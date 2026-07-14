@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DAON Agent System</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script>
+    // Apply saved theme immediately to prevent FOUC (Flash of Unthemed Content)
+    (function () {
+      const savedTheme = localStorage.getItem('daon_theme') || 'midnight';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+</head>
+
+<body>
+
+  <div class="app-container">
+
+    <!-- ── GLOBAL HEADER (fixed agent/model bar) ── -->
+    <div class="global-header">
+      <div class="agent-model-bar">
+        <label>AGENT</label>
+        <select id="modelSelect" style="flex:1;max-width:160px;">
+          <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+        </select>
+        <label style="margin-left: 8px;">PROFILE</label>
+        <select id="rightAgentProfileSelect" style="flex:1;max-width:120px;">
+        </select>
+        <button class="clear-btn" id="clearChatBtn" style="margin-left: 8px;">Clear</button>
+        <div class="status-wrap">
+          <div class="status-indicator" id="statusIndicator"></div>
+          <span id="statusText">Idle</span>
+        </div>
+      </div>
+      <div class="editor-action-bar">
+        <div class="theme-selector-wrap"
+          style="display: flex; align-items: center; gap: 6px; margin-right: 12px; flex-shrink: 0;">
+          <span style="font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap;">🎨 테마:</span>
+          <select id="themeSelect" onchange="changeTheme(this.value)"
+            style="background: var(--bg3); border: 1px solid var(--border2); color: var(--text); border-radius: 4px; padding: 2px 6px; font-size: 11px; outline: none; cursor: pointer; font-family: inherit;">
+            <option value="midnight">Midnight Neon (기본)</option>
+            <option value="forest">Forest Emerald</option>
+            <option value="nordic">Nordic Slate</option>
+            <option value="sunset">Sunset Wine</option>
+            <option value="oled">Absolute OLED</option>
+            <option value="light">Light Breeze</option>
+          </select>
+        </div>
+        <span id="activeFilePath"
+          style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--muted);">파일을
+          탐색기에서 선택하세요</span>
+        <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+          <button class="action-btn" id="clearEditorBtn" style="display:none;">Clear</button>
+          <button class="action-btn" id="previewHtmlBtn" style="display:none;">미리보기</button>
+          <button class="action-btn" id="saveFileBtn" style="display:none;" disabled>Save</button>
+          <button class="action-btn danger" id="deleteFileBtn" style="display:none;">Delete</button>
+          <div style="display:flex; gap: 4px; align-items: center; margin-left: 8px;">
+            <button class="action-btn" id="showHarnessManualBtn" title="다이나믹 하네스 설명서 보기">❓ 하네스 안내</button>
+            <button class="action-btn active" id="toggleBrowserBtn" title="브라우저 뷰 열기/닫기">🌐 Web</button>
+            <button class="action-btn active" id="toggleLeftBtn" title="좌측 세션 패널 열기/닫기">◧ 좌측</button>
+            <button class="action-btn active" id="toggleExplorerBtn" title="탐색기 열기/닫기">📁 탐색기</button>
+            <button class="action-btn active" id="toggleRightBtn" title="우측 채팅 패널 열기/닫기">◨ 우측</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MAIN GRID (3 columns) ── -->
+    <div class="main-grid">
+
+      <!-- ── LEFT PANEL ── -->
+      <div class="left-panel">
+        <!-- ── VERTICAL NAV BAR ── -->
+        <div class="sidebar-nav"
+          style="width: 48px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 12px; flex-shrink: 0;">
+          <button class="nav-tab active" data-panel="chat" onclick="switchPanel('chat')" title="채팅"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">💬</button>
+          <button class="nav-tab" data-panel="tasks" onclick="switchPanel('tasks')" title="예약 작업"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">⏱️</button>
+          <button class="nav-tab" data-panel="skills" onclick="switchPanel('skills')" title="스킬"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧩</button>
+          <button class="nav-tab" data-panel="memory" onclick="switchPanel('memory')" title="기억"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧠</button>
+          <button class="nav-tab" data-panel="workspaces" onclick="switchPanel('workspaces')" title="작업공간"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📂</button>
+          <button class="nav-tab" data-panel="profiles" onclick="switchPanel('profiles')" title="에이전트 프로필"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">👤</button>
+          <button class="nav-tab" data-panel="todos" onclick="switchPanel('todos')" title="할 일 목록"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📝</button>
+          <button class="nav-tab" data-panel="artifacts" onclick="switchPanel('artifacts')" title="아티팩트"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📦</button>
+          <button class="nav-tab" data-panel="setup" onclick="switchPanel('setup')" title="설치 팩"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧰</button>
+          <button class="nav-tab" data-panel="checks" onclick="switchPanel('checks')" title="시스템 점검"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔍</button>
+          <button class="nav-tab" data-panel="dashboard" onclick="switchPanel('dashboard')" title="토큰 사용량 & 비용 대시보드"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📊</button>
+          <button class="nav-tab" data-panel="git" onclick="switchPanel('git')" title="Git 자동화"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔀</button>
+          <button class="nav-tab" data-panel="browser" onclick="switchPanel('browser')" title="브라우저 자동화"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🌐</button>
+          <button class="nav-tab" data-panel="docs" onclick="switchPanel('docs')" title="자동 문서화"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📄</button>
+          <button class="nav-tab" data-panel="mcp" onclick="switchPanel('mcp')" title="MCP 서버 관리"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔌</button>
+          <button class="nav-tab" data-panel="integrations" onclick="switchPanel('integrations')"
+            title="Slack & Notion 연동"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔗</button>
+          <button class="nav-tab demo-nav-btn" id="demoNavBtn" onclick="openDemoSkill()" title="Demo → Skill (자동 스킬 생성)"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🎬</button>
+        </div>
+
+        <!-- ── PANELS CONTAINER ── -->
+        <div class="left-panel-content"
+          style="flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100%;">
+
+          <!-- ── CHAT (SESSIONS) PANEL ── -->
+          <div class="panel-view active" id="panelChat"
+            style="display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+            <!-- Logo header -->
+            <div class="daon-header">
+              <div class="daon-logo">D</div>
+              <div>
+                <div class="daon-title">DAON</div>
+              </div>
+              <span class="daon-badge">Agent</span>
+            </div>
+
+            <!-- Profile select -->
+            <div class="profile-bar">
+              <select id="agentProfileSelect" title="에이전트 프로필 전환">
+                <option value="default">default</option>
+              </select>
+            </div>
+
+            <!-- Sessions -->
+            <div class="sessions-section">
+              <span class="section-label">Sessions</span>
+              <button class="new-session-btn" id="newSessionBtn">+ New Chat</button>
+            </div>
+            <div id="sessionsList"></div>
+
+            <!-- Default Tasks -->
+            <div class="default-tasks-section">
+              <div class="default-tasks-header" id="defaultTasksHeader">
+                <span class="section-label">Default Tasks</span>
+                <span style="font-size:11px;color:var(--muted)">▶</span>
+              </div>
+              <div class="default-tasks-content collapsed" id="defaultTasksContent">
+                <button class="task-btn" data-template="workspace-summary">📦 작업공간 요약</button>
+                <button class="task-btn" data-template="note-draft">📝 노트 초안 만들기</button>
+                <button class="task-btn" data-template="blog-post">✍️ 블로그 포스트 초안</button>
+                <button class="task-btn" data-template="schedule-task">⏱️ 예약 작업 만들기</button>
+              </div>
+            </div>
+
+            <!-- User profile -->
+            <div class="left-panel-bottom">
+              <div class="user-avatar">U</div>
+              <div class="user-info">
+                <div class="user-name">User</div>
+                <div class="user-role">Developer</div>
+              </div>
+              <button class="settings-icon-btn" id="settingsBtn" title="설정">⚙</button>
+            </div>
+          </div>
+
+          <!-- ── TASKS PANEL ── -->
+          <div class="panel-view" id="panelTasks">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">예약 작업 (Cron)</span>
+              <button class="new-session-btn" id="toggleCronFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
+                작업</button>
+            </div>
+            <div class="panel-body-scroll">
+              <div id="cronCreateForm"
+                style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px;">
+                <textarea id="cronFormVibe" rows="2" placeholder="자유 형식: 예) 매일 아침 8시에 AI 뉴스 요약해서 텔레그램으로 보내줘"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:none;font-family:inherit;"></textarea>
+                <div style="display:flex;gap:4px;">
+                  <button class="cron-btn run" id="autofillCronBtn" style="flex:1;">✨ AI 분석</button>
+                  <button class="cron-btn" id="fillCronDailyBtn" style="flex:1;">매일 예시</button>
+                  <button class="cron-btn" id="fillCronWeeklyBtn" style="flex:1;">주간 예시</button>
+                </div>
+                <div id="cronFormPreview" class="cron-preview" style="display:none;"></div>
+                <input id="cronFormName" placeholder="작업 이름 (선택)"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                <input id="cronFormSchedule" placeholder="스케줄: '0 9 * * *' 또는 'every 1h'"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                <textarea id="cronFormPrompt" rows="3" placeholder="실행할 프롬프트"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:none;font-family:inherit;"></textarea>
+                <select id="cronFormDeliver"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                  <option value="local">로컬 (결과만 저장)</option>
+                  <option value="discord">Discord</option>
+                  <option value="telegram">Telegram</option>
+                </select>
+                <div id="cronFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
+                <div style="display:flex;gap:4px;">
+                  <button class="cron-btn run" id="submitCronCreateBtn" style="flex:1;">만들기</button>
+                  <button class="cron-btn" id="cancelCronCreateBtn" style="flex:1;">취소</button>
+                </div>
+              </div>
+              <div id="cronList" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SKILLS PANEL ── -->
+          <div class="panel-view" id="panelSkills">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">스킬 관리</span>
+              <button class="new-session-btn" id="toggleSkillFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
+                스킬</button>
+            </div>
+            <div class="panel-body-scroll">
+              <input id="skillsSearch" placeholder="스킬 검색..."
+                style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px 8px;font-size:11px;outline:none;margin-bottom:6px;">
+              <div id="skillCreateForm"
+                style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+                <input id="skillFormName" placeholder="스킬 이름 (예: my-skill)"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                <input id="skillFormCategory" placeholder="카테고리 (선택, 예: devops)"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                <textarea id="skillFormContent" rows="6" placeholder="SKILL.md 내용 (YAML frontmatter + markdown)"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:monospace;"></textarea>
+                <div id="skillFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
+                <div style="display:flex;gap:4px;">
+                  <button class="cron-btn run" id="submitSkillSaveBtn" style="flex:1;">스킬 저장</button>
+                  <button class="cron-btn" id="cancelSkillFormBtn" style="flex:1;">취소</button>
+                </div>
+              </div>
+
+              <!-- Demo->Skill section -->
+              <div class="demo-skill-section" id="demoSkillSection">
+                <div class="demo-skill-header" id="demoSkillHeader" onclick="toggleDemoSkill()">
+                  <span>&#127916; Demo &rarr; Skill</span>
+                  <span class="demo-toggle-icon" id="demoToggleIcon">&#9654;</span>
+                </div>
+                <div class="demo-skill-body" id="demoSkillBody" style="display:none;">
+                  <!-- Recording mode -->
+                  <div class="demo-recording-area" id="demoRecordingIdle">
+                    <div class="demo-hint">브라우저 동작을 녹화하여 자동으로 스킬을 생성합니다.<br>Chrome이 디버그
+                      모드(--remote-debugging-port=9222)로
+                      실행 중이어야 합니다.</div>
+                    <div style="display:flex;gap:4px;">
+                      <button class="cron-btn run" id="demoStartRecordBtn" onclick="startDemoRecording()"
+                        style="flex:1;font-size:11px;">&#128308; 녹화 시작</button>
+                      <button class="cron-btn" id="demoToggleTextBtn" onclick="toggleDemoTextMode()"
+                        style="flex:1;font-size:11px;">&#128221; 텍스트 입력</button>
+                    </div>
+                  </div>
+                  <!-- Recording in progress -->
+                  <div class="demo-recording-area" id="demoRecordingActive" style="display:none;">
+                    <div class="demo-status-bar">
+                      <span class="demo-pulse"></span>
+                      <span>녹화 중...</span>
+                      <span id="demoEventCount" style="font-size:10px;color:var(--muted);">0 이벤트</span>
+                    </div>
+                    <div style="display:flex;gap:4px;">
+                      <button class="cron-btn pause" id="demoStopRecordBtn" onclick="stopDemoRecording()"
+                        style="flex:1;font-size:11px;">&#9209; 중지 & 분석</button>
+                      <button class="cron-btn" id="demoCancelRecordBtn" onclick="cancelDemoRecording()"
+                        style="flex:1;font-size:11px;">&#10005; 취소</button>
+                    </div>
+                  </div>
+                  <!-- Analyzing state -->
+                  <div class="demo-recording-area" id="demoAnalyzing" style="display:none;">
+                    <div class="demo-status-bar analyzing">
+                      <span class="demo-spinner"></span>
+                      <span>LLM 분석 중...</span>
+                    </div>
+                    <button class="cron-btn" onclick="cancelDemoRecording()" style="width:100%;font-size:11px;">&#10005;
+                      취소</button>
+                  </div>
+                  <!-- Generation result -->
+                  <div class="demo-result-area" id="demoResultArea" style="display:none;">
+                    <div id="demoResultContent"></div>
+                    <div style="display:flex;gap:4px;">
+                      <button class="cron-btn run" id="demoApproveBtn" onclick="approveDemoSkill()"
+                        style="flex:1;font-size:11px;">&#10003; 승인</button>
+                      <button class="cron-btn pause" id="demoRejectBtn" onclick="rejectDemoSkill()"
+                        style="flex:1;font-size:11px;">&#10005; 거절</button>
+                    </div>
+                  </div>
+                  <!-- Text workflow mode -->
+                  <div class="demo-text-area" id="demoTextMode" style="display:none;">
+                    <input id="demoTextSkillName" placeholder="스킬 이름 (선택)"
+                      style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;margin-bottom:6px;">
+                    <textarea id="demoTextDescription" rows="4"
+                      placeholder="예:&#10;1. GitHub에 로그인한다&#10;2. 새 이슈를 생성한다&#10;3. 제목과 내용을 입력한다&#10;4. 제출 버튼을 누른다"
+                      style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:inherit;margin-bottom:6px;"></textarea>
+                    <div id="demoTextError" style="font-size:10px;color:var(--danger);display:none;margin-bottom:4px;">
+                    </div>
+                    <div style="display:flex;gap:4px;">
+                      <button class="cron-btn run" onclick="submitDemoTextWorkflow()"
+                        style="flex:1;font-size:11px;">&#127916; 스킬 생성</button>
+                      <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:11px;">&#8617; 녹화
+                        모드</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Community Skills Hub -->
+              <!-- ── Skills Auto-Recommend (Phase 5b) ── -->
+              <div id="skillsRecommendSection"
+                style="margin-top:12px;padding:8px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-weight:600;font-size:12px;">🤖 워크스페이스 분석 추천</span>
+                  <button id="skillsRecommendBtn" onclick="runSkillsRecommend()"
+                    style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer;">🔄
+                    분석</button>
+                </div>
+                <div id="skillsRecommendList"
+                  style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;"></div>
+                <div id="skillsRecommendStatus"
+                  style="font-size:10px;color:var(--muted);text-align:center;display:none;">
+                </div>
+              </div>
+
+              <div id="skillsHubSection"
+                style="margin-top:12px;padding:8px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);">
+                <div style="font-weight:600;font-size:12px;margin-bottom:6px;">🌐 커뮤니티 스킬 검색</div>
+              </div>
+
+              <div id="skillsList" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── MEMORY PANEL ── -->
+          <div class="panel-view" id="panelMemory">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">개인 기억 & 노트</span>
+              <button class="new-session-btn" id="memEditBtn" style="padding: 2px 6px; font-size:11px;">✏ 편집</button>
+            </div>
+            <div class="panel-body-scroll">
+              <div id="memoryEditForm"
+                style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+                <div style="font-size:10px;color:var(--muted)">편집 중: <span id="memEditSection">memory</span></div>
+                <textarea id="memEditContent" rows="8"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:monospace;"></textarea>
+                <div id="memEditError" style="font-size:10px;color:var(--danger);display:none;"></div>
+                <div style="display:flex;gap:4px;">
+                  <button class="cron-btn run" id="submitMemorySaveBtn" style="flex:1;">저장</button>
+                  <button class="cron-btn" id="closeMemoryEditBtn" style="flex:1;">취소</button>
+                </div>
+              </div>
+              <div id="memoryPanel" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── TODOS PANEL ── -->
+          <div class="panel-view" id="panelTodos">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">현재 할 일 목록</span>
+            </div>
+            <div class="panel-body-scroll">
+              <div id="todoPanel" style="display: flex; flex-direction: column; gap: 6px;"></div>
+            </div>
+          </div>
+
+          <!-- ── WORKSPACES PANEL ── -->
+          <div class="panel-view" id="panelWorkspaces">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">작업공간 관리</span>
+            </div>
+            <div class="panel-body-scroll">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;line-height:1.4;">세션용 작업공간을 추가하고 전환하세요.
+              </div>
+              <div id="workspacesPanel" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── PROFILES PANEL ── -->
+          <div class="panel-view" id="panelProfiles">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">에이전트 프로필</span>
+              <button class="new-session-btn" id="toggleProfileFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
+                프로필</button>
+            </div>
+            <div class="panel-body-scroll">
+              <div id="profileCreateForm"
+                style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+                <input id="profileFormName" placeholder="프로필 이름 (소문자, 숫자, 하이픈)"
+                  style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;font-weight:normal;text-transform:none;">
+                  <input type="checkbox" id="profileFormClone" style="width:auto;margin:0;"> 현재 활성 프로필 설정 복제
+                </label>
+                <div id="profileFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
+                <div style="display:flex;gap:4px;">
+                  <button class="cron-btn run" id="submitProfileCreateBtn" style="flex:1;">생성</button>
+                  <button class="cron-btn" id="cancelProfileFormBtn" style="flex:1;">취소</button>
+                </div>
+              </div>
+              <div id="profilesPanel" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── ARTIFACTS PANEL ── -->
+          <div class="panel-view" id="panelArtifacts">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">아티팩트 목록</span>
+            </div>
+            <div class="panel-body-scroll">
+              <div id="artifactListSidebar" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">아직 아티팩트가 없습니다.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SETUP PANEL ── -->
+          <div class="panel-view" id="panelSetup">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">Setup Packs</span>
+            </div>
+            <div class="panel-body-scroll" style="gap:12px;">
+              <div class="quick-actions-grid">
+                <button class="quick-action setup-pack" data-pack="obsidian-starter">📚 Obsidian Starter</button>
+                <button class="quick-action setup-pack" data-pack="sharenote-telegram">🔗 Share+Telegram</button>
+                <button class="quick-action setup-pack" data-pack="obsidian-power">⚙️ Obsidian Power</button>
+                <button class="quick-action setup-pack" data-pack="memory-sync">🧠 Memory Sync</button>
+                <button class="quick-action setup-pack" data-pack="telegram-onboarding">📣 Telegram Onboarding</button>
+                <button class="quick-action setup-pack" data-pack="hermes-full-install">🚀 Full Hermes Install</button>
+                <button class="quick-action setup-pack" data-pack="webui-only-install">🪄 WebUI Install</button>
+                <button class="quick-action setup-pack" data-pack="last30days">📈 last30days</button>
+                <button class="quick-action setup-pack" data-pack="autoresearch">🔬 AutoResearch</button>
+              </div>
+              <div class="setup-pack-help" id="setupPackHelpSidebar">팩 위에 마우스를 올리면 설명이 보입니다. 클릭하면 설치 작업을 시작합니다.</div>
+              <!-- AI 설정 생성기 -->
+              <div id="setupGeneratorSection" style="margin-top:12px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">Setup 패널을 열면 자동 분석됩니다...
+                </div>
+              </div>
+              <div class="setup-pack-detail" id="setupPackDetailSidebar"
+                style="display:none;font-size:11px;background:rgba(0,0,0,0.15);padding:8px;border-radius:4px;"></div>
+              <div id="setupPackHistorySidebar" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">실행 내역이 없습니다.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── CHECKS PANEL ── -->
+          <div class="panel-view" id="panelChecks">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">Preflight Validator</span>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;">
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <button class="preflight-run" data-preflight="note">📝 Note</button>
+                <button class="preflight-run" data-preflight="posting">✍️ Posting</button>
+                <button class="preflight-run" data-preflight="cron">⏱️ Cron</button>
+              </div>
+              <div id="preflightListSidebar" style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">점검을 실행해 주세요.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── DASHBOARD PANEL ── -->
+          <div class="panel-view" id="panelDashboard">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">📊 토큰 사용량 & 비용 대시보드</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDashboard()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+
+              <!-- 요약 카드 -->
+              <div id="dashSummary" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div class="dash-card"
+                  style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">총 토큰</div>
+                  <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashTotalTokens">...</div>
+                </div>
+                <div class="dash-card"
+                  style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">예상 비용</div>
+                  <div style="font-size:16px;font-weight:700;color:var(--accent)" id="dashTotalCost">...</div>
+                </div>
+                <div class="dash-card"
+                  style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">실행 횟수</div>
+                  <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashRunCount">...</div>
+                </div>
+                <div class="dash-card"
+                  style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">채팅 세션</div>
+                  <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashSessionCount">...</div>
+                </div>
+              </div>
+
+              <!-- 모델별 사용량 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">🤖 모델별 사용량</div>
+              <div id="dashModelBreakdown"
+                style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto">
+                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+              </div>
+
+              <!-- 에이전트별 사용량 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">👤 에이전트별 사용량</div>
+              <div id="dashAgentBreakdown"
+                style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto">
+                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+              </div>
+
+              <!-- 최근 실행 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📋 최근 실행</div>
+              <div id="dashRecentRuns"
+                style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow-y:auto;font-size:10px">
+                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+              </div>
+
+              <!-- ⚙️ Config Score Section -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin:8px 0 4px">⚙️ 설정 완성도 점수 <button
+                  class="cron-btn run" style="padding:2px 6px;font-size:9px;margin-left:6px"
+                  onclick="refreshConfigScore()">🔄</button></div>
+              <div id="scoreContainer"></div>
+
+            </div>
+          </div>
+
+          <!-- ── GIT PANEL ── -->
+          <div class="panel-view" id="panelGit">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">🔀 Git 자동화</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadGitPanel()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+
+              <!-- 상태 요약 -->
+              <div id="gitSummary" style="display:flex;gap:8px;flex-wrap:wrap">
+                <span style="font-size:10px;color:var(--muted)">브랜치:</span>
+                <span id="gitBranch" style="font-size:10px;font-weight:600;color:var(--text)">...</span>
+                <span style="font-size:10px;color:var(--muted);margin-left:8px">커밋:</span>
+                <span id="gitCommitShort"
+                  style="font-size:10px;font-weight:600;color:var(--text);font-family:monospace">...</span>
+                <span id="gitAheadBehind" style="font-size:10px;color:var(--muted)"></span>
+              </div>
+
+              <!-- 액션 버튼 -->
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="action-btn" onclick="gitPull()"
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">⬇️
+                  Pull</button>
+                <button class="action-btn" onclick="gitPush()"
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">⬆️
+                  Push</button>
+                <button class="action-btn" id="gitCommitBtn" onclick="gitCommit()"
+                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer">✅
+                  Commit</button>
+              </div>
+
+              <!-- 커밋 메시지 -->
+              <div id="gitCommitMsgWrap" style="display:none">
+                <input id="gitCommitMsg" placeholder="커밋 메시지 입력..."
+                  style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;margin-top:4px">
+                <div style="display:flex;gap:4px;margin-top:4px">
+                  <button class="action-btn" onclick="gitCommit()"
+                    style="background:var(--success);color:#fff;border:none;padding:3px 10px;border-radius:6px;font-size:10px">확인</button>
+                  <button class="action-btn" onclick="document.getElementById('gitCommitMsgWrap').style.display='none'"
+                    style="background:var(--bg2);color:var(--muted);border:1px solid var(--border);padding:3px 10px;border-radius:6px;font-size:10px">취소</button>
+                </div>
+              </div>
+
+              <!-- 변경된 파일 목록 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">📁 변경된 파일</div>
+              <div id="gitChangedFiles"
+                style="display:flex;flex-direction:column;gap:2px;max-height:300px;overflow-y:auto;font-size:10px">
+                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+              </div>
+
+              <!-- Diff 출력 -->
+              <div id="gitDiffOutput"
+                style="display:none;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:400px;overflow:auto;font-family:monospace;font-size:10px;white-space:pre-wrap;color:var(--text)">
+              </div>
+
+              <!-- Git 결과 메시지 -->
+              <div id="gitResult" style="display:none;padding:8px;border-radius:6px;font-size:11px"></div>
+
+            </div>
+          </div>
+
+          <!-- ── BROWSER AUTOMATION PANEL ── -->
+          <div class="panel-view" id="panelBrowser">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">🌐 브라우저 자동화</span>
+              <div style="display:flex;gap:4px;">
+                <span id="browserStatus" style="font-size:10px;color:var(--muted);line-height:1.8">⚫ 연결 안 됨</span>
+                <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadBrowserPanel()">🔄
+                  상태</button>
+              </div>
+            </div>
+            <div class="panel-body-scroll" style="gap:6px;padding:8px;">
+
+              <!-- URL 입력 + 이동 -->
+              <div style="display:flex;gap:4px;">
+                <input id="browserUrlInput" placeholder="https://example.com"
+                  style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;font-family:monospace">
+                <button class="action-btn" onclick="browserNavigate()"
+                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap">▶
+                  이동</button>
+              </div>
+
+              <!-- 액션 버튼 -->
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="action-btn" onclick="browserSnapshot()"
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">📸
+                  스냅샷</button>
+                <button class="action-btn" onclick="browserScreenshot()"
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">🖼️
+                  스크린샷</button>
+                <button class="action-btn" onclick="browserClose()"
+                  style="background:var(--bg2);color:var(--danger);border:1px solid var(--danger);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">✕
+                  닫기</button>
+              </div>
+
+              <!-- 결과 메시지 -->
+              <div id="browserResult"
+                style="display:none;padding:6px 8px;border-radius:4px;font-size:10px;background:var(--bg2)"></div>
+
+              <!-- 요소 입력 -->
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <input id="browserTypeRef" placeholder="ref (예: @e0)"
+                  style="width:80px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px;font-family:monospace">
+                <input id="browserTypeValue" placeholder="입력할 텍스트..."
+                  style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px">
+                <button class="action-btn" onclick="browserTypeText()"
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap">⌨️
+                  입력</button>
+              </div>
+
+              <!-- JavaScript 실행 -->
+              <div style="display:flex;gap:4px;">
+                <input id="browserJSInput" placeholder="document.title"
+                  style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px;font-family:monospace">
+                <button class="action-btn" onclick="browserExecuteJS()"
+                  style="background:var(--bg2);color:var(--accent);border:1px solid var(--accent);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap">JS
+                  실행</button>
+              </div>
+              <div id="browserJSOutput"
+                style="display:none;background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:6px;font-family:monospace;font-size:10px;white-space:pre-wrap;max-height:120px;overflow:auto;color:var(--text)">
+              </div>
+
+              <!-- 인터랙티브 요소 목록 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">🔍 인터랙티브 요소</div>
+              <div id="browserElementsList"
+                style="display:flex;flex-direction:column;gap:2px;max-height:250px;overflow-y:auto;font-size:10px">
+                <div style="padding:8px;color:var(--muted);font-size:11px">페이지를 먼저 열어주세요.</div>
+              </div>
+
+              <!-- 스크린샷 미리보기 -->
+              <div id="browserScreenshot"
+                style="display:none;margin-top:4px;border:1px solid var(--border);border-radius:4px;overflow:hidden">
+              </div>
+
+              <!-- 페이지 텍스트 -->
+              <details style="margin-top:4px">
+                <summary style="font-size:10px;color:var(--muted);cursor:pointer">📄 페이지 텍스트</summary>
+                <div id="browserPageText"
+                  style="background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:10px;white-space:pre-wrap;max-height:300px;overflow:auto;color:var(--text);margin-top:4px">
+                </div>
+              </details>
+
+            </div>
+          </div>
+
+          <!-- ── DOCS PANEL ── -->
+          <div class="panel-view" id="panelDocs">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">📄 자동 문서화</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDocsPanel()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+
+              <!-- 문서 유형 선택 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📋 생성할 문서 유형</div>
+              <div id="docsTypeCheckboxes" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
+                    type="checkbox" value="readme" checked onchange="updateDocsGenerateBtn()"> README.md - 프로젝트
+                  개요</label>
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
+                    type="checkbox" value="architecture" checked onchange="updateDocsGenerateBtn()"> ARCHITECTURE.md -
+                  시스템
+                  아키텍처</label>
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
+                    type="checkbox" value="api" onchange="updateDocsGenerateBtn()"> API 문서 - 엔드포인트 명세</label>
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
+                    type="checkbox" value="modules" onchange="updateDocsGenerateBtn()"> 모듈 문서 - 클래스/함수 설명</label>
+                <label
+                  style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
+                    type="checkbox" value="config" onchange="updateDocsGenerateBtn()"> 설정 가이드 - config.yaml/.env</label>
+              </div>
+
+              <!-- 출력 디렉토리 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📁 출력 디렉토리</div>
+              <div style="display:flex;gap:4px;margin-bottom:8px">
+                <input id="docsOutputDir" placeholder="docs" value="docs"
+                  style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;font-family:monospace">
+                <button onclick="browseDocsOutputDir()" title="폴더 찾기"
+                  style="background:var(--bg3);color:var(--text);border:1px solid var(--border2);padding:6px 8px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">📁
+                  찾기</button>
+              </div>
+
+              <!-- 생성 버튼 -->
+              <div style="display:flex;gap:4px;margin-bottom:8px">
+                <button id="docsGenerateBtn" class="action-btn" onclick="generateDocs()"
+                  style="background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;flex:1">🚀
+                  문서 생성하기 (2개 유형)</button>
+                <button onclick="resetDocsPanel()"
+                  style="background:var(--bg3);color:var(--muted);border:1px solid var(--border2);padding:8px 10px;border-radius:8px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">🔄
+                  초기화</button>
+              </div>
+
+              <!-- 진행 상태 -->
+              <div id="docsProgress" style="display:none;margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                  <span id="docsProgressLabel" style="font-size:10px;color:var(--muted)">준비 중...</span>
+                  <span id="docsProgressPercent" style="font-size:10px;color:var(--accent)">0%</span>
+                </div>
+                <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+                  <div id="docsProgressBar"
+                    style="background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;width:0%;transition:width 0.3s">
+                  </div>
+                </div>
+              </div>
+
+              <!-- 결과 메시지 -->
+              <div id="docsResult" style="display:none;padding:8px;border-radius:6px;font-size:11px;margin-bottom:8px">
+              </div>
+
+              <!-- 생성된 문서 목록 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📑 생성된 문서</div>
+              <div id="docsList"
+                style="display:flex;flex-direction:column;gap:4px;max-height:350px;overflow-y:auto;font-size:10px">
+                <div style="padding:8px;color:var(--muted);font-size:11px">문서를 불러오는 중...</div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- ── MCP PANEL (Model Context Protocol) ── -->
+          <div class="panel-view" id="panelMcp">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">🔌 MCP 서버</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="refreshMcpServers()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+              <!-- 서버 목록 -->
+              <div id="mcpServerList" style="display:flex;flex-direction:column;gap:4px;">
+                <div style="padding:12px;color:var(--muted);text-align:center;font-size:13px;">로딩 중...</div>
+              </div>
+
+              <!-- ── MCP 추천 섹션 ── -->
+              <div id="mcpRecommendSection"
+                style="background:var(--bg2);border-radius:8px;padding:8px;display:none;flex-direction:column;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;font-weight:600;color:var(--text);">🤖 워크스페이스 분석 추천</span>
+                  <button class="cron-btn run" style="padding:2px 6px;font-size:10px" onclick="runMcpRecommend()">🔄
+                    분석</button>
+                </div>
+                <div id="mcpRecommendList" style="display:flex;flex-direction:column;gap:4px;"></div>
+              </div>
+
+              <!-- 도구 실행 결과 -->
+              <div id="mcpToolResult" style="display:none;margin-top:8px;"></div>
+
+              <!-- 커스텀 서버 추가 폼 -->
+              <button class="action-btn" onclick="toggleMcpCustomForm()" style="margin-top:8px;width:100%;">➕ 직접
+                추가</button>
+              <div id="mcpCustomForm"
+                style="display:none;background:var(--bg2);border-radius:8px;padding:8px;gap:6px;flex-direction:column;">
+                <input id="mcpCustomId" placeholder="Server ID (예: my-server)"
+                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
+                <input id="mcpCustomCmd" placeholder="Command (예: npx)"
+                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
+                <input id="mcpCustomArgs" placeholder="Args (예: -y @anthropic/mcp-server-filesystem .)"
+                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
+                <input id="mcpCustomLabel" placeholder="Label (표시 이름)"
+                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
+                <button class="action-btn" onclick="addMcpCustomServer()"
+                  style="background:var(--success);color:white;">추가</button>
+              </div>
+
+              <!-- 프리셋 목록 -->
+              <div
+                style="font-size:13px;font-weight:600;margin-top:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;">
+                <span>🏪 커뮤니티 MCP 허브 (스토어)</span>
+              </div>
+              <input id="mcpPresetSearch" placeholder="🔍 MCP 검색..." oninput="filterMcpPresets()"
+                style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;margin-bottom:4px;font-size:11px;" />
+              <div id="mcpPresetList" style="display:flex;flex-direction:column;gap:4px;">
+                <div style="padding:8px;color:var(--muted);text-align:center;">로딩 중...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── INTEGRATIONS PANEL (Slack & Notion) ── -->
+          <div class="panel-view" id="panelIntegrations">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">🔗 Slack & Notion 연동</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadIntegrationsPanel()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+
+              <!-- Slack Section -->
+              <div id="integrationSlackConfig"
+                style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
+                <div style="padding:8px;color:var(--muted);font-size:10px">불러오는 중...</div>
+              </div>
+
+              <!-- Slack Send Form -->
+              <div style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
+                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">📤 Slack 메시지 전송</div>
+                <textarea id="intSlackMessage" placeholder="전송할 메시지를 입력하세요 (Markdown 지원)..."
+                  style="width:100%;height:80px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);color:var(--text);font-size:11px;resize:vertical;margin-bottom:4px;font-family:monospace"></textarea>
+                <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+                  <input id="intSlackChannelSelect" type="text" placeholder="채널 (기본값 사용)"
+                    style="flex:1;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace">
+                  <button class="cron-btn run" style="padding:4px 10px;font-size:10px;white-space:nowrap"
+                    onclick="sendToSlack()">📤
+                    전송</button>
+                </div>
+                <div id="intSlackResult"
+                  style="display:none;padding:6px;border-radius:4px;font-size:10px;word-break:break-all"></div>
+              </div>
+
+              <!-- Notion Section -->
+              <div id="integrationNotionConfig"
+                style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
+                <div style="padding:8px;color:var(--muted);font-size:10px">불러오는 중...</div>
+              </div>
+
+              <!-- Notion Create Form -->
+              <div style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
+                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">📝 Notion 페이지 생성</div>
+                <input id="intNotionTitle" type="text" placeholder="페이지 제목..."
+                  style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace;margin-bottom:4px">
+                <textarea id="intNotionContent" placeholder="페이지 본문 (Markdown 지원)..."
+                  style="width:100%;height:100px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);color:var(--text);font-size:11px;resize:vertical;margin-bottom:4px;font-family:monospace"></textarea>
+                <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+                  <input id="intNotionTags" type="text" placeholder="태그 (쉼표 구분)"
+                    style="flex:1;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace">
+                  <button class="cron-btn run" style="padding:4px 10px;font-size:10px;white-space:nowrap"
+                    onclick="sendToNotion()">📝
+                    생성</button>
+                </div>
+                <div id="intNotionResult"
+                  style="display:none;padding:6px;border-radius:4px;font-size:10px;word-break:break-all"></div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── LEFT RESIZER ── -->
+      <div class="resizer" id="resizerLeft"></div>
+
+      <!-- ── MIDDLE PANEL ── -->
+      <div class="middle-panel">
+
+        <div class="explorer-inner">
+          <!-- File Tree -->
+          <div class="file-tree-wrap">
+            <!-- Explorer header -->
+            <div class="explorer-header">
+              <span class="explorer-label">Explorer</span>
+              <button class="explorer-btn" id="newFileBtn" title="새 파일">+</button>
+              <button class="explorer-btn" id="newDirBtn" title="새 폴더">📁</button>
+              <button class="explorer-btn" id="openFileBtn" title="파일 열기">📂</button>
+              <button class="explorer-btn" id="refreshExplorerBtn" title="새로고침">↻</button>
+              <button class="explorer-btn" id="openFolderBtn" title="폴더 열기">🔗</button>
+            </div>
+
+            <div id="noWorkspaceWelcome" style="display:none;">
+              <div class="no-ws-icon">📂</div>
+              <div class="no-ws-text">세션에 작업공간을<br>선택하세요</div>
+              <button class="open-folder-btn" id="welcomeOpenFolderBtn">폴더 열기</button>
+            </div>
+            <div id="fileTreeContainer"></div>
+          </div>
+
+          <!-- Editor -->
+          <div class="editor-area">
+            <!-- Tabs -->
+            <div id="editorTabs"></div>
+
+            <!-- Canvas -->
+            <div class="canvas-area">
+              <div id="monacoContainer"></div>
+              <div id="imgPreviewContainer">
+                <img id="imgPreview" src="" alt="">
+              </div>
+              <div id="mdPreviewContainer"></div>
+              <div id="htmlPreviewContainer">
+                <iframe id="htmlPreview"></iframe>
+              </div>
+              <!-- Browser View (in-canvas) -->
+              <div id="browserViewWrap" style="display:none; flex-direction: column; height: 100%;">
+                <div class="browser-url-bar">
+                  <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
+                  <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
+                  <button class="browser-nav-btn" onclick="browserReload()" title="새로고침">↻</button>
+                  <input type="text" id="browserCanvasUrlInput" class="browser-url-input"
+                    placeholder="주소 입력 후 Enter..." />
+                  <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="이동">→</button>
+                </div>
+                <div class="browser-main-area">
+                  <div class="browser-frame-wrap" id="browserFrameWrap">
+                    <iframe id="browserFrame" class="browser-frame" style="display:none"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+                    <div id="browserPlaceholder" class="browser-placeholder">
+                      <div class="browser-placeholder-icon">🌐</div>
+                      <div class="browser-placeholder-text">위에 URL을 입력하고 Enter 를 누르면 브라우저가 열립니다</div>
+                    </div>
+                    <div id="browserFrameError" class="browser-frame-error" style="display:none">
+                      <span>⚠️ 이 사이트는 iframe으로 표시할 수 없습니다 (X-Frame-Options)</span>
+                    </div>
+                  </div>
+                  <div class="browserai-sidebar" id="browseraiSidebar">
+                    <div id="browseraiContext" class="browserai-context"></div>
+                    <div id="browseraiSkillsSection" style="display:none">
+                      <div class="browserai-section-title">🧩 추천 스킬</div>
+                      <div id="browseraiSkills" class="browserai-list"></div>
+                    </div>
+                    <div id="browseraiActionsSection" style="display:none">
+                      <div class="browserai-section-title">⚡ 빠른 행동</div>
+                      <div id="browseraiActions" class="browserai-list"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="welcomeCanvas">
+                <div class="welcome-icon">⚡</div>
+                <div class="welcome-title">DAON Agent System</div>
+                <div class="welcome-sub">탐색기에서 파일을 선택하거나<br>채팅으로 작업을 시작하세요</div>
+              </div>
+
+              <!-- Dynamic Harness Manual Overlay -->
+              <div class="harness-manual-overlay" id="harnessManualOverlay">
+                <div class="harness-manual-card">
+                  <div class="harness-manual-header">
+                    <h3>🌸 DAON Dynamic Harness 사용 설명서</h3>
+                    <button class="harness-manual-close-btn" id="harnessManualCloseBtn">&times;</button>
+                  </div>
+                  <div class="harness-manual-body">
+                    <div class="harness-manual-section">
+                      <h4>🤖 다이나믹 하네스(Dynamic Harness)란?</h4>
+                      <p>사용자의 요구사항을 해결하기 위해 백그라운드에서 실시간으로 멀티 에이전트(Multi-Agent)들이 협업하여 코딩, 실행, 오류 검증 및 자가 수정을 수행하는 최첨단
+                        오케스트레이션 엔진입니다.</p>
+                    </div>
+                    <div class="harness-manual-section">
+                      <h4>✨ 핵심 기능</h4>
+                      <ul>
+                        <li><strong>코드 자동 생성 및 검증</strong>: 코드를 자동으로 작성하고 실행하여 컴파일 오류나 실행 에러를 자가 감지 및 수정합니다.</li>
+                        <li><strong>실시간 에이전트 로그 스트리밍</strong>: 에이전트들의 세부 작업 로그가 하단의 <strong>CLI Console</strong>에 실시간으로
+                          출력됩니다.</li>
+                        <li><strong>작업공간 자동 갱신</strong>: 에이전트의 작업이 완료되면 탐색기와 에디터에 결과가 즉시 동기화됩니다.</li>
+                      </ul>
+                    </div>
+                    <div class="harness-manual-section">
+                      <h4>🚀 사용 방법</h4>
+                      <ul>
+                        <li><strong>방법 1 (우측 채팅 패널)</strong>: 일반 대화 창에 작업 지시사항을 입력하여 자연스럽게 에이전트를 구동합니다.</li>
+                        <li><strong>방법 2 (하단 CLI 콘솔)</strong>: CLI 입력창에 <code>run [작업내용]</code>을 직접 실행합니다.<br>(예시:
+                          <code>run index.html 파일 검토해줘</code>)
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="harness-manual-footer">
+                    <label class="harness-manual-dontshow">
+                      <input type="checkbox" id="harnessManualHideCheck" />
+                      다시 보지 않기
+                    </label>
+                    <button class="harness-manual-confirm-btn" id="harnessManualConfirmBtn">확인하고 시작하기</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Console Resizer -->
+            <div class="console-resizer" id="consoleResizer"></div>
+
+            <!-- CLI Console -->
+            <div class="cli-console" id="cliConsole">
+              <div class="console-header" id="consoleHeader">
+                <div class="console-title" id="consoleTitleBtn">
+                  <span class="console-toggle-icon">▶</span> CLI Console
+                </div>
+                <div class="console-actions">
+                  <span class="console-action-label">agent output stream</span>
+                  <button class="console-clear-btn" id="helpConsoleBtn">help</button>
+                  <button class="console-clear-btn" id="clearConsoleBtn">clear</button>
+                </div>
+              </div>
+              <div class="console-body" id="consoleBody"></div>
+              <div class="console-input-row">
+                <span class="console-prompt">&gt;</span>
+                <input type="text" id="consoleInput" placeholder="명령어를 입력하세요 (도움말: help 또는 우측의 help 버튼) ..."
+                  autocomplete="off" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RIGHT RESIZER ── -->
+      <div class="resizer" id="resizerRight"></div>
+
+      <!-- ── RIGHT PANEL (Chat) ── -->
+      <div class="right-panel">
+        <!-- Roo-style Agent Mode tabs -->
+        <div class="mode-tabs" id="modeTabs">
+          <button class="agent-mode-tab active" data-mode="code" onclick="switchAgentMode('code')"
+            title="💻 Code: 모든 파일에 대해 코드 작성, 수정, 리팩토링">💻</button>
+          <button class="agent-mode-tab" data-mode="architect" onclick="switchAgentMode('architect')"
+            title="🏗️ Architect: 설계, 기획, 전략 수립 — 마크다운 파일만 수정 가능">🏗️</button>
+          <button class="agent-mode-tab" data-mode="debug" onclick="switchAgentMode('debug')"
+            title="🪲 Debug: 문제 진단, 로깅 추가, 스택 트레이스 분석">🪲</button>
+          <button class="agent-mode-tab" data-mode="ask" onclick="switchAgentMode('ask')"
+            title="❓ Ask: 읽기 전용 — 설명과 분석만 수행">❓</button>
+          <button class="agent-mode-tab" data-mode="orchestrator" onclick="switchAgentMode('orchestrator')"
+            title="🪃 Orchestrator: 도메인 간 멀티 에이전트 워크플로 조정">🪃</button>
+          <button class="agent-mode-tab" data-mode="review" onclick="switchAgentMode('review')"
+            title="👁️ Review: 코드 변경사항 검토 및 피드백 — 읽기 전용">👁️</button>
+          <button class="agent-mode-tab" data-mode="test" onclick="switchAgentMode('test')"
+            title="🧪 Test: 테스트 작성 및 실행 — 테스트 파일만 수정 가능">🧪</button>
+        </div>
+
+        <!-- View switcher (Chat / Debate / Harness) -->
+        <div class="mode-tabs">
+          <button class="mode-tab-btn active" id="modeChatBtn">💬 Chat</button>
+          <button class="mode-tab-btn" id="toggleDebateModeBtn" onclick="switchMode('debate')"
+            style="color:var(--accent);">⚖️ 토론</button>
+          <button class="mode-tab-btn" id="modeHarnessBtn">⚡ Harness</button>
+        </div>
+        <div
+          style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">
+          <span id="currentModeName">💻 Code Mode</span>
+        </div>
+
+        <!-- Chat Mode Content -->
+        <div id="chatModeContent">
+          <div id="chatMessages"></div>
+          <div id="debateMessages" style="display:none;"></div>
+          <button id="cancelStreamBtn">■ 취소</button>
+          <div class="chat-input-area" id="chatInputArea">
+            <!-- 업로드 프로그레스 바 -->
+            <div class="upload-bar-wrap" id="uploadBarWrap"
+              style="display:none; height:3px; background:var(--border); border-radius:3px; overflow:hidden; margin-bottom:4px;">
+              <div class="upload-bar" id="uploadBar"
+                style="height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); width:0%;"></div>
+            </div>
+            <!-- 첨부 파일 칩 영역 -->
+            <div id="attachTray" style="display:none; flex-wrap:wrap; gap:6px; padding:4px 0;"></div>
+
+            <!-- 음성 입력 상태 표시 -->
+            <div class="mic-status" id="voiceMicStatus" style="display:none"><span class="mic-dot"></span> 듣는 중…</div>
+
+            <!-- 🤖 모드 제안 바 (사용자 입력 분석 후 자동 표시) -->
+            <div class="mode-suggestion-bar" id="modeSuggestionBar" style="display:none;">
+              <div class="mode-suggestion-header">
+                <span class="mode-suggestion-icon">🤔</span>
+                <span class="mode-suggestion-label">어떤 작업을 도와드릴까요?</span>
+                <button class="mode-suggestion-close" onclick="hideModeSuggestions()" title="닫기">✕</button>
+              </div>
+              <div class="mode-suggestion-body" id="modeSuggestionBody">
+                <!-- JS에서 동적 생성 -->
+              </div>
+              <div class="mode-suggestion-footer">
+                <button class="mode-suggestion-default-btn" onclick="sendWithCurrentMode()">현재 모드로 바로 실행</button>
+              </div>
+            </div>
+
+            <textarea id="promptInput" rows="2"
+              placeholder="Ask Daon to write code, edit files, or explain…"></textarea>
+            <div class="chat-input-row" style="display:flex; justify-content:space-between; align-items:center;">
+              <!-- 클립 파일 첨부 단추 및 숨겨진 file input -->
+              <div style="display:flex; gap:6px; align-items:center;">
+                <button id="attachBtn" title="파일 첨부"
+                  style="background:var(--bg3); border:1px solid var(--border2); color:var(--text2); border-radius:5px; padding:3px 8px; font-size:12px; cursor:pointer;">📎
+                  파일 첨부</button>
+
+                <!-- Planning Mode Toggle -->
+                <label title="자율 플래닝 모드: 켜면 복잡한 작업을 스스로 판단해 승인을 요청합니다."
+                  style="margin-left:8px; display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text2); cursor:pointer;">
+                  <input type="checkbox" id="planningModeToggle" checked style="cursor:pointer;">
+                  <span style="user-select:none;">플래닝 모드 🧠</span>
+                </label>
+
+                <button class="icon-btn mic-btn" id="voiceMicBtn" title="음성 입력 (Whisper)" style="display:none">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="1" width="6" height="12" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0" />
+                    <line x1="12" y1="19" x2="12" y2="23" />
+                    <line x1="8" y1="23" x2="16" y2="23" />
+                  </svg>
+                </button>
+              </div>
+              <input type="file" id="fileInput" multiple style="display:none;">
+
+              <button id="sendPromptBtn">전송 ↑</button>
+            </div>
+          </div>
+
+          <!-- ⚖️ 토론 설정 영역 (기본 숨김) -->
+          <div class="chat-input-area" id="debateSetupArea"
+            style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); background:var(--bg2);">
+            <div
+              style="font-weight:600; font-size:11px; color:var(--text2); display:flex; justify-content:space-between; align-items:center;">
+              <span>⚖️ 토론 참여 모델 선택 (최소 2개 이상):</span>
+            </div>
+            <div id="debateModelCheckboxes"
+              style="display:flex; flex-wrap:wrap; gap:8px; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px; max-height:90px; overflow-y:auto; width:100%;">
+              <!-- JS에서 동적 로드 -->
+            </div>
+            <div style="font-weight:600; font-size:11px; color:var(--text2);">토론 주제:</div>
+            <textarea id="debateTopicInput" rows="2" placeholder="AI 모델들이 토론할 주제를 입력하세요..."
+              style="width:100%; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; color:var(--text); padding:6px; font-size:11px; outline:none; resize:none; font-family:inherit;"></textarea>
+            <div style="display:flex; gap:6px; width:100%;">
+              <button class="cron-btn run" onclick="startDebateWorkflow()"
+                style="flex:1; padding:5px; font-size:11px; font-weight:600;">⚖️ 토론 시작</button>
+              <button class="cron-btn" onclick="toggleDebateModeUI(false)"
+                style="flex:1; padding:5px; font-size:11px;">일반
+                대화로</button>
+            </div>
+          </div>
+
+          <!-- ⚖️ 토론 진행 제어 영역 (기본 숨김) -->
+          <div class="chat-input-area" id="debateControlArea"
+            style="display:none; padding:12px; gap:8px; border-top:1px solid var(--border); align-items:center; background:var(--bg2);">
+            <div id="debateStatusText" style="font-size:11px; color:var(--accent); font-weight:600; text-align:center;">
+              토론을 시작해 주세요.</div>
+            <div style="display:flex; gap:6px; width:100%;">
+              <button class="cron-btn run" id="debateNextBtn" onclick="proceedDebateRound()"
+                style="flex:1; padding:6px; font-size:11px; display:none;">▶ 다음 라운드 진행</button>
+              <button class="cron-btn pause" id="debateCancelBtn" onclick="cancelDebateWorkflow()"
+                style="flex:1; padding:6px; font-size:11px;">✕ 토론 중단</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Harness Mode Content -->
+        <div id="harnessModeContent">
+          <div id="harnessConsole">
+            <div class="harness-welcome">
+              <div class="harness-welcome-icon">⚡</div>
+              <h4>Dynamic Harness Orchestrator</h4>
+              <p>멀티 에이전트 작업을 실행합니다</p>
+            </div>
+          </div>
+          <div class="harness-input-area">
+            <textarea id="harnessInput" rows="2" placeholder="실행할 미션을 입력하세요..."></textarea>
+            <div class="harness-btns">
+              <button id="runHarnessBtn">▶ 실행</button>
+              <button id="cancelHarnessBtn">■ 취소</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- .main-grid -->
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal" style="display:none;">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3>Settings <span class="score-badge" id="scoreBadge" style="display:none;margin-left:10px;"></span></h3>
+        <button class="modal-close" id="closeSettingsBtn">✕</button>
+      </div>
+      <div class="modal-body" id="settingsModalBody">
+        <div class="field-group">
+          <label>Default Model</label>
+          <select id="settingsDefaultModel"></select>
+        </div>
+        <div class="field-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;">
+            <input type="checkbox" id="settingsShowCli" style="width:auto;"> CLI 세션 목록에 표시
+          </label>
+        </div>
+        <!-- Provider Management Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <span>🔌 API Providers</span>
+            <button class="settings-add-btn" id="settingsAddProviderBtn" onclick="showAddProviderForm()">+ Add
+              Provider</button>
+          </div>
+          <div id="settingsProvidersList" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+            <div style="color:var(--muted);font-size:11px;text-align:center;padding:8px;">Loading providers...</div>
+          </div>
+        </div>
+        <!-- Add/Edit Provider Form (hidden by default) -->
+        <div class="settings-section" id="settingsAddProviderForm" style="display:none;">
+          <div class="settings-section-header">
+            <span id="settingsProviderFormTitle">Add Provider</span>
+            <button class="settings-close-btn" onclick="hideAddProviderForm()">✕</button>
+          </div>
+          <div class="field-group">
+            <label>Provider Preset (optional)</label>
+            <select id="settingsProviderPreset" onchange="onProviderPresetChange()">
+              <option value="">-- Manual Entry --</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label>Provider Name <span style="color:var(--danger);">*</span></label>
+            <input type="text" id="settingsProviderName" placeholder="e.g. my-openai"
+              style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:7px 10px;font-size:12px;outline:none;">
+          </div>
+          <div class="field-group">
+            <label>API Key <span style="color:var(--danger);">*</span></label>
+            <input type="password" id="settingsProviderKey" placeholder="sk-..."
+              style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:7px 10px;font-size:12px;outline:none;">
+          </div>
+          <div class="field-group">
+            <label>Base URL</label>
+            <input type="text" id="settingsProviderUrl" placeholder="https://api.example.com/v1"
+              style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:7px 10px;font-size:12px;outline:none;">
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <button class="settings-action-btn" id="settingsProviderFetchBtn" onclick="fetchProviderModels()"
+              style="flex:1;">🔍 Auto-Detect Models</button>
+            <button class="settings-action-btn settings-action-btn-primary" id="settingsProviderSaveBtn"
+              onclick="saveProvider()" style="flex:1;">💾 Save Provider</button>
+          </div>
+          <div id="settingsProviderFetchResult"
+            style="display:none;margin-top:4px;font-size:11px;padding:8px;border-radius:6px;background:var(--bg3);max-height:150px;overflow-y:auto;">
+          </div>
+        </div>
+        <button class="modal-save-btn" id="saveSettingsBtn">설정 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Web File Explorer Modal -->
+  <div class="modal-overlay" id="webExplorerModal" style="display:none; z-index: 9999;">
+    <div class="modal-panel"
+      style="max-width: 600px; width: 90%; height: 500px; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3 id="webExplorerTitle">폴더 선택</h3>
+        <button class="modal-close" id="closeWebExplorerBtn">✕</button>
+      </div>
+      <div class="modal-body"
+        style="flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 12px; gap: 8px;">
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="action-btn" id="webExplorerParentBtn" title="상위 폴더로 이동" style="padding: 4px 8px;">⬆
+            상위</button>
+          <input type="text" id="webExplorerPathInput"
+            style="flex: 1; padding: 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-family: monospace;"
+            readonly />
+        </div>
+        <div id="webExplorerList"
+          style="flex: 1; border: 1px solid var(--border); background: var(--code-bg); border-radius: 4px; overflow-y: auto; display: flex; flex-direction: column;">
+        </div>
+      </div>
+      <div class="modal-footer"
+        style="padding: 12px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: var(--panel2); border-radius: 0 0 8px 8px;">
+        <button class="action-btn" id="webExplorerSelectBtn"
+          style="background: var(--success); color: white;">선택</button>
+        <button class="action-btn" id="webExplorerCancelBtn">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Demo -> Skill Modal -->
+  <div class="modal-overlay" id="demoSkillModal" style="display:none; z-index: 9998;">
+    <div class="modal-panel" style="max-width: 420px; width: 90%;">
+      <div class="modal-header">
+        <h3>🎬 Demo → Skill</h3>
+        <button class="modal-close" id="closeDemoSkillBtn">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
+
+        <!-- idle: not recording -->
+        <div id="demoModalIdle">
+          <div class="demo-hint" style="margin-bottom:10px;">녹화를 시작한 후, 시스템 브라우저에서<br>원하는 동작을 수행하세요.</div>
+          <div style="display:flex;gap:8px;">
+            <button class="cron-btn run" id="demoModalStartBtn" onclick="startDemoRecording()"
+              style="flex:1;font-size:12px;">🔴 녹화 시작</button>
+            <button class="cron-btn" id="demoModalTextBtn" onclick="toggleDemoTextMode()"
+              style="flex:1;font-size:12px;">📝 텍스트 입력</button>
+          </div>
+        </div>
+
+        <!-- recording active -->
+        <div id="demoModalRecording" style="display:none;">
+          <div class="demo-status-bar" style="margin-bottom:10px;">
+            <span class="demo-pulse"></span>
+            <span>녹화 중...</span>
+            <span id="demoModalEventCount" style="font-size:10px;color:var(--muted);margin-left:auto;">0 이벤트</span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="cron-btn pause" id="demoModalStopBtn" onclick="stopDemoRecording()"
+              style="flex:1;font-size:12px;">⏹ 중지 & 분석</button>
+            <button class="cron-btn" id="demoModalCancelBtn" onclick="cancelDemoRecording()"
+              style="flex:1;font-size:12px;">✕ 취소</button>
+          </div>
+        </div>
+
+        <!-- analyzing -->
+        <div id="demoModalAnalyzing" style="display:none;">
+          <div class="demo-status-bar analyzing" style="margin-bottom:10px;">
+            <span class="demo-spinner"></span>
+            <span>LLM 분석 중...</span>
+          </div>
+          <button class="cron-btn" onclick="cancelDemoRecording()" style="width:100%;font-size:12px;">✕ 취소</button>
+        </div>
+
+        <!-- result -->
+        <div id="demoModalResult" style="display:none;">
+          <div id="demoModalResultContent"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="cron-btn run" id="demoModalApproveBtn" onclick="approveDemoSkill()"
+              style="flex:1;font-size:12px;">✓ 승인</button>
+            <button class="cron-btn pause" id="demoModalRejectBtn" onclick="rejectDemoSkill()"
+              style="flex:1;font-size:12px;">✕ 거절</button>
+          </div>
+        </div>
+
+        <!-- text workflow mode -->
+        <div id="demoModalTextMode" style="display:none;">
+          <input id="demoModalSkillName" placeholder="스킬 이름 (선택)"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px 8px;font-size:12px;outline:none;margin-bottom:8px;">
+          <textarea id="demoModalDescription" rows="4"
+            placeholder="예:&#10;1. GitHub에 로그인한다&#10;2. 새 이슈를 생성한다&#10;3. 제목과 내용을 입력한다&#10;4. 제출 버튼을 누른다"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:8px;font-size:12px;outline:none;resize:vertical;font-family:inherit;margin-bottom:8px;"></textarea>
+          <div id="demoModalTextError" style="font-size:10px;color:var(--danger);display:none;margin-bottom:8px;">
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="cron-btn run" onclick="submitDemoTextWorkflow()" style="flex:1;font-size:12px;">🎬 스킬
+              생성</button>
+            <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:12px;">↩ 녹화 모드</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Monaco AMD loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+  <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
+  <script src="/static/modules/core.js?v=4"></script>
+  <script src="/static/modules/chat.js"></script>
+  <script src="/static/modules/explorer.js"></script>
+  <script src="/static/modules/editor.js"></script>
+  <script src="/static/modules/panels.js"></script>
+  <script src="/static/modules/dashboard.js"></script>
+  <script src="/static/modules/score.js"></script>
+  <script src="/static/modules/setup.js"></script>
+  <script src="/static/modules/git.js"></script>
+  <script src="/static/modules/voice.js"></script>
+  <script src="/static/modules/browser.js"></script>
+  <script src="/static/modules/browser_ai.js"></script>
+  <script src="/static/modules/docs.js"></script>
+  <script src="/static/modules/integrations.js"></script>
+  <script src="/static/modules/modes.js"></script>
+  <script src="/static/modules/diff_preview.js"></script>
+  <script src="/static/modules/skills_hub.js"></script>
+  <script src="/static/modules/approval.js"></script>
+  <script src="/static/modules/mcp.js"></script>
+  <script src="/static/modules/harness.js"></script>
+</body>
+
+</html>

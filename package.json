@@ -1,0 +1,66 @@
+{
+  "name": "daon-agent-system",
+  "version": "1.0.0",
+  "description": "DAON Multi-Agent IDE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/daon.git"
+  },
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "build": {
+    "appId": "com.daon.agentsystem",
+    "productName": "DAON Agent System",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "extraResources": [
+      {
+        "from": "dist_new/server.exe",
+        "to": "server.exe"
+      },
+      {
+        "from": "dist_new/api",
+        "to": "api"
+      },
+      {
+        "from": "dist_new/skills",
+        "to": "skills"
+      },
+      {
+        "from": "dist_new/index.html",
+        "to": "index.html"
+      },
+      {
+        "from": "dist_new/static",
+        "to": "static"
+      },
+      {
+        "from": "config.yaml",
+        "to": "config.yaml"
+      },
+      {
+        "from": ".env",
+        "to": ".env"
+      },
+      {
+        "from": "data",
+        "to": "data"
+      }
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
