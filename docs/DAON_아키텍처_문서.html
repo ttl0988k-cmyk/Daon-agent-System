@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAON Agent System — 프로젝트 아키텍처 문서</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a22; --panel2:#1c212c;
+    --border:#2a313d; --text:#e6e9ef; --muted:#9aa3b2;
+    --accent:#7c5cff; --accent2:#22d3ee; --warn:#f59e0b; --ok:#10b981; --bad:#ef4444;
+    --link:#7dd3fc;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Pretendard,"Noto Sans KR",sans-serif;line-height:1.55;font-size:14px}
+  a{color:var(--link);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  code{background:#0a0d12;padding:1px 6px;border-radius:4px;font-size:12.5px;color:#fbbf24}
+  pre{background:#0a0d12;border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow:auto;font-size:12.5px}
+  pre code{background:transparent;padding:0;color:#e6e9ef}
+  .layout{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
+  /* ── Sidebar ─────────────────────────────────────────── */
+  aside{position:sticky;top:0;height:100vh;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:18px 14px}
+  aside h1{font-size:18px;margin:0 0 4px;color:#fff;display:flex;align-items:center;gap:8px}
+  aside h1 .dot{width:10px;height:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:50%;box-shadow:0 0 12px var(--accent)}
+  aside .sub{color:var(--muted);font-size:11.5px;margin-bottom:18px}
+  .search{position:sticky;top:0;background:var(--panel);padding-bottom:10px;z-index:5}
+  .search input{width:100%;padding:9px 12px;background:#0a0d12;border:1px solid var(--border);color:#fff;border-radius:8px;font-size:13px;outline:none}
+  .search input:focus{border-color:var(--accent)}
+  nav ul{list-style:none;padding:0;margin:0}
+  nav details{border-left:2px solid transparent;margin:2px 0}
+  nav details[open]{border-left-color:var(--accent)}
+  nav summary{cursor:pointer;padding:6px 8px;border-radius:6px;font-size:13px;color:#d1d5db;list-style:none;user-select:none}
+  nav summary:hover{background:#1f2532}
+  nav summary::before{content:"▸";color:var(--muted);display:inline-block;width:14px;transition:transform .15s}
+  nav details[open]>summary::before{transform:rotate(90deg)}
+  nav ul ul{margin:2px 0 6px 16px;border-left:1px dashed var(--border)}
+  nav ul ul a{display:block;padding:4px 10px;font-size:12.5px;color:var(--muted);border-radius:4px}
+  nav ul ul a:hover{color:#fff;background:#1f2532;text-decoration:none}
+  nav ul ul a.active{color:#fff;background:#262d3b;border-left:2px solid var(--accent);padding-left:8px}
+
+  /* ── Main ───────────────────────────────────────────── */
+  main{padding:28px 36px;max-width:1200px;margin:0 auto;width:100%}
+  h2{font-size:24px;margin:34px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border);color:#fff;scroll-margin-top:20px}
+  h2:first-child{margin-top:0}
+  h3{font-size:17px;margin:24px 0 10px;color:#fff;scroll-margin-top:20px}
+  h4{font-size:14.5px;margin:18px 0 8px;color:#e6e9ef}
+  p{margin:8px 0;color:#cbd1da}
+  ul,ol{margin:6px 0 10px;padding-left:22px}
+  li{margin:3px 0;color:#cbd1da}
+  .lead{font-size:15px;color:#d1d5db;margin-bottom:18px}
+
+  /* ── Stat cards ─────────────────────────────────────── */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 24px}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
+  .stat::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .stat .v{font-size:24px;font-weight:700;color:#fff;line-height:1.1}
+  .stat .k{color:var(--muted);font-size:11.5px;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+  /* ── Cards & collapsible sections ───────────────────── */
+  details.section{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin:14px 0;overflow:hidden}
+  details.section>summary{cursor:pointer;padding:14px 18px;font-weight:600;font-size:15px;color:#fff;list-style:none;user-select:none;display:flex;align-items:center;justify-content:space-between;background:var(--panel2)}
+  details.section>summary::after{content:"▾";color:var(--muted);transition:transform .2s}
+  details.section[open]>summary::after{transform:rotate(180deg)}
+  details.section>summary:hover{background:#222936}
+  details.section[open]>summary{border-bottom:1px solid var(--border)}
+  .section-body{padding:16px 20px}
+
+  /* ── Feature grid ───────────────────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:12px 0}
+  .feat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;transition:transform .15s,border-color .15s}
+  .feat:hover{transform:translateY(-2px);border-color:var(--accent)}
+  .feat .ico{font-size:22px;margin-bottom:6px}
+  .feat .title{font-weight:600;color:#fff;margin-bottom:4px}
+  .feat .desc{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .feat .tag{display:inline-block;background:#0a0d12;border:1px solid var(--border);padding:1px 7px;border-radius:10px;font-size:10.5px;color:#9ca3af;margin-right:4px;margin-top:6px}
+
+  /* ── Tables ─────────────────────────────────────────── */
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12.5px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+  th{background:#0a0d12;color:#9aa3b2;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  tr:hover td{background:#1a1f29}
+  td code{font-size:11.5px}
+
+  /* ── Tags / badges ─────────────────────────────────── */
+  .b{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10.5px;font-weight:600;letter-spacing:.3px}
+  .b-ok{background:rgba(16,185,129,.15);color:#10b981}
+  .b-warn{background:rgba(245,158,11,.15);color:#f59e0b}
+  .b-bad{background:rgba(239,68,68,.15);color:#ef4444}
+  .b-info{background:rgba(34,211,238,.15);color:#22d3ee}
+  .b-accent{background:rgba(124,92,255,.18);color:#a78bfa}
+  .b-mut{background:#1f2532;color:#9aa3b2}
+
+  /* ── Architecture diagram ───────────────────────────── */
+  .arch{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;margin:14px 0;overflow-x:auto}
+  .arch svg{display:block;margin:0 auto;max-width:100%;height:auto}
+
+  /* ── TOC (in-article) ───────────────────────────────── */
+  .toc{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin:16px 0;font-size:13px}
+  .toc b{color:#fff;display:block;margin-bottom:6px}
+  .toc a{display:inline-block;margin:2px 10px 2px 0;color:var(--link)}
+
+  /* ── Footer ────────────────────────────────────────── */
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;text-align:center}
+
+  /* Highlight when TOC link active */
+  h2:target, h3:target, details.section:target{box-shadow:0 0 0 2px var(--accent) inset;border-radius:10px}
+
+  /* Small responsive */
+  @media (max-width: 900px){
+    .layout{grid-template-columns:1fr}
+    aside{position:static;height:auto}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ════════════════════════════════════════════════════════════
+     SIDEBAR
+════════════════════════════════════════════════════════════════ -->
+<aside>
+  <h1><span class="dot"></span>DAON Agent</h1>
+  <div class="sub">v1.2.0 · 프로젝트 아키텍처 문서</div>
+  <div class="search"><input type="text" id="search" placeholder="🔍 문서 내 검색…"/></div>
+  <nav id="toc-nav">
+    <ul>
+      <li><a href="#overview">📌 개요</a></li>
+      <li><a href="#stats">📊 프로젝트 통계</a></li>
+      <li>
+        <details open>
+          <summary>🧠 AI 시스템</summary>
+          <ul>
+            <li><a href="#planner">Planner</a></li>
+            <li><a href="#compiler">Compiler</a></li>
+            <li><a href="#runner">Parallel Runner</a></li>
+            <li><a href="#merger">Result Merger</a></li>
+            <li><a href="#persona">Persona</a></li>
+            <li><a href="#memory">Memory</a></li>
+            <li><a href="#skill">Skill</a></li>
+            <li><a href="#demo2skill">Demo→Skill</a></li>
+            <li><a href="#expdb">Experience DB</a></li>
+            <li><a href="#stylecard">Style Card</a></li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details open>
+          <summary>🌐 브라우저</summary>
+          <ul>
+            <li><a href="#playwright">Playwright</a></li>
+            <li><a href="#cdp">CDP</a></li>
+            <li><a href="#recording">Recording</a></li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details open>
+          <summary>🔌 MCP</summary>
+          <ul>
+            <li><a href="#mcp-list">연결된 서버</a></li>
+            <li><a href="#mcp-client">MCP Client</a></li>
+            <li><a href="#mcp-design">Daon Design</a></li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details open>
+          <summary>💻 UI</summary>
+          <ul>
+            <li><a href="#ui-chat">Chat</a></li>
+            <li><a href="#ui-editor">Monaco Editor</a></li>
+            <li><a href="#ui-diff">Diff Viewer</a></li>
+            <li><a href="#ui-preview">HTML Preview</a></li>
+            <li><a href="#ui-workspace">Workspace</a></li>
+          </ul>
+        </details>
+      </li>
+      <li>
+        <details open>
+          <summary>⚙️ 백엔드</summary>
+          <ul>
+            <li><a href="#api-list">API 목록</a></li>
+            <li><a href="#streaming">Streaming</a></li>
+            <li><a href="#session">Session</a></li>
+            <li><a href="#db">Database</a></li>
+            <li><a href="#scheduler">Scheduler / Cron</a></li>
+          </ul>
+        </details>
+      </li>
+      <li><a href="#tests">🧪 테스트</a></li>
+      <li><a href="#arch">🏛️ 아키텍처</a></li>
+    </ul>
+  </nav>
+</aside>
+
+<!-- ════════════════════════════════════════════════════════════
+     MAIN
+════════════════════════════════════════════════════════════════ -->
+<main>
+
+<h2 id="overview">📌 프로젝트 개요</h2>
+<p class="lead">
+  <b>DAON Agent System v1.2.0</b>은 Hermes Agent 위에 구축된 한국어 1등 멀티에이전트 데스크톱 IDE입니다.
+  Electron + FastAPI + MCP(Model Context Protocol) + 동적 JIT 에이전트 컴파일러로 구성되며,
+  단일 사용자(1인 대표님) 환경을 위해 설계되었습니다.
+</p>
+<div class="grid">
+  <div class="feat"><div class="ico">🧠</div><div class="title">Dynamic Hermes</div><div class="desc">자연어 미션을 입력하면 자동으로 Planner→Compiler→Runner→Merger 파이프라인을 구성해 DAG 형태의 에이전트 팀을 즉석에서 생성·실행</div><span class="tag">JIT</span><span class="tag">DAG</span></div>
+  <div class="feat"><div class="ico">🪪</div><div class="title">Persona 시스템</div><div class="desc">17개 역할 스킬(bill/sherlock/prada 등) + 7개 전문가 역할(writer/reviewer/tester 등)을 자동 주입</div><span class="tag">17 roles</span></div>
+  <div class="feat"><div class="ico">🌐</div><div class="title">브라우저 자동화</div><div class="desc">Playwright MCP + 자체 CDP/Recording 모듈로 사용자가 열어둔 페이지를 실시간 공유·자동 조작</div><span class="tag">Real-time</span></div>
+  <div class="feat"><div class="ico">🎨</div><div class="title">Style Card 시스템</div><div class="desc">디자인 DNA 추출 + 컴포넌트 믹싱 + 트렌드/accessibility 검증 + Daon Design MCP로 노출</div><span class="tag">Design DNA</span></div>
+  <div class="feat"><div class="ico">🔌</div><div class="title">6개 MCP 통합</div><div class="desc">Filesystem / Playwright / Memory / Daon-Design / Figma / PlayMCP-Gateway (카톡·네이버)</div><span class="tag">6 servers</span></div>
+  <div class="feat"><div class="ico">📺</div><div class="title">Demo→Skill</div><div class="desc">사용자 시연을 자동 녹화·분석해 재사용 가능한 SKILL.md를 자동 생성</div><span class="tag">Auto-gen</span></div>
+</div>
+
+<div class="toc">
+  <b>📑 빠른 이동</b>
+  <a href="#stats">통계</a>
+  <a href="#arch">아키텍처</a>
+  <a href="#planner">Planner</a>
+  <a href="#api-list">API</a>
+  <a href="#mcp-list">MCP</a>
+  <a href="#tests">테스트</a>
+</div>
+
+<!-- ─── STATS ──────────────────────────────────────────── -->
+<h2 id="stats">📊 프로젝트 통계</h2>
+<div class="stats">
+  <div class="stat"><div class="v">26,843</div><div class="k">Python LOC (API)</div></div>
+  <div class="stat"><div class="v">77</div><div class="k">Python 파일</div></div>
+  <div class="stat"><div class="v">14,617</div><div class="k">JavaScript LOC</div></div>
+  <div class="stat"><div class="v">21</div><div class="k">JS 모듈</div></div>
+  <div class="stat"><div class="v">165</div><div class="k">API 엔드포인트</div></div>
+  <div class="stat"><div class="v">24</div><div class="k">라우트 모듈</div></div>
+  <div class="stat"><div class="v">20</div><div class="k">Dynamic 모듈</div></div>
+  <div class="stat"><div class="v">17</div><div class="k">역할 스킬</div></div>
+  <div class="stat"><div class="v">7</div><div class="k">전문가 역할</div></div>
+  <div class="stat"><div class="v">6</div><div class="k">MCP 서버</div></div>
+  <div class="stat"><div class="v">62</div><div class="k">Tool 모듈 (hermes)</div></div>
+  <div class="stat"><div class="v">480K</div><div class="k">Hermes LOC (전체)</div></div>
+</div>
+
+<!-- ─── ARCHITECTURE DIAGRAM ───────────────────────────── -->
+<h2 id="arch">🏛️ 시스템 아키텍처</h2>
+<div class="arch">
+<svg viewBox="0 0 1000 580" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif" font-size="12">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c212c"/><stop offset="1" stop-color="#161a22"/></linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b2"/>
+    </marker>
+  </defs>
+
+  <!-- Tiers -->
+  <text x="20" y="30" fill="#9aa3b2" font-size="11" font-weight="600">PRESENTATION</text>
+  <text x="20" y="160" fill="#9aa3b2" font-size="11" font-weight="600">ORCHESTRATION</text>
+  <text x="20" y="320" fill="#9aa3b2" font-size="11" font-weight="600">EXECUTION</text>
+  <text x="20" y="470" fill="#9aa3b2" font-size="11" font-weight="600">PERSISTENCE</text>
+
+  <!-- Tier backgrounds -->
+  <rect x="120" y="10"  width="860" height="100" rx="8" fill="url(#g2)" stroke="#2a313d"/>
+  <rect x="120" y="130" width="860" height="160" rx="8" fill="url(#g2)" stroke="#2a313d"/>
+  <rect x="120" y="310" width="860" height="130" rx="8" fill="url(#g2)" stroke="#2a313d"/>
+  <rect x="120" y="460" width="860" height="100" rx="8" fill="url(#g2)" stroke="#2a313d"/>
+
+  <!-- Presentation -->
+  <g>
+    <rect x="140" y="25" width="180" height="70" rx="8" fill="#0a0d12" stroke="url(#g1)" stroke-width="1.5"/>
+    <text x="230" y="50" fill="#fff" text-anchor="middle" font-weight="700">Electron UI</text>
+    <text x="230" y="68" fill="#9aa3b2" text-anchor="middle" font-size="11">chat.js · editor.js · harness.js</text>
+    <text x="230" y="83" fill="#9aa3b2" text-anchor="middle" font-size="11">20 modules / Monaco / Diff</text>
+  </g>
+  <g>
+    <rect x="340" y="25" width="160" height="70" rx="8" fill="#0a0d12" stroke="url(#g1)" stroke-width="1.5"/>
+    <text x="420" y="50" fill="#fff" text-anchor="middle" font-weight="700">WebUI (HTML)</text>
+    <text x="420" y="68" fill="#9aa3b2" text-anchor="middle" font-size="11">SSE Streaming</text>
+    <text x="420" y="83" fill="#9aa3b2" text-anchor="middle" font-size="11">Real-time cards</text>
+  </g>
+  <g>
+    <rect x="520" y="25" width="160" height="70" rx="8" fill="#0a0d12" stroke="url(#g1)" stroke-width="1.5"/>
+    <text x="600" y="50" fill="#fff" text-anchor="middle" font-weight="700">Browser Panel</text>
+    <text x="600" y="68" fill="#9aa3b2" text-anchor="middle" font-size="11">Playwright + CDP</text>
+    <text x="600" y="83" fill="#9aa3b2" text-anchor="middle" font-size="11">Shared screen</text>
+  </g>
+  <g>
+    <rect x="700" y="25" width="260" height="70" rx="8" fill="#0a0d12" stroke="url(#g1)" stroke-width="1.5"/>
+    <text x="830" y="50" fill="#fff" text-anchor="middle" font-weight="700">CLI Tools (62)</text>
+    <text x="830" y="68" fill="#9aa3b2" text-anchor="middle" font-size="11">browser · memory · skills · cron</text>
+    <text x="830" y="83" fill="#9aa3b2" text-anchor="middle" font-size="11">transcription · voice · image gen</text>
+  </g>
+
+  <!-- Orchestration -->
+  <g>
+    <rect x="140" y="145" width="160" height="60" rx="8" fill="#0a0d12" stroke="#7c5cff"/>
+    <text x="220" y="170" fill="#fff" text-anchor="middle" font-weight="700">Planner</text>
+    <text x="220" y="188" fill="#9aa3b2" text-anchor="middle" font-size="11">mission → DAG</text>
+  </g>
+  <g>
+    <rect x="320" y="145" width="160" height="60" rx="8" fill="#0a0d12" stroke="#7c5cff"/>
+    <text x="400" y="170" fill="#fff" text-anchor="middle" font-weight="700">AgentCompiler</text>
+    <text x="400" y="188" fill="#9aa3b2" text-anchor="middle" font-size="11">persona · skill · context</text>
+  </g>
+  <g>
+    <rect x="500" y="145" width="160" height="60" rx="8" fill="#0a0d12" stroke="#7c5cff"/>
+    <text x="580" y="170" fill="#fff" text-anchor="middle" font-weight="700">ParallelRunner</text>
+    <text x="580" y="188" fill="#9aa3b2" text-anchor="middle" font-size="11">batch exec · retry</text>
+  </g>
+  <g>
+    <rect x="680" y="145" width="160" height="60" rx="8" fill="#0a0d12" stroke="#7c5cff"/>
+    <text x="760" y="170" fill="#fff" text-anchor="middle" font-weight="700">ResultMerger</text>
+    <text x="760" y="188" fill="#9aa3b2" text-anchor="middle" font-size="11">merge · score</text>
+  </g>
+  <g>
+    <rect x="860" y="145" width="100" height="60" rx="8" fill="#0a0d12" stroke="#7c5cff"/>
+    <text x="910" y="170" fill="#fff" text-anchor="middle" font-weight="700">Recovery</text>
+    <text x="910" y="188" fill="#9aa3b2" text-anchor="middle" font-size="11">re-plan</text>
+  </g>
+
+  <!-- Recovery & feedback row -->
+  <g>
+    <rect x="140" y="220" width="820" height="55" rx="8" fill="#0a0d12" stroke="#22d3ee" stroke-dasharray="4,3"/>
+    <text x="550" y="245" fill="#fff" text-anchor="middle" font-weight="700">Recovery Re-planning · CodeReviewer · Skill Extractor</text>
+    <text x="550" y="263" fill="#9aa3b2" text-anchor="middle" font-size="11">실패 노드 감지 → 자동 재계획 → 스킬 추출 → Experience DB 누적</text>
+  </g>
+
+  <!-- Execution -->
+  <g>
+    <rect x="140" y="325" width="180" height="55" rx="8" fill="#0a0d12" stroke="#10b981"/>
+    <text x="230" y="350" fill="#fff" text-anchor="middle" font-weight="700">Direct LLM Calls</text>
+    <text x="230" y="368" fill="#9aa3b2" text-anchor="middle" font-size="11">minimax · deepseek</text>
+  </g>
+  <g>
+    <rect x="340" y="325" width="180" height="55" rx="8" fill="#0a0d12" stroke="#10b981"/>
+    <text x="430" y="350" fill="#fff" text-anchor="middle" font-weight="700">Hermes Tools (62)</text>
+    <text x="430" y="368" fill="#9aa3b2" text-anchor="middle" font-size="11">browser · terminal · patch</text>
+  </g>
+  <g>
+    <rect x="540" y="325" width="180" height="55" rx="8" fill="#0a0d12" stroke="#10b981"/>
+    <text x="630" y="350" fill="#fff" text-anchor="middle" font-weight="700">MCP Client</text>
+    <text x="630" y="368" fill="#9aa3b2" text-anchor="middle" font-size="11">6 stdio servers</text>
+  </g>
+  <g>
+    <rect x="740" y="325" width="220" height="55" rx="8" fill="#0a0d12" stroke="#10b981"/>
+    <text x="850" y="350" fill="#fff" text-anchor="middle" font-weight="700">Skills Hub (auto/roles)</text>
+    <text x="850" y="368" fill="#9aa3b2" text-anchor="middle" font-size="11">17 roles + 7 personas + auto</text>
+  </g>
+
+  <!-- Execution 2nd row -->
+  <g>
+    <rect x="140" y="390" width="180" height="40" rx="8" fill="#0a0d12" stroke="#3b3f4a"/>
+    <text x="230" y="415" fill="#d1d5db" text-anchor="middle">Demo→Skill</text>
+  </g>
+  <g>
+    <rect x="340" y="390" width="180" height="40" rx="8" fill="#0a0d12" stroke="#3b3f4a"/>
+    <text x="430" y="415" fill="#d1d5db" text-anchor="middle">Style Card Mixer</text>
+  </g>
+  <g>
+    <rect x="540" y="390" width="180" height="40" rx="8" fill="#0a0d12" stroke="#3b3f4a"/>
+    <text x="630" y="415" fill="#d1d5db" text-anchor="middle">Cron / Webhook</text>
+  </g>
+  <g>
+    <rect x="740" y="390" width="220" height="40" rx="8" fill="#0a0d12" stroke="#3b3f4a"/>
+    <text x="850" y="415" fill="#d1d5db" text-anchor="middle">Approval / Debate / Kakao</text>
+  </g>
+
+  <!-- Persistence -->
+  <g>
+    <rect x="140" y="475" width="200" height="65" rx="8" fill="#0a0d12" stroke="#f59e0b"/>
+    <text x="240" y="500" fill="#fff" text-anchor="middle" font-weight="700">Session Manager</text>
+    <text x="240" y="518" fill="#9aa3b2" text-anchor="middle" font-size="11">SQLite + index.json</text>
+    <text x="240" y="533" fill="#9aa3b2" text-anchor="middle" font-size="11">CLI 세션 import</text>
+  </g>
+  <g>
+    <rect x="360" y="475" width="180" height="65" rx="8" fill="#0a0d12" stroke="#f59e0b"/>
+    <text x="450" y="500" fill="#fff" text-anchor="middle" font-weight="700">Memory</text>
+    <text x="450" y="518" fill="#9aa3b2" text-anchor="middle" font-size="11">JSON + MCP memory</text>
+  </g>
+  <g>
+    <rect x="560" y="475" width="180" height="65" rx="8" fill="#0a0d12" stroke="#f59e0b"/>
+    <text x="650" y="500" fill="#fff" text-anchor="middle" font-weight="700">Skill Registry</text>
+    <text x="650" y="518" fill="#9aa3b2" text-anchor="middle" font-size="11">17 skills + auto</text>
+  </g>
+  <g>
+    <rect x="760" y="475" width="200" height="65" rx="8" fill="#0a0d12" stroke="#f59e0b"/>
+    <text x="860" y="500" fill="#fff" text-anchor="middle" font-weight="700">Filesystem / Workspaces</text>
+    <text x="860" y="518" fill="#9aa3b2" text-anchor="middle" font-size="11">C:\daon\ + userspace</text>
+  </g>
+
+  <!-- Arrows between tiers -->
+  <g stroke="#9aa3b2" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+    <path d="M 230 95 L 230 145"/>
+    <path d="M 420 95 L 420 145"/>
+    <path d="M 600 95 L 600 145"/>
+    <path d="M 830 95 L 830 145"/>
+    <path d="M 230 205 L 230 325"/>
+    <path d="M 430 205 L 430 325"/>
+    <path d="M 630 205 L 630 325"/>
+    <path d="M 850 205 L 850 325"/>
+    <path d="M 230 380 L 230 475"/>
+    <path d="M 450 380 L 450 475"/>
+    <path d="M 650 380 L 650 475"/>
+    <path d="M 860 380 L 860 475"/>
+  </g>
+</svg>
+</div>
+<p style="font-size:12.5px;color:#9aa3b2">↑ Presentation → Orchestration → Execution → Persistence 4-tier 구조. 에이전트 실행 결과는 다시 Experience DB / Skill Registry로 흘러 다음 미션에 활용됩니다.</p>
+
+<!-- ─── AI SYSTEM ──────────────────────────────────────── -->
+<h2 id="ai-system">🧠 AI 시스템</h2>
+<p>Dynamic Hermes는 자연어 미션을 받아 자동으로 에이전트 팀을 즉석에서 구성·실행하는 JIT 컴파일러입니다.</p>
+
+<details class="section" id="planner" open>
+  <summary>1. Planner (미션 분해)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/dynamic/planner.py</code> · <code>api/dynamic/plan_validator.py</code></p>
+    <p>자연어 미션을 받아 DAG(노드 그래프) 형태의 실행 계획으로 변환합니다.</p>
+    <h4>동작 흐름</h4>
+    <ol>
+      <li>사용자 미션 수신</li>
+      <li><code>HermesPlanner.plan_mission()</code> 호출</li>
+      <li>LLM이 JSON 스키마(plan schema)에 맞춰 노드/엣지 생성</li>
+      <li><code>validate_plan_schema()</code> + <code>semantic_validate()</code>로 검증</li>
+      <li><code>_compute_execution_batches()</code>로 병렬 실행 배치 계산</li>
+    </ol>
+    <h4>호출 위치</h4>
+    <ul>
+      <li><code>api/dynamic/orchestrator.py:HermesDynamicRunner</code> — 메인 파이프라인 진입점</li>
+      <li><code>api/routes/chat_routes.py:handle_post_chat_start</code> — 채팅 시작 시</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="compiler">
+  <summary>2. AgentCompiler (에이전트 빌드)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/dynamic/compiler.py</code></p>
+    <p>DAG 노드 하나당 실행 가능한 에이전트 객체를 생성합니다. 페르소나/스킬/컨텍스트를 주입합니다.</p>
+    <h4>주입 구성요소</h4>
+    <ul>
+      <li><b>Persona</b> — <code>get_integrated_persona()</code> (17 roles 중 선택)</li>
+      <li><b>Skills</b> — <code>skill_retriever</code>로 매칭된 스킬 자동 첨부</li>
+      <li><b>Context</b> — <code>_build_node_context()</code> (이전 노드 결과 + 사용자 히스토리)</li>
+      <li><b>Model</b> — <code>model_selector.py</code>로 노드별 모델 선택</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="runner">
+  <summary>3. ParallelRunner (병렬 실행)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/dynamic/runner.py</code></p>
+    <p>배치별로 노드들을 병렬 실행합니다. 실패 시 <code>_run_node_with_retries()</code>로 자동 재시도합니다.</p>
+    <h4>관련</h4>
+    <ul>
+      <li><code>_handle_timeout_node()</code> — 노드 타임아웃 처리</li>
+      <li><code>_persist_node_result()</code> — 결과 영속화</li>
+      <li><code>cleanup_harness_artifacts()</code> — 실행 산출물 정리</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="merger">
+  <summary>4. ResultMerger (결과 병합)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/dynamic/merger.py</code></p>
+    <p>여러 노드의 출력을 하나의 최종 응답으로 병합합니다. <code>select_best_output()</code>으로 최우수 결과 선택도 지원합니다.</p>
+  </div>
+</details>
+
+<details class="section" id="persona">
+  <summary>5. Persona / Roles</summary>
+  <div class="section-body">
+    <p><b>위치:</b> <code>dist_new/skills/</code> (17개) + <code>dist_new/skills/roles/</code> (7개)</p>
+    <h4>역할 스킬 (17)</h4>
+    <table>
+      <tr><th>이름</th><th>용도</th></tr>
+      <tr><td><code>bill-dev.md</code></td><td>백엔드/시스템 개발자</td></tr>
+      <tr><td><code>sherlock-qa.md</code></td><td>QA/디버깅 전문가</td></tr>
+      <tr><td><code>prada</code>/<code>creative-director.md</code></td><td>크리에이티브 디렉터</td></tr>
+      <tr><td><code>taste-design.md</code> / <code>taste.md</code> / <code>taste_v1.1.md</code></td><td>디자인 감각/품질</td></tr>
+      <tr><td><code>full-output.md</code></td><td>완성된 결과물 산출</td></tr>
+      <tr><td><code>brutalist-ui.md</code> / <code>minimalist-ui.md</code> / <code>premium-ui.md</code></td><td>UI 디자인 변주</td></tr>
+      <tr><td><code>html-anything.md</code></td><td>단일 HTML 생성</td></tr>
+      <tr><td><code>redesign-audit.md</code></td><td>재설계 진단</td></tr>
+      <tr><td><code>auto-documenter.md</code></td><td>자동 문서화</td></tr>
+      <tr><td><code>contract-validator.md</code></td><td>계약/스키마 검증</td></tr>
+      <tr><td><code>notification-relay.md</code></td><td>알림 중계</td></tr>
+      <tr><td><code>security.md</code></td><td>보안 검토</td></tr>
+      <tr><td><code>self-reflection.md</code></td><td>자기 성찰/메타</td></tr>
+    </table>
+    <h4>전문가 역할 (7)</h4>
+    <p><code>writer.md</code> · <code>reviewer.md</code> · <code>tester.md</code> · <code>debugger.md</code> · <code>refactorer.md</code> · <code>documenter.md</code> · <code>explainer.md</code></p>
+  </div>
+</details>
+
+<details class="section" id="memory">
+  <summary>6. Memory</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>hermes-agent/tools/memory_tool.py</code> + MCP <code>@modelcontextprotocol/server-memory</code></p>
+    <h4>동작 흐름</h4>
+    <ol>
+      <li>에이전트가 학습한 사실을 <code>memory</code> MCP에 기록</li>
+      <li>다음 미션에서 관련 메모리 자동 recall → 컨텍스트 주입</li>
+      <li>장기 메모리 한도 도달 시 <code>memory-compression-workflow</code>로 압축</li>
+    </ol>
+    <h4>호출 위치</h4>
+    <ul>
+      <li><code>api/streaming.py:_run_agent_streaming</code> — 스트리밍 시작 시 컨텍스트 로드</li>
+      <li><code>api/routes/admin_routes.py:handle_post_memory_write</code> — 수동 메모리 추가</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="skill">
+  <summary>7. Skill Registry / Hub</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/skill_registry.py</code> · <code>api/dynamic/skill_retriever.py</code> · <code>api/dynamic/skill_extractor.py</code></p>
+    <p>SKILL.md 파일을 실시간 스캔·인덱싱하고, 미션 키워드와 매칭되는 스킬을 자동 주입합니다.</p>
+    <h4>스킬 출처</h4>
+    <ul>
+      <li><code>~/.hermes/profiles/raon/skills/</code> — 대표님 프로필 스킬 (raon)</li>
+      <li><code>dist_new/skills/</code> — 시스템 내장 스킬 (17+7)</li>
+      <li><code>auto/</code> — Demo→Skill 자동 생성</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="demo2skill">
+  <summary>8. Demo → Skill (시연 자동 스킬화)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/demo_to_skill.py</code> + <code>api/routes/demo_to_skill_routes.py</code> (1655줄)</p>
+    <p>사용자 시연을 녹화·분석해 재사용 가능한 <code>SKILL.md</code>를 자동 생성합니다.</p>
+    <h4>API</h4>
+    <ul>
+      <li><code>POST /api/demo/start</code> · <code>POST /api/demo/stop</code></li>
+      <li><code>POST /api/demo/text-workflow</code> — 텍스트 기반 워크플로우 학습</li>
+      <li><code>POST /api/demo/add-event</code></li>
+      <li><code>POST /api/demo/skill/approve</code> · <code>/reject</code></li>
+      <li><code>GET /api/demo/status</code> · <code>GET /api/demo/events</code></li>
+    </ul>
+    <h4>관련 스킬</h4>
+    <p><code>skills/auto/naver-login</code> (89줄, 풀스킬 검증), <code>test-task-skill</code>, <code>user-demonstration-pending</code> 등이 현재 운영 중.</p>
+  </div>
+</details>
+
+<details class="section" id="expdb">
+  <summary>9. Experience DB</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/dynamic/experience_db.py</code></p>
+    <p>실패한 노드와 성공한 패턴을 모두 기록합니다. 다음 Planner 호출 시 과거 경험을 참고해 더 나은 계획을 생성합니다.</p>
+  </div>
+</details>
+
+<details class="section" id="stylecard">
+  <summary>10. Style Card System</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/style_card.py</code> · <code>api/dynamic/style_card_extractor.py</code> · <code>api/dynamic/style_card_retriever.py</code> · <code>api/dynamic/style_mixer.py</code> + <code>api/routes/style_card_routes.py</code></p>
+    <p>디자인 웹페이지/앱의 DNA를 추출하고, 컴포넌트를 믹싱해 새 디자인 브리프를 생성합니다.</p>
+    <h4>파이프라인</h4>
+    <ol>
+      <li><b>Extract</b> — URL/이미지에서 디자인 DNA 추출</li>
+      <li><b>Retrieve</b> — Style Card DB 조회</li>
+      <li><b>Mix</b> — 카테고리별 컴포넌트 믹싱 (harmony 검증 포함)</li>
+      <li><b>Trend Check</b> — 트렌드 적합성 (deprecated 패턴 감지)</li>
+      <li><b>Accessibility</b> — WCAG 2.1 AA 검증</li>
+    </ol>
+    <h4>API</h4>
+    <ul>
+      <li><code>POST /api/style-cards/extract</code></li>
+      <li><code>POST /api/style-cards/save</code> / <code>delete</code></li>
+      <li><code>POST /api/style-cards/rebuild-index</code></li>
+    </ul>
+  </div>
+</details>
+
+<!-- ─── BROWSER ────────────────────────────────────────── -->
+<h2 id="browser">🌐 브라우저</h2>
+
+<details class="section" id="playwright" open>
+  <summary>Playwright MCP</summary>
+  <div class="section-body">
+    <p><b>MCP:</b> <code>@playwright/mcp</code> (stdio)</p>
+    <p>외부 브라우저 자동화 표준. 라온이 헤드리스로 페이지를 탐색·클릭·입력합니다.</p>
+    <h4>도구 목록 (대표)</h4>
+    <ul>
+      <li><code>browser_navigate</code> · <code>browser_snapshot</code></li>
+      <li><code>browser_click</code> · <code>browser_type</code> · <code>browser_press</code></li>
+      <li><code>browser_evaluate</code> · <code>browser_take_screenshot</code></li>
+      <li><code>browser_wait_for</code> · <code>browser_tabs</code></li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="cdp">
+  <summary>CDP (Chrome DevTools Protocol)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>hermes-agent/tools/browser_cdp_tool.py</code> · <code>browser_camofox.py</code> · <code>browser_camofox_state.py</code></p>
+    <p>저수준 CDP 연결을 통한 브라우저 제어. 사용자 세션에 attach 가능합니다.</p>
+  </div>
+</details>
+
+<details class="section" id="recording">
+  <summary>Recording / Shared Screen</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>hermes-agent/tools/browser_tool.py</code> + <code>dist_new/static/modules/browser.js</code></p>
+    <p>다온 시스템 좌측 시스템 브라우저를 사용자와 <b>실시간 화면 공유</b>합니다.</p>
+    <ul>
+      <li>대표님이 페이지를 이동/클릭해도 라온이 같은 세션으로 잡힘</li>
+      <li>browser_* 도구로 조작 가능</li>
+      <li>workflow 녹화 → Demo→Skill 자동화</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ─── MCP ────────────────────────────────────────────── -->
+<h2 id="mcp">🔌 MCP (Model Context Protocol)</h2>
+<p><b>정의 파일:</b> <code>data/mcp_servers.json</code> · <b>클라이언트:</b> <code>api/mcp_client.py</code></p>
+
+<h3 id="mcp-list">연결된 MCP 서버 (6개)</h3>
+<table>
+  <tr><th>서버 ID</th><th>라벨</th><th>도구 수</th><th>용도</th></tr>
+  <tr><td><code>filesystem</code></td><td>파일 시스템 MCP</td><td>10+</td><td>C:\daon 파일 읽기/쓰기/검색</td></tr>
+  <tr><td><code>playwright</code></td><td>Playwright MCP</td><td>20+</td><td>브라우저 자동화</td></tr>
+  <tr><td><code>memory</code></td><td>Memory MCP</td><td>9</td><td>지식 그래프 영구 저장</td></tr>
+  <tr><td><code>daon-design</code></td><td>Daon Design MCP</td><td>12</td><td>디자인 검색·믹싱·오케스트레이션</td></tr>
+  <tr><td><code>figma</code></td><td>Figma MCP</td><td>4</td><td>Figma 파일·컴포넌트 접근</td></tr>
+  <tr><td><code>playmcp-gateway</code></td><td>PlayMCP Gateway</td><td>23</td><td>카카오톡·네이버 검색·DataLab</td></tr>
+</table>
+
+<details class="section" id="mcp-client">
+  <summary>MCP Client</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/mcp_client.py</code> · <code>api/mcp_recommender.py</code> · <code>api/routes/mcp_routes.py</code></p>
+    <h4>API</h4>
+    <ul>
+      <li><code>POST /api/mcp/servers/add</code> · <code>/remove</code> · <code>/connect</code> · <code>/disconnect</code></li>
+      <li><code>POST /api/mcp/servers/add-preset</code></li>
+      <li><code>POST /api/mcp/tools/call</code> — 도구 호출</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="mcp-design">
+  <summary>Daon Design MCP (자체)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/mcp/daon_design_mcp.py</code></p>
+    <h4>12개 도구</h4>
+    <ul>
+      <li><code>design_search_cards</code> · <code>design_get_card</code> · <code>design_list_categories</code></li>
+      <li><code>design_search_components</code> · <code>design_get_component_mix</code></li>
+      <li><code>design_orchestrate</code> — 풀 파이프라인</li>
+      <li><code>design_check_trends</code> · <code>design_check_accessibility</code></li>
+      <li><code>design_get_graph_summary</code> · <code>design_get_style_context</code></li>
+    </ul>
+  </div>
+</details>
+
+<!-- ─── UI ─────────────────────────────────────────────── -->
+<h2 id="ui">💻 UI (Frontend)</h2>
+<p><b>위치:</b> <code>dist_new/static/modules/*.js</code> (20개 모듈) · <code>dist_new/static/styles.css</code></p>
+
+<div class="grid">
+  <div class="feat" id="ui-chat"><div class="ico">💬</div><div class="title">chat.js</div><div class="desc">SSE 스트리밍 + 인라인 카드 (초이스/모드제안/승인) + 마크다운 이미지/링크 렌더링</div><span class="tag">SSE</span><span class="tag">Cards</span></div>
+  <div class="feat" id="ui-editor"><div class="ico">📝</div><div class="title">editor.js</div><div class="desc">Monaco Editor 통합 + 다국어 + Diff 모드</div><span class="tag">Monaco</span></div>
+  <div class="feat" id="ui-diff"><div class="ico">🔀</div><div class="title">diff_preview.js</div><div class="desc">파일 변경 시각적 비교 + 미리보기·적용·거부</div><span class="tag">Diff</span></div>
+  <div class="feat" id="ui-preview"><div class="ico">🌐</div><div class="title">HTML Preview</div><div class="desc">단일 HTML 자동 미리보기 (html-anything 스킬)</div><span class="tag">Sandbox</span></div>
+  <div class="feat" id="ui-workspace"><div class="ico">📁</div><div class="title">explorer.js</div><div class="desc">워크스페이스 탐색기 + 다중 워크스페이스 + Git 상태</div><span class="tag">Tree</span><span class="tag">Git</span></div>
+  <div class="feat"><div class="ico">🤖</div><div class="title">harness.js</div><div class="desc">다이나믹 하네스 DAG 시각화 + 노드별 로그</div><span class="tag">DAG</span></div>
+  <div class="feat"><div class="ico">🧭</div><div class="title">modes.js</div><div class="desc">7모드 (code/architect/debug/ask/orchestrator/review/test) 전환</div><span class="tag">7 modes</span></div>
+  <div class="feat"><div class="ico">🎤</div><div class="title">voice.js</div><div class="desc">음성 입력/출력 (Whisper/TTS)</div><span class="tag">Voice</span></div>
+  <div class="feat"><div class="ico">🔍</div><div class="title">docs.js</div><div class="desc">API 문서/통합 가이드 자동 생성</div><span class="tag">Docs</span></div>
+  <div class="feat"><div class="ico">🛡️</div><div class="title">approval.js</div><div class="desc">4타입 인라인 승인 (file_change/is_plan/skill_save/dangerous_command)</div><span class="tag">Safety</span></div>
+  <div class="feat"><div class="ico">📊</div><div class="title">dashboard.js</div><div class="desc">메트릭 대시보드 + 점수판</div><span class="tag">Metrics</span></div>
+  <div class="feat"><div class="ico">🔌</div><div class="title">mcp.js</div><div class="desc">MCP 서버/도구 관리 UI</div><span class="tag">MCP</span></div>
+</div>
+
+<!-- ─── BACKEND ────────────────────────────────────────── -->
+<h2 id="backend">⚙️ 백엔드</h2>
+<p><b>프레임워크:</b> Python 3 + http.server (Electron 프로세스 내장) · <b>엔트리:</b> <code>server.exe</code> / <code>api/__init__.py</code></p>
+
+<h3 id="api-list">API 엔드포인트 (165개, 24 모듈)</h3>
+<details class="section" open>
+  <summary>전체 라우트 목록 (클릭하여 펼치기/접기)</summary>
+  <div class="section-body">
+
+<h4>Admin / Auth (9)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>핸들러</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/</code> · <code>/login</code> · <code>/favicon.ico</code> · <code>/health</code></td><td>admin_routes</td></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/auth/status</code> · <code>/api/models</code> · <code>/api/providers</code> · <code>/api/settings</code></td><td>admin/settings</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/auth/login</code> · <code>/logout</code> · <code>/api/settings</code></td><td>admin_routes</td></tr>
+</table>
+
+<h4>Session / Project (16)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/session</code> · <code>/api/sessions</code> · <code>/api/sessions/search</code> · <code>/api/projects</code> · <code>/api/session/export</code></td><td>세션 조회/검색/내보내기</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/session/new</code> · <code>/rename</code> · <code>/update</code> · <code>/delete</code> · <code>/clear</code> · <code>/truncate</code> · <code>/pin</code> · <code>/archive</code> · <code>/move</code> · <code>/import</code> · <code>/import-cli</code></td><td>세션 관리</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/sessions/cleanup</code> · <code>/api/project/create</code> · <code>/rename</code> · <code>/delete</code></td><td>프로젝트/정리</td></tr>
+</table>
+
+<h4>Chat / Streaming (5)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/chat/stream</code> (SSE) · <code>/stream/status</code> · <code>/chat/cancel</code></td><td>스트리밍/취소</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/chat/start</code> · <code>/chat/sync</code></td><td>대화 시작/동기화</td></tr>
+</table>
+
+<h4>File / Workspace (12)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/list</code> · <code>/api/file/raw</code> · <code>/api/file</code> · <code>/api/git-info</code> · <code>/api/git/status</code> · <code>/diff</code> · <code>/log</code> · <code>/conflicts</code> · <code>/api/workspaces</code></td><td>파일/Git/워크스페이스</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/upload</code> · <code>/api/file/delete</code> · <code>/save</code> · <code>/create</code> · <code>/rename</code> · <code>/api/create_dir</code> · <code>/api/workspace/add</code> · <code>/remove</code> · <code>/rename</code></td><td>파일 조작</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/file/preview-diff</code> · <code>/apply-diff</code> · <code>/apply-preview</code> · <code>/reject-preview</code></td><td>Diff 승인</td></tr>
+</table>
+
+<h4>Approval (5)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/approval/pending</code> · <code>/inject_test</code></td><td>대기 승인/테스트 주입</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/approval/approve</code> · <code>/reject</code> · <code>/skill-save/approve</code> · <code>/skill-save/reject</code></td><td>승인/거부</td></tr>
+</table>
+
+<h4>Skills / Memory (12)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/skills</code> · <code>/api/skills/content</code> · <code>/api/memory</code></td><td>스킬/메모리 조회</td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/skills/install</code> · <code>/api/skill/promote</code> · <code>/reject</code> · <code>/save</code> · <code>/delete</code> · <code>/api/memory/write</code></td><td>스킬/메모리 조작</td></tr>
+</table>
+
+<h4>Demo→Skill (8)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/demo/start</code> · <code>/stop</code> · <code>/cancel</code> · <code>/text-workflow</code> · <code>/add-event</code> · <code>/skill/approve</code> · <code>/skill/reject</code></td><td>시연 녹화/스킬화</td></tr>
+<tr><td><span class="b b-info">GET</span></td><td><code>/api/demo/status</code> · <code>/events</code></td><td>상태/이벤트</td></tr>
+</table>
+
+<h4>MCP / Mode / Cron / Others (~20)</h4>
+<table>
+<tr><th>메서드</th><th>경로</th></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/mcp/servers/add</code> · <code>/remove</code> · <code>/connect</code> · <code>/disconnect</code> · <code>/add-preset</code> · <code>/api/mcp/tools/call</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/mode/intent</code> · <code>/api/mode</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/style-cards/extract</code> · <code>/save</code> · <code>/delete</code> · <code>/rebuild-index</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/crons</code> · <code>/output</code> · <code>/recent</code> · <code>/api/cron/create</code> · <code>/update</code> · <code>/delete</code> · <code>/run</code> · <code>/pause</code> · <code>/resume</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/sync/start</code> · <code>/stop</code> · <code>/hook/install</code> · <code>/hook/uninstall</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/debate/start</code> · <code>/next</code> · <code>/cancel</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/checkpoints/rollback</code> · <code>/delete</code> · <code>/api/diff/history</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/kakao/send</code></td></tr>
+<tr><td><span class="b b-accent">POST</span></td><td><code>/api/integration/notion/create</code> · <code>/test</code> · <code>/api/integration/config</code></td></tr>
+</table>
+
+  </div>
+</details>
+
+<details class="section" id="streaming">
+  <summary>Streaming (SSE)</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/streaming.py</code> (streaming-monolith-refactor-pattern 적용)</p>
+    <h4>동작 흐름</h4>
+    <ol>
+      <li>클라이언트가 <code>POST /api/chat/start</code>로 미션 전송</li>
+      <li>서버가 <code>stream_id</code> 발급 + <code>STREAMS</code> dict에 등록</li>
+      <li>백그라운드 스레드에서 <code>HermesDynamicRunner</code> 실행</li>
+      <li><code>GET /api/chat/stream?stream_id=...</code> (SSE) 연결</li>
+      <li>이벤트: <code>tool</code> · <code>node_start</code> · <code>node_end</code> · <code>approval</code> · <code>complete</code> · <code>error</code></li>
+      <li><code>cancel_stream()</code>으로 중단 가능 (<code>CANCEL_FLAGS</code>)</li>
+    </ol>
+  </div>
+</details>
+
+<details class="section" id="session">
+  <summary>Session</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>api/session_manager.py</code> · <code>api/models.py</code> · <code>data/sessions/</code></p>
+    <ul>
+      <li>SQLite + JSON 하이브리드 (sessions.jsonl + 인덱스)</li>
+      <li>CLI 세션 import (<code>import_cli_session</code>)</li>
+      <li>세션 pin/archive/move/copy/clear</li>
+      <li>세션 검색 (full-text)</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="db">
+  <summary>Database / Storage</summary>
+  <div class="section-body">
+    <ul>
+      <li><code>data/sessions/</code> — 세션 데이터</li>
+      <li><code>data/checkpoints/</code> — 파일 체크포인트 (rollback 지원)</li>
+      <li><code>data/mcp_servers.json</code> — MCP 서버 정의</li>
+      <li><code>data/skill_registry.json</code> — 스킬 인덱스</li>
+    </ul>
+  </div>
+</details>
+
+<details class="section" id="scheduler">
+  <summary>Scheduler / Cron</summary>
+  <div class="section-body">
+    <p><b>파일:</b> <code>hermes-agent/tools/cronjob_tools.py</code> · <code>api/routes/admin_routes.py</code> (cron 핸들러)</p>
+    <h4>기능</h4>
+    <ul>
+      <li>크론잡 CRUD (<code>create/update/delete/run/pause/resume</code>)</li>
+      <li>실행 출력/최근 실행 조회</li>
+      <li>webhook 구독 (event-driven)</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ─── TESTS ──────────────────────────────────────────── -->
+<h2 id="tests">🧪 테스트</h2>
+<div class="stats">
+  <div class="stat"><div class="v">~120</div><div class="k">테스트 케이스 (추정)</div></div>
+  <div class="stat"><div class="v">Hermes</div><div class="k">pytest 기반</div></div>
+  <div class="stat"><div class="v">Dist</div><div class="k">내부 QA</div></div>
+  <div class="stat"><div class="v">M6</div><div class="k">daon-card-feature-diagnostic</div></div>
+</div>
+<p>다온 시스템은 자체 QA 진단 스킬(<code>daon-card-feature-diagnostic</code>)과 외부 QA 리포트 검증(<code>external-qa-report-verification</code>)을 운영합니다.</p>
+
+<!-- ─── FOOTER ─────────────────────────────────────────── -->
+<footer>
+  <p>📅 생성일: 2026-07-15 · 🛠️ 라온(Raon) · 📁 출처: <code>C:\daon\Daon agent System</code></p>
+  <p style="margin-top:6px">검색은 좌측 상단 또는 <kbd>Ctrl+F</kbd>를 사용하세요. 각 섹션은 클릭하여 펼치기/접기 가능합니다.</p>
+</footer>
+
+</main>
+</div>
+
+<script>
+  // ── 실시간 검색 ──────────────────────────────────────
+  const search = document.getElementById('search');
+  const navLinks = document.querySelectorAll('#toc-nav a');
+  search.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    navLinks.forEach(a => {
+      const txt = a.textContent.toLowerCase();
+      a.parentElement.style.display = (!q || txt.includes(q)) ? '' : 'none';
+    });
+    // 본문 검색 결과는 scrollIntoView로 안내
+    if (q.length >= 2) {
+      const sections = document.querySelectorAll('main h2, main h3, main details.section');
+      sections.forEach(sec => {
+        if (sec.textContent.toLowerCase().includes(q)) {
+          sec.style.outline = '2px solid #7c5cff';
+        } else {
+          sec.style.outline = '';
+        }
+      });
+    } else {
+      document.querySelectorAll('main h2, main h3, main details.section').forEach(s => s.style.outline = '');
+    }
+  });
+
+  // ── 클릭한 nav 링크 active 표시 ──────────────────────
+  navLinks.forEach(a => {
+    a.addEventListener('click', () => {
+      navLinks.forEach(x => x.classList.remove('active'));
+      a.classList.add('active');
+    });
+  });
+
+  // ── URL 해시 자동 스크롤 ────────────────────────────
+  if (location.hash) {
+    setTimeout(() => {
+      const el = document.querySelector(location.hash);
+      if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+    }, 100);
+  }
+</script>
+</body>
+</html>
