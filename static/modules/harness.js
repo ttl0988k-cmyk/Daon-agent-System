@@ -300,25 +300,51 @@ function cleanupHarnessState() {
 }
 
 function logToConsole(message, type = 'info') {
-  // Output to right-panel harness console
-  const consoleEl = $('harnessConsole');
-  if (consoleEl) {
-    const line = document.createElement('div');
-    line.className = `console-line ${type}`;
-    line.textContent = message;
-    consoleEl.appendChild(line);
-    scrollToHarnessBottom();
+  const cliBody = $('consoleBody');
+  if (!cliBody) return;
+
+  // 생성 시점 (타임스탬프)
+  const now = new Date();
+  const timeStr = now.getHours().toString().padStart(2, '0') + ':' +
+                  now.getMinutes().toString().padStart(2, '0') + ':' +
+                  now.getSeconds().toString().padStart(2, '0');
+
+  // 메시지 파싱 (예: "[api.dynamic.runner] 작업 시작")
+  let tag = '';
+  let content = message;
+  const tagMatch = message.match(/^\[(.*?)\]\s([\s\S]*)$/);
+  if (tagMatch) {
+    tag = tagMatch[1];
+    content = tagMatch[2];
   }
 
-  // Also output to CLI console body at the bottom
-  const cliBody = $('consoleBody');
-  if (cliBody) {
-    const cliLine = document.createElement('div');
-    cliLine.className = `console-line ${type}`;
-    cliLine.textContent = message;
-    cliBody.appendChild(cliLine);
-    cliBody.scrollTop = cliBody.scrollHeight;
+  const cliLine = document.createElement('div');
+  cliLine.className = `console-line ${type}`;
+  
+  // HTML 조립
+  let html = `<span class="timestamp">[${timeStr}]</span>`;
+  
+  // 배지 (로그 유형별 아이콘/색상)
+  if (type === 'error') html += `<span class="log-badge error">✖</span>`;
+  else if (type === 'success') html += `<span class="log-badge success">✔</span>`;
+  else if (type === 'warning') html += `<span class="log-badge warning">⚠</span>`;
+  else if (type === 'command') html += `<span class="log-badge command">▶</span>`;
+  else html += `<span class="log-badge info">ℹ</span>`;
+
+  // 태그
+  if (tag) {
+    const safeTag = tag.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html += `<span class="log-tag">[${safeTag}]</span> `;
   }
+
+  // 본문 (XSS 방지를 위해 DOM의 textContent로 삽입)
+  html += `<span class="log-msg"></span>`;
+  
+  cliLine.innerHTML = html;
+  cliLine.querySelector('.log-msg').textContent = content;
+
+  cliBody.appendChild(cliLine);
+  cliBody.scrollTop = cliBody.scrollHeight;
 }
 
 function handleConsoleCommand(cmdText) {
