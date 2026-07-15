@@ -4718,3 +4718,37 @@
   font-weight: bold;
   animation: pulse 2s infinite;
 }
+
+/* CLI Console Enhanced Logging */
+.console-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.4;
+  padding: 2px 0;
+}
+.console-line .timestamp {
+  color: var(--muted, #64748b);
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+.console-line .log-badge {
+  font-size: 0.9em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+.console-line .log-tag {
+  color: var(--accent, #3b82f6);
+  font-weight: 600;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.console-line .log-msg {
+  flex: 1;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
