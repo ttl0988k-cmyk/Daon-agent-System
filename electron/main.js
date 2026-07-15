@@ -246,6 +246,19 @@ app.whenReady().asyncReady = async () => {
 
     uiView.webContents.loadURL(`http://127.0.0.1:${serverPort}`);
 
+    // [NEW] Global shortcuts for reload and devtools
+    uiView.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown') {
+        if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) {
+          uiView.webContents.reload();
+          event.preventDefault();
+        } else if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+          uiView.webContents.toggleDevTools();
+          event.preventDefault();
+        }
+      }
+    });
+
     // Resize UI when window resizes or maximizes
     const updateBounds = () => {
       const bounds = mainWindow.getContentBounds();
