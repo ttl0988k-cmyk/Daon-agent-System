@@ -178,6 +178,7 @@ from api.routes.mcp_routes import (
     handle_post_mcp_server_disconnect,
     handle_post_mcp_server_add_preset,
     handle_post_mcp_tool_call,
+    handle_post_mcp_exchange_ott,
 )
 from api.routes.demo_to_skill_routes import (
     handle_get_demo_status,
@@ -718,6 +719,9 @@ def handle_post(handler, parsed) -> bool:
 
     if parsed.path == '/api/mcp/tools/call':
         return handle_post_mcp_tool_call(handler, body)
+
+    if parsed.path == '/api/mcp/exchange-ott':
+        return handle_post_mcp_exchange_ott(handler, body)
 
     # ── Approval API (POST) ──
     if parsed.path == '/api/approval/approve':

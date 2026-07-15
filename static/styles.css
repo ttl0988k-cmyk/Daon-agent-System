@@ -4705,3 +4705,16 @@
     #syncWatcherSection input[type="checkbox"] {
       accent-color: var(--accent);
     }
+/* Token Expired MCP Server Styles */
+.mcp-server-card.mcp-expired {
+  border: 1px solid var(--warning);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
+}
+.mcp-server-card.mcp-expired .mcp-server-header {
+  background: rgba(245, 158, 11, 0.05);
+}
+.mcp-expired-badge {
+  color: var(--warning);
+  font-weight: bold;
+  animation: pulse 2s infinite;
+}

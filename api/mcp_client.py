@@ -454,6 +454,7 @@ class MCPServerConnection:
             'transport': self.transport,
             'connected': self.connected,
             'error': self.error,
+            'expired': getattr(self, 'expired', False),
             'tools_count': len(self.tools),
             'tools': self.tools,
             'resources_count': len(self.resources),
@@ -553,14 +554,15 @@ class MCPManager:
                 server_id = srv.get('server_id')
                 transport = srv.get('transport', TRANSPORT_STDIO)
                 auth_token = srv.get('auth_token', '')
-                # Skip HTTP servers with expired JWT tokens to avoid 401 errors
+                
+                is_expired = False
                 if transport == TRANSPORT_HTTP and auth_token and self._is_jwt_expired(auth_token):
                     _logger.warning(
-                        "MCP server '%s': JWT token is expired — skipping auto-connect. "
-                        "Re-authenticate via PlayMCP settings to get a new token.",
+                        "MCP server '%s': JWT token is expired. Marking as expired.",
                         server_id or 'unknown'
                     )
-                    continue
+                    is_expired = True
+
                 self.add_server(
                     server_id=server_id,
                     command=srv.get('command'),
@@ -571,10 +573,17 @@ class MCPManager:
                     transport=transport,
                     url=srv.get('url', ''),
                     auth_token=auth_token,
-                    auto_connect=False
+                    auto_connect=not is_expired
                 )
-                if server_id:
-                    threading.Thread(target=self.connect_server, args=(server_id,), daemon=True).start()
+                
+                if is_expired:
+                    conn = self._connections.get(server_id)
+                    if conn:
+                        conn.expired = True
+                        conn.error = "Token Expired (재인증 필요)"
+                else:
+                    if server_id:
+                        threading.Thread(target=self.connect_server, args=(server_id,), daemon=True).start()
         except Exception as e:
             _logger.error("Failed to load MCP config: %s", e)
 

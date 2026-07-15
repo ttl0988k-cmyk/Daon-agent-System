@@ -48,7 +48,7 @@ function renderMcpServerList() {
             desc = _mcpState.presets[srv.server_id].description;
         }
 
-        html += '<div class="mcp-server-card' + (srv.connected ? ' mcp-connected' : '') + '" data-server-id="' + _escapeHtml(srv.server_id) + '" title="' + _escapeHtml(desc) + '">';
+        html += '<div class="mcp-server-card' + (srv.connected ? ' mcp-connected' : '') + (isExpired ? ' mcp-expired' : '') + '" data-server-id="' + _escapeHtml(srv.server_id) + '" title="' + _escapeHtml(desc) + '">';
         html += '  <div class="mcp-server-header" onclick="toggleMcpServerDetail(\'' + _escapeJs(srv.server_id) + '\')">';
         html += '    <span style="color:' + statusColor + ';margin-right:6px;">' + statusText + '</span>';
         html += '    <span style="font-weight:600;">' + _escapeHtml(srv.label) + '</span>';
@@ -58,7 +58,13 @@ function renderMcpServerList() {
         html += '  <div class="mcp-server-detail" id="mcpDetail_' + _escapeJs(srv.server_id) + '" style="display:none;">';
         html += '    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">';
         html += '      <code>' + _escapeHtml(srv.command) + '</code>';
-        if (srv.error) {
+        if (isExpired) {
+            html += '      <div style="margin-top:8px;padding:8px;background:rgba(255,0,0,0.1);border-radius:4px;">';
+            html += '        <div style="color:var(--danger);font-weight:600;margin-bottom:4px;">í† í°ì´ ë§Œë£Œë˜ì—ˆìŠµë‹ˆë‹¤.</div>';
+            html += '        <input type="password" id="mcpOttInput_' + _escapeJs(srv.server_id) + '" class="mcp-token-input" placeholder="ìƒˆë¡œìš´ oneTimeToken ì…ë ¥" style="width:100%;margin-bottom:4px;padding:6px;border:1px solid var(--border-color);border-radius:4px;background:var(--bg-lighter);color:var(--text-color);" />';
+            html += '        <button class="mcp-action-btn" onclick="updateMcpOtt(\'' + _escapeJs(srv.server_id) + '\')" style="width:100%;margin-top:4px;">í† í° êµí™˜ ë° ì—°ê²°</button>';
+            html += '      </div>';
+        } else if (srv.error) {
             html += '      <div style="color:var(--danger);margin-top:4px;">ì˜¤ë¥˜: ' + _escapeHtml(srv.error) + '</div>';
         }
         html += '    </div>';
@@ -454,5 +460,30 @@ function _showToast(msg, type) {
         toast.style.display = 'block';
         toast.style.background = type === 'error' ? 'var(--danger)' : 'var(--success)';
         setTimeout(function () { toast.style.display = 'none'; }, 3000);
+    }
+}
+
+async function updateMcpOtt(serverId) {
+    var inputEl = document.getElementById('mcpOttInput_' + serverId);
+    if (!inputEl) return;
+    var ott = inputEl.value.trim();
+    if (!ott) {
+        showToast('One Time TokenÀ» ÀÔ·ÂÇÏ¼¼¿ä.', 'error');
+        return;
+    }
+    try {
+        var res = await api('/api/mcp/exchange-ott', {
+            method: 'POST',
+            body: { server_id: serverId, oneTimeToken: ott }
+        });
+        if (res.ok) {
+            showToast('ÅäÅ«ÀÌ °»½ÅµÇ¾î ¿¬°áÀ» ´Ù½Ã ½ÃµµÇÕ´Ï´Ù.', 'success');
+            // Give it a short delay to allow background reconnect
+            setTimeout(refreshMcpServers, 1500);
+        } else {
+            showToast('ÅäÅ« °»½Å ½ÇÆĞ: ' + (res.error || '¾Ë ¼ö ¾ø´Â ¿À·ù'), 'error');
+        }
+    } catch (e) {
+        showToast('ÅäÅ« °»½Å Áß ¿À·ù ¹ß»ı', 'error');
     }
 }

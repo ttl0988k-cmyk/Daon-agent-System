@@ -194,3 +194,56 @@ def handle_post_mcp_tool_call(handler, body: dict) -> bool:
         timeout=float(body.get('timeout', 30.0)),
     )
     return j(handler, result)
+
+def handle_post_mcp_exchange_ott(handler, body: dict) -> bool:
+    "\""POST /api/mcp/exchange-ott - Exchange OTT for access token and update config."\""
+    require(body, ['server_id', 'oneTimeToken'])
+    server_id = body['server_id']
+    ott = body['oneTimeToken']
+    
+    import urllib.request
+    import json
+    from pathlib import Path
+    
+    # 1. Exchange OTT via Kakao API
+    url = 'https://playmcp.kakao.com/api/v1/auths/otts:exchange'
+    req = urllib.request.Request(url, data=json.dumps({'tokenValue': ott}).encode('utf-8'), headers={'Content-Type': 'application/json', 'Accept': '*/*'})
+    try:
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        access_token = data.get('accessToken', {}).get('tokenValue')
+        if not access_token:
+            return j_err(handler, 'Failed to extract accessToken from response')
+    except Exception as e:
+        _logger.error(f"OTT Exchange Failed: {e}")
+        return j_err(handler, f"OTT Exchange Failed: {str(e)}")
+        
+    # 2. Update data/mcp_servers.json
+    try:
+        from api.config import BASE_DIR
+        config_path = BASE_DIR / 'data' / 'mcp_servers.json'
+    except ImportError:
+        config_path = Path('data/mcp_servers.json')
+        
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            servers = json.load(f)
+        for srv in servers:
+            if srv.get('server_id') == server_id:
+                srv['auth_token'] = access_token
+                break
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(servers, f, indent=2, ensure_ascii=False)
+            
+    # 3. Update active manager and reconnect
+    mgr = get_mcp_manager()
+    with mgr._lock:
+        if server_id in mgr._connections:
+            conn = mgr._connections[server_id]
+            conn.auth_token = access_token
+            conn.expired = False
+            conn.error = ''
+    
+    # Trigger reconnect async
+    threading.Thread(target=mgr.connect_server, args=(server_id,), daemon=True).start()
+    return j_ok(handler, {'message': 'Token updated and reconnecting...'})
