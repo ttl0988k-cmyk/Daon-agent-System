@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 
 <head>
@@ -20,7 +20,7 @@
 
   <div class="app-container">
 
-    <!-- ── GLOBAL HEADER (fixed agent/model bar) ── -->
+    <!-- ?? GLOBAL HEADER (fixed agent/model bar) ?? -->
     <div class="global-header">
       <div class="agent-model-bar">
         <label>AGENT</label>
@@ -39,10 +39,10 @@
       <div class="editor-action-bar">
         <div class="theme-selector-wrap"
           style="display: flex; align-items: center; gap: 6px; margin-right: 12px; flex-shrink: 0;">
-          <span style="font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap;">🎨 테마:</span>
+          <span style="font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap;">?렓 ?뚮쭏:</span>
           <select id="themeSelect" onchange="changeTheme(this.value)"
             style="background: var(--bg3); border: 1px solid var(--border2); color: var(--text); border-radius: 4px; padding: 2px 6px; font-size: 11px; outline: none; cursor: pointer; font-family: inherit;">
-            <option value="midnight">Midnight Neon (기본)</option>
+            <option value="midnight">Midnight Neon (湲곕낯)</option>
             <option value="forest">Forest Emerald</option>
             <option value="nordic">Nordic Slate</option>
             <option value="sunset">Sunset Wine</option>
@@ -51,74 +51,74 @@
           </select>
         </div>
         <span id="activeFilePath"
-          style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--muted);">파일을
-          탐색기에서 선택하세요</span>
+          style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--muted);">?뚯씪??
+          ?먯깋湲곗뿉???좏깮?섏꽭??/span>
         <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
           <button class="action-btn" id="clearEditorBtn" style="display:none;">Clear</button>
-          <button class="action-btn" id="previewHtmlBtn" style="display:none;">미리보기</button>
+          <button class="action-btn" id="previewHtmlBtn" style="display:none;">誘몃━蹂닿린</button>
           <button class="action-btn" id="saveFileBtn" style="display:none;" disabled>Save</button>
           <button class="action-btn danger" id="deleteFileBtn" style="display:none;">Delete</button>
           <div style="display:flex; gap: 4px; align-items: center; margin-left: 8px;">
-            <button class="action-btn" id="showHarnessManualBtn" title="다이나믹 하네스 설명서 보기">❓ 하네스 안내</button>
-            <button class="action-btn active" id="toggleBrowserBtn" title="브라우저 뷰 열기/닫기">🌐 Web</button>
-            <button class="action-btn active" id="toggleLeftBtn" title="좌측 세션 패널 열기/닫기">◧ 좌측</button>
-            <button class="action-btn active" id="toggleExplorerBtn" title="탐색기 열기/닫기">📁 탐색기</button>
-            <button class="action-btn active" id="toggleRightBtn" title="우측 채팅 패널 열기/닫기">◨ 우측</button>
+            <button class="action-btn" id="showHarnessManualBtn" title="?ㅼ씠?섎? ?섎꽕???ㅻ챸??蹂닿린">???섎꽕???덈궡</button>
+            <button class="action-btn active" id="toggleBrowserBtn" title="釉뚮씪?곗? 酉??닿린/?リ린">?뙋 Web</button>
+            <button class="action-btn active" id="toggleLeftBtn" title="醫뚯륫 ?몄뀡 ?⑤꼸 ?닿린/?リ린">??醫뚯륫</button>
+            <button class="action-btn active" id="toggleExplorerBtn" title="?먯깋湲??닿린/?リ린">?뱚 ?먯깋湲?/button>
+            <button class="action-btn active" id="toggleRightBtn" title="?곗륫 梨꾪똿 ?⑤꼸 ?닿린/?リ린">???곗륫</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ── MAIN GRID (3 columns) ── -->
+    <!-- ?? MAIN GRID (3 columns) ?? -->
     <div class="main-grid">
 
-      <!-- ── LEFT PANEL ── -->
+      <!-- ?? LEFT PANEL ?? -->
       <div class="left-panel">
-        <!-- ── VERTICAL NAV BAR ── -->
+        <!-- ?? VERTICAL NAV BAR ?? -->
         <div class="sidebar-nav"
           style="width: 48px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 12px; flex-shrink: 0;">
-          <button class="nav-tab active" data-panel="chat" onclick="switchPanel('chat')" title="채팅"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">💬</button>
-          <button class="nav-tab" data-panel="tasks" onclick="switchPanel('tasks')" title="예약 작업"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">⏱️</button>
-          <button class="nav-tab" data-panel="skills" onclick="switchPanel('skills')" title="스킬"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧩</button>
-          <button class="nav-tab" data-panel="memory" onclick="switchPanel('memory')" title="기억"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧠</button>
-          <button class="nav-tab" data-panel="workspaces" onclick="switchPanel('workspaces')" title="작업공간"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📂</button>
-          <button class="nav-tab" data-panel="profiles" onclick="switchPanel('profiles')" title="에이전트 프로필"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">👤</button>
-          <button class="nav-tab" data-panel="todos" onclick="switchPanel('todos')" title="할 일 목록"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📝</button>
-          <button class="nav-tab" data-panel="artifacts" onclick="switchPanel('artifacts')" title="아티팩트"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📦</button>
-          <button class="nav-tab" data-panel="setup" onclick="switchPanel('setup')" title="설치 팩"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🧰</button>
-          <button class="nav-tab" data-panel="checks" onclick="switchPanel('checks')" title="시스템 점검"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔍</button>
-          <button class="nav-tab" data-panel="dashboard" onclick="switchPanel('dashboard')" title="토큰 사용량 & 비용 대시보드"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📊</button>
-          <button class="nav-tab" data-panel="git" onclick="switchPanel('git')" title="Git 자동화"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔀</button>
-          <button class="nav-tab" data-panel="browser" onclick="switchPanel('browser')" title="브라우저 자동화"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🌐</button>
-          <button class="nav-tab" data-panel="docs" onclick="switchPanel('docs')" title="자동 문서화"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📄</button>
-          <button class="nav-tab" data-panel="mcp" onclick="switchPanel('mcp')" title="MCP 서버 관리"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔌</button>
+          <button class="nav-tab active" data-panel="chat" onclick="switchPanel('chat')" title="梨꾪똿"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뮠</button>
+          <button class="nav-tab" data-panel="tasks" onclick="switchPanel('tasks')" title="?덉빟 ?묒뾽"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?깍툘</button>
+          <button class="nav-tab" data-panel="skills" onclick="switchPanel('skills')" title="?ㅽ궗"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?㎥</button>
+          <button class="nav-tab" data-panel="memory" onclick="switchPanel('memory')" title="湲곗뼲"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?쭬</button>
+          <button class="nav-tab" data-panel="workspaces" onclick="switchPanel('workspaces')" title="?묒뾽怨듦컙"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뱛</button>
+          <button class="nav-tab" data-panel="profiles" onclick="switchPanel('profiles')" title="?먯씠?꾪듃 ?꾨줈??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뫀</button>
+          <button class="nav-tab" data-panel="todos" onclick="switchPanel('todos')" title="????紐⑸줉"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뱷</button>
+          <button class="nav-tab" data-panel="artifacts" onclick="switchPanel('artifacts')" title="?꾪떚?⑺듃"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?벀</button>
+          <button class="nav-tab" data-panel="setup" onclick="switchPanel('setup')" title="?ㅼ튂 ??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?㎞</button>
+          <button class="nav-tab" data-panel="checks" onclick="switchPanel('checks')" title="?쒖뒪???먭?"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뵇</button>
+          <button class="nav-tab" data-panel="dashboard" onclick="switchPanel('dashboard')" title="?좏겙 ?ъ슜??& 鍮꾩슜 ??쒕낫??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뱤</button>
+          <button class="nav-tab" data-panel="git" onclick="switchPanel('git')" title="Git ?먮룞??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">??</button>
+          <button class="nav-tab" data-panel="browser" onclick="switchPanel('browser')" title="釉뚮씪?곗? ?먮룞??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뙋</button>
+          <button class="nav-tab" data-panel="docs" onclick="switchPanel('docs')" title="?먮룞 臾몄꽌??
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뱞</button>
+          <button class="nav-tab" data-panel="mcp" onclick="switchPanel('mcp')" title="MCP ?쒕쾭 愿由?
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뵆</button>
           <button class="nav-tab" data-panel="integrations" onclick="switchPanel('integrations')"
-            title="Slack & Notion 연동"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔗</button>
-          <button class="nav-tab demo-nav-btn" id="demoNavBtn" onclick="openDemoSkill()" title="Demo → Skill (자동 스킬 생성)"
-            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🎬</button>
+            title="Slack & Notion ?곕룞"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?뵕</button>
+          <button class="nav-tab demo-nav-btn" id="demoNavBtn" onclick="openDemoSkill()" title="Demo ??Skill (?먮룞 ?ㅽ궗 ?앹꽦)"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">?렗</button>
         </div>
 
-        <!-- ── PANELS CONTAINER ── -->
+        <!-- ?? PANELS CONTAINER ?? -->
         <div class="left-panel-content"
           style="flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100%;">
 
-          <!-- ── CHAT (SESSIONS) PANEL ── -->
+          <!-- ?? CHAT (SESSIONS) PANEL ?? -->
           <div class="panel-view active" id="panelChat"
             style="display: flex; flex-direction: column; height: 100%; overflow: hidden;">
             <!-- Logo header -->
@@ -132,7 +132,7 @@
 
             <!-- Profile select -->
             <div class="profile-bar">
-              <select id="agentProfileSelect" title="에이전트 프로필 전환">
+              <select id="agentProfileSelect" title="?먯씠?꾪듃 ?꾨줈???꾪솚">
                 <option value="default">default</option>
               </select>
             </div>
@@ -148,13 +148,13 @@
             <div class="default-tasks-section">
               <div class="default-tasks-header" id="defaultTasksHeader">
                 <span class="section-label">Default Tasks</span>
-                <span style="font-size:11px;color:var(--muted)">▶</span>
+                <span style="font-size:11px;color:var(--muted)">??/span>
               </div>
               <div class="default-tasks-content collapsed" id="defaultTasksContent">
-                <button class="task-btn" data-template="workspace-summary">📦 작업공간 요약</button>
-                <button class="task-btn" data-template="note-draft">📝 노트 초안 만들기</button>
-                <button class="task-btn" data-template="blog-post">✍️ 블로그 포스트 초안</button>
-                <button class="task-btn" data-template="schedule-task">⏱️ 예약 작업 만들기</button>
+                <button class="task-btn" data-template="workspace-summary">?벀 ?묒뾽怨듦컙 ?붿빟</button>
+                <button class="task-btn" data-template="note-draft">?뱷 ?명듃 珥덉븞 留뚮뱾湲?/button>
+                <button class="task-btn" data-template="blog-post">?랃툘 釉붾줈洹??ъ뒪??珥덉븞</button>
+                <button class="task-btn" data-template="schedule-task">?깍툘 ?덉빟 ?묒뾽 留뚮뱾湲?/button>
               </div>
             </div>
 
@@ -165,74 +165,74 @@
                 <div class="user-name">User</div>
                 <div class="user-role">Developer</div>
               </div>
-              <button class="settings-icon-btn" id="settingsBtn" title="설정">⚙</button>
+              <button class="settings-icon-btn" id="settingsBtn" title="?ㅼ젙">??/button>
             </div>
           </div>
 
-          <!-- ── TASKS PANEL ── -->
+          <!-- ?? TASKS PANEL ?? -->
           <div class="panel-view" id="panelTasks">
             <div class="panel-header-simple">
-              <span class="panel-header-title">예약 작업 (Cron)</span>
-              <button class="new-session-btn" id="toggleCronFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
-                작업</button>
+              <span class="panel-header-title">?덉빟 ?묒뾽 (Cron)</span>
+              <button class="new-session-btn" id="toggleCronFormBtn" style="padding: 2px 6px; font-size:11px;">+ ??
+                ?묒뾽</button>
             </div>
             <div class="panel-body-scroll">
               <div id="cronCreateForm"
                 style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px;">
-                <textarea id="cronFormVibe" rows="2" placeholder="자유 형식: 예) 매일 아침 8시에 AI 뉴스 요약해서 텔레그램으로 보내줘"
+                <textarea id="cronFormVibe" rows="2" placeholder="?먯쑀 ?뺤떇: ?? 留ㅼ씪 ?꾩묠 8?쒖뿉 AI ?댁뒪 ?붿빟?댁꽌 ?붾젅洹몃옩?쇰줈 蹂대궡以?
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:none;font-family:inherit;"></textarea>
                 <div style="display:flex;gap:4px;">
-                  <button class="cron-btn run" id="autofillCronBtn" style="flex:1;">✨ AI 분석</button>
-                  <button class="cron-btn" id="fillCronDailyBtn" style="flex:1;">매일 예시</button>
-                  <button class="cron-btn" id="fillCronWeeklyBtn" style="flex:1;">주간 예시</button>
+                  <button class="cron-btn run" id="autofillCronBtn" style="flex:1;">??AI 遺꾩꽍</button>
+                  <button class="cron-btn" id="fillCronDailyBtn" style="flex:1;">留ㅼ씪 ?덉떆</button>
+                  <button class="cron-btn" id="fillCronWeeklyBtn" style="flex:1;">二쇨컙 ?덉떆</button>
                 </div>
                 <div id="cronFormPreview" class="cron-preview" style="display:none;"></div>
-                <input id="cronFormName" placeholder="작업 이름 (선택)"
+                <input id="cronFormName" placeholder="?묒뾽 ?대쫫 (?좏깮)"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
-                <input id="cronFormSchedule" placeholder="스케줄: '0 9 * * *' 또는 'every 1h'"
+                <input id="cronFormSchedule" placeholder="?ㅼ?以? '0 9 * * *' ?먮뒗 'every 1h'"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
-                <textarea id="cronFormPrompt" rows="3" placeholder="실행할 프롬프트"
+                <textarea id="cronFormPrompt" rows="3" placeholder="?ㅽ뻾???꾨＼?꾪듃"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:none;font-family:inherit;"></textarea>
                 <select id="cronFormDeliver"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
-                  <option value="local">로컬 (결과만 저장)</option>
+                  <option value="local">濡쒖뺄 (寃곌낵留????</option>
                   <option value="discord">Discord</option>
                   <option value="telegram">Telegram</option>
                 </select>
                 <div id="cronFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
                 <div style="display:flex;gap:4px;">
-                  <button class="cron-btn run" id="submitCronCreateBtn" style="flex:1;">만들기</button>
-                  <button class="cron-btn" id="cancelCronCreateBtn" style="flex:1;">취소</button>
+                  <button class="cron-btn run" id="submitCronCreateBtn" style="flex:1;">留뚮뱾湲?/button>
+                  <button class="cron-btn" id="cancelCronCreateBtn" style="flex:1;">痍⑥냼</button>
                 </div>
               </div>
               <div id="cronList" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">遺덈윭?ㅻ뒗 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── SKILLS PANEL ── -->
+          <!-- ?? SKILLS PANEL ?? -->
           <div class="panel-view" id="panelSkills">
             <div class="panel-header-simple">
-              <span class="panel-header-title">스킬 관리</span>
-              <button class="new-session-btn" id="toggleSkillFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
-                스킬</button>
+              <span class="panel-header-title">?ㅽ궗 愿由?/span>
+              <button class="new-session-btn" id="toggleSkillFormBtn" style="padding: 2px 6px; font-size:11px;">+ ??
+                ?ㅽ궗</button>
             </div>
             <div class="panel-body-scroll">
-              <input id="skillsSearch" placeholder="스킬 검색..."
+              <input id="skillsSearch" placeholder="?ㅽ궗 寃??.."
                 style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px 8px;font-size:11px;outline:none;margin-bottom:6px;">
               <div id="skillCreateForm"
                 style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                <input id="skillFormName" placeholder="스킬 이름 (예: my-skill)"
+                <input id="skillFormName" placeholder="?ㅽ궗 ?대쫫 (?? my-skill)"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
-                <input id="skillFormCategory" placeholder="카테고리 (선택, 예: devops)"
+                <input id="skillFormCategory" placeholder="移댄뀒怨좊━ (?좏깮, ?? devops)"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
-                <textarea id="skillFormContent" rows="6" placeholder="SKILL.md 내용 (YAML frontmatter + markdown)"
+                <textarea id="skillFormContent" rows="6" placeholder="SKILL.md ?댁슜 (YAML frontmatter + markdown)"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:monospace;"></textarea>
                 <div id="skillFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
                 <div style="display:flex;gap:4px;">
-                  <button class="cron-btn run" id="submitSkillSaveBtn" style="flex:1;">스킬 저장</button>
-                  <button class="cron-btn" id="cancelSkillFormBtn" style="flex:1;">취소</button>
+                  <button class="cron-btn run" id="submitSkillSaveBtn" style="flex:1;">?ㅽ궗 ???/button>
+                  <button class="cron-btn" id="cancelSkillFormBtn" style="flex:1;">痍⑥냼</button>
                 </div>
               </div>
 
@@ -245,77 +245,77 @@
                 <div class="demo-skill-body" id="demoSkillBody" style="display:none;">
                   <!-- Recording mode -->
                   <div class="demo-recording-area" id="demoRecordingIdle">
-                    <div class="demo-hint">브라우저 동작을 녹화하여 자동으로 스킬을 생성합니다.<br>Chrome이 디버그
-                      모드(--remote-debugging-port=9222)로
-                      실행 중이어야 합니다.</div>
+                    <div class="demo-hint">釉뚮씪?곗? ?숈옉???뱁솕?섏뿬 ?먮룞?쇰줈 ?ㅽ궗???앹꽦?⑸땲??<br>Chrome???붾쾭洹?
+                      紐⑤뱶(--remote-debugging-port=9222)濡?
+                      ?ㅽ뻾 以묒씠?댁빞 ?⑸땲??</div>
                     <div style="display:flex;gap:4px;">
                       <button class="cron-btn run" id="demoStartRecordBtn" onclick="startDemoRecording()"
-                        style="flex:1;font-size:11px;">&#128308; 녹화 시작</button>
+                        style="flex:1;font-size:11px;">&#128308; ?뱁솕 ?쒖옉</button>
                       <button class="cron-btn" id="demoToggleTextBtn" onclick="toggleDemoTextMode()"
-                        style="flex:1;font-size:11px;">&#128221; 텍스트 입력</button>
+                        style="flex:1;font-size:11px;">&#128221; ?띿뒪???낅젰</button>
                     </div>
                   </div>
                   <!-- Recording in progress -->
                   <div class="demo-recording-area" id="demoRecordingActive" style="display:none;">
                     <div class="demo-status-bar">
                       <span class="demo-pulse"></span>
-                      <span>녹화 중...</span>
-                      <span id="demoEventCount" style="font-size:10px;color:var(--muted);">0 이벤트</span>
+                      <span>?뱁솕 以?..</span>
+                      <span id="demoEventCount" style="font-size:10px;color:var(--muted);">0 ?대깽??/span>
                     </div>
                     <div style="display:flex;gap:4px;">
                       <button class="cron-btn pause" id="demoStopRecordBtn" onclick="stopDemoRecording()"
-                        style="flex:1;font-size:11px;">&#9209; 중지 & 분석</button>
+                        style="flex:1;font-size:11px;">&#9209; 以묒? & 遺꾩꽍</button>
                       <button class="cron-btn" id="demoCancelRecordBtn" onclick="cancelDemoRecording()"
-                        style="flex:1;font-size:11px;">&#10005; 취소</button>
+                        style="flex:1;font-size:11px;">&#10005; 痍⑥냼</button>
                     </div>
                   </div>
                   <!-- Analyzing state -->
                   <div class="demo-recording-area" id="demoAnalyzing" style="display:none;">
                     <div class="demo-status-bar analyzing">
                       <span class="demo-spinner"></span>
-                      <span>LLM 분석 중...</span>
+                      <span>LLM 遺꾩꽍 以?..</span>
                     </div>
                     <button class="cron-btn" onclick="cancelDemoRecording()" style="width:100%;font-size:11px;">&#10005;
-                      취소</button>
+                      痍⑥냼</button>
                   </div>
                   <!-- Generation result -->
                   <div class="demo-result-area" id="demoResultArea" style="display:none;">
                     <div id="demoResultContent"></div>
                     <div style="display:flex;gap:4px;">
                       <button class="cron-btn run" id="demoApproveBtn" onclick="approveDemoSkill()"
-                        style="flex:1;font-size:11px;">&#10003; 승인</button>
+                        style="flex:1;font-size:11px;">&#10003; ?뱀씤</button>
                       <button class="cron-btn pause" id="demoRejectBtn" onclick="rejectDemoSkill()"
-                        style="flex:1;font-size:11px;">&#10005; 거절</button>
+                        style="flex:1;font-size:11px;">&#10005; 嫄곗젅</button>
                     </div>
                   </div>
                   <!-- Text workflow mode -->
                   <div class="demo-text-area" id="demoTextMode" style="display:none;">
-                    <input id="demoTextSkillName" placeholder="스킬 이름 (선택)"
+                    <input id="demoTextSkillName" placeholder="?ㅽ궗 ?대쫫 (?좏깮)"
                       style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;margin-bottom:6px;">
                     <textarea id="demoTextDescription" rows="4"
-                      placeholder="예:&#10;1. GitHub에 로그인한다&#10;2. 새 이슈를 생성한다&#10;3. 제목과 내용을 입력한다&#10;4. 제출 버튼을 누른다"
+                      placeholder="??&#10;1. GitHub??濡쒓렇?명븳??#10;2. ???댁뒋瑜??앹꽦?쒕떎&#10;3. ?쒕ぉ怨??댁슜???낅젰?쒕떎&#10;4. ?쒖텧 踰꾪듉???꾨Ⅸ??
                       style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:inherit;margin-bottom:6px;"></textarea>
                     <div id="demoTextError" style="font-size:10px;color:var(--danger);display:none;margin-bottom:4px;">
                     </div>
                     <div style="display:flex;gap:4px;">
                       <button class="cron-btn run" onclick="submitDemoTextWorkflow()"
-                        style="flex:1;font-size:11px;">&#127916; 스킬 생성</button>
-                      <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:11px;">&#8617; 녹화
-                        모드</button>
+                        style="flex:1;font-size:11px;">&#127916; ?ㅽ궗 ?앹꽦</button>
+                      <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:11px;">&#8617; ?뱁솕
+                        紐⑤뱶</button>
                     </div>
                   </div>
                 </div>
               </div>
 
               <!-- Community Skills Hub -->
-              <!-- ── Skills Auto-Recommend (Phase 5b) ── -->
+              <!-- ?? Skills Auto-Recommend (Phase 5b) ?? -->
               <div id="skillsRecommendSection"
                 style="margin-top:12px;padding:8px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);display:flex;flex-direction:column;gap:6px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                  <span style="font-weight:600;font-size:12px;">🤖 워크스페이스 분석 추천</span>
+                  <span style="font-weight:600;font-size:12px;">?쨼 ?뚰겕?ㅽ럹?댁뒪 遺꾩꽍 異붿쿇</span>
                   <button id="skillsRecommendBtn" onclick="runSkillsRecommend()"
-                    style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer;">🔄
-                    분석</button>
+                    style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer;">?봽
+                    遺꾩꽍</button>
                 </div>
                 <div id="skillsRecommendList"
                   style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;"></div>
@@ -326,352 +326,352 @@
 
               <div id="skillsHubSection"
                 style="margin-top:12px;padding:8px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);">
-                <div style="font-weight:600;font-size:12px;margin-bottom:6px;">🌐 커뮤니티 스킬 검색</div>
+                <div style="font-weight:600;font-size:12px;margin-bottom:6px;">?뙋 而ㅻ??덊떚 ?ㅽ궗 寃??/div>
               </div>
 
               <div id="skillsList" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">遺덈윭?ㅻ뒗 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── MEMORY PANEL ── -->
+          <!-- ?? MEMORY PANEL ?? -->
           <div class="panel-view" id="panelMemory">
             <div class="panel-header-simple">
-              <span class="panel-header-title">개인 기억 & 노트</span>
-              <button class="new-session-btn" id="memEditBtn" style="padding: 2px 6px; font-size:11px;">✏ 편집</button>
+              <span class="panel-header-title">媛쒖씤 湲곗뼲 & ?명듃</span>
+              <button class="new-session-btn" id="memEditBtn" style="padding: 2px 6px; font-size:11px;">???몄쭛</button>
             </div>
             <div class="panel-body-scroll">
               <div id="memoryEditForm"
                 style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                <div style="font-size:10px;color:var(--muted)">편집 중: <span id="memEditSection">memory</span></div>
+                <div style="font-size:10px;color:var(--muted)">?몄쭛 以? <span id="memEditSection">memory</span></div>
                 <textarea id="memEditContent" rows="8"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px;font-size:11px;outline:none;resize:vertical;font-family:monospace;"></textarea>
                 <div id="memEditError" style="font-size:10px;color:var(--danger);display:none;"></div>
                 <div style="display:flex;gap:4px;">
-                  <button class="cron-btn run" id="submitMemorySaveBtn" style="flex:1;">저장</button>
-                  <button class="cron-btn" id="closeMemoryEditBtn" style="flex:1;">취소</button>
+                  <button class="cron-btn run" id="submitMemorySaveBtn" style="flex:1;">???/button>
+                  <button class="cron-btn" id="closeMemoryEditBtn" style="flex:1;">痍⑥냼</button>
                 </div>
               </div>
               <div id="memoryPanel" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">遺덈윭?ㅻ뒗 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── TODOS PANEL ── -->
+          <!-- ?? TODOS PANEL ?? -->
           <div class="panel-view" id="panelTodos">
             <div class="panel-header-simple">
-              <span class="panel-header-title">현재 할 일 목록</span>
+              <span class="panel-header-title">?꾩옱 ????紐⑸줉</span>
             </div>
             <div class="panel-body-scroll">
               <div id="todoPanel" style="display: flex; flex-direction: column; gap: 6px;"></div>
             </div>
           </div>
 
-          <!-- ── WORKSPACES PANEL ── -->
+          <!-- ?? WORKSPACES PANEL ?? -->
           <div class="panel-view" id="panelWorkspaces">
             <div class="panel-header-simple">
-              <span class="panel-header-title">작업공간 관리</span>
+              <span class="panel-header-title">?묒뾽怨듦컙 愿由?/span>
             </div>
             <div class="panel-body-scroll">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;line-height:1.4;">세션용 작업공간을 추가하고 전환하세요.
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;line-height:1.4;">?몄뀡???묒뾽怨듦컙??異붽??섍퀬 ?꾪솚?섏꽭??
               </div>
               <div id="workspacesPanel" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">遺덈윭?ㅻ뒗 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── PROFILES PANEL ── -->
+          <!-- ?? PROFILES PANEL ?? -->
           <div class="panel-view" id="panelProfiles">
             <div class="panel-header-simple">
-              <span class="panel-header-title">에이전트 프로필</span>
-              <button class="new-session-btn" id="toggleProfileFormBtn" style="padding: 2px 6px; font-size:11px;">+ 새
-                프로필</button>
+              <span class="panel-header-title">?먯씠?꾪듃 ?꾨줈??/span>
+              <button class="new-session-btn" id="toggleProfileFormBtn" style="padding: 2px 6px; font-size:11px;">+ ??
+                ?꾨줈??/button>
             </div>
             <div class="panel-body-scroll">
               <div id="profileCreateForm"
                 style="display:none; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                <input id="profileFormName" placeholder="프로필 이름 (소문자, 숫자, 하이픈)"
+                <input id="profileFormName" placeholder="?꾨줈???대쫫 (?뚮Ц?? ?レ옄, ?섏씠??"
                   style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 6px;font-size:11px;outline:none;">
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;font-weight:normal;text-transform:none;">
-                  <input type="checkbox" id="profileFormClone" style="width:auto;margin:0;"> 현재 활성 프로필 설정 복제
+                  <input type="checkbox" id="profileFormClone" style="width:auto;margin:0;"> ?꾩옱 ?쒖꽦 ?꾨줈???ㅼ젙 蹂듭젣
                 </label>
                 <div id="profileFormError" style="font-size:10px;color:var(--danger);display:none;"></div>
                 <div style="display:flex;gap:4px;">
-                  <button class="cron-btn run" id="submitProfileCreateBtn" style="flex:1;">생성</button>
-                  <button class="cron-btn" id="cancelProfileFormBtn" style="flex:1;">취소</button>
+                  <button class="cron-btn run" id="submitProfileCreateBtn" style="flex:1;">?앹꽦</button>
+                  <button class="cron-btn" id="cancelProfileFormBtn" style="flex:1;">痍⑥냼</button>
                 </div>
               </div>
               <div id="profilesPanel" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">불러오는 중...</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">遺덈윭?ㅻ뒗 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── ARTIFACTS PANEL ── -->
+          <!-- ?? ARTIFACTS PANEL ?? -->
           <div class="panel-view" id="panelArtifacts">
             <div class="panel-header-simple">
-              <span class="panel-header-title">아티팩트 목록</span>
+              <span class="panel-header-title">?꾪떚?⑺듃 紐⑸줉</span>
             </div>
             <div class="panel-body-scroll">
               <div id="artifactListSidebar" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">아직 아티팩트가 없습니다.</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">?꾩쭅 ?꾪떚?⑺듃媛 ?놁뒿?덈떎.</div>
               </div>
             </div>
           </div>
 
-          <!-- ── SETUP PANEL ── -->
+          <!-- ?? SETUP PANEL ?? -->
           <div class="panel-view" id="panelSetup">
             <div class="panel-header-simple">
               <span class="panel-header-title">Setup Packs</span>
             </div>
             <div class="panel-body-scroll" style="gap:12px;">
               <div class="quick-actions-grid">
-                <button class="quick-action setup-pack" data-pack="obsidian-starter">📚 Obsidian Starter</button>
-                <button class="quick-action setup-pack" data-pack="sharenote-telegram">🔗 Share+Telegram</button>
-                <button class="quick-action setup-pack" data-pack="obsidian-power">⚙️ Obsidian Power</button>
-                <button class="quick-action setup-pack" data-pack="memory-sync">🧠 Memory Sync</button>
-                <button class="quick-action setup-pack" data-pack="telegram-onboarding">📣 Telegram Onboarding</button>
-                <button class="quick-action setup-pack" data-pack="hermes-full-install">🚀 Full Hermes Install</button>
-                <button class="quick-action setup-pack" data-pack="webui-only-install">🪄 WebUI Install</button>
-                <button class="quick-action setup-pack" data-pack="last30days">📈 last30days</button>
-                <button class="quick-action setup-pack" data-pack="autoresearch">🔬 AutoResearch</button>
+                <button class="quick-action setup-pack" data-pack="obsidian-starter">?뱴 Obsidian Starter</button>
+                <button class="quick-action setup-pack" data-pack="sharenote-telegram">?뵕 Share+Telegram</button>
+                <button class="quick-action setup-pack" data-pack="obsidian-power">?숋툘 Obsidian Power</button>
+                <button class="quick-action setup-pack" data-pack="memory-sync">?쭬 Memory Sync</button>
+                <button class="quick-action setup-pack" data-pack="telegram-onboarding">?뱽 Telegram Onboarding</button>
+                <button class="quick-action setup-pack" data-pack="hermes-full-install">?? Full Hermes Install</button>
+                <button class="quick-action setup-pack" data-pack="webui-only-install">?챷 WebUI Install</button>
+                <button class="quick-action setup-pack" data-pack="last30days">?뱢 last30days</button>
+                <button class="quick-action setup-pack" data-pack="autoresearch">?뵮 AutoResearch</button>
               </div>
-              <div class="setup-pack-help" id="setupPackHelpSidebar">팩 위에 마우스를 올리면 설명이 보입니다. 클릭하면 설치 작업을 시작합니다.</div>
-              <!-- AI 설정 생성기 -->
+              <div class="setup-pack-help" id="setupPackHelpSidebar">???꾩뿉 留덉슦?ㅻ? ?щ━硫??ㅻ챸??蹂댁엯?덈떎. ?대┃?섎㈃ ?ㅼ튂 ?묒뾽???쒖옉?⑸땲??</div>
+              <!-- AI ?ㅼ젙 ?앹꽦湲?-->
               <div id="setupGeneratorSection" style="margin-top:12px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">Setup 패널을 열면 자동 분석됩니다...
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">Setup ?⑤꼸???대㈃ ?먮룞 遺꾩꽍?⑸땲??..
                 </div>
               </div>
               <div class="setup-pack-detail" id="setupPackDetailSidebar"
                 style="display:none;font-size:11px;background:rgba(0,0,0,0.15);padding:8px;border-radius:4px;"></div>
               <div id="setupPackHistorySidebar" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">실행 내역이 없습니다.</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">?ㅽ뻾 ?댁뿭???놁뒿?덈떎.</div>
               </div>
             </div>
           </div>
 
-          <!-- ── CHECKS PANEL ── -->
+          <!-- ?? CHECKS PANEL ?? -->
           <div class="panel-view" id="panelChecks">
             <div class="panel-header-simple">
               <span class="panel-header-title">Preflight Validator</span>
             </div>
             <div class="panel-body-scroll" style="gap:8px;">
               <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                <button class="preflight-run" data-preflight="note">📝 Note</button>
-                <button class="preflight-run" data-preflight="posting">✍️ Posting</button>
-                <button class="preflight-run" data-preflight="cron">⏱️ Cron</button>
+                <button class="preflight-run" data-preflight="note">?뱷 Note</button>
+                <button class="preflight-run" data-preflight="posting">?랃툘 Posting</button>
+                <button class="preflight-run" data-preflight="cron">?깍툘 Cron</button>
               </div>
               <div id="preflightListSidebar" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">점검을 실행해 주세요.</div>
+                <div style="padding:12px;color:var(--muted);font-size:11px;text-align:center;">?먭????ㅽ뻾??二쇱꽭??</div>
               </div>
             </div>
           </div>
 
-          <!-- ── DASHBOARD PANEL ── -->
+          <!-- ?? DASHBOARD PANEL ?? -->
           <div class="panel-view" id="panelDashboard">
             <div class="panel-header-simple">
-              <span class="panel-header-title">📊 토큰 사용량 & 비용 대시보드</span>
-              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDashboard()">🔄
-                새로고침</button>
+              <span class="panel-header-title">?뱤 ?좏겙 ?ъ슜??& 鍮꾩슜 ??쒕낫??/span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDashboard()">?봽
+                ?덈줈怨좎묠</button>
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
 
-              <!-- 요약 카드 -->
+              <!-- ?붿빟 移대뱶 -->
               <div id="dashSummary" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
                 <div class="dash-card"
                   style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
-                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">총 토큰</div>
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">珥??좏겙</div>
                   <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashTotalTokens">...</div>
                 </div>
                 <div class="dash-card"
                   style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
-                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">예상 비용</div>
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">?덉긽 鍮꾩슜</div>
                   <div style="font-size:16px;font-weight:700;color:var(--accent)" id="dashTotalCost">...</div>
                 </div>
                 <div class="dash-card"
                   style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
-                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">실행 횟수</div>
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">?ㅽ뻾 ?잛닔</div>
                   <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashRunCount">...</div>
                 </div>
                 <div class="dash-card"
                   style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px">
-                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">채팅 세션</div>
+                  <div style="font-size:9px;color:var(--muted);margin-bottom:2px">梨꾪똿 ?몄뀡</div>
                   <div style="font-size:16px;font-weight:700;color:var(--text)" id="dashSessionCount">...</div>
                 </div>
               </div>
 
-              <!-- 모델별 사용량 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">🤖 모델별 사용량</div>
+              <!-- 紐⑤뜽蹂??ъ슜??-->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?쨼 紐⑤뜽蹂??ъ슜??/div>
               <div id="dashModelBreakdown"
                 style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto">
-                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">?곗씠?곕? 遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
-              <!-- 에이전트별 사용량 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">👤 에이전트별 사용량</div>
+              <!-- ?먯씠?꾪듃蹂??ъ슜??-->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?뫀 ?먯씠?꾪듃蹂??ъ슜??/div>
               <div id="dashAgentBreakdown"
                 style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto">
-                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">?곗씠?곕? 遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
-              <!-- 최근 실행 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📋 최근 실행</div>
+              <!-- 理쒓렐 ?ㅽ뻾 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?뱥 理쒓렐 ?ㅽ뻾</div>
               <div id="dashRecentRuns"
                 style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow-y:auto;font-size:10px">
-                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">?곗씠?곕? 遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
-              <!-- ⚙️ Config Score Section -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin:8px 0 4px">⚙️ 설정 완성도 점수 <button
+              <!-- ?숋툘 Config Score Section -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin:8px 0 4px">?숋툘 ?ㅼ젙 ?꾩꽦???먯닔 <button
                   class="cron-btn run" style="padding:2px 6px;font-size:9px;margin-left:6px"
-                  onclick="refreshConfigScore()">🔄</button></div>
+                  onclick="refreshConfigScore()">?봽</button></div>
               <div id="scoreContainer"></div>
 
             </div>
           </div>
 
-          <!-- ── GIT PANEL ── -->
+          <!-- ?? GIT PANEL ?? -->
           <div class="panel-view" id="panelGit">
             <div class="panel-header-simple">
-              <span class="panel-header-title">🔀 Git 자동화</span>
-              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadGitPanel()">🔄
-                새로고침</button>
+              <span class="panel-header-title">?? Git ?먮룞??/span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadGitPanel()">?봽
+                ?덈줈怨좎묠</button>
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
 
-              <!-- 상태 요약 -->
+              <!-- ?곹깭 ?붿빟 -->
               <div id="gitSummary" style="display:flex;gap:8px;flex-wrap:wrap">
-                <span style="font-size:10px;color:var(--muted)">브랜치:</span>
+                <span style="font-size:10px;color:var(--muted)">釉뚮옖移?</span>
                 <span id="gitBranch" style="font-size:10px;font-weight:600;color:var(--text)">...</span>
-                <span style="font-size:10px;color:var(--muted);margin-left:8px">커밋:</span>
+                <span style="font-size:10px;color:var(--muted);margin-left:8px">而ㅻ컠:</span>
                 <span id="gitCommitShort"
                   style="font-size:10px;font-weight:600;color:var(--text);font-family:monospace">...</span>
                 <span id="gitAheadBehind" style="font-size:10px;color:var(--muted)"></span>
               </div>
 
-              <!-- 액션 버튼 -->
+              <!-- ?≪뀡 踰꾪듉 -->
               <div style="display:flex;gap:6px;flex-wrap:wrap">
                 <button class="action-btn" onclick="gitPull()"
-                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">⬇️
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">燧뉛툘
                   Pull</button>
                 <button class="action-btn" onclick="gitPush()"
-                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">⬆️
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">燧놅툘
                   Push</button>
                 <button class="action-btn" id="gitCommitBtn" onclick="gitCommit()"
-                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer">✅
+                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer">??
                   Commit</button>
               </div>
 
-              <!-- 커밋 메시지 -->
+              <!-- 而ㅻ컠 硫붿떆吏 -->
               <div id="gitCommitMsgWrap" style="display:none">
-                <input id="gitCommitMsg" placeholder="커밋 메시지 입력..."
+                <input id="gitCommitMsg" placeholder="而ㅻ컠 硫붿떆吏 ?낅젰..."
                   style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;margin-top:4px">
                 <div style="display:flex;gap:4px;margin-top:4px">
                   <button class="action-btn" onclick="gitCommit()"
-                    style="background:var(--success);color:#fff;border:none;padding:3px 10px;border-radius:6px;font-size:10px">확인</button>
+                    style="background:var(--success);color:#fff;border:none;padding:3px 10px;border-radius:6px;font-size:10px">?뺤씤</button>
                   <button class="action-btn" onclick="document.getElementById('gitCommitMsgWrap').style.display='none'"
-                    style="background:var(--bg2);color:var(--muted);border:1px solid var(--border);padding:3px 10px;border-radius:6px;font-size:10px">취소</button>
+                    style="background:var(--bg2);color:var(--muted);border:1px solid var(--border);padding:3px 10px;border-radius:6px;font-size:10px">痍⑥냼</button>
                 </div>
               </div>
 
-              <!-- 변경된 파일 목록 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">📁 변경된 파일</div>
+              <!-- 蹂寃쎈맂 ?뚯씪 紐⑸줉 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">?뱚 蹂寃쎈맂 ?뚯씪</div>
               <div id="gitChangedFiles"
                 style="display:flex;flex-direction:column;gap:2px;max-height:300px;overflow-y:auto;font-size:10px">
-                <div style="padding:8px;color:var(--muted);font-size:11px">데이터를 불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">?곗씠?곕? 遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
-              <!-- Diff 출력 -->
+              <!-- Diff 異쒕젰 -->
               <div id="gitDiffOutput"
                 style="display:none;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:400px;overflow:auto;font-family:monospace;font-size:10px;white-space:pre-wrap;color:var(--text)">
               </div>
 
-              <!-- Git 결과 메시지 -->
+              <!-- Git 寃곌낵 硫붿떆吏 -->
               <div id="gitResult" style="display:none;padding:8px;border-radius:6px;font-size:11px"></div>
 
             </div>
           </div>
 
-          <!-- ── BROWSER AUTOMATION PANEL ── -->
+          <!-- ?? BROWSER AUTOMATION PANEL ?? -->
           <div class="panel-view" id="panelBrowser">
             <div class="panel-header-simple">
-              <span class="panel-header-title">🌐 브라우저 자동화</span>
+              <span class="panel-header-title">?뙋 釉뚮씪?곗? ?먮룞??/span>
               <div style="display:flex;gap:4px;">
-                <span id="browserStatus" style="font-size:10px;color:var(--muted);line-height:1.8">⚫ 연결 안 됨</span>
-                <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadBrowserPanel()">🔄
-                  상태</button>
+                <span id="browserStatus" style="font-size:10px;color:var(--muted);line-height:1.8">???곌껐 ????/span>
+                <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadBrowserPanel()">?봽
+                  ?곹깭</button>
               </div>
             </div>
             <div class="panel-body-scroll" style="gap:6px;padding:8px;">
 
-              <!-- URL 입력 + 이동 -->
+              <!-- URL ?낅젰 + ?대룞 -->
               <div style="display:flex;gap:4px;">
                 <input id="browserUrlInput" placeholder="https://example.com"
                   style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;font-family:monospace">
                 <button class="action-btn" onclick="browserNavigate()"
-                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap">▶
-                  이동</button>
+                  style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap">??
+                  ?대룞</button>
               </div>
 
-              <!-- 액션 버튼 -->
+              <!-- ?≪뀡 踰꾪듉 -->
               <div style="display:flex;gap:6px;flex-wrap:wrap">
                 <button class="action-btn" onclick="browserSnapshot()"
-                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">📸
-                  스냅샷</button>
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">?벝
+                  ?ㅻ깄??/button>
                 <button class="action-btn" onclick="browserScreenshot()"
-                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">🖼️
-                  스크린샷</button>
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">?뼹截?
+                  ?ㅽ겕由곗꺑</button>
                 <button class="action-btn" onclick="browserClose()"
-                  style="background:var(--bg2);color:var(--danger);border:1px solid var(--danger);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">✕
-                  닫기</button>
+                  style="background:var(--bg2);color:var(--danger);border:1px solid var(--danger);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">??
+                  ?リ린</button>
               </div>
 
-              <!-- 결과 메시지 -->
+              <!-- 寃곌낵 硫붿떆吏 -->
               <div id="browserResult"
                 style="display:none;padding:6px 8px;border-radius:4px;font-size:10px;background:var(--bg2)"></div>
 
-              <!-- 요소 입력 -->
+              <!-- ?붿냼 ?낅젰 -->
               <div style="display:flex;gap:4px;margin-top:4px">
-                <input id="browserTypeRef" placeholder="ref (예: @e0)"
+                <input id="browserTypeRef" placeholder="ref (?? @e0)"
                   style="width:80px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px;font-family:monospace">
-                <input id="browserTypeValue" placeholder="입력할 텍스트..."
+                <input id="browserTypeValue" placeholder="?낅젰???띿뒪??.."
                   style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px">
                 <button class="action-btn" onclick="browserTypeText()"
-                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap">⌨️
-                  입력</button>
+                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap">?⑨툘
+                  ?낅젰</button>
               </div>
 
-              <!-- JavaScript 실행 -->
+              <!-- JavaScript ?ㅽ뻾 -->
               <div style="display:flex;gap:4px;">
                 <input id="browserJSInput" placeholder="document.title"
                   style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);font-size:10px;font-family:monospace">
                 <button class="action-btn" onclick="browserExecuteJS()"
                   style="background:var(--bg2);color:var(--accent);border:1px solid var(--accent);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap">JS
-                  실행</button>
+                  ?ㅽ뻾</button>
               </div>
               <div id="browserJSOutput"
                 style="display:none;background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:6px;font-family:monospace;font-size:10px;white-space:pre-wrap;max-height:120px;overflow:auto;color:var(--text)">
               </div>
 
-              <!-- 인터랙티브 요소 목록 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">🔍 인터랙티브 요소</div>
+              <!-- ?명꽣?숉떚釉??붿냼 紐⑸줉 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:4px">?뵇 ?명꽣?숉떚釉??붿냼</div>
               <div id="browserElementsList"
                 style="display:flex;flex-direction:column;gap:2px;max-height:250px;overflow-y:auto;font-size:10px">
-                <div style="padding:8px;color:var(--muted);font-size:11px">페이지를 먼저 열어주세요.</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">?섏씠吏瑜?癒쇱? ?댁뼱二쇱꽭??</div>
               </div>
 
-              <!-- 스크린샷 미리보기 -->
+              <!-- ?ㅽ겕由곗꺑 誘몃━蹂닿린 -->
               <div id="browserScreenshot"
                 style="display:none;margin-top:4px;border:1px solid var(--border);border-radius:4px;overflow:hidden">
               </div>
 
-              <!-- 페이지 텍스트 -->
+              <!-- ?섏씠吏 ?띿뒪??-->
               <details style="margin-top:4px">
-                <summary style="font-size:10px;color:var(--muted);cursor:pointer">📄 페이지 텍스트</summary>
+                <summary style="font-size:10px;color:var(--muted);cursor:pointer">?뱞 ?섏씠吏 ?띿뒪??/summary>
                 <div id="browserPageText"
                   style="background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:10px;white-space:pre-wrap;max-height:300px;overflow:auto;color:var(--text);margin-top:4px">
                 </div>
@@ -680,62 +680,62 @@
             </div>
           </div>
 
-          <!-- ── DOCS PANEL ── -->
+          <!-- ?? DOCS PANEL ?? -->
           <div class="panel-view" id="panelDocs">
             <div class="panel-header-simple">
-              <span class="panel-header-title">📄 자동 문서화</span>
-              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDocsPanel()">🔄
-                새로고침</button>
+              <span class="panel-header-title">?뱞 ?먮룞 臾몄꽌??/span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadDocsPanel()">?봽
+                ?덈줈怨좎묠</button>
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
 
-              <!-- 문서 유형 선택 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📋 생성할 문서 유형</div>
+              <!-- 臾몄꽌 ?좏삎 ?좏깮 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?뱥 ?앹꽦??臾몄꽌 ?좏삎</div>
               <div id="docsTypeCheckboxes" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
-                    type="checkbox" value="readme" checked onchange="updateDocsGenerateBtn()"> README.md - 프로젝트
-                  개요</label>
+                    type="checkbox" value="readme" checked onchange="updateDocsGenerateBtn()"> README.md - ?꾨줈?앺듃
+                  媛쒖슂</label>
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
                     type="checkbox" value="architecture" checked onchange="updateDocsGenerateBtn()"> ARCHITECTURE.md -
-                  시스템
-                  아키텍처</label>
+                  ?쒖뒪??
+                  ?꾪궎?띿쿂</label>
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
-                    type="checkbox" value="api" onchange="updateDocsGenerateBtn()"> API 문서 - 엔드포인트 명세</label>
+                    type="checkbox" value="api" onchange="updateDocsGenerateBtn()"> API 臾몄꽌 - ?붾뱶?ъ씤??紐낆꽭</label>
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
-                    type="checkbox" value="modules" onchange="updateDocsGenerateBtn()"> 모듈 문서 - 클래스/함수 설명</label>
+                    type="checkbox" value="modules" onchange="updateDocsGenerateBtn()"> 紐⑤뱢 臾몄꽌 - ?대옒???⑥닔 ?ㅻ챸</label>
                 <label
                   style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer"><input
-                    type="checkbox" value="config" onchange="updateDocsGenerateBtn()"> 설정 가이드 - config.yaml/.env</label>
+                    type="checkbox" value="config" onchange="updateDocsGenerateBtn()"> ?ㅼ젙 媛?대뱶 - config.yaml/.env</label>
               </div>
 
-              <!-- 출력 디렉토리 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📁 출력 디렉토리</div>
+              <!-- 異쒕젰 ?붾젆?좊━ -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?뱚 異쒕젰 ?붾젆?좊━</div>
               <div style="display:flex;gap:4px;margin-bottom:8px">
                 <input id="docsOutputDir" placeholder="docs" value="docs"
                   style="flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:11px;font-family:monospace">
-                <button onclick="browseDocsOutputDir()" title="폴더 찾기"
-                  style="background:var(--bg3);color:var(--text);border:1px solid var(--border2);padding:6px 8px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">📁
-                  찾기</button>
+                <button onclick="browseDocsOutputDir()" title="?대뜑 李얘린"
+                  style="background:var(--bg3);color:var(--text);border:1px solid var(--border2);padding:6px 8px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">?뱚
+                  李얘린</button>
               </div>
 
-              <!-- 생성 버튼 -->
+              <!-- ?앹꽦 踰꾪듉 -->
               <div style="display:flex;gap:4px;margin-bottom:8px">
                 <button id="docsGenerateBtn" class="action-btn" onclick="generateDocs()"
-                  style="background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;flex:1">🚀
-                  문서 생성하기 (2개 유형)</button>
+                  style="background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;flex:1">??
+                  臾몄꽌 ?앹꽦?섍린 (2媛??좏삎)</button>
                 <button onclick="resetDocsPanel()"
-                  style="background:var(--bg3);color:var(--muted);border:1px solid var(--border2);padding:8px 10px;border-radius:8px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">🔄
-                  초기화</button>
+                  style="background:var(--bg3);color:var(--muted);border:1px solid var(--border2);padding:8px 10px;border-radius:8px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">?봽
+                  珥덇린??/button>
               </div>
 
-              <!-- 진행 상태 -->
+              <!-- 吏꾪뻾 ?곹깭 -->
               <div id="docsProgress" style="display:none;margin-bottom:8px">
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                  <span id="docsProgressLabel" style="font-size:10px;color:var(--muted)">준비 중...</span>
+                  <span id="docsProgressLabel" style="font-size:10px;color:var(--muted)">以鍮?以?..</span>
                   <span id="docsProgressPercent" style="font-size:10px;color:var(--accent)">0%</span>
                 </div>
                 <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
@@ -745,103 +745,103 @@
                 </div>
               </div>
 
-              <!-- 결과 메시지 -->
+              <!-- 寃곌낵 硫붿떆吏 -->
               <div id="docsResult" style="display:none;padding:8px;border-radius:6px;font-size:11px;margin-bottom:8px">
               </div>
 
-              <!-- 생성된 문서 목록 -->
-              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">📑 생성된 문서</div>
+              <!-- ?앹꽦??臾몄꽌 紐⑸줉 -->
+              <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:2px">?뱫 ?앹꽦??臾몄꽌</div>
               <div id="docsList"
                 style="display:flex;flex-direction:column;gap:4px;max-height:350px;overflow-y:auto;font-size:10px">
-                <div style="padding:8px;color:var(--muted);font-size:11px">문서를 불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:11px">臾몄꽌瑜?遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
             </div>
           </div>
 
-          <!-- ── MCP PANEL (Model Context Protocol) ── -->
+          <!-- ?? MCP PANEL (Model Context Protocol) ?? -->
           <div class="panel-view" id="panelMcp">
             <div class="panel-header-simple">
-              <span class="panel-header-title">🔌 MCP 서버</span>
-              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="refreshMcpServers()">🔄
-                새로고침</button>
+              <span class="panel-header-title">?뵆 MCP ?쒕쾭</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="refreshMcpServers()">?봽
+                ?덈줈怨좎묠</button>
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
-              <!-- 서버 목록 -->
+              <!-- ?쒕쾭 紐⑸줉 -->
               <div id="mcpServerList" style="display:flex;flex-direction:column;gap:4px;">
-                <div style="padding:12px;color:var(--muted);text-align:center;font-size:13px;">로딩 중...</div>
+                <div style="padding:12px;color:var(--muted);text-align:center;font-size:13px;">濡쒕뵫 以?..</div>
               </div>
 
-              <!-- ── MCP 추천 섹션 ── -->
+              <!-- ?? MCP 異붿쿇 ?뱀뀡 ?? -->
               <div id="mcpRecommendSection"
                 style="background:var(--bg2);border-radius:8px;padding:8px;display:none;flex-direction:column;gap:6px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                  <span style="font-size:12px;font-weight:600;color:var(--text);">🤖 워크스페이스 분석 추천</span>
-                  <button class="cron-btn run" style="padding:2px 6px;font-size:10px" onclick="runMcpRecommend()">🔄
-                    분석</button>
+                  <span style="font-size:12px;font-weight:600;color:var(--text);">?쨼 ?뚰겕?ㅽ럹?댁뒪 遺꾩꽍 異붿쿇</span>
+                  <button class="cron-btn run" style="padding:2px 6px;font-size:10px" onclick="runMcpRecommend()">?봽
+                    遺꾩꽍</button>
                 </div>
                 <div id="mcpRecommendList" style="display:flex;flex-direction:column;gap:4px;"></div>
               </div>
 
-              <!-- 도구 실행 결과 -->
+              <!-- ?꾧뎄 ?ㅽ뻾 寃곌낵 -->
               <div id="mcpToolResult" style="display:none;margin-top:8px;"></div>
 
-              <!-- 커스텀 서버 추가 폼 -->
-              <button class="action-btn" onclick="toggleMcpCustomForm()" style="margin-top:8px;width:100%;">➕ 직접
-                추가</button>
+              <!-- 而ㅼ뒪? ?쒕쾭 異붽? ??-->
+              <button class="action-btn" onclick="toggleMcpCustomForm()" style="margin-top:8px;width:100%;">??吏곸젒
+                異붽?</button>
               <div id="mcpCustomForm"
                 style="display:none;background:var(--bg2);border-radius:8px;padding:8px;gap:6px;flex-direction:column;">
-                <input id="mcpCustomId" placeholder="Server ID (예: my-server)"
+                <input id="mcpCustomId" placeholder="Server ID (?? my-server)"
                   style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
-                <input id="mcpCustomCmd" placeholder="Command (예: npx)"
+                <input id="mcpCustomCmd" placeholder="Command (?? npx)"
                   style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
-                <input id="mcpCustomArgs" placeholder="Args (예: -y @anthropic/mcp-server-filesystem .)"
+                <input id="mcpCustomArgs" placeholder="Args (?? -y @anthropic/mcp-server-filesystem .)"
                   style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
-                <input id="mcpCustomLabel" placeholder="Label (표시 이름)"
+                <input id="mcpCustomLabel" placeholder="Label (?쒖떆 ?대쫫)"
                   style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;" />
                 <button class="action-btn" onclick="addMcpCustomServer()"
-                  style="background:var(--success);color:white;">추가</button>
+                  style="background:var(--success);color:white;">異붽?</button>
               </div>
 
-              <!-- 프리셋 목록 -->
+              <!-- ?꾨━??紐⑸줉 -->
               <div
                 style="font-size:13px;font-weight:600;margin-top:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;">
-                <span>🏪 커뮤니티 MCP 허브 (스토어)</span>
+                <span>?룵 而ㅻ??덊떚 MCP ?덈툕 (?ㅽ넗??</span>
               </div>
-              <input id="mcpPresetSearch" placeholder="🔍 MCP 검색..." oninput="filterMcpPresets()"
+              <input id="mcpPresetSearch" placeholder="?뵇 MCP 寃??.." oninput="filterMcpPresets()"
                 style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;margin-bottom:4px;font-size:11px;" />
               <div id="mcpPresetList" style="display:flex;flex-direction:column;gap:4px;">
-                <div style="padding:8px;color:var(--muted);text-align:center;">로딩 중...</div>
+                <div style="padding:8px;color:var(--muted);text-align:center;">濡쒕뵫 以?..</div>
               </div>
             </div>
           </div>
 
-          <!-- ── INTEGRATIONS PANEL (Slack & Notion) ── -->
+          <!-- ?? INTEGRATIONS PANEL (Slack & Notion) ?? -->
           <div class="panel-view" id="panelIntegrations">
             <div class="panel-header-simple">
-              <span class="panel-header-title">🔗 Slack & Notion 연동</span>
-              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadIntegrationsPanel()">🔄
-                새로고침</button>
+              <span class="panel-header-title">?뵕 Slack & Notion ?곕룞</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="loadIntegrationsPanel()">?봽
+                ?덈줈怨좎묠</button>
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
 
               <!-- Slack Section -->
               <div id="integrationSlackConfig"
                 style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
-                <div style="padding:8px;color:var(--muted);font-size:10px">불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:10px">遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
               <!-- Slack Send Form -->
               <div style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
-                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">📤 Slack 메시지 전송</div>
-                <textarea id="intSlackMessage" placeholder="전송할 메시지를 입력하세요 (Markdown 지원)..."
+                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">?뱾 Slack 硫붿떆吏 ?꾩넚</div>
+                <textarea id="intSlackMessage" placeholder="?꾩넚??硫붿떆吏瑜??낅젰?섏꽭??(Markdown 吏??..."
                   style="width:100%;height:80px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);color:var(--text);font-size:11px;resize:vertical;margin-bottom:4px;font-family:monospace"></textarea>
                 <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
-                  <input id="intSlackChannelSelect" type="text" placeholder="채널 (기본값 사용)"
+                  <input id="intSlackChannelSelect" type="text" placeholder="梨꾨꼸 (湲곕낯媛??ъ슜)"
                     style="flex:1;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace">
                   <button class="cron-btn run" style="padding:4px 10px;font-size:10px;white-space:nowrap"
-                    onclick="sendToSlack()">📤
-                    전송</button>
+                    onclick="sendToSlack()">?뱾
+                    ?꾩넚</button>
                 </div>
                 <div id="intSlackResult"
                   style="display:none;padding:6px;border-radius:4px;font-size:10px;word-break:break-all"></div>
@@ -850,22 +850,22 @@
               <!-- Notion Section -->
               <div id="integrationNotionConfig"
                 style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
-                <div style="padding:8px;color:var(--muted);font-size:10px">불러오는 중...</div>
+                <div style="padding:8px;color:var(--muted);font-size:10px">遺덈윭?ㅻ뒗 以?..</div>
               </div>
 
               <!-- Notion Create Form -->
               <div style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px">
-                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">📝 Notion 페이지 생성</div>
-                <input id="intNotionTitle" type="text" placeholder="페이지 제목..."
+                <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:4px">?뱷 Notion ?섏씠吏 ?앹꽦</div>
+                <input id="intNotionTitle" type="text" placeholder="?섏씠吏 ?쒕ぉ..."
                   style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace;margin-bottom:4px">
-                <textarea id="intNotionContent" placeholder="페이지 본문 (Markdown 지원)..."
+                <textarea id="intNotionContent" placeholder="?섏씠吏 蹂몃Ц (Markdown 吏??..."
                   style="width:100%;height:100px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);color:var(--text);font-size:11px;resize:vertical;margin-bottom:4px;font-family:monospace"></textarea>
                 <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
-                  <input id="intNotionTags" type="text" placeholder="태그 (쉼표 구분)"
+                  <input id="intNotionTags" type="text" placeholder="?쒓렇 (?쇳몴 援щ텇)"
                     style="flex:1;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg1);color:var(--text);font-size:10px;font-family:monospace">
                   <button class="cron-btn run" style="padding:4px 10px;font-size:10px;white-space:nowrap"
-                    onclick="sendToNotion()">📝
-                    생성</button>
+                    onclick="sendToNotion()">?뱷
+                    ?앹꽦</button>
                 </div>
                 <div id="intNotionResult"
                   style="display:none;padding:6px;border-radius:4px;font-size:10px;word-break:break-all"></div>
@@ -877,10 +877,10 @@
         </div>
       </div>
 
-      <!-- ── LEFT RESIZER ── -->
+      <!-- ?? LEFT RESIZER ?? -->
       <div class="resizer" id="resizerLeft"></div>
 
-      <!-- ── MIDDLE PANEL ── -->
+      <!-- ?? MIDDLE PANEL ?? -->
       <div class="middle-panel">
 
         <div class="explorer-inner">
@@ -889,17 +889,17 @@
             <!-- Explorer header -->
             <div class="explorer-header">
               <span class="explorer-label">Explorer</span>
-              <button class="explorer-btn" id="newFileBtn" title="새 파일">+</button>
-              <button class="explorer-btn" id="newDirBtn" title="새 폴더">📁</button>
-              <button class="explorer-btn" id="openFileBtn" title="파일 열기">📂</button>
-              <button class="explorer-btn" id="refreshExplorerBtn" title="새로고침">↻</button>
-              <button class="explorer-btn" id="openFolderBtn" title="폴더 열기">🔗</button>
+              <button class="explorer-btn" id="newFileBtn" title="???뚯씪">+</button>
+              <button class="explorer-btn" id="newDirBtn" title="???대뜑">?뱚</button>
+              <button class="explorer-btn" id="openFileBtn" title="?뚯씪 ?닿린">?뱛</button>
+              <button class="explorer-btn" id="refreshExplorerBtn" title="?덈줈怨좎묠">??/button>
+              <button class="explorer-btn" id="openFolderBtn" title="?대뜑 ?닿린">?뵕</button>
             </div>
 
             <div id="noWorkspaceWelcome" style="display:none;">
-              <div class="no-ws-icon">📂</div>
-              <div class="no-ws-text">세션에 작업공간을<br>선택하세요</div>
-              <button class="open-folder-btn" id="welcomeOpenFolderBtn">폴더 열기</button>
+              <div class="no-ws-icon">?뱛</div>
+              <div class="no-ws-text">?몄뀡???묒뾽怨듦컙??br>?좏깮?섏꽭??/div>
+              <button class="open-folder-btn" id="welcomeOpenFolderBtn">?대뜑 ?닿린</button>
             </div>
             <div id="fileTreeContainer"></div>
           </div>
@@ -922,72 +922,73 @@
               <!-- Browser View (in-canvas) -->
               <div id="browserViewWrap" style="display:none; flex-direction: column; height: 100%;">
                 <div class="browser-url-bar">
-                  <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
-                  <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
-                  <button class="browser-nav-btn" onclick="browserReload()" title="새로고침">↻</button>
+                  <button class="browser-nav-btn" onclick="browserBack()" title="?ㅻ줈">?</button>
+                  <button class="browser-nav-btn" onclick="browserForward()" title="?욎쑝濡?>??/button>
+                  <button class="browser-nav-btn" onclick="browserReload()" title="?덈줈怨좎묠">??/button>
                   <input type="text" id="browserCanvasUrlInput" class="browser-url-input"
-                    placeholder="주소 입력 후 Enter..." />
-                  <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="이동">→</button>
+                    placeholder="二쇱냼 ?낅젰 ??Enter..." />
+                  <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="?대룞">??/button>
+                  <button class="browser-nav-btn" onclick="toggleBrowserView()" title="닫기" style="margin-left:auto; color:var(--danger); font-size: 14px;">✖</button>
                 </div>
                 <div class="browser-main-area">
                   <div class="browser-frame-wrap" id="browserFrameWrap">
                     <iframe id="browserFrame" class="browser-frame" style="display:none"
                       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
                     <div id="browserPlaceholder" class="browser-placeholder">
-                      <div class="browser-placeholder-icon">🌐</div>
-                      <div class="browser-placeholder-text">위에 URL을 입력하고 Enter 를 누르면 브라우저가 열립니다</div>
+                      <div class="browser-placeholder-icon">?뙋</div>
+                      <div class="browser-placeholder-text">?꾩뿉 URL???낅젰?섍퀬 Enter 瑜??꾨Ⅴ硫?釉뚮씪?곗?媛 ?대┰?덈떎</div>
                     </div>
                     <div id="browserFrameError" class="browser-frame-error" style="display:none">
-                      <span>⚠️ 이 사이트는 iframe으로 표시할 수 없습니다 (X-Frame-Options)</span>
+                      <span>?좑툘 ???ъ씠?몃뒗 iframe?쇰줈 ?쒖떆?????놁뒿?덈떎 (X-Frame-Options)</span>
                     </div>
                   </div>
                   <div class="browserai-sidebar" id="browseraiSidebar">
                     <div id="browseraiContext" class="browserai-context"></div>
                     <div id="browseraiSkillsSection" style="display:none">
-                      <div class="browserai-section-title">🧩 추천 스킬</div>
+                      <div class="browserai-section-title">?㎥ 異붿쿇 ?ㅽ궗</div>
                       <div id="browseraiSkills" class="browserai-list"></div>
                     </div>
                     <div id="browseraiActionsSection" style="display:none">
-                      <div class="browserai-section-title">⚡ 빠른 행동</div>
+                      <div class="browserai-section-title">??鍮좊Ⅸ ?됰룞</div>
                       <div id="browseraiActions" class="browserai-list"></div>
                     </div>
                   </div>
                 </div>
               </div>
               <div id="welcomeCanvas">
-                <div class="welcome-icon">⚡</div>
+                <div class="welcome-icon">??/div>
                 <div class="welcome-title">DAON Agent System</div>
-                <div class="welcome-sub">탐색기에서 파일을 선택하거나<br>채팅으로 작업을 시작하세요</div>
+                <div class="welcome-sub">?먯깋湲곗뿉???뚯씪???좏깮?섍굅??br>梨꾪똿?쇰줈 ?묒뾽???쒖옉?섏꽭??/div>
               </div>
 
               <!-- Dynamic Harness Manual Overlay -->
               <div class="harness-manual-overlay" id="harnessManualOverlay">
                 <div class="harness-manual-card">
                   <div class="harness-manual-header">
-                    <h3>🌸 DAON Dynamic Harness 사용 설명서</h3>
+                    <h3>?뙵 DAON Dynamic Harness ?ъ슜 ?ㅻ챸??/h3>
                     <button class="harness-manual-close-btn" id="harnessManualCloseBtn">&times;</button>
                   </div>
                   <div class="harness-manual-body">
                     <div class="harness-manual-section">
-                      <h4>🤖 다이나믹 하네스(Dynamic Harness)란?</h4>
-                      <p>사용자의 요구사항을 해결하기 위해 백그라운드에서 실시간으로 멀티 에이전트(Multi-Agent)들이 협업하여 코딩, 실행, 오류 검증 및 자가 수정을 수행하는 최첨단
-                        오케스트레이션 엔진입니다.</p>
+                      <h4>?쨼 ?ㅼ씠?섎? ?섎꽕??Dynamic Harness)??</h4>
+                      <p>?ъ슜?먯쓽 ?붽뎄?ы빆???닿껐?섍린 ?꾪빐 諛깃렇?쇱슫?쒖뿉???ㅼ떆媛꾩쑝濡?硫???먯씠?꾪듃(Multi-Agent)?ㅼ씠 ?묒뾽?섏뿬 肄붾뵫, ?ㅽ뻾, ?ㅻ쪟 寃利?諛??먭? ?섏젙???섑뻾?섎뒗 理쒖꺼??
+                        ?ㅼ??ㅽ듃?덉씠???붿쭊?낅땲??</p>
                     </div>
                     <div class="harness-manual-section">
-                      <h4>✨ 핵심 기능</h4>
+                      <h4>???듭떖 湲곕뒫</h4>
                       <ul>
-                        <li><strong>코드 자동 생성 및 검증</strong>: 코드를 자동으로 작성하고 실행하여 컴파일 오류나 실행 에러를 자가 감지 및 수정합니다.</li>
-                        <li><strong>실시간 에이전트 로그 스트리밍</strong>: 에이전트들의 세부 작업 로그가 하단의 <strong>CLI Console</strong>에 실시간으로
-                          출력됩니다.</li>
-                        <li><strong>작업공간 자동 갱신</strong>: 에이전트의 작업이 완료되면 탐색기와 에디터에 결과가 즉시 동기화됩니다.</li>
+                        <li><strong>肄붾뱶 ?먮룞 ?앹꽦 諛?寃利?/strong>: 肄붾뱶瑜??먮룞?쇰줈 ?묒꽦?섍퀬 ?ㅽ뻾?섏뿬 而댄뙆???ㅻ쪟???ㅽ뻾 ?먮윭瑜??먭? 媛먯? 諛??섏젙?⑸땲??</li>
+                        <li><strong>?ㅼ떆媛??먯씠?꾪듃 濡쒓렇 ?ㅽ듃由щ컢</strong>: ?먯씠?꾪듃?ㅼ쓽 ?몃? ?묒뾽 濡쒓렇媛 ?섎떒??<strong>CLI Console</strong>???ㅼ떆媛꾩쑝濡?
+                          異쒕젰?⑸땲??</li>
+                        <li><strong>?묒뾽怨듦컙 ?먮룞 媛깆떊</strong>: ?먯씠?꾪듃???묒뾽???꾨즺?섎㈃ ?먯깋湲곗? ?먮뵒?곗뿉 寃곌낵媛 利됱떆 ?숆린?붾맗?덈떎.</li>
                       </ul>
                     </div>
                     <div class="harness-manual-section">
-                      <h4>🚀 사용 방법</h4>
+                      <h4>?? ?ъ슜 諛⑸쾿</h4>
                       <ul>
-                        <li><strong>방법 1 (우측 채팅 패널)</strong>: 일반 대화 창에 작업 지시사항을 입력하여 자연스럽게 에이전트를 구동합니다.</li>
-                        <li><strong>방법 2 (하단 CLI 콘솔)</strong>: CLI 입력창에 <code>run [작업내용]</code>을 직접 실행합니다.<br>(예시:
-                          <code>run index.html 파일 검토해줘</code>)
+                        <li><strong>諛⑸쾿 1 (?곗륫 梨꾪똿 ?⑤꼸)</strong>: ?쇰컲 ???李쎌뿉 ?묒뾽 吏?쒖궗??쓣 ?낅젰?섏뿬 ?먯뿰?ㅻ읇寃??먯씠?꾪듃瑜?援щ룞?⑸땲??</li>
+                        <li><strong>諛⑸쾿 2 (?섎떒 CLI 肄섏넄)</strong>: CLI ?낅젰李쎌뿉 <code>run [?묒뾽?댁슜]</code>??吏곸젒 ?ㅽ뻾?⑸땲??<br>(?덉떆:
+                          <code>run index.html ?뚯씪 寃?좏빐以?/code>)
                         </li>
                       </ul>
                     </div>
@@ -995,9 +996,9 @@
                   <div class="harness-manual-footer">
                     <label class="harness-manual-dontshow">
                       <input type="checkbox" id="harnessManualHideCheck" />
-                      다시 보지 않기
+                      ?ㅼ떆 蹂댁? ?딄린
                     </label>
-                    <button class="harness-manual-confirm-btn" id="harnessManualConfirmBtn">확인하고 시작하기</button>
+                    <button class="harness-manual-confirm-btn" id="harnessManualConfirmBtn">?뺤씤?섍퀬 ?쒖옉?섍린</button>
                   </div>
                 </div>
               </div>
@@ -1010,7 +1011,7 @@
             <div class="cli-console" id="cliConsole">
               <div class="console-header" id="consoleHeader">
                 <div class="console-title" id="consoleTitleBtn">
-                  <span class="console-toggle-icon">▶</span> CLI Console
+                  <span class="console-toggle-icon">??/span> CLI Console
                 </div>
                 <div class="console-actions">
                   <span class="console-action-label">agent output stream</span>
@@ -1021,7 +1022,7 @@
               <div class="console-body" id="consoleBody"></div>
               <div class="console-input-row">
                 <span class="console-prompt">&gt;</span>
-                <input type="text" id="consoleInput" placeholder="명령어를 입력하세요 (도움말: help 또는 우측의 help 버튼) ..."
+                <input type="text" id="consoleInput" placeholder="紐낅졊?대? ?낅젰?섏꽭??(?꾩?留? help ?먮뒗 ?곗륫??help 踰꾪듉) ..."
                   autocomplete="off" />
               </div>
             </div>
@@ -1029,91 +1030,91 @@
         </div>
       </div>
 
-      <!-- ── RIGHT RESIZER ── -->
+      <!-- ?? RIGHT RESIZER ?? -->
       <div class="resizer" id="resizerRight"></div>
 
-      <!-- ── RIGHT PANEL (Chat) ── -->
+      <!-- ?? RIGHT PANEL (Chat) ?? -->
       <div class="right-panel">
         <!-- Roo-style Agent Mode tabs -->
         <div class="mode-tabs" id="modeTabs">
           <button class="agent-mode-tab active" data-mode="code" onclick="switchAgentMode('code')"
-            title="💻 Code: 모든 파일에 대해 코드 작성, 수정, 리팩토링">💻</button>
+            title="?뮲 Code: 紐⑤뱺 ?뚯씪?????肄붾뱶 ?묒꽦, ?섏젙, 由ы뙥?좊쭅">?뮲</button>
           <button class="agent-mode-tab" data-mode="architect" onclick="switchAgentMode('architect')"
-            title="🏗️ Architect: 설계, 기획, 전략 수립 — 마크다운 파일만 수정 가능">🏗️</button>
+            title="?룛截?Architect: ?ㅺ퀎, 湲고쉷, ?꾨왂 ?섎┰ ??留덊겕?ㅼ슫 ?뚯씪留??섏젙 媛??>?룛截?/button>
           <button class="agent-mode-tab" data-mode="debug" onclick="switchAgentMode('debug')"
-            title="🪲 Debug: 문제 진단, 로깅 추가, 스택 트레이스 분석">🪲</button>
+            title="?げ Debug: 臾몄젣 吏꾨떒, 濡쒓퉭 異붽?, ?ㅽ깮 ?몃젅?댁뒪 遺꾩꽍">?げ</button>
           <button class="agent-mode-tab" data-mode="ask" onclick="switchAgentMode('ask')"
-            title="❓ Ask: 읽기 전용 — 설명과 분석만 수행">❓</button>
+            title="??Ask: ?쎄린 ?꾩슜 ???ㅻ챸怨?遺꾩꽍留??섑뻾">??/button>
           <button class="agent-mode-tab" data-mode="orchestrator" onclick="switchAgentMode('orchestrator')"
-            title="🪃 Orchestrator: 도메인 간 멀티 에이전트 워크플로 조정">🪃</button>
+            title="?챶 Orchestrator: ?꾨찓??媛?硫???먯씠?꾪듃 ?뚰겕?뚮줈 議곗젙">?챶</button>
           <button class="agent-mode-tab" data-mode="review" onclick="switchAgentMode('review')"
-            title="👁️ Review: 코드 변경사항 검토 및 피드백 — 읽기 전용">👁️</button>
+            title="?몓截?Review: 肄붾뱶 蹂寃쎌궗??寃??諛??쇰뱶諛????쎄린 ?꾩슜">?몓截?/button>
           <button class="agent-mode-tab" data-mode="test" onclick="switchAgentMode('test')"
-            title="🧪 Test: 테스트 작성 및 실행 — 테스트 파일만 수정 가능">🧪</button>
+            title="?㎦ Test: ?뚯뒪???묒꽦 諛??ㅽ뻾 ???뚯뒪???뚯씪留??섏젙 媛??>?㎦</button>
         </div>
 
         <!-- View switcher (Chat / Debate / Harness) -->
         <div class="mode-tabs">
-          <button class="mode-tab-btn active" id="modeChatBtn">💬 Chat</button>
+          <button class="mode-tab-btn active" id="modeChatBtn">?뮠 Chat</button>
           <button class="mode-tab-btn" id="toggleDebateModeBtn" onclick="switchMode('debate')"
-            style="color:var(--accent);">⚖️ 토론</button>
-          <button class="mode-tab-btn" id="modeHarnessBtn">⚡ Harness</button>
+            style="color:var(--accent);">?뽳툘 ?좊줎</button>
+          <button class="mode-tab-btn" id="modeHarnessBtn">??Harness</button>
         </div>
         <div
           style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">
-          <span id="currentModeName">💻 Code Mode</span>
+          <span id="currentModeName">?뮲 Code Mode</span>
         </div>
 
         <!-- Chat Mode Content -->
         <div id="chatModeContent">
           <div id="chatMessages"></div>
           <div id="debateMessages" style="display:none;"></div>
-          <button id="cancelStreamBtn">■ 취소</button>
+          <button id="cancelStreamBtn">??痍⑥냼</button>
           <div class="chat-input-area" id="chatInputArea">
-            <!-- 업로드 프로그레스 바 -->
+            <!-- ?낅줈???꾨줈洹몃젅??諛?-->
             <div class="upload-bar-wrap" id="uploadBarWrap"
               style="display:none; height:3px; background:var(--border); border-radius:3px; overflow:hidden; margin-bottom:4px;">
               <div class="upload-bar" id="uploadBar"
                 style="height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); width:0%;"></div>
             </div>
-            <!-- 첨부 파일 칩 영역 -->
+            <!-- 泥⑤? ?뚯씪 移??곸뿭 -->
             <div id="attachTray" style="display:none; flex-wrap:wrap; gap:6px; padding:4px 0;"></div>
 
-            <!-- 음성 입력 상태 표시 -->
-            <div class="mic-status" id="voiceMicStatus" style="display:none"><span class="mic-dot"></span> 듣는 중…</div>
+            <!-- ?뚯꽦 ?낅젰 ?곹깭 ?쒖떆 -->
+            <div class="mic-status" id="voiceMicStatus" style="display:none"><span class="mic-dot"></span> ?ｋ뒗 以묅?/div>
 
-            <!-- 🤖 모드 제안 바 (사용자 입력 분석 후 자동 표시) -->
+            <!-- ?쨼 紐⑤뱶 ?쒖븞 諛?(?ъ슜???낅젰 遺꾩꽍 ???먮룞 ?쒖떆) -->
             <div class="mode-suggestion-bar" id="modeSuggestionBar" style="display:none;">
               <div class="mode-suggestion-header">
-                <span class="mode-suggestion-icon">🤔</span>
-                <span class="mode-suggestion-label">어떤 작업을 도와드릴까요?</span>
-                <button class="mode-suggestion-close" onclick="hideModeSuggestions()" title="닫기">✕</button>
+                <span class="mode-suggestion-icon">?쨺</span>
+                <span class="mode-suggestion-label">?대뼡 ?묒뾽???꾩??쒕┫源뚯슂?</span>
+                <button class="mode-suggestion-close" onclick="hideModeSuggestions()" title="?リ린">??/button>
               </div>
               <div class="mode-suggestion-body" id="modeSuggestionBody">
-                <!-- JS에서 동적 생성 -->
+                <!-- JS?먯꽌 ?숈쟻 ?앹꽦 -->
               </div>
               <div class="mode-suggestion-footer">
-                <button class="mode-suggestion-default-btn" onclick="sendWithCurrentMode()">현재 모드로 바로 실행</button>
+                <button class="mode-suggestion-default-btn" onclick="sendWithCurrentMode()">?꾩옱 紐⑤뱶濡?諛붾줈 ?ㅽ뻾</button>
               </div>
             </div>
 
             <textarea id="promptInput" rows="2"
-              placeholder="Ask Daon to write code, edit files, or explain…"></textarea>
+              placeholder="Ask Daon to write code, edit files, or explain??></textarea>
             <div class="chat-input-row" style="display:flex; justify-content:space-between; align-items:center;">
-              <!-- 클립 파일 첨부 단추 및 숨겨진 file input -->
+              <!-- ?대┰ ?뚯씪 泥⑤? ?⑥텛 諛??④꺼吏?file input -->
               <div style="display:flex; gap:6px; align-items:center;">
-                <button id="attachBtn" title="파일 첨부"
-                  style="background:var(--bg3); border:1px solid var(--border2); color:var(--text2); border-radius:5px; padding:3px 8px; font-size:12px; cursor:pointer;">📎
-                  파일 첨부</button>
+                <button id="attachBtn" title="?뚯씪 泥⑤?"
+                  style="background:var(--bg3); border:1px solid var(--border2); color:var(--text2); border-radius:5px; padding:3px 8px; font-size:12px; cursor:pointer;">?뱨
+                  ?뚯씪 泥⑤?</button>
 
                 <!-- Planning Mode Toggle -->
-                <label title="자율 플래닝 모드: 켜면 복잡한 작업을 스스로 판단해 승인을 요청합니다."
+                <label title="?먯쑉 ?뚮옒??紐⑤뱶: 耳쒕㈃ 蹂듭옟???묒뾽???ㅼ뒪濡??먮떒???뱀씤???붿껌?⑸땲??"
                   style="margin-left:8px; display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text2); cursor:pointer;">
                   <input type="checkbox" id="planningModeToggle" checked style="cursor:pointer;">
-                  <span style="user-select:none;">플래닝 모드 🧠</span>
+                  <span style="user-select:none;">?뚮옒??紐⑤뱶 ?쭬</span>
                 </label>
 
-                <button class="icon-btn mic-btn" id="voiceMicBtn" title="음성 입력 (Whisper)" style="display:none">
+                <button class="icon-btn mic-btn" id="voiceMicBtn" title="?뚯꽦 ?낅젰 (Whisper)" style="display:none">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="9" y="1" width="6" height="12" rx="3" />
                     <path d="M5 11a7 7 0 0 0 14 0" />
@@ -1124,43 +1125,43 @@
               </div>
               <input type="file" id="fileInput" multiple style="display:none;">
 
-              <button id="sendPromptBtn">전송 ↑</button>
+              <button id="sendPromptBtn">?꾩넚 ??/button>
             </div>
           </div>
 
-          <!-- ⚖️ 토론 설정 영역 (기본 숨김) -->
+          <!-- ?뽳툘 ?좊줎 ?ㅼ젙 ?곸뿭 (湲곕낯 ?④?) -->
           <div class="chat-input-area" id="debateSetupArea"
             style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); background:var(--bg2);">
             <div
               style="font-weight:600; font-size:11px; color:var(--text2); display:flex; justify-content:space-between; align-items:center;">
-              <span>⚖️ 토론 참여 모델 선택 (최소 2개 이상):</span>
+              <span>?뽳툘 ?좊줎 李몄뿬 紐⑤뜽 ?좏깮 (理쒖냼 2媛??댁긽):</span>
             </div>
             <div id="debateModelCheckboxes"
               style="display:flex; flex-wrap:wrap; gap:8px; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px; max-height:90px; overflow-y:auto; width:100%;">
-              <!-- JS에서 동적 로드 -->
+              <!-- JS?먯꽌 ?숈쟻 濡쒕뱶 -->
             </div>
-            <div style="font-weight:600; font-size:11px; color:var(--text2);">토론 주제:</div>
-            <textarea id="debateTopicInput" rows="2" placeholder="AI 모델들이 토론할 주제를 입력하세요..."
+            <div style="font-weight:600; font-size:11px; color:var(--text2);">?좊줎 二쇱젣:</div>
+            <textarea id="debateTopicInput" rows="2" placeholder="AI 紐⑤뜽?ㅼ씠 ?좊줎??二쇱젣瑜??낅젰?섏꽭??.."
               style="width:100%; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; color:var(--text); padding:6px; font-size:11px; outline:none; resize:none; font-family:inherit;"></textarea>
             <div style="display:flex; gap:6px; width:100%;">
               <button class="cron-btn run" onclick="startDebateWorkflow()"
-                style="flex:1; padding:5px; font-size:11px; font-weight:600;">⚖️ 토론 시작</button>
+                style="flex:1; padding:5px; font-size:11px; font-weight:600;">?뽳툘 ?좊줎 ?쒖옉</button>
               <button class="cron-btn" onclick="toggleDebateModeUI(false)"
-                style="flex:1; padding:5px; font-size:11px;">일반
-                대화로</button>
+                style="flex:1; padding:5px; font-size:11px;">?쇰컲
+                ??붾줈</button>
             </div>
           </div>
 
-          <!-- ⚖️ 토론 진행 제어 영역 (기본 숨김) -->
+          <!-- ?뽳툘 ?좊줎 吏꾪뻾 ?쒖뼱 ?곸뿭 (湲곕낯 ?④?) -->
           <div class="chat-input-area" id="debateControlArea"
             style="display:none; padding:12px; gap:8px; border-top:1px solid var(--border); align-items:center; background:var(--bg2);">
             <div id="debateStatusText" style="font-size:11px; color:var(--accent); font-weight:600; text-align:center;">
-              토론을 시작해 주세요.</div>
+              ?좊줎???쒖옉??二쇱꽭??</div>
             <div style="display:flex; gap:6px; width:100%;">
               <button class="cron-btn run" id="debateNextBtn" onclick="proceedDebateRound()"
-                style="flex:1; padding:6px; font-size:11px; display:none;">▶ 다음 라운드 진행</button>
+                style="flex:1; padding:6px; font-size:11px; display:none;">???ㅼ쓬 ?쇱슫??吏꾪뻾</button>
               <button class="cron-btn pause" id="debateCancelBtn" onclick="cancelDebateWorkflow()"
-                style="flex:1; padding:6px; font-size:11px;">✕ 토론 중단</button>
+                style="flex:1; padding:6px; font-size:11px;">???좊줎 以묐떒</button>
             </div>
           </div>
         </div>
@@ -1169,16 +1170,16 @@
         <div id="harnessModeContent">
           <div id="harnessConsole">
             <div class="harness-welcome">
-              <div class="harness-welcome-icon">⚡</div>
+              <div class="harness-welcome-icon">??/div>
               <h4>Dynamic Harness Orchestrator</h4>
-              <p>멀티 에이전트 작업을 실행합니다</p>
+              <p>硫???먯씠?꾪듃 ?묒뾽???ㅽ뻾?⑸땲??/p>
             </div>
           </div>
           <div class="harness-input-area">
-            <textarea id="harnessInput" rows="2" placeholder="실행할 미션을 입력하세요..."></textarea>
+            <textarea id="harnessInput" rows="2" placeholder="?ㅽ뻾??誘몄뀡???낅젰?섏꽭??.."></textarea>
             <div class="harness-btns">
-              <button id="runHarnessBtn">▶ 실행</button>
-              <button id="cancelHarnessBtn">■ 취소</button>
+              <button id="runHarnessBtn">???ㅽ뻾</button>
+              <button id="cancelHarnessBtn">??痍⑥냼</button>
             </div>
           </div>
         </div>
@@ -1196,7 +1197,7 @@
     <div class="modal-panel">
       <div class="modal-header">
         <h3>Settings <span class="score-badge" id="scoreBadge" style="display:none;margin-left:10px;"></span></h3>
-        <button class="modal-close" id="closeSettingsBtn">✕</button>
+        <button class="modal-close" id="closeSettingsBtn">??/button>
       </div>
       <div class="modal-body" id="settingsModalBody">
         <div class="field-group">
@@ -1205,13 +1206,13 @@
         </div>
         <div class="field-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;">
-            <input type="checkbox" id="settingsShowCli" style="width:auto;"> CLI 세션 목록에 표시
+            <input type="checkbox" id="settingsShowCli" style="width:auto;"> CLI ?몄뀡 紐⑸줉???쒖떆
           </label>
         </div>
         <!-- Provider Management Section -->
         <div class="settings-section">
           <div class="settings-section-header">
-            <span>🔌 API Providers</span>
+            <span>?뵆 API Providers</span>
             <button class="settings-add-btn" id="settingsAddProviderBtn" onclick="showAddProviderForm()">+ Add
               Provider</button>
           </div>
@@ -1223,7 +1224,7 @@
         <div class="settings-section" id="settingsAddProviderForm" style="display:none;">
           <div class="settings-section-header">
             <span id="settingsProviderFormTitle">Add Provider</span>
-            <button class="settings-close-btn" onclick="hideAddProviderForm()">✕</button>
+            <button class="settings-close-btn" onclick="hideAddProviderForm()">??/button>
           </div>
           <div class="field-group">
             <label>Provider Preset (optional)</label>
@@ -1248,15 +1249,15 @@
           </div>
           <div style="display:flex;gap:6px;margin-bottom:8px;">
             <button class="settings-action-btn" id="settingsProviderFetchBtn" onclick="fetchProviderModels()"
-              style="flex:1;">🔍 Auto-Detect Models</button>
+              style="flex:1;">?뵇 Auto-Detect Models</button>
             <button class="settings-action-btn settings-action-btn-primary" id="settingsProviderSaveBtn"
-              onclick="saveProvider()" style="flex:1;">💾 Save Provider</button>
+              onclick="saveProvider()" style="flex:1;">?뮶 Save Provider</button>
           </div>
           <div id="settingsProviderFetchResult"
             style="display:none;margin-top:4px;font-size:11px;padding:8px;border-radius:6px;background:var(--bg3);max-height:150px;overflow-y:auto;">
           </div>
         </div>
-        <button class="modal-save-btn" id="saveSettingsBtn">설정 저장</button>
+        <button class="modal-save-btn" id="saveSettingsBtn">?ㅼ젙 ???/button>
       </div>
     </div>
   </div>
@@ -1266,14 +1267,14 @@
     <div class="modal-panel"
       style="max-width: 600px; width: 90%; height: 500px; display: flex; flex-direction: column;">
       <div class="modal-header">
-        <h3 id="webExplorerTitle">폴더 선택</h3>
-        <button class="modal-close" id="closeWebExplorerBtn">✕</button>
+        <h3 id="webExplorerTitle">?대뜑 ?좏깮</h3>
+        <button class="modal-close" id="closeWebExplorerBtn">??/button>
       </div>
       <div class="modal-body"
         style="flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 12px; gap: 8px;">
         <div style="display: flex; gap: 6px; align-items: center;">
-          <button class="action-btn" id="webExplorerParentBtn" title="상위 폴더로 이동" style="padding: 4px 8px;">⬆
-            상위</button>
+          <button class="action-btn" id="webExplorerParentBtn" title="?곸쐞 ?대뜑濡??대룞" style="padding: 4px 8px;">燧?
+            ?곸쐞</button>
           <input type="text" id="webExplorerPathInput"
             style="flex: 1; padding: 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-family: monospace;"
             readonly />
@@ -1285,8 +1286,8 @@
       <div class="modal-footer"
         style="padding: 12px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: var(--panel2); border-radius: 0 0 8px 8px;">
         <button class="action-btn" id="webExplorerSelectBtn"
-          style="background: var(--success); color: white;">선택</button>
-        <button class="action-btn" id="webExplorerCancelBtn">취소</button>
+          style="background: var(--success); color: white;">?좏깮</button>
+        <button class="action-btn" id="webExplorerCancelBtn">痍⑥냼</button>
       </div>
     </div>
   </div>
@@ -1295,19 +1296,19 @@
   <div class="modal-overlay" id="demoSkillModal" style="display:none; z-index: 9998;">
     <div class="modal-panel" style="max-width: 420px; width: 90%;">
       <div class="modal-header">
-        <h3>🎬 Demo → Skill</h3>
-        <button class="modal-close" id="closeDemoSkillBtn">✕</button>
+        <h3>?렗 Demo ??Skill</h3>
+        <button class="modal-close" id="closeDemoSkillBtn">??/button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
 
         <!-- idle: not recording -->
         <div id="demoModalIdle">
-          <div class="demo-hint" style="margin-bottom:10px;">녹화를 시작한 후, 시스템 브라우저에서<br>원하는 동작을 수행하세요.</div>
+          <div class="demo-hint" style="margin-bottom:10px;">?뱁솕瑜??쒖옉???? ?쒖뒪??釉뚮씪?곗??먯꽌<br>?먰븯???숈옉???섑뻾?섏꽭??</div>
           <div style="display:flex;gap:8px;">
             <button class="cron-btn run" id="demoModalStartBtn" onclick="startDemoRecording()"
-              style="flex:1;font-size:12px;">🔴 녹화 시작</button>
+              style="flex:1;font-size:12px;">?뵶 ?뱁솕 ?쒖옉</button>
             <button class="cron-btn" id="demoModalTextBtn" onclick="toggleDemoTextMode()"
-              style="flex:1;font-size:12px;">📝 텍스트 입력</button>
+              style="flex:1;font-size:12px;">?뱷 ?띿뒪???낅젰</button>
           </div>
         </div>
 
@@ -1315,14 +1316,14 @@
         <div id="demoModalRecording" style="display:none;">
           <div class="demo-status-bar" style="margin-bottom:10px;">
             <span class="demo-pulse"></span>
-            <span>녹화 중...</span>
-            <span id="demoModalEventCount" style="font-size:10px;color:var(--muted);margin-left:auto;">0 이벤트</span>
+            <span>?뱁솕 以?..</span>
+            <span id="demoModalEventCount" style="font-size:10px;color:var(--muted);margin-left:auto;">0 ?대깽??/span>
           </div>
           <div style="display:flex;gap:8px;">
             <button class="cron-btn pause" id="demoModalStopBtn" onclick="stopDemoRecording()"
-              style="flex:1;font-size:12px;">⏹ 중지 & 분석</button>
+              style="flex:1;font-size:12px;">??以묒? & 遺꾩꽍</button>
             <button class="cron-btn" id="demoModalCancelBtn" onclick="cancelDemoRecording()"
-              style="flex:1;font-size:12px;">✕ 취소</button>
+              style="flex:1;font-size:12px;">??痍⑥냼</button>
           </div>
         </div>
 
@@ -1330,9 +1331,9 @@
         <div id="demoModalAnalyzing" style="display:none;">
           <div class="demo-status-bar analyzing" style="margin-bottom:10px;">
             <span class="demo-spinner"></span>
-            <span>LLM 분석 중...</span>
+            <span>LLM 遺꾩꽍 以?..</span>
           </div>
-          <button class="cron-btn" onclick="cancelDemoRecording()" style="width:100%;font-size:12px;">✕ 취소</button>
+          <button class="cron-btn" onclick="cancelDemoRecording()" style="width:100%;font-size:12px;">??痍⑥냼</button>
         </div>
 
         <!-- result -->
@@ -1340,25 +1341,25 @@
           <div id="demoModalResultContent"></div>
           <div style="display:flex;gap:8px;margin-top:8px;">
             <button class="cron-btn run" id="demoModalApproveBtn" onclick="approveDemoSkill()"
-              style="flex:1;font-size:12px;">✓ 승인</button>
+              style="flex:1;font-size:12px;">???뱀씤</button>
             <button class="cron-btn pause" id="demoModalRejectBtn" onclick="rejectDemoSkill()"
-              style="flex:1;font-size:12px;">✕ 거절</button>
+              style="flex:1;font-size:12px;">??嫄곗젅</button>
           </div>
         </div>
 
         <!-- text workflow mode -->
         <div id="demoModalTextMode" style="display:none;">
-          <input id="demoModalSkillName" placeholder="스킬 이름 (선택)"
+          <input id="demoModalSkillName" placeholder="?ㅽ궗 ?대쫫 (?좏깮)"
             style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px 8px;font-size:12px;outline:none;margin-bottom:8px;">
           <textarea id="demoModalDescription" rows="4"
-            placeholder="예:&#10;1. GitHub에 로그인한다&#10;2. 새 이슈를 생성한다&#10;3. 제목과 내용을 입력한다&#10;4. 제출 버튼을 누른다"
+            placeholder="??&#10;1. GitHub??濡쒓렇?명븳??#10;2. ???댁뒋瑜??앹꽦?쒕떎&#10;3. ?쒕ぉ怨??댁슜???낅젰?쒕떎&#10;4. ?쒖텧 踰꾪듉???꾨Ⅸ??
             style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:8px;font-size:12px;outline:none;resize:vertical;font-family:inherit;margin-bottom:8px;"></textarea>
           <div id="demoModalTextError" style="font-size:10px;color:var(--danger);display:none;margin-bottom:8px;">
           </div>
           <div style="display:flex;gap:8px;">
-            <button class="cron-btn run" onclick="submitDemoTextWorkflow()" style="flex:1;font-size:12px;">🎬 스킬
-              생성</button>
-            <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:12px;">↩ 녹화 모드</button>
+            <button class="cron-btn run" onclick="submitDemoTextWorkflow()" style="flex:1;font-size:12px;">?렗 ?ㅽ궗
+              ?앹꽦</button>
+            <button class="cron-btn" onclick="toggleDemoTextMode()" style="flex:1;font-size:12px;">???뱁솕 紐⑤뱶</button>
           </div>
         </div>
 
@@ -1368,7 +1369,7 @@
 
   <!-- Monaco AMD loader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
-  <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
+  <!-- DAON 紐⑤뱢 (?섏〈???쒖꽌: core ??chat ??explorer ??editor ??panels ??dashboard ??git ??voice ??browser ??harness) -->
   <script src="/static/modules/core.js?v=4"></script>
   <script src="/static/modules/chat.js"></script>
   <script src="/static/modules/explorer.js"></script>
