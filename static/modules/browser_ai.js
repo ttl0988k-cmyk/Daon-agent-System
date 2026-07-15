@@ -338,6 +338,47 @@ function browserRefresh() {
   }
 }
 
+/**
+ * Close the current page — clear the browser view back to placeholder.
+ * (Electron: navigate to about:blank, iframe: clear src)
+ */
+function browserClosePage() {
+  if (window.electronAPI) {
+    window.electronAPI.navigate('tab1', 'about:blank');
+  }
+  // Clear iframe
+  var frame = document.getElementById('browserFrame');
+  var placeholder = document.getElementById('browserPlaceholder');
+  var errorDiv = document.getElementById('browserFrameError');
+  if (errorDiv) errorDiv.style.display = 'none';
+  if (frame) {
+    frame.style.display = 'none';
+    frame.src = '';
+  }
+  if (placeholder) {
+    placeholder.style.display = 'flex';
+    placeholder.innerHTML = '<div class="browser-placeholder-icon">🌐</div>' +
+      '<div class="browser-placeholder-text">주소를 입력하고 Enter 를 누르면 브라우저가 열립니다</div>';
+  }
+  // Reset state
+  _browserCurrentUrl = '';
+  _browserHistory = [];
+  _browserHistoryIdx = -1;
+  // Clear address bar
+  var input = document.getElementById('browserCanvasUrlInput') || document.getElementById('browserUrlInput');
+  if (input) input.value = '';
+  // Sync backend
+  fetch('/api/browser/sync_url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'about:blank' })
+  }).catch(function () { /* ignore */ });
+  // Refresh BrowserAI recommendations
+  if (typeof onBrowserUrlChange === 'function') {
+    onBrowserUrlChange('');
+  }
+}
+
 // ═══════════════════════════════════════════
 // BrowserAI: URL Change → Skill Recommendation
 // ═══════════════════════════════════════════

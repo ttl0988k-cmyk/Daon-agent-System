@@ -922,14 +922,15 @@
               <!-- Browser View (in-canvas) -->
               <div id="browserViewWrap" style="display:none; flex-direction: column; height: 100%;">
                 <div class="browser-url-bar">
-                  <button class="browser-nav-btn" onclick="browserBack()" title="?ㅻ줈">?</button>
-                  <button class="browser-nav-btn" onclick="browserForward()" title="?욎쑝濡?>??/button>
-                  <button class="browser-nav-btn" onclick="browserReload()" title="?덈줈怨좎묠">??/button>
+                  <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
+                  <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
+                  <button class="browser-nav-btn" onclick="browserReload()" title="새로고침">⟳</button>
                   <input type="text" id="browserCanvasUrlInput" class="browser-url-input"
-                    placeholder="二쇱냼 ?낅젰 ??Enter..." />
+                    placeholder="주소 입력 후 Enter..." />
                   <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="이동">↵</button>
-                    <button class="browser-nav-btn" onclick="toggleBrowserView()" title="닫기" style="margin-left:auto; color:var(--danger); font-size: 14px;">✖</button>
-                  </div>
+                  <button class="browser-nav-btn" onclick="browserClosePage()" title="페이지 닫기" style="color:var(--warning);">✕</button>
+                  <button class="browser-nav-btn" onclick="toggleBrowserView()" title="브라우저 뷰 닫기" style="margin-left:auto; color:var(--danger); font-size: 14px;">✖</button>
+                </div>
                 <div class="browser-main-area">
                   <div class="browser-frame-wrap" id="browserFrameWrap">
                     <iframe id="browserFrame" class="browser-frame" style="display:none"

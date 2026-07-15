@@ -504,7 +504,6 @@ async function _executeAgentStream(displayText, uploaded) {
       const toolEvent = data.event || 'tool.started';
       const isStarted = toolEvent === 'tool.started';
       setChatStatus('tool', `${isStarted ? 'Running' : 'Completed'} tool: ${toolName}...`);
-      logToConsole(`${isStarted ? 'Running' : 'Completed'} tool: ${toolName}...`, 'info');
 
       // ── ask_followup_question: render choice cards inline ──
       if (toolName === 'ask_followup_question' && isStarted && data.args) {
@@ -612,14 +611,12 @@ async function _executeAgentStream(displayText, uploaded) {
 
     sse.addEventListener('model_fallback', (e) => {
       const data = JSON.parse(e.data);
-      logToConsole(data.message || 'Model fallback occurred.', 'warning');
     });
 
     sse.addEventListener('done', (e) => {
       const data = JSON.parse(e.data);
       sse.close();
       cleanupStreamState();
-      logToConsole('Agent run completed successfully.', 'success');
 
       // Render the final completed message and update lists
       renderMessages(data.session.messages, data.session.tool_calls);
@@ -666,14 +663,12 @@ async function _executeAgentStream(displayText, uploaded) {
     sse.addEventListener('cancel', () => {
       sse.close();
       cleanupStreamState();
-      logToConsole('Agent run cancelled by user.', 'warning');
       asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[Run Cancelled]</div>');
     });
 
     sse.addEventListener('error', (e) => {
       sse.close();
       cleanupStreamState();
-      logToConsole('Agent run stream error occurred.', 'error');
       asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[Stream error occurred]</div>');
     });
 
@@ -681,7 +676,6 @@ async function _executeAgentStream(displayText, uploaded) {
       const data = JSON.parse(e.data);
       sse.close();
       cleanupStreamState();
-      logToConsole(`Agent run error: ${data.message}`, 'error');
       asstBubble.insertAdjacentHTML('beforeend', `<div class="text-danger" style="margin-top:8px;">[Error: ${data.message}]</div>`);
     });
 
