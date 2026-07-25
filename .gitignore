@@ -1,0 +1,39 @@
+# Windows reserved names
+nul
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+__pycache__/
+*.pyc
+
+# Runtime
+daon_runtime/
+
+# Data (user-specific)
+data/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+
+# Temp
+*.tmp
+extracted_asar/
+test_app_unpacked/
+clean_build_unpacked/
+dist_new/

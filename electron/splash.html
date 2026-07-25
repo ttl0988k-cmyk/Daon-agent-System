@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DAON Agent System</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+    -webkit-app-region: drag;
+  }
+
+  /* Animated background gradient */
+  .bg-glow {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 50% 60%, rgba(99,102,241,0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 30% at 20% 20%, rgba(139,92,246,0.08) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .logo-wrap {
+    position: relative;
+    margin-bottom: 36px;
+  }
+
+  /* Outer spinning ring */
+  .ring {
+    position: absolute;
+    inset: -18px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: #818cf8;
+    border-right-color: rgba(129,140,248,0.3);
+    animation: spin 1.4s linear infinite;
+  }
+  .ring2 {
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+    border: 1.5px solid transparent;
+    border-bottom-color: rgba(167,139,250,0.5);
+    animation: spin 2.1s linear infinite reverse;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Logo circle */
+  .logo-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+      0 0 30px rgba(99,102,241,0.4),
+      0 0 60px rgba(99,102,241,0.15);
+    animation: pulse-glow 2.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 30px rgba(99,102,241,0.4), 0 0 60px rgba(99,102,241,0.15); }
+    50%       { box-shadow: 0 0 50px rgba(99,102,241,0.6), 0 0 90px rgba(99,102,241,0.25); }
+  }
+
+  .logo-text-inner {
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: -1px;
+  }
+
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #f1f5f9;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: #64748b;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 40px;
+  }
+
+  /* Progress bar track */
+  .progress-wrap {
+    width: 260px;
+    height: 3px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4f46e5, #818cf8, #a78bfa);
+    background-size: 200% 100%;
+    border-radius: 99px;
+    animation: shimmer 1.8s linear infinite;
+    width: 0%;
+    transition: width 0.6s ease;
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 200% center; }
+    100% { background-position: -200% center; }
+  }
+
+  /* Status text */
+  .status {
+    font-size: 12.5px;
+    color: #475569;
+    height: 18px;
+    text-align: center;
+    transition: opacity 0.3s;
+  }
+
+  /* Dot pulse indicator */
+  .dots {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 4px;
+  }
+  .dots span {
+    width: 3.5px;
+    height: 3.5px;
+    background: #64748b;
+    border-radius: 50%;
+    animation: dot-bounce 1.2s ease-in-out infinite;
+  }
+  .dots span:nth-child(2) { animation-delay: 0.2s; }
+  .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes dot-bounce {
+    0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+    40%            { opacity: 1;   transform: translateY(-3px); }
+  }
+
+  .version {
+    position: fixed;
+    bottom: 22px;
+    font-size: 11px;
+    color: #334155;
+    letter-spacing: 0.3px;
+  }
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <div class="logo-wrap">
+    <div class="ring"></div>
+    <div class="ring2"></div>
+    <div class="logo-circle">
+      <span class="logo-text-inner">D</span>
+    </div>
+  </div>
+
+  <h1>DAON Agent System</h1>
+  <p class="subtitle">Multi-Agent IDE</p>
+
+  <div class="progress-wrap">
+    <div class="progress-bar" id="bar"></div>
+  </div>
+  <p class="status" id="status">
+    AI 모델 초기화 중<span class="dots"><span></span><span></span><span></span></span>
+  </p>
+
+  <span class="version">v1.0.0</span>
+
+<script>
+  const bar = document.getElementById('bar');
+  const status = document.getElementById('status');
+
+  const steps = [
+    { pct: 15, msg: '서버 프로세스 시작 중' },
+    { pct: 35, msg: 'AI 라이브러리 로딩 중 (PyTorch / CUDA)' },
+    { pct: 55, msg: '에이전트 모듈 초기화 중' },
+    { pct: 75, msg: '서버 헬스 체크 중' },
+    { pct: 90, msg: '서비스 준비 완료 확인 중' },
+  ];
+
+  let step = 0;
+  const dots = '<span class="dots"><span></span><span></span><span></span></span>';
+
+  function nextStep() {
+    if (step < steps.length) {
+      const s = steps[step++];
+      bar.style.width = s.pct + '%';
+      status.innerHTML = s.msg + dots;
+    }
+  }
+
+  nextStep();
+  const interval = setInterval(nextStep, 5000);
+
+  // Listen for progress updates from main process
+  if (window.__daon_splash) {
+    window.__daon_splash.onProgress((msg) => {
+      clearInterval(interval);
+      bar.style.width = '95%';
+      status.innerHTML = msg + dots;
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+# =============================================================================
+# Hermes Web UI — Configuration
+# =============================================================================
+# This file overrides hardcoded defaults in api/config.py.
+# Settings here are loaded at startup and merged with environment variables.
+# 
+# NOTE: Provider model lists are now managed dynamically in
+#       data/custom_providers.json — this is the single source of truth.
+#       config.yaml only contains cosmetic provider_display names.
+# =============================================================================
+
+# --- Server ---
+server:
+  host: "127.0.0.1"
+  port: 9090
+
+# --- Default model ---
+model:
+  default: ""
+
+# --- Limits ---
+limits:
+  max_file_bytes: 200000          # Max single file read size (bytes)
+  max_upload_bytes: 20971520      # Max upload size (20 MB)
+  sessions_cache_max: 100         # Max in-memory session entries
+
+# --- File type extensions ---
+extensions:
+  image:
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".gif"
+    - ".svg"
+    - ".webp"
+    - ".ico"
+    - ".bmp"
+  markdown:
+    - ".md"
+    - ".markdown"
+    - ".mdown"
+  code:
+    - ".py"
+    - ".js"
+    - ".ts"
+    - ".jsx"
+    - ".tsx"
+    - ".css"
+    - ".html"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".toml"
+    - ".sh"
+    - ".bash"
+    - ".txt"
+    - ".log"
+    - ".env"
+    - ".csv"
+    - ".xml"
+    - ".sql"
+    - ".rs"
+    - ".go"
+    - ".java"
+    - ".c"
+    - ".cpp"
+    - ".h"
+
+# --- MIME type map ---
+mime_map:
+  ".png": "image/png"
+  ".jpg": "image/jpeg"
+  ".jpeg": "image/jpeg"
+  ".gif": "image/gif"
+  ".svg": "image/svg+xml"
+  ".webp": "image/webp"
+  ".ico": "image/x-icon"
+  ".bmp": "image/bmp"
+  ".pdf": "application/pdf"
+  ".json": "application/json"
+  ".css": "text/css; charset=utf-8"
+  ".js": "application/javascript; charset=utf-8"
+  ".html": "text/html; charset=utf-8"
+  ".md": "text/markdown; charset=utf-8"
+
+# --- Default tool sets ---
+toolsets:
+  default:
+    - "browser"
+    - "clarify"
+    - "code_execution"
+    - "cronjob"
+    - "delegation"
+    - "file"
+    - "image_gen"
+    - "memory"
+    - "session_search"
+    - "skills"
+    - "terminal"
+    - "todo"
+    - "web"
+    - "webhook"
+
+# --- Fallback models (when model_manager is unavailable) ---
+fallback_models:
+  - provider: "OpenRouter"
+    id: "nvidia/nemotron-3-ultra-550b-a55b:free"
+    label: "Nemotron 3 Ultra (Free)"
+  - provider: "OpenRouter"
+    id: "openai/gpt-oss-120b:free"
+    label: "GPT-OSS 120B"
+  - provider: "OpenRouter"
+    id: "tencent/hy3:free"
+    label: "Tencent Hy3 (free)"
+
+# --- Provider display names (cosmetic only — real model lists in data/custom_providers.json) ---
+provider_display:
+  openai: "OpenAI"
+  openai-codex: "OpenAI Codex"
+  anthropic: "Anthropic"
+  openrouter: "OpenRouter"
+  xai: "xAI"
+  zai: "ZhipuAI"
+  kimi-coding: "Kimi"
+  deepseek: "DeepSeek"
+  nous: "Nous"
+  minimax: "MiniMax"
+  nvidia: "NVIDIA NIM"
+  meta-llama: "Meta Llama"
+  huggingface: "HuggingFace"
+  alibaba: "Alibaba"
+  ollama: "Ollama"
+  lmstudio: "LM Studio"

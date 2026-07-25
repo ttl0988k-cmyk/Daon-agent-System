@@ -1,0 +1,82 @@
+{
+  "name": "daon-agent-system",
+  "version": "1.0.0",
+  "description": "DAON Multi-Agent IDE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/daon.git"
+  },
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE= && electron .",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "build": {
+    "appId": "com.daon.agentsystem",
+    "productName": "DAON Agent System",
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "include": "installer.nsh"
+    },
+    "extraResources": [
+      {
+        "from": "dist/server.exe",
+        "to": "server.exe"
+      },
+      {
+        "from": "api/api",
+        "to": "api"
+      },
+      {
+        "from": "skills",
+        "to": "skills"
+      },
+      {
+        "from": "hermes-agent",
+        "to": "hermes-agent"
+      },
+      {
+        "from": "index.html",
+        "to": "index.html"
+      },
+      {
+        "from": "static",
+        "to": "static"
+      },
+      {
+        "from": "config.yaml",
+        "to": "config.yaml"
+      },
+      {
+        "from": ".env",
+        "to": ".env"
+      },
+      {
+        "from": "data",
+        "to": "data"
+      }
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron-builder": "^24.13.3",
+    "electron": "^31.7.7"
+  },
+  "dependencies": {}
+}
