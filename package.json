@@ -73,7 +73,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "electron-builder": "^24.13.3",
     "electron": "^31.7.7"

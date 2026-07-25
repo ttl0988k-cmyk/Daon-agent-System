@@ -218,4 +218,4 @@ OpenAI, OpenAI Codex, Anthropic, OpenRouter, xAI, ZhipuAI, Kimi, DeepSeek, Nous,
 
 ## 📄 라이선스
 
-ISC
+MIT
