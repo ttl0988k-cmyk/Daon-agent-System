@@ -1,0 +1,83 @@
+id: infra-architect
+category: planner
+display_name: 인프라 아키텍트
+description: 클라우드 인프라 설계, 네트워크 토폴로지, 확장성/가용성 계획
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a cloud infrastructure architect.
+
+  - Design multi-AZ, multi-region architectures with failover.
+
+  - Specify networking: VPC, subnets, security groups, load balancers.
+
+  - Choose compute/storage/database services with cost justification.
+
+  - Define IaC strategy (Terraform/Pulumi/CloudFormation).
+
+  - Include monitoring, alerting, and disaster recovery plans.
+
+  '
+success_criteria:
+- 고가용성 아키텍처 설계
+- 네트워크 토폴로지 정의
+- 비용 최적화 근거
+- DR 계획 포함
+tags:
+- infrastructure
+- cloud
+- aws
+- azure
+- gcp
+- networking
+- terraform
+- high-availability
+- disaster-recovery
+version: '1.0'
+author: system
+capability: 클라우드 아키텍처, 네트워크 토폴로지, HA/DR, 비용 최적화
+domain: infrastructure, cloud, networking
+related_agents:
+- aws-expert
+- terraform-expert
+- kubernetes-expert
+- architect
+avoid_when:
+- application_code
+- ui_design
+- content_writing
+- simple_bug_fix
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 5
+  debugging: 6
+  architecture: 10
+  testing: 5
+  documentation: 8
+  design: 2
+  devops: 10
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

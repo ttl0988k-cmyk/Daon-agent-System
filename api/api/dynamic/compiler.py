@@ -4,12 +4,14 @@ Agent persona resolution and AgentCompiler.
 Provides:
 - get_integrated_persona(): loads agent persona from profile SOUL/AGENTS.md or role manuals
 - AgentCompiler: validates and compiles the CEO's plan into executable agent definitions
+  * Supports template_id-based resolution (new) and legacy inline definitions (backward compat)
 """
 
 from pathlib import Path
 
 from api.skill_registry import get_skill_registry
 from api.dynamic.plan_validator import semantic_validate
+from api.dynamic.template_loader import resolve_template_for_node
 from api.dynamic.logging_utils import get_logger
 
 _log = get_logger(__name__)
@@ -92,18 +94,63 @@ class AgentCompiler:
         compiled_nodes: list[dict] = []
 
         for n in nodes_list:
+            # --- Template-based resolution (new path) ---
+            if n.get("template_id"):
+                resolved = resolve_template_for_node(n)
+                name = resolved.get("name", "agent").strip().lower().replace(" ", "_")
+
+                # Merge plan-level skills with template skills
+                node_skills = list(plan_level_skills)
+                for s in (resolved.get("skills") or []):
+                    if s not in node_skills:
+                        node_skills.append(s)
+
+                # Load skill content from registry
+                skill_content = skill_registry.load_skills(node_skills)
+
+                # Build full prompt: template system_prompt + env + skills
+                base_prompt = resolved.get("system_prompt", "")
+                env_note = AgentCompiler._get_env_note()
+                full_prompt = base_prompt + env_note
+                if skill_content:
+                    full_prompt += f"\n\n{skill_content}"
+
+                # Tools from template (already resolved)
+                enabled_toolsets = list(resolved.get("tools", ["file", "terminal"]))
+                # Inject MCP tools
+                enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
+
+                if node_skills:
+                    _log.info("Injected skills into '%s' (template: %s): %s",
+                              name, resolved.get("template_id"), node_skills)
+
+                compiled_nodes.append({
+                    "name": name,
+                    "type": resolved.get("type", "llm"),
+                    "role": resolved.get("role", "specialist"),
+                    "system_prompt": full_prompt,
+                    "subtask": resolved.get("subtask", ""),
+                    "tools": enabled_toolsets,
+                    "input": resolved.get("input") or "",
+                    "output": resolved.get("output") or (name + "_output"),
+                    "model": resolved.get("model") or "",
+                    "skills": node_skills,
+                    "template_id": resolved.get("template_id"),
+                    "_display_name": resolved.get("_display_name", ""),
+                    "_model_prefs": resolved.get("_model_prefs", {}),
+                    "_success_criteria": resolved.get("_success_criteria", []),
+                    "_runtime": resolved.get("_runtime", {}),
+                    "_capability_score": resolved.get("_capability_score", {}),
+                    "_cost_profile": resolved.get("_cost_profile", {}),
+                    "_model_preference": resolved.get("_model_preference", {}),
+                })
+                continue
+
+            # --- Legacy path (no template_id, backward compatibility) ---
             name = n.get("name", "agent").strip().lower().replace(" ", "_")
             node_type = n.get("type", "llm").strip().lower()
             enabled_toolsets: list[str] = ["file", "terminal"]
-
-            try:
-                from api.mcp_client import get_mcp_manager
-                _mgr = get_mcp_manager()
-                for _srv_id, _conn in _mgr._connections.items():
-                    if _conn.connected:
-                        enabled_toolsets.append(f"mcp-{_srv_id}")
-            except Exception:
-                pass
+            enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
 
             if "web_search" in node_type:
                 enabled_toolsets.append("web_search")
@@ -121,23 +168,7 @@ class AgentCompiler:
             persona_content = get_integrated_persona(name, n.get("role", ""))
             skill_content = skill_registry.load_skills(node_skills)
 
-            # Inject OS/environment awareness into system_prompt
-            import sys as _csys, os as _cos
-            _cplatform = _csys.platform
-            _cis_windows = _cplatform == "win32"
-            _cos_name = "Windows" if _cis_windows else ("macOS" if _cplatform == "darwin" else "Linux")
-
-            # Detect actual shell
-            _cshell = _cos.environ.get('SHELL', '') or _cos.environ.get('COMSPEC', '')
-            _cis_bash = 'bash' in _cshell.lower()
-            _cshell_label = _cshell if _cshell else ('cmd.exe' if _cis_windows else 'bash')
-
-            env_note = f"\n\n[ENVIRONMENT]\nOS: {_cos_name} | Shell: {_cshell_label}\n"
-            if _cis_windows and not _cis_bash:
-                env_note += ("CRITICAL: cmd.exe does NOT support heredoc(<<), cat, or Unix commands. "
-                            "Use the write_file tool to create files. Use PowerShell for scripts.\n")
-            elif _cis_bash:
-                env_note += "Bash available: heredoc, Unix commands (ls, find, grep, cat) are supported. Prefer POSIX paths.\n"
+            env_note = AgentCompiler._get_env_note()
 
             full_prompt = base_prompt + env_note
             if persona_content:
@@ -161,3 +192,38 @@ class AgentCompiler:
                 "skills": node_skills,
             })
         return compiled_nodes
+
+    @staticmethod
+    def _get_env_note() -> str:
+        """Generate OS/environment awareness note for system_prompt injection."""
+        import sys as _csys, os as _cos
+        _cplatform = _csys.platform
+        _cis_windows = _cplatform == "win32"
+        _cos_name = "Windows" if _cis_windows else ("macOS" if _cplatform == "darwin" else "Linux")
+
+        _cshell = _cos.environ.get('SHELL', '') or _cos.environ.get('COMSPEC', '')
+        _cis_bash = 'bash' in _cshell.lower()
+        _cshell_label = _cshell if _cshell else ('cmd.exe' if _cis_windows else 'bash')
+
+        env_note = f"\n\n[ENVIRONMENT]\nOS: {_cos_name} | Shell: {_cshell_label}\n"
+        if _cis_windows and not _cis_bash:
+            env_note += ("CRITICAL: cmd.exe does NOT support heredoc(<<), cat, or Unix commands. "
+                        "Use the write_file tool to create files. Use PowerShell for scripts.\n")
+        elif _cis_bash:
+            env_note += "Bash available: heredoc, Unix commands (ls, find, grep, cat) are supported. Prefer POSIX paths.\n"
+        return env_note
+
+    @staticmethod
+    def _inject_mcp_tools(toolsets: list[str]) -> list[str]:
+        """Inject connected MCP server tool IDs into the toolset list."""
+        try:
+            from api.mcp_client import get_mcp_manager
+            _mgr = get_mcp_manager()
+            for _srv_id, _conn in _mgr._connections.items():
+                if _conn.connected:
+                    mcp_id = f"mcp-{_srv_id}"
+                    if mcp_id not in toolsets:
+                        toolsets.append(mcp_id)
+        except Exception:
+            pass
+        return toolsets

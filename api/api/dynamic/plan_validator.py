@@ -14,17 +14,28 @@ _log = get_logger(__name__)
 
 
 def _validate_plan_nodes(nodes: list) -> list[str]:
-    """Validate the nodes list: required fields and string-type constraints."""
+    """Validate the nodes list: required fields and string-type constraints.
+    
+    Supports two node formats:
+    - Template-based: requires 'name', 'template_id', 'subtask' (type/role/system_prompt resolved from template)
+    - Legacy inline: requires 'name', 'type', 'role', 'system_prompt', 'subtask'
+    """
     errors: list[str] = []
     if not isinstance(nodes, list):
         return ["'nodes' must be a list."]
-    required_keys = ["name", "type", "role", "system_prompt", "subtask"]
-    string_keys = ["name", "type", "role", "system_prompt", "subtask", "input", "output"]
+    legacy_required_keys = ["name", "type", "role", "system_prompt", "subtask"]
+    template_required_keys = ["name", "template_id", "subtask"]
+    string_keys = ["name", "type", "role", "system_prompt", "subtask", "input", "output", "template_id"]
     for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
             errors.append(f"Node at index {idx} is not an object.")
             continue
         label = node.get("name", "unnamed")
+        # Determine which required keys apply
+        if node.get("template_id"):
+            required_keys = template_required_keys
+        else:
+            required_keys = legacy_required_keys
         errors.extend(
             f"Node at index {idx} ({label}) is missing required key '{k}'." for k in required_keys if k not in node
         )
@@ -119,13 +130,15 @@ def semantic_validate(plan: dict) -> list[str]:
     if visited_count < len(node_names):
         errors.append("Circular dependency detected in agent edges. The execution path contains a cycle.")
 
-    # 2. Tool availability check
+    # 2. Tool availability check (skip for template-based nodes — type resolved at compile time)
     allowed_types = {"llm", "llm+web_search", "llm+image_tool", "llm+terminal"}
     for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
             continue
+        if node.get("template_id"):
+            continue  # Template nodes get their type from the template at compile time
         ntype = node.get("type", "").strip().lower()
-        if ntype not in allowed_types:
+        if ntype and ntype not in allowed_types:
             errors.append(
                 f"Node at index {idx} ({node.get('name', 'unnamed')}) has invalid type '{ntype}'. "
                 f"Allowed types: {sorted(allowed_types)}"

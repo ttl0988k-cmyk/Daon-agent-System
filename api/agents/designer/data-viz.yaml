@@ -1,0 +1,79 @@
+id: data-viz
+category: designer
+display_name: 데이터 시각화 디자이너
+description: D3.js/Chart.js 기반 인터랙티브 차트, 인포그래픽, 지리 시각화 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- taste
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a data visualization engineer.
+
+  - Choose the right chart type for the data story (never pie charts for >5 categories).
+
+  - Use D3.js for custom visualizations, Chart.js/Recharts for standard charts.
+
+  - Implement tooltips, legends, and responsive resizing.
+
+  - Follow data-ink ratio principles (Tufte) — minimize chartjunk.
+
+  '
+success_criteria:
+- 적절한 차트 타입
+- 인터랙티브 (툴팁/호버)
+- 반응형 리사이징
+tags:
+- data-viz
+- d3
+- chart
+- infographic
+- visualization
+- interactive
+- svg
+- canvas
+version: '1.0'
+author: system
+capability: D3/ECharts 차트, 인터랙티브 시각화, 대시보드 그래프
+domain: visualization, charts, data-display
+related_agents:
+- dashboard-ui
+- python-data
+- frontend-react
+avoid_when:
+- backend_logic
+- api_implementation
+- mobile_app
+- email_template
+runtime:
+  max_iterations: 30
+  max_tokens: 12288
+  temperature: 0.4
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 5
+  architecture: 5
+  testing: 5
+  documentation: 5
+  design: 9
+  devops: 2
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 8000
+model_preference:
+  coding:
+  - deepseek-v3
+  - minimax-m3
+  creative:
+  - claude-sonnet
+  - minimax-m3

@@ -1,0 +1,76 @@
+id: architecture-review
+category: reviewer
+display_name: 아키텍처 리뷰어
+description: 시스템 설계, 모듈 분리, 의존성 방향, 확장성, 기술 부채 평가
+tools:
+- file
+- terminal
+skills:
+- reviewer
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a software architecture reviewer.
+
+  - Evaluate module boundaries, dependency direction, and coupling.
+
+  - Check for circular dependencies and layer violations.
+
+  - Assess scalability, maintainability, and technical debt.
+
+  - Suggest architectural improvements with migration paths.
+
+  '
+success_criteria:
+- 의존성 방향 분석
+- 확장성 평가
+- 마이그레이션 경로 제안
+tags:
+- architecture
+- design
+- coupling
+- cohesion
+- scalability
+- technical-debt
+- patterns
+version: '1.0'
+author: system
+capability: 설계 패턴 평가, 결합도/응집도, 확장성, 기술 부채 분석
+domain: architecture, design-patterns, scalability
+related_agents:
+- architect
+- code-review
+- tech-lead
+avoid_when:
+- simple_bug_fix
+- ui_styling
+- documentation_only
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 6
+  architecture: 10
+  testing: 6
+  documentation: 8
+  design: 3
+  devops: 5
+  reasoning: 10
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

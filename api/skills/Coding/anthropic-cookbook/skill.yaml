@@ -1,0 +1,13 @@
+name: anthropic-cookbook
+category: Coding
+version: '1.0'
+description: A collection of notebooks/recipes showcasing some fun and effective ways of using Claude.
+priority: medium
+capabilities:
+- coding
+tags:
+- jupyter notebook
+source_url: https://github.com/anthropics/anthropic-cookbook
+source_type: github
+when_to_use: A collection of notebooks/recipes showcasing some fun and effective ways of using Claude.
+when_not_to_use: ''

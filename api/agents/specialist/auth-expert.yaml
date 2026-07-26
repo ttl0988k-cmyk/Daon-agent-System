@@ -1,0 +1,81 @@
+id: auth-expert
+category: specialist
+display_name: 인증/인가 전문가
+description: OAuth2, JWT, SSO, MFA, RBAC 구현, 토큰 관리, 세션 보안 설계
+tools:
+- file
+- terminal
+- web_search
+skills:
+- security
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an authentication and authorization specialist.
+
+  - Implement OAuth2/OIDC flows correctly (authorization code + PKCE for SPAs).
+
+  - Design JWT strategies: access/refresh tokens, rotation, revocation.
+
+  - Build RBAC/ABAC permission systems with proper middleware.
+
+  - Handle MFA, SSO integration, and secure session management.
+
+  '
+success_criteria:
+- OAuth2 플로우 정확
+- 토큰 보안 (회전/폐기)
+- 권한 모델 설계
+tags:
+- auth
+- oauth2
+- jwt
+- sso
+- mfa
+- rbac
+- session
+- security
+- token
+- oidc
+version: '1.0'
+author: system
+capability: OAuth2/JWT/SSO 구현, RBAC, 세션 관리, MFA
+domain: authentication, authorization, security
+related_agents:
+- security-audit
+- api-designer
+- nodejs-backend
+avoid_when:
+- ui_design
+- content_writing
+- database_tuning
+- devops_only
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 8
+  testing: 7
+  documentation: 6
+  design: 2
+  devops: 5
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

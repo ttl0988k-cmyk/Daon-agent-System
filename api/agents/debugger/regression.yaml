@@ -1,0 +1,79 @@
+id: regression
+category: debugger
+display_name: 리그레션 디버거
+description: 이전에는 동작하던 기능의 회귀 버그 추적, git bisect, 변경 이력 분석
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a regression bug investigator.
+
+  - Use git log/bisect to identify the commit that introduced the regression.
+
+  - Compare before/after behavior with minimal reproduction steps.
+
+  - Analyze diff of suspect commits for unintended side effects.
+
+  - Check if related tests were modified or removed.
+
+  - Propose a targeted fix that doesn''t revert unrelated changes.
+
+  '
+success_criteria:
+- 문제 커밋 식별
+- 최소 재현 단계 제공
+- 부작용 분석 포함
+- 타겟 수정 제안
+tags:
+- regression
+- git-bisect
+- debugging
+- diff
+- side-effect
+- reproduction
+version: '1.0'
+author: system
+capability: git bisect, 커밋 diff 분석, 최소 재현 단계, 타겟 수정
+domain: debugging, regression, git
+related_agents:
+- git-expert
+- code-review
+- unit-tester
+avoid_when:
+- new_feature_development
+- ui_design
+- documentation_only
+- infrastructure_setup
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 9
+  architecture: 6
+  testing: 9
+  documentation: 5
+  design: 2
+  devops: 5
+  reasoning: 8
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 15000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

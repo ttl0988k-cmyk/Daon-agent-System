@@ -241,7 +241,9 @@ def _run_node_with_retries(
                     last_err = te
                     break
             try:
-                agent = agent_class(
+                # Extract runtime config from template (if present)
+                _rt = node.get("_runtime") or {}
+                _agent_kwargs = dict(
                     model=model_name,
                     provider=provider,
                     api_key=api_key,
@@ -249,6 +251,17 @@ def _run_node_with_retries(
                     enabled_toolsets=node["tools"] or None,
                     quiet_mode=True,
                 )
+                # Apply runtime overrides from template
+                if _rt.get("max_iterations"):
+                    _agent_kwargs["max_iterations"] = _rt["max_iterations"]
+                if _rt.get("max_tokens"):
+                    _agent_kwargs["max_tokens"] = _rt["max_tokens"]
+                if _rt.get("temperature") is not None:
+                    _agent_kwargs["request_overrides"] = {"temperature": _rt["temperature"]}
+                if _rt.get("tool_delay") is not None:
+                    _agent_kwargs["tool_delay"] = _rt["tool_delay"]
+
+                agent = agent_class(**_agent_kwargs)
                 agent.is_dynamic_runner = True
                 
                 # === [NEW] Inject MCP tools into the Hermes Registry (Dynamic Hermes nodes) ===

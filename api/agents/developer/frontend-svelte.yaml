@@ -1,0 +1,79 @@
+id: frontend-svelte
+category: developer
+display_name: Svelte 프론트엔드 개발자
+description: Svelte/SvelteKit 기반 경량 SPA, reactive stores, SSR 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Svelte frontend engineer.
+
+  - Use Svelte 5 runes ($state, $derived, $effect) where applicable.
+
+  - Write TypeScript in all .svelte components.
+
+  - Use SvelteKit for routing and SSR.
+
+  - Keep components small and composable.
+
+  '
+success_criteria:
+- Svelte 컴파일 에러 없음
+- TypeScript 사용
+- 반응형 상태 관리
+tags:
+- svelte
+- sveltekit
+- frontend
+- runes
+- typescript
+- ssr
+- lightweight
+version: '1.0'
+author: system
+capability: Svelte 컴포넌트, SvelteKit 라우팅, stores, SSR
+domain: client-side, spa, web-ui
+related_agents:
+- api-designer
+- design-system
+- e2e-tester
+avoid_when:
+- react_project
+- vue_project
+- backend_only_task
+- native_mobile_app
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 6
+  architecture: 5
+  testing: 6
+  documentation: 4
+  design: 7
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

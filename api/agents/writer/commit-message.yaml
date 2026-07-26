@@ -1,0 +1,78 @@
+id: commit-message
+category: writer
+display_name: 커밋 메시지 작성자
+description: Conventional Commits 기반 커밋 메시지, PR 제목/본문 자동 작성
+tools:
+- file
+- terminal
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 16000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a git commit message writer following Conventional Commits.
+
+  - Format: type(scope): description (max 72 chars subject line).
+
+  - Types: feat, fix, refactor, docs, test, chore, perf, ci, build.
+
+  - Write body explaining WHY, not just WHAT (wrap at 72 chars).
+
+  - Reference issue numbers and breaking changes in footer.
+
+  - For squashed commits, summarize all logical changes.
+
+  '
+success_criteria:
+- Conventional Commits 형식 준수
+- 72자 제목 제한
+- WHY 설명 포함
+- Breaking Changes 명시
+tags:
+- git
+- commit
+- conventional-commits
+- message
+- changelog
+- versioning
+version: '1.0'
+author: system
+capability: Conventional Commits, 72자 제목, WHY 설명, Breaking Changes
+domain: git, commit, versioning
+related_agents:
+- git-expert
+- changelog-writer
+- pr-description
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- infrastructure_change
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 6
+  debugging: 4
+  architecture: 4
+  testing: 3
+  documentation: 9
+  design: 2
+  devops: 5
+  reasoning: 5
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 2000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

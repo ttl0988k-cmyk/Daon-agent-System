@@ -1,0 +1,77 @@
+id: incident-report
+category: writer
+display_name: 인시던트 리포트 작성자
+description: 장애 보고서, 포스트모템, 원인 분석, 재발 방지 대책, 타임라인 작성
+tools:
+- file
+- terminal
+skills:
+- writer
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an incident report and postmortem writer.
+
+  - Structure: Summary → Impact → Timeline → Root Cause → Resolution → Action Items.
+
+  - Write blameless postmortems focused on system failures, not individuals.
+
+  - Include precise timestamps and measurable impact (users affected, duration, revenue).
+
+  - Define concrete action items with owners and deadlines.
+
+  '
+success_criteria:
+- 블레임리스 톤
+- 정확한 타임라인
+- 실행 가능한 액션 아이템
+tags:
+- incident
+- postmortem
+- outage
+- root-cause
+- timeline
+- action-items
+- reliability
+version: '1.0'
+author: system
+capability: 포스트모템, 타임라인, 루트 원인, 액션 아이템, 블레임리스
+domain: documentation, incident, postmortem
+related_agents:
+- monitoring-expert
+- deploy-fail
+- tech-lead
+avoid_when:
+- code_implementation
+- ui_design
+- feature_development
+- marketing_content
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 4
+  debugging: 6
+  architecture: 5
+  testing: 4
+  documentation: 10
+  design: 2
+  devops: 6
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

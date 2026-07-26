@@ -18,6 +18,77 @@
 
 <body>
 
+  <!-- ── BEGINNER OVERLAY (초보자 시작 화면) ── -->
+  <div id="beginnerOverlay"
+    style="display:none; position:fixed; top:0; right:0; bottom:0; left:48px; z-index:9999; background:var(--bg1); overflow-y:auto;">
+    <div
+      style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 20px;">
+      <!-- 로고 + 제목 -->
+      <div style="text-align:center; margin-bottom:32px;">
+        <div style="font-size:48px; margin-bottom:12px;">🌱</div>
+        <h1 style="font-size:28px; font-weight:700; color:var(--text); margin:0 0 8px;">DAON Agent System</h1>
+        <p style="font-size:15px; color:var(--muted); margin:0;">무엇을 만들고 싶나요?</p>
+      </div>
+
+      <!-- 시작 카드 -->
+      <div
+        style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; max-width:720px; width:100%; margin-bottom:32px;">
+        <div class="beginner-card"
+          onclick="beginnerStart('🎯 모바일 앱 만들기', '간단한 할 일 관리 앱을 만들어줘. React Native 또는 Flutter로, 화면 3개(목록, 추가, 상세)면 돼.')"
+          style="background:var(--bg2); border:1px solid var(--border2); border-radius:12px; padding:24px 20px; cursor:pointer; transition:all .2s; text-align:center;">
+          <div style="font-size:32px; margin-bottom:8px;">🎯</div>
+          <div style="font-size:14px; font-weight:600; color:var(--text);">앱 만들기</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">모바일 / 데스크톱 앱</div>
+        </div>
+        <div class="beginner-card"
+          onclick="beginnerStart('🌐 웹사이트 만들기', '포트폴리오 웹사이트를 만들어줘. HTML/CSS/JS 단일 페이지, 다크 테마, 반응형으로.')"
+          style="background:var(--bg2); border:1px solid var(--border2); border-radius:12px; padding:24px 20px; cursor:pointer; transition:all .2s; text-align:center;">
+          <div style="font-size:32px; margin-bottom:8px;">🌐</div>
+          <div style="font-size:14px; font-weight:600; color:var(--text);">웹사이트 만들기</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">랜딩페이지 / 포트폴리오</div>
+        </div>
+        <div class="beginner-card"
+          onclick="beginnerStart('🤖 AI 에이전트 만들기', '나를 대신해서 이메일을 요약하고 일정을 정리하는 AI 에이전트를 만들어줘.')"
+          style="background:var(--bg2); border:1px solid var(--border2); border-radius:12px; padding:24px 20px; cursor:pointer; transition:all .2s; text-align:center;">
+          <div style="font-size:32px; margin-bottom:8px;">🤖</div>
+          <div style="font-size:14px; font-weight:600; color:var(--text);">AI 에이전트 만들기</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">자동화 / 챗봇 / 비서</div>
+        </div>
+        <div class="beginner-card"
+          onclick="beginnerStart('📺 유튜브 자동화', '유튜브 영상 스크립트를 자동으로 작성하고, 썸네일 텍스트를 생성하는 파이프라인을 만들어줘.')"
+          style="background:var(--bg2); border:1px solid var(--border2); border-radius:12px; padding:24px 20px; cursor:pointer; transition:all .2s; text-align:center;">
+          <div style="font-size:32px; margin-bottom:8px;">📺</div>
+          <div style="font-size:14px; font-weight:600; color:var(--text);">유튜브 자동화</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">스크립트 / 콘텐츠 제작</div>
+        </div>
+      </div>
+
+      <!-- 직접 입력 -->
+      <div style="max-width:560px; width:100%; margin-bottom:24px;">
+        <div style="display:flex; gap:8px;">
+          <input id="beginnerInput" type="text" placeholder="또는 직접 입력하세요... (예: 블로그 API 만들어줘)"
+            onkeydown="if(event.key==='Enter')beginnerSendInput()"
+            style="flex:1; background:var(--bg3); border:1px solid var(--border2); border-radius:8px; color:var(--text); padding:12px 16px; font-size:14px; outline:none;">
+          <button onclick="beginnerSendInput()"
+            style="background:var(--accent); color:#fff; border:none; border-radius:8px; padding:12px 20px; font-size:14px; cursor:pointer; white-space:nowrap;">전송
+            →</button>
+        </div>
+      </div>
+
+      <!-- 하단 링크 -->
+      <div style="text-align:center;">
+        <a href="#" onclick="beginnerDismiss(); return false;"
+          style="font-size:12px; color:var(--muted); text-decoration:none;">전문가 모드로 바로 가기 →</a>
+        <div style="margin-top:8px;">
+          <label style="font-size:11px; color:var(--muted); cursor:pointer;">
+            <input type="checkbox" id="beginnerDontShow" onchange="beginnerToggleDontShow(this.checked)"
+              style="margin-right:4px;"> 다음부터 이 화면 보지 않기
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="app-container">
 
     <!-- ── GLOBAL HEADER (fixed agent/model bar) ── -->
@@ -62,6 +133,8 @@
           <button class="action-btn" id="saveFileBtn" style="display:none;" disabled>저장</button>
           <button class="action-btn danger" id="deleteFileBtn" style="display:none;">삭제</button>
           <div style="display:flex; gap: 4px; align-items: center; margin-left: 8px;">
+            <button class="action-btn" id="showBeginnerBtn" title="초보자 시작 화면 열기" onclick="showBeginnerOverlay()">🌱
+              처음</button>
             <button class="action-btn" id="showHarnessManualBtn" title="다이나믹 하네스 설명서 보기">❓ 하네스 안내</button>
             <button class="action-btn active" id="toggleBrowserBtn" title="브라우저 뷰 열기/닫기">🌐 웹</button>
             <button class="action-btn active" id="toggleLeftBtn" title="좌측 세션 패널 열기/닫기">◧ 좌측</button>
@@ -1450,6 +1523,7 @@
   <script src="/static/modules/approval.js"></script>
   <script src="/static/modules/mcp.js"></script>
   <script src="/static/modules/harness.js"></script>
+  <script src="/static/modules/beginner.js"></script>
 </body>
 
 </html>

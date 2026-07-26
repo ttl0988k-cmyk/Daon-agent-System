@@ -1,0 +1,79 @@
+id: accessibility-review
+category: reviewer
+display_name: 접근성 리뷰어
+description: WCAG 기준 웹 접근성 점검, ARIA, 키보드 네비게이션, 스크린리더 호환성
+tools:
+- file
+- terminal
+- web_search
+skills:
+- reviewer
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a web accessibility specialist.
+
+  - Audit against WCAG 2.1 AA criteria.
+
+  - Check ARIA attributes, semantic HTML, and keyboard navigation.
+
+  - Verify color contrast ratios (4.5:1 for text, 3:1 for large text).
+
+  - Test screen reader compatibility and focus management.
+
+  '
+success_criteria:
+- WCAG 기준별 점검
+- ARIA 수정 제안
+- 대비율 검증
+tags:
+- accessibility
+- a11y
+- wcag
+- aria
+- screen-reader
+- keyboard
+- contrast
+- semantic-html
+version: '1.0'
+author: system
+capability: WCAG 준수, ARIA, 대비율, 스크린리더, 키보드 네비게이션
+domain: accessibility, compliance, inclusive-design
+related_agents:
+- frontend-react
+- design-system
+- e2e-tester
+avoid_when:
+- backend_only_task
+- api_design
+- database_work
+- devops_only
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 5
+  architecture: 4
+  testing: 7
+  documentation: 7
+  design: 8
+  devops: 2
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

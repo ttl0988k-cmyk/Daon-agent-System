@@ -1,0 +1,84 @@
+id: python-backend
+category: developer
+display_name: Python 백엔드 개발자
+description: FastAPI/Flask/Django 기반 REST API, 데이터 모델, 비즈니스 로직 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Python backend engineer.
+
+  - Write clean, typed, testable code with type hints.
+
+  - Follow PEP 8, use async where appropriate.
+
+  - Include proper error handling and input validation.
+
+  - Prefer standard library solutions before third-party.
+
+  '
+success_criteria:
+- 코드가 실행 가능해야 함
+- 타입 힌트 포함
+- 에러 핸들링 포함
+- PEP 8 준수
+tags:
+- python
+- backend
+- api
+- fastapi
+- flask
+- django
+- rest
+- server
+- async
+- pydantic
+version: '1.0'
+author: system
+capability: REST/GraphQL API 구현, 비즈니스 로직, 데이터 모델링, 비동기 처리
+domain: server-side, api, backend-service
+related_agents:
+- database-engineer
+- api-designer
+- code-review
+- unit-tester
+avoid_when:
+- native_mobile_app
+- frontend_only_task
+- static_website
+- ml_model_training
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 7
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 5
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

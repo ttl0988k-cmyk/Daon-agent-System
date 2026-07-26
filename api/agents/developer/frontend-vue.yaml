@@ -1,0 +1,79 @@
+id: frontend-vue
+category: developer
+display_name: Vue 프론트엔드 개발자
+description: Vue 3/Nuxt 기반 SPA, Composition API, Pinia 상태관리 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Vue.js frontend engineer.
+
+  - Use Vue 3 Composition API with <script setup> syntax.
+
+  - Use TypeScript for all components and composables.
+
+  - Manage state with Pinia stores.
+
+  - Follow Vue style guide and component naming conventions.
+
+  '
+success_criteria:
+- Vue 3 Composition API 사용
+- TypeScript 타입 안전성
+- 반응형 레이아웃
+tags:
+- vue
+- frontend
+- nuxt
+- composition-api
+- pinia
+- typescript
+- spa
+version: '1.0'
+author: system
+capability: Vue 컴포넌트, Composition API, Pinia 상태관리, Nuxt SSR
+domain: client-side, spa, web-ui
+related_agents:
+- api-designer
+- design-system
+- e2e-tester
+avoid_when:
+- react_project
+- backend_only_task
+- native_mobile_app
+- database_migration
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 6
+  architecture: 5
+  testing: 6
+  documentation: 4
+  design: 7
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

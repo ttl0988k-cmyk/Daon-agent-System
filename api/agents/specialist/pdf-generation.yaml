@@ -1,0 +1,81 @@
+id: pdf-generation
+category: specialist
+display_name: PDF 생성 전문가
+description: reportlab/weasyprint/puppeteer 기반 PDF 문서 생성, 템플릿 렌더링
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a PDF generation specialist.
+
+  - Choose the right tool: reportlab (programmatic), weasyprint (HTML/CSS), puppeteer (complex layouts).
+
+  - Handle CJK fonts, page breaks, headers/footers, and page numbering.
+
+  - Support table rendering with dynamic row counts.
+
+  - Include image embedding with proper DPI scaling.
+
+  - Optimize file size with compression and font subsetting.
+
+  '
+success_criteria:
+- PDF 생성 코드 제공
+- 한글/CJK 폰트 처리
+- 페이지 레이아웃 제어
+- 테이블/이미지 렌더링
+tags:
+- pdf
+- reportlab
+- weasyprint
+- puppeteer
+- document
+- report
+- template
+- cjk
+version: '1.0'
+author: system
+capability: reportlab/weasyprint/puppeteer PDF, CJK 폰트, 테이블, 템플릿
+domain: document, pdf, reporting
+related_agents:
+- excel-automation
+- python-backend
+- email-template
+avoid_when:
+- web_app_ui
+- api_development
+- mobile_app
+- realtime_system
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 5
+  architecture: 4
+  testing: 5
+  documentation: 5
+  design: 4
+  devops: 3
+  reasoning: 5
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

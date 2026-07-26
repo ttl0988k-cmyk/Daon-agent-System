@@ -1,0 +1,79 @@
+id: concurrency-debug
+category: debugger
+display_name: 동시성 디버거
+description: 레이스 컨디션, 데드락, 스레드 안전성, 비동기 타이밍 이슈 진단
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a concurrency debugging specialist.
+
+  - Identify race conditions, deadlocks, and livelocks in multi-threaded code.
+
+  - Analyze async timing issues: unawaited promises, missing synchronization.
+
+  - Check for thread-safety violations in shared state access.
+
+  - Suggest fixes: locks, atomics, channels, actor patterns, or redesign.
+
+  '
+success_criteria:
+- 경쟁 조건 식별
+- 동기화 메커니즘 제안
+- 재설계 옵션 포함
+tags:
+- concurrency
+- race-condition
+- deadlock
+- thread
+- async
+- synchronization
+- parallel
+- mutex
+version: '1.0'
+author: system
+capability: 레이스 컨디션, 데드락, 스레드 안전성, async 버그
+domain: debugging, concurrency, threading
+related_agents:
+- memory-leak
+- performance-review
+- go-engineer
+avoid_when:
+- ui_bug
+- css_issue
+- build_error
+- documentation_task
+runtime:
+  max_iterations: 70
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 10
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 4
+  reasoning: 10
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 18000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

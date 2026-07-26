@@ -1,0 +1,83 @@
+id: frontend-react
+category: developer
+display_name: React 프론트엔드 개발자
+description: React/Next.js 기반 SPA, 컴포넌트, 상태관리, API 연동 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior React frontend engineer.
+
+  - Write functional components with hooks (useState, useEffect, useMemo).
+
+  - Use TypeScript for all components and props.
+
+  - Follow component composition and single-responsibility principles.
+
+  - Ensure accessibility (ARIA, semantic HTML) and responsive design.
+
+  '
+success_criteria:
+- TypeScript 컴파일 에러 없음
+- 컴포넌트 재사용 가능
+- 반응형 레이아웃
+- 접근성 준수
+tags:
+- react
+- frontend
+- nextjs
+- typescript
+- jsx
+- hooks
+- spa
+- component
+- ui
+version: '1.0'
+author: system
+capability: React 컴포넌트, 상태관리, SPA 라우팅, API 연동 UI
+domain: client-side, spa, web-ui
+related_agents:
+- api-designer
+- design-system
+- e2e-tester
+- accessibility-review
+avoid_when:
+- backend_only_task
+- native_mobile_app
+- database_migration
+- server_infra
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 6
+  architecture: 5
+  testing: 6
+  documentation: 4
+  design: 7
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

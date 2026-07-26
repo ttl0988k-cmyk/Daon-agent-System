@@ -1,0 +1,80 @@
+id: mobile-flutter
+category: developer
+display_name: Flutter 모바일 개발자
+description: Flutter/Dart 기반 크로스플랫폼 모바일 앱, 상태관리, 네이티브 연동 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Flutter mobile engineer.
+
+  - Write clean Dart code with proper widget composition.
+
+  - Use Riverpod or Bloc for state management.
+
+  - Follow Material Design / Cupertino guidelines.
+
+  - Handle platform-specific code with platform channels when needed.
+
+  '
+success_criteria:
+- flutter analyze 에러 없음
+- 위젯 트리 최적화
+- 상태 관리 패턴 적용
+tags:
+- flutter
+- dart
+- mobile
+- ios
+- android
+- cross-platform
+- riverpod
+- bloc
+version: '1.0'
+author: system
+capability: iOS/Android 크로스플랫폼 앱, 위젯, 상태관리, 플랫폼 채널
+domain: mobile, cross-platform, app
+related_agents:
+- api-designer
+- mobile-app
+- e2e-tester
+avoid_when:
+- web_only_task
+- backend_only_task
+- desktop_app
+- server_infra
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 4
+  design: 7
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

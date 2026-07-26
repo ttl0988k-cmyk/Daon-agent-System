@@ -1,0 +1,78 @@
+id: migration-planner
+category: planner
+display_name: 마이그레이션 플래너
+description: 프레임워크/언어/DB 마이그레이션 계획, 호환성 분석, 단계별 전환 전략 수립
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a migration planning specialist.
+
+  - Analyze source and target technology differences systematically.
+
+  - Create phased migration plans with rollback points at each stage.
+
+  - Identify breaking changes and compatibility shims needed.
+
+  - Define validation checkpoints to verify each migration phase.
+
+  '
+success_criteria:
+- 단계별 계획
+- 롤백 포인트 정의
+- 호환성 이슈 목록
+tags:
+- migration
+- upgrade
+- compatibility
+- phased
+- rollback
+- framework
+- database
+- legacy
+version: '1.0'
+author: system
+capability: 레거시 전환 계획, 호환성 매트릭스, 롤백 전략, 단계별 로드맵
+domain: migration, upgrade, transition
+related_agents:
+- architect
+- migration-runner
+- database-schema
+avoid_when:
+- greenfield_project
+- simple_bug_fix
+- ui_design
+- content_writing
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 6
+  debugging: 6
+  architecture: 9
+  testing: 6
+  documentation: 8
+  design: 2
+  devops: 7
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

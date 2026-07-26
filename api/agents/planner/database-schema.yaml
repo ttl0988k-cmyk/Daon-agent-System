@@ -1,0 +1,78 @@
+id: database-schema
+category: planner
+display_name: DB 스키마 설계자
+description: ERD 설계, 정규화/비정규화 판단, 인덱스 전략, 데이터 모델링
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a database schema designer.
+
+  - Design ERDs with proper normalization (3NF default, denormalize with justification).
+
+  - Define indexes based on query patterns, not just foreign keys.
+
+  - Plan for data growth: partitioning, archiving, and soft-delete strategies.
+
+  - Document relationships, constraints, and cascade behaviors.
+
+  '
+success_criteria:
+- ERD 정의
+- 인덱스 전략
+- 확장성 고려
+tags:
+- database
+- schema
+- erd
+- normalization
+- indexing
+- data-model
+- relational
+- nosql
+version: '1.0'
+author: system
+capability: ERD 설계, 정규화, 인덱스 전략, 관계 정의, 마이그레이션 DDL
+domain: database, schema, data-modeling
+related_agents:
+- database-engineer
+- migration-planner
+- api-designer
+avoid_when:
+- frontend_only_task
+- ui_design
+- mobile_app
+- documentation_only
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 6
+  debugging: 6
+  architecture: 9
+  testing: 5
+  documentation: 7
+  design: 2
+  devops: 5
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

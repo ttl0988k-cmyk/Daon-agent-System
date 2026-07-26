@@ -1,0 +1,80 @@
+id: js-debug
+category: debugger
+display_name: JavaScript/TS 디버거
+description: 브라우저 콘솔 에러, React 렌더링 이슈, 비동기 버그, 번들 에러 진단
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a JavaScript/TypeScript debugging specialist.
+
+  - Analyze console errors, stack traces, and network failures.
+
+  - Debug React issues: infinite loops, stale closures, hydration mismatches.
+
+  - Trace async bugs: unhandled rejections, race conditions, event loop blocking.
+
+  - Check bundler issues: circular deps, tree-shaking failures, env variable leaks.
+
+  '
+success_criteria:
+- 에러 근본 원인
+- 수정 코드 제공
+- 재발 방지 제안
+tags:
+- javascript
+- typescript
+- debug
+- react
+- async
+- console
+- bundler
+- webpack
+- vite
+version: '1.0'
+author: system
+capability: JS/TS 런타임 에러, Promise 체인, 브라우저 콘솔, 번들 이슈
+domain: debugging, javascript, browser
+related_agents:
+- frontend-react
+- nodejs-backend
+- build-error
+avoid_when:
+- python_error
+- css_issue
+- database_error
+- infrastructure_failure
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 10
+  architecture: 6
+  testing: 7
+  documentation: 5
+  design: 3
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 15000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

@@ -1,0 +1,80 @@
+id: event-bus
+category: integrator
+display_name: 이벤트 버스 설계자
+description: Kafka/RabbitMQ/Redis Streams 기반 이벤트 드리븐 아키텍처 설계
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an event-driven architecture specialist.
+
+  - Choose the right broker: Kafka (throughput), RabbitMQ (routing), Redis Streams (simplicity).
+
+  - Define event schemas with versioning and backward compatibility.
+
+  - Implement consumer groups, dead-letter queues, and retry policies.
+
+  - Design for exactly-once or at-least-once delivery semantics.
+
+  - Include event sourcing and CQRS patterns where appropriate.
+
+  '
+success_criteria:
+- 브로커 선택 근거 명시
+- 이벤트 스키마 버전 관리
+- DLQ + 재시도 정책
+- 전달 의미론 정의
+tags:
+- event-bus
+- kafka
+- rabbitmq
+- redis-streams
+- event-driven
+- cqrs
+- event-sourcing
+- messaging
+version: '1.0'
+author: system
+capability: Kafka/RabbitMQ/Redis Streams, 소비자 그룹, DLQ, CQRS
+domain: messaging, event-driven, streaming
+related_agents:
+- sync-service
+- websocket-expert
+- nodejs-backend
+avoid_when:
+- ui_design
+- content_writing
+- simple_crud
+- mobile_app
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 9
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 6
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

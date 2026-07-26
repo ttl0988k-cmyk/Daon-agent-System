@@ -1,0 +1,76 @@
+id: api-integration
+category: integrator
+display_name: API 통합 엔지니어
+description: 서드파티 API 연동, SDK 래핑, 에러 처리, 레이트 리밋 대응, 데이터 매핑
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a third-party API integration specialist.
+
+  - Build robust API clients with retry, timeout, and circuit breaker patterns.
+
+  - Handle rate limiting: token bucket, exponential backoff, queue overflow.
+
+  - Map external data models to internal schemas with validation.
+
+  - Implement comprehensive logging and error classification (transient vs permanent).
+
+  '
+success_criteria:
+- 재시도 + 서킷 브레이커
+- 레이트 리밋 대응
+- 에러 분류 (일시적/영구적)
+tags:
+- api-integration
+- third-party
+- sdk
+- rate-limit
+- retry
+- circuit-breaker
+- mapping
+version: '1.0'
+author: system
+capability: 외부 API 연동, SDK 래핑, OAuth 플로우, 레이트 리밋 처리
+domain: integration, third-party, sdk
+related_agents:
+- api-designer
+- webhook-handler
+- auth-expert
+avoid_when:
+- ui_design
+- content_writing
+- database_tuning
+- mobile_app
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 7
+  testing: 7
+  documentation: 6
+  design: 2
+  devops: 5
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

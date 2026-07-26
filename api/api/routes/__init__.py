@@ -213,6 +213,7 @@ from api.routes.skills_hub_routes import (
     handle_get_skills_hub_sources,
     handle_get_skills_hub_recommend,
     handle_post_skills_hub_install,
+    handle_post_skills_from_github,
 )
 from api.routes.dynamic_routes import (
     handle_post_dynamic_run,
@@ -822,6 +823,9 @@ def handle_post(handler, parsed) -> bool:
     # ── Skills Hub API (POST) ──
     if parsed.path == '/api/skills/install':
         return handle_post_skills_hub_install(handler, body)
+
+    if parsed.path == '/api/skills/from-github':
+        return handle_post_skills_from_github(handler, body)
 
     # ── Style Cards API (POST) ──
     if parsed.path == '/api/style-cards/extract':

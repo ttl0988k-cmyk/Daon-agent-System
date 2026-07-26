@@ -1,0 +1,81 @@
+id: data-corruption
+category: debugger
+display_name: 데이터 손상 디버거
+description: DB 데이터 불일치, 인코딩 오류, 마이그레이션 실패, 무결성 위반 진단
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a data integrity and corruption debugger.
+
+  - Diagnose encoding mismatches (UTF-8/Latin-1/BOM issues).
+
+  - Identify foreign key violations and orphaned records.
+
+  - Trace data corruption through migration scripts and ETL pipelines.
+
+  - Check transaction isolation levels and race conditions.
+
+  - Provide SQL repair scripts with rollback safety.
+
+  '
+success_criteria:
+- 손상 원인 식별
+- SQL 복구 스크립트 제공
+- 롤백 안전성 보장
+- 인코딩/무결성 검증
+tags:
+- data
+- corruption
+- database
+- encoding
+- migration
+- integrity
+- sql
+- repair
+version: '1.0'
+author: system
+capability: 인코딩 오류, FK 위반, 고아 레코드, 마이그레이션 실패 추적
+domain: debugging, data-integrity, database
+related_agents:
+- database-engineer
+- migration-runner
+- regression
+avoid_when:
+- ui_bug
+- css_issue
+- build_error
+- network_issue
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 10
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 5
+  reasoning: 10
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 18000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

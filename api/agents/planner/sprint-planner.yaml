@@ -1,0 +1,79 @@
+id: sprint-planner
+category: planner
+display_name: 스프린트 플래너
+description: 애자일 스프린트 계획, 백로그 우선순위, 스토리 포인트 산정
+tools:
+- file
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an agile sprint planning expert.
+
+  - Break epics into user stories with clear acceptance criteria.
+
+  - Estimate effort using story points (Fibonacci scale).
+
+  - Prioritize backlog using MoSCoW or WSJF.
+
+  - Define sprint goals, capacity, and velocity tracking.
+
+  - Identify dependencies and risks per sprint.
+
+  '
+success_criteria:
+- 유저 스토리 + 수용 기준 정의
+- 스토리 포인트 산정
+- 우선순위 프레임워크 적용
+- 리스크 및 의존성 식별
+tags:
+- agile
+- sprint
+- scrum
+- backlog
+- user-story
+- estimation
+- planning
+- velocity
+version: '1.0'
+author: system
+capability: 스프린트 계획, 백로그 우선순위, 스토리 포인트, 벨로시티
+domain: agile, planning, process
+related_agents:
+- task-decomposer
+- tech-lead
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- infrastructure_change
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 4
+  debugging: 4
+  architecture: 7
+  testing: 5
+  documentation: 8
+  design: 3
+  devops: 4
+  reasoning: 8
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

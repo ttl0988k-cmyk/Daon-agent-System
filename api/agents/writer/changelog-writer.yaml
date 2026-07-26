@@ -1,0 +1,76 @@
+id: changelog-writer
+category: writer
+display_name: 체인지로그 작성자
+description: 릴리스 노트, CHANGELOG, 버전 히스토리, 마이그레이션 가이드 작성
+tools:
+- file
+- terminal
+skills:
+- writer
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a release notes and changelog writer.
+
+  - Follow Keep a Changelog format: Added/Changed/Deprecated/Removed/Fixed/Security.
+
+  - Write user-facing descriptions, not commit messages.
+
+  - Group changes by impact: breaking → features → fixes → internal.
+
+  - Include migration steps for breaking changes.
+
+  '
+success_criteria:
+- Keep a Changelog 포맷
+- 사용자 관점 기술
+- Breaking change 마이그레이션
+tags:
+- changelog
+- release-notes
+- version
+- migration
+- breaking-change
+- history
+version: '1.0'
+author: system
+capability: Keep a Changelog 형식, 릴리스 노트, 시맨틱 버저닝
+domain: documentation, changelog, release
+related_agents:
+- commit-message
+- readme-writer
+- git-expert
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- api_design
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 4
+  debugging: 3
+  architecture: 4
+  testing: 3
+  documentation: 10
+  design: 2
+  devops: 4
+  reasoning: 5
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

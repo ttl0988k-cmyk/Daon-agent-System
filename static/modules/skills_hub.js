@@ -53,6 +53,19 @@ function renderSkillsHubUI(container) {
         html += '</div>';
     }
 
+    // GitHub URL → Skill converter
+    html += '<div class="skills-hub-github-section" style="margin-top:8px;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;">';
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">🔗 GitHub URL → 스킬 변환</div>';
+    html += '<div style="display:flex;gap:4px;">';
+    html += '<input id="skillsHubGithubUrl" type="text" placeholder="https://github.com/owner/repo ..." '
+        + 'onkeydown="if(event.key===\'Enter\')convertGithubSkill()" '
+        + 'style="flex:1;background:var(--bg2);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:6px 8px;font-size:11px;outline:none;">';
+    html += '<button id="skillsHubGithubBtn" onclick="convertGithubSkill()" '
+        + 'style="background:#238636;color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:11px;cursor:pointer;white-space:nowrap;">⚡ 변환</button>';
+    html += '</div>';
+    html += '<div id="skillsHubGithubStatus" style="font-size:10px;color:var(--muted);margin-top:4px;display:none;"></div>';
+    html += '</div>';
+
     // Results area
     html += '<div id="skillsHubResults" style="margin-top:8px;"></div>';
 
@@ -344,5 +357,61 @@ function renderSkillsRecommend(data) {
         statusEl.style.display = 'block';
         const queries = data.queries_made || [];
         statusEl.textContent = '✅ ' + recs.length + '개 추천 (검색어: ' + queries.slice(0, 3).join(', ') + ')';
+    }
+}
+
+/**
+ * Convert a GitHub URL to a local skill via POST /api/skills/from-github.
+ */
+async function convertGithubSkill() {
+    const input = document.getElementById('skillsHubGithubUrl');
+    const statusEl = document.getElementById('skillsHubGithubStatus');
+    const btn = document.getElementById('skillsHubGithubBtn');
+
+    if (!input) return;
+    const url = input.value.trim();
+    if (!url) {
+        _showToast('GitHub URL을 입력해주세요', 'error');
+        return;
+    }
+    if (!url.includes('github.com') && !url.includes('raw.githubusercontent.com')) {
+        _showToast('유효한 GitHub URL이 아닙니다', 'error');
+        return;
+    }
+
+    // UI state: loading
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 변환 중...'; }
+    if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '🔄 GitHub 저장소 분석 중...'; statusEl.style.color = 'var(--muted)'; }
+
+    try {
+        const data = await api('/api/skills/from-github', {
+            method: 'POST',
+            body: { url: url }
+        });
+
+        if (data && data.success) {
+            if (statusEl) {
+                statusEl.style.color = '#3fb950';
+                statusEl.textContent = '✅ 스킬 설치 완료: ' + (data.skill_name || '') + ' (' + (data.category || '') + ')';
+            }
+            _showToast('🎉 GitHub → 스킬 변환 성공: ' + (data.skill_name || ''), 'success');
+            input.value = '';
+            // Refresh skills list if visible
+            if (typeof loadSkills === 'function') loadSkills();
+        } else {
+            if (statusEl) {
+                statusEl.style.color = '#f85149';
+                statusEl.textContent = '❌ ' + (data.error || '변환 실패');
+            }
+            _showToast('변환 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.style.color = '#f85149';
+            statusEl.textContent = '❌ ' + (e.message || '네트워크 오류');
+        }
+        _showToast('변환 오류: ' + (e.message || ''), 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ 변환'; }
     }
 }

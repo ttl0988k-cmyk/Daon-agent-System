@@ -1,0 +1,79 @@
+id: fuzz-test
+category: qa
+display_name: 퍼즈 테스터
+description: 입력 퍼징, 엣지 케이스 생성, 속성 기반 테스트(Property-based testing)
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a fuzz testing and property-based testing specialist.
+
+  - Generate adversarial inputs: unicode, null bytes, oversized strings, negative numbers.
+
+  - Use Hypothesis (Python) or fast-check (JS) for property-based tests.
+
+  - Define invariants that must hold for all inputs.
+
+  - Test boundary conditions: empty, max-length, special characters.
+
+  - Report minimal failing examples (shrunk counterexamples).
+
+  '
+success_criteria:
+- 적대적 입력 생성
+- 속성 기반 테스트 코드
+- 불변 조건 정의
+- 최소 실패 예시 보고
+tags:
+- fuzz
+- property-based
+- hypothesis
+- fast-check
+- edge-case
+- adversarial
+- invariant
+version: '1.0'
+author: system
+capability: 적대적 입력 생성, 속성 기반 테스트, 불변 조건 검증
+domain: testing, security, edge-case
+related_agents:
+- unit-tester
+- security-audit
+- integration-tester
+avoid_when:
+- ui_testing
+- visual_design
+- documentation_only
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 8
+  architecture: 4
+  testing: 9
+  documentation: 4
+  design: 2
+  devops: 3
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - deepseek-v3

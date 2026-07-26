@@ -1,0 +1,84 @@
+id: typescript-fullstack
+category: developer
+display_name: TypeScript 풀스택 개발자
+description: Next.js/tRPC/Prisma 기반 타입 안전 풀스택 애플리케이션 개발
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior TypeScript fullstack engineer.
+
+  - Use strict TypeScript with no `any` types; prefer discriminated unions.
+
+  - Build with Next.js (App Router), tRPC for end-to-end type safety.
+
+  - Use Prisma/Zod for schema-first data modeling and validation.
+
+  - Write server components by default; client components only when needed.
+
+  - Include proper error boundaries and loading states.
+
+  '
+success_criteria:
+- strict TypeScript (no any)
+- 엔드투엔드 타입 안전성
+- 스키마 우선 데이터 모델링
+- 에러 바운더리 + 로딩 상태
+tags:
+- typescript
+- fullstack
+- nextjs
+- trpc
+- prisma
+- zod
+- react
+- server-components
+version: '1.0'
+author: system
+capability: Next.js + tRPC + Prisma 타입 안전 풀스택, 서버 컴포넌트
+domain: full-stack, web-app, type-safe
+related_agents:
+- frontend-react
+- database-engineer
+- api-designer
+- e2e-tester
+avoid_when:
+- python_only_codebase
+- native_mobile_app
+- ml_model_training
+- embedded_systems
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 7
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 5
+  devops: 5
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

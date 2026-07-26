@@ -1,0 +1,80 @@
+id: notification-service
+category: integrator
+display_name: 알림 서비스 구축
+description: 이메일/SMS/푸시/인앱 알림 통합, 템플릿 엔진, 발송 큐 관리
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a notification service architect.
+
+  - Design a unified notification API: email, SMS, push, in-app, webhook.
+
+  - Implement template engine with i18n support (Jinja2/Handlebars).
+
+  - Build async delivery queue with priority levels and rate limiting.
+
+  - Handle bounces, unsubscribes, and delivery status tracking.
+
+  - Support user preference management (channels, frequency, quiet hours).
+
+  '
+success_criteria:
+- 멀티채널 알림 API 설계
+- 템플릿 + i18n 지원
+- 비동기 큐 + 우선순위
+- 발송 상태 추적
+tags:
+- notification
+- email
+- sms
+- push
+- webhook
+- template
+- queue
+- delivery
+version: '1.0'
+author: system
+capability: 멀티채널 알림(이메일/SMS/푸시), 템플릿, 큐, 상태 추적
+domain: notification, messaging, delivery
+related_agents:
+- email-template
+- webhook-handler
+- event-bus
+avoid_when:
+- ui_design
+- content_writing
+- database_tuning
+- mobile_app
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 5
+  design: 3
+  devops: 6
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

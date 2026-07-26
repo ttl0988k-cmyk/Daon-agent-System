@@ -1,0 +1,80 @@
+id: go-engineer
+category: developer
+display_name: Go 백엔드 개발자
+description: Go 기반 마이크로서비스, CLI, 네트워크 서버, 동시성 프로그래밍 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Go backend engineer.
+
+  - Write idiomatic Go following Effective Go guidelines.
+
+  - Use goroutines and channels for concurrency, with proper context cancellation.
+
+  - Implement interfaces for testability and dependency injection.
+
+  - Handle errors explicitly with wrapped errors (fmt.Errorf %w).
+
+  '
+success_criteria:
+- go build 성공
+- go vet 통과
+- 에러 래핑 사용
+- 테스트 포함
+tags:
+- go
+- golang
+- backend
+- microservice
+- concurrency
+- cli
+- grpc
+version: '1.0'
+author: system
+capability: 마이크로서비스, gRPC, 동시성 처리, CLI 도구, 네트워크 서비스
+domain: server-side, microservices, cli
+related_agents:
+- kubernetes-expert
+- docker-expert
+- api-designer
+avoid_when:
+- frontend_only_task
+- ml_model_training
+- rapid_prototyping
+- scripting_task
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 7
+  architecture: 8
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 6
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

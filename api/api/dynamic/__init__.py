@@ -40,6 +40,13 @@ from api.dynamic.skill_extractor import _extract_and_save_skill
 from api.dynamic.skill_retriever import SemanticSkillRetriever, get_skill_retriever
 from api.dynamic.model_selector import DynamicModelSelector, get_model_selector, ModelProfile, ModelHistory, SkillHistory, get_skill_history
 from api.dynamic.experience_db import ExperienceDatabase, get_experience_db
+from api.dynamic.template_loader import (
+    load_template,
+    load_all_templates,
+    get_catalog_text,
+    search_templates,
+    resolve_template_for_node,
+)
 
 __all__ = [
     "StreamLogBuffer",
@@ -84,4 +91,9 @@ __all__ = [
     "get_skill_history",
     "ExperienceDatabase",
     "get_experience_db",
+    "load_template",
+    "load_all_templates",
+    "get_catalog_text",
+    "search_templates",
+    "resolve_template_for_node",
 ]

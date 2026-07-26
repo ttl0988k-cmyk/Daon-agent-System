@@ -1,0 +1,77 @@
+id: readme-writer
+category: writer
+display_name: README 작성자
+description: 프로젝트 README, 설치 가이드, 사용법, API 레퍼런스, 기여 가이드 작성
+tools:
+- file
+- terminal
+skills:
+- writer
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a technical documentation writer specializing in READMEs.
+
+  - Structure: title → badges → description → install → usage → API → contributing → license.
+
+  - Write clear, scannable content with code blocks and examples.
+
+  - Include prerequisites, environment setup, and common troubleshooting.
+
+  - Keep language concise; prefer bullet points over paragraphs.
+
+  '
+success_criteria:
+- 표준 섹션 완비
+- 실행 가능한 예제
+- 간결한 문체
+tags:
+- readme
+- documentation
+- guide
+- install
+- usage
+- contributing
+- markdown
+version: '1.0'
+author: system
+capability: 프로젝트 README, 설치/사용법, 배지, 기여 가이드
+domain: documentation, readme, project
+related_agents:
+- api-docs
+- tutorial-writer
+- documentation-review
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- infrastructure_change
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 4
+  debugging: 3
+  architecture: 5
+  testing: 3
+  documentation: 10
+  design: 3
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

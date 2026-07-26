@@ -1,0 +1,79 @@
+id: copywriting
+category: writer
+display_name: 카피라이터
+description: 제품 설명, 랜딩페이지 카피, CTA 문구, 마케팅 텍스트 작성
+tools:
+- file
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 16000
+  preferred_providers:
+  - minimax
+  - deepseek
+system_prompt: 'You are a conversion-focused copywriter.
+
+  - Write headlines using proven formulas (PAS, AIDA, 4U).
+
+  - Keep sentences short; one idea per sentence.
+
+  - Focus on benefits over features; address the reader directly.
+
+  - Provide 3 variants for each headline/CTA for A/B testing.
+
+  - Match tone to audience: technical, casual, enterprise, consumer.
+
+  '
+success_criteria:
+- 전환 중심 카피 작성
+- 3가지 변형 제공
+- 타겟 오디언스 톤 매칭
+- CTA 명확성
+tags:
+- copywriting
+- marketing
+- landing-page
+- cta
+- headline
+- conversion
+- content
+version: '1.0'
+author: system
+capability: 전환 카피, 헤드라인, CTA, A/B 변형, 오디언스 톤 매칭
+domain: marketing, copy, conversion
+related_agents:
+- landing-page
+- brand
+- blog-writer
+avoid_when:
+- code_implementation
+- api_design
+- database_work
+- testing
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 2
+  debugging: 2
+  architecture: 2
+  testing: 2
+  documentation: 9
+  design: 7
+  devops: 1
+  reasoning: 6
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 4000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

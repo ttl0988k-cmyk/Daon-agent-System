@@ -1,0 +1,84 @@
+id: api-designer
+category: developer
+display_name: API 설계 전문가
+description: REST/GraphQL API 스펙 설계, OpenAPI 문서화, 스키마 계약 정의
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- contract-validator
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an API design specialist.
+
+  - Design RESTful APIs following resource-oriented conventions.
+
+  - Write OpenAPI 3.0 specs with complete request/response schemas.
+
+  - Ensure naming consistency (camelCase/snake_case) across all endpoints.
+
+  - Define error response formats and pagination patterns upfront.
+
+  '
+success_criteria:
+- OpenAPI 스펙 유효
+- 네이밍 일관성
+- 에러 포맷 정의
+- 페이지네이션 패턴
+tags:
+- api
+- rest
+- graphql
+- openapi
+- swagger
+- schema
+- contract
+- design
+- specification
+version: '1.0'
+author: system
+capability: REST/GraphQL 스키마 설계, 버전 관리, 문서화, 계약 정의
+domain: api, contract, interface
+related_agents:
+- python-backend
+- frontend-react
+- api-contract
+- api-docs
+avoid_when:
+- implementation_only
+- ui_design
+- database_tuning
+- devops_only
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 5
+  architecture: 9
+  testing: 6
+  documentation: 8
+  design: 3
+  devops: 4
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

@@ -20,6 +20,7 @@ from api.dynamic.state import StreamLogBuffer
 from api.dynamic.plan_validator import validate_plan_schema, semantic_validate
 from api.dynamic.direct_calls import _call_direct
 from api.dynamic.model_selector import get_skill_history, extract_task_context, build_context_keys
+from api.dynamic.template_loader import get_catalog_text, load_all_templates
 from api.dynamic.logging_utils import get_logger
 
 _log = get_logger(__name__)
@@ -116,9 +117,17 @@ class HermesPlanner:
                 "[End Experience Database]\n"
             )
 
+        # --- Agent Template Catalog ---
+        try:
+            template_catalog_text = get_catalog_text()
+        except Exception as e:
+            _log.warning("Failed to load template catalog: %s", e)
+            template_catalog_text = "(Template catalog unavailable)"
+
         system_instruction = (
-            "You are the Master Orchestrator and Agent Compiler of a multi-agent system.\n"
-            "Generate a valid EXECUTABLE DAG of agents for the task.\n"
+            "You are the Master Orchestrator (CEO) of a multi-agent system.\n"
+            "Your job: SELECT agent templates from the catalog below, assign subtasks, and define execution order.\n"
+            "You do NOT need to write system_prompts or define tools/skills — templates provide those automatically.\n\n"
             "Respond ONLY with a valid JSON object matching this structure:\n"
             "{\n"
             '  "plan_summary": "Short execution description.",\n'
@@ -126,14 +135,12 @@ class HermesPlanner:
             '  "nodes": [\n'
             "    {\n"
             '      "name": "agent_name (alphanumeric and underscores only)",\n'
-            '      "type": "llm | llm+web_search | llm+image_tool | llm+terminal",\n'
-            '      "role": "specialist role",\n'
-            '      "skills": ["skill-name"],\n'
-            '      "system_prompt": "specific instructions for this agent (keep SHORT, 3-5 lines). Skills will be auto-injected by the harness.",\n'
-            '      "subtask": "the subtask this agent will execute.",\n'
+            '      "template_id": "MUST be an exact ID from the AGENT TEMPLATE CATALOG below",\n'
+            '      "subtask": "the specific subtask this agent will execute (be detailed and concrete)",\n'
             '      "input": "input_key_from_dependency (null if none)",\n'
             '      "output": "output_key_for_this_agent",\n'
-            '      "model": "Assign the optimal model. MUST match one in AVAILABLE MODELS."\n'
+            '      "model": "Assign the optimal model. MUST match one in AVAILABLE MODELS.",\n'
+            '      "system_prompt": "(OPTIONAL) extra instructions beyond the template default, keep SHORT 1-3 lines"\n'
             "    }\n"
             "  ],\n"
             '  "edges": [\n'
@@ -141,37 +148,35 @@ class HermesPlanner:
             "  ]\n"
             "}\n"
             "Ensure the JSON output is valid without markdown blocks.\n\n"
+            "[AGENT TEMPLATE CATALOG — 100 pre-built specialist agents]\n"
+            "Select template_id from this catalog. Each template includes system_prompt, tools, skills, and model preferences.\n"
+            + template_catalog_text + "\n"
+            "[End Agent Template Catalog]\n\n"
             + experience_block + "\n"
             "[CEO DECISION-MAKING CHECKLIST]\n"
             "Before generating the nodes and edges, you MUST mentally evaluate:\n"
             "1. What is the Task Difficulty/Complexity?\n"
             "2. Is a single agent sufficient, or is a multi-agent DAG required?\n"
-            "3. What specific roles are needed (e.g., Designer, Developer, Integrator)?\n"
-            "4. Which skills from the AVAILABLE SKILLS CATALOG should each agent use?\n"
-            "5. What is the optimal model for each role based on task difficulty?\n"
-            "6. What is the concrete Success Criteria for the task?\n"
-            "7. Is a Reviewer/QA agent needed to verify correctness?\n"
-            "8. Does this task involve API routes, response formats, or message structures? If YES, follow the SHARED SCHEMA CONTRACT rules below.\n\n"
-            "[SKILL SELECTION RULES]\n"
-            "- You select skill NAMES only. The harness will read actual skill files and inject their full content into agent system_prompts automatically.\n"
-            "- For Development/Coding agents: assign 'bill-dev' + 'self-reflection' skills.\n"
-            "- For QA/Review agents: assign 'sherlock-qa' + 'self-reflection' skills.\n"
-            "- For Contract Validation agents: assign 'contract-validator' skill (MUST run BEFORE Backend/Frontend agents).\n"
-            "- For UI/Design agents: assign 'taste' + 'landing-page' + 'self-reflection' skills.\n"
-            "- For Security-sensitive tasks: assign 'security' skill.\n"
-            "- You can assign multiple skills per agent. Only assign relevant skills.\n"
-            "- Do NOT embed skill content in 'system_prompt'. Keep system_prompt SHORT (3-5 lines focusing on the unique subtask).\n\n"
+            "3. Which template_id(s) from the AGENT TEMPLATE CATALOG best fit each subtask?\n"
+            "4. What is the optimal model for each agent based on task difficulty?\n"
+            "5. What is the concrete Success Criteria for the task?\n"
+            "6. Is a Reviewer/QA agent needed to verify correctness?\n"
+            "7. Does this task involve API routes, response formats, or message structures? If YES, follow the SHARED SCHEMA CONTRACT rules below.\n\n"
+            "[TEMPLATE SELECTION RULES]\n"
+            "- You MUST select template_id from the AGENT TEMPLATE CATALOG above. Do NOT invent template IDs.\n"
+            "- Each template already includes: system_prompt, tools, skills, and model preferences.\n"
+            "- Your job is to: (a) pick the right template, (b) write a detailed subtask, (c) assign a model.\n"
+            "- The optional 'system_prompt' field is for EXTRA instructions only (1-3 lines). The template's base prompt is auto-injected.\n"
+            "- You can still add plan-level 'skills' that apply to ALL agents (e.g., 'self-reflection').\n"
+            "- For Contract Validation: use a reviewer template + 'contract-validator' skill in plan-level skills.\n"
+            "- AVOID_WHEN ENFORCEMENT: Each catalog entry has [AVOID: ...] markers. If the task matches ANY avoid_when condition of a template, you MUST NOT select that template. Example: frontend-react has [AVOID: backend_only_task, native_mobile_app] — do NOT use it for a pure backend API task.\n"
+            "- DOMAIN MATCHING: Check the 'capability' and 'domain' fields. Select the template whose domain best matches the subtask requirement.\n"
+            "- COST OPTIMIZATION: Each catalog entry has [COST: low/mid/high] marker. For simple tasks (CRUD, boilerplate, docs), prefer low-cost templates + cheaper models. Reserve high-cost templates for complex reasoning/architecture tasks. Example: simple API endpoint → python-backend [COST: mid] + deepseek-v3, NOT architect [COST: high] + claude-sonnet.\n"
+            "- MODEL SELECTION BY COST: low-cost tasks → deepseek-v3/minimax-m3; mid-cost → deepseek-v3/qwen-coder; high-cost complex reasoning → claude-sonnet/gpt-4o. Always prefer the cheapest model that can handle the task quality requirement.\n\n"
             "[RETRIEVER ≠ AUTO-SELECT — CRITICAL ENFORCEMENT]\n"
-            "The Semantic Skill Retriever above provides Top-K RECOMMENDATIONS based on embedding similarity.\n"
+            "The Semantic Skill Retriever provides Top-K RECOMMENDATIONS based on embedding similarity.\n"
             "These are SUGGESTIONS ONLY. You are the CEO and YOU make the FINAL decision.\n"
-            "RULES YOU MUST FOLLOW:\n"
-            "  1. The highest similarity score does NOT guarantee the best skill for the task.\n"
-            "  2. You MUST cross-check Retriever recommendations against Skill History (past success rates).\n"
-            "     A skill with high similarity but low historical success in this context is SUSPECT.\n"
-            "  3. You MUST cross-check against the Skill Graph for conflicts, requirements, and compatibilities.\n"
-            "  4. If the Retriever's top recommendation conflicts with context-aware history, OVERRIDE it.\n"
-            "  5. You may select skills that are NOT in the Retriever's Top-10 if the Skill Graph requires them.\n"
-            "  6. Document your rationale: when you deviate from Retriever recommendations, explain why briefly in plan_summary.\n"
+            "Cross-check recommendations against Skill History (past success rates) and Skill Graph (conflicts/requirements).\n"
             "[End Retriever ≠ Auto-Select]\n\n"
             + semantic_skill_block + "\n"
             + skill_history_block + "\n"
@@ -179,36 +184,18 @@ class HermesPlanner:
             + skill_graph_block + "\n"
             "[SHARED SCHEMA CONTRACT — MANDATORY FOR ALL AGENTS]\n"
             "- ALL agents MUST follow the shared Schema contract defined in shared/schema.py and shared/schema.js.\n"
-            "- Do NOT invent API routes, response fields, or message formats. If the schema is missing, request it before implementation.\n"
-            "- Contract Validator agents (skill: 'contract-validator'): Run BEFORE any Backend/Frontend code is written. Verify endpoint consistency, request/response schema alignment, and common field parity. MUST return VERIFIED PASS before implementation agents are generated. Block agent generation on FAIL.\n"
-            "- Frontend agents: Use Schema.createUserMessage(), Schema.validateMessage(), Schema.SSEClientEvent constants only.\n"
-            "- Backend agents: Use Message.create_user(), validate_message(), to_response(), to_dict() from shared/schema.py only.\n"
-            "- QA agents: Validate against integration_checklist.yaml. All checks MUST achieve VERIFIED PASS.\n"
-            "- Integrator agents: Run scripts/run_integration_checks.py after every code change. Exit code 0 required before delivery.\n"
+            "- Do NOT invent API routes, response fields, or message formats.\n"
+            "- Contract Validator: Run BEFORE any Backend/Frontend code is written. MUST return VERIFIED PASS.\n"
             "- Schema is the Single Source of Truth. No agent may deviate from it.\n\n"
-            "[CRITICAL AGENT COMPILING CONSTRAINTS]\n"
-            "- Thin Prompting: system_prompt should be 3-5 concise lines. Skill content is auto-injected.\n"
-            "- Component Modularization: For UI tasks, split into specialized agents.\n"
+            "[CRITICAL CONSTRAINTS]\n"
             "- PORT/PROCESS SAFETY: Agents must NEVER kill the active backend process on port 9090.\n"
+            "- Component Modularization: For UI tasks, split into specialized agents.\n"
             "\n[MASTER ORCHESTRATION RULES]\n"
-            "1. SCHEMA-FIRST DAG ORDER (For API/Message tasks): You MUST strictly follow this execution sequence:\n"
-            "   a. Schema Agent: Create/update shared schema files (e.g., shared/schema.py, shared/schema.js).\n"
-            "   b. Contract Validator: Create an agent (skill: 'contract-validator') to verify endpoint/schema/field parity BEFORE implementation.\n"
-            "   c. Validation Gate: The Contract Validator MUST return VERIFIED PASS. If FAIL, fix the contract. Do NOT proceed with violations.\n"
-            "   d. Implementation: Generate Backend/Frontend agents ONLY after passing validation. Inject the schema reference into their prompts.\n"
-            "   e. QA/Review: Perform final validation (ensure a QA agent is assigned to validate against integration_checklist.yaml).\n"
-            "2. MINIMAL VIABLE DAG: Prefer the smallest viable DAG. Do not create additional agents unless they materially improve output quality or pipeline reliability. Single-agent execution is highly encouraged for simple tasks.\n"
-            "3. CONTEXT INTEGRITY: Each downstream agent must receive all necessary context explicitly via 'input' and 'output' dependencies. Never assume shared memory or implicit context between agents.\n"
-            "4. ROLE-SPECIFIC SUCCESS CRITERIA: You MUST assign and enforce strict success criteria tailored to each agent's role:\n"
-            "   - Planner: DAG logically complete, No missing dependencies, No circular dependencies.\n"
-            "   - Schema/Contract: Validation Pass, Strict parity between Frontend/Backend fields.\n"
-            "   - Backend: Build/Execution Success, Tests Pass, Lint Pass, No regressions.\n"
-            "   - Frontend: Build Success, No Console Errors, UI matches requirements perfectly.\n"
-            "   - QA/Review: Integration validation passed, Edge cases tested, Requirements alignment verified.\n"
-            "5. ENDLESS LOOP PREVENTION: Avoid endless review-fix cycles. You MUST strictly adhere to these limits:\n"
-            "   - Max QA iterative corrections: 2 times.\n"
-            "   - If it fails the 2nd time -> Escalate to the highest-reasoning model available.\n"
-            "   - If it still fails after escalation -> Terminate the agent chain and report failure.\n"
+            "1. SCHEMA-FIRST DAG ORDER (For API/Message tasks): Schema Agent → Contract Validator → Implementation → QA/Review.\n"
+            "2. MINIMAL VIABLE DAG: Prefer the smallest viable DAG. Single-agent execution is encouraged for simple tasks.\n"
+            "3. CONTEXT INTEGRITY: Each downstream agent must receive context via 'input'/'output' dependencies.\n"
+            "4. ROLE-SPECIFIC SUCCESS CRITERIA: Templates include success_criteria. Enforce them.\n"
+            "5. ENDLESS LOOP PREVENTION: Max QA corrections: 2. Then escalate. Then terminate.\n"
         )
 
         try:

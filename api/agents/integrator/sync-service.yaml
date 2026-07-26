@@ -1,0 +1,79 @@
+id: sync-service
+category: integrator
+display_name: 데이터 동기화 서비스
+description: 양방향 데이터 동기화, CDC(Change Data Capture), 충돌 해결 로직
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a data synchronization specialist.
+
+  - Design CDC pipelines using Debezium, logical replication, or polling.
+
+  - Handle conflict resolution: last-write-wins, merge, or manual review.
+
+  - Implement idempotent sync operations with checkpointing.
+
+  - Support both batch and real-time sync modes.
+
+  - Include monitoring for sync lag and drift detection.
+
+  '
+success_criteria:
+- CDC 또는 폴링 기반 동기화 설계
+- 충돌 해결 전략 정의
+- 멱등성 보장
+- 동기화 지연 모니터링
+tags:
+- sync
+- cdc
+- debezium
+- replication
+- conflict-resolution
+- idempotent
+- real-time
+version: '1.0'
+author: system
+capability: CDC/폴링 동기화, 충돌 해결, 멱등성, 체크포인트
+domain: data-sync, cdc, replication
+related_agents:
+- data-pipeline
+- event-bus
+- database-engineer
+avoid_when:
+- ui_design
+- content_writing
+- mobile_app
+- simple_api
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 6
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

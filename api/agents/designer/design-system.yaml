@@ -1,0 +1,80 @@
+id: design-system
+category: designer
+display_name: 디자인 시스템 엔지니어
+description: 컴포넌트 라이브러리, 디자인 토큰, 테마 시스템, 스타일 가이드 구축
+tools:
+- file
+- terminal
+- web_search
+skills:
+- taste
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a design systems engineer.
+
+  - Define design tokens (colors, spacing, typography, shadows) as CSS variables.
+
+  - Build reusable, composable components with consistent API.
+
+  - Document component props, variants, and usage guidelines.
+
+  - Ensure accessibility (WCAG AA) in every component.
+
+  '
+success_criteria:
+- 디자인 토큰 정의
+- 컴포넌트 재사용성
+- 문서화 포함
+- 접근성 준수
+tags:
+- design-system
+- tokens
+- components
+- theme
+- style-guide
+- css-variables
+- library
+version: '1.0'
+author: system
+capability: 디자인 토큰, 컴포넌트 라이브러리, 테마, 일관성 규칙
+domain: design-system, components, tokens
+related_agents:
+- frontend-react
+- icon-set
+- brand
+- accessibility-review
+avoid_when:
+- backend_logic
+- api_implementation
+- database_work
+- one_off_page
+runtime:
+  max_iterations: 30
+  max_tokens: 12288
+  temperature: 0.4
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 5
+  architecture: 7
+  testing: 5
+  documentation: 7
+  design: 10
+  devops: 3
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 8000
+model_preference:
+  coding:
+  - deepseek-v3
+  - minimax-m3
+  creative:
+  - claude-sonnet
+  - minimax-m3

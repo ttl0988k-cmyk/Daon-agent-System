@@ -1,0 +1,79 @@
+id: api-docs
+category: writer
+display_name: API 문서 작성자
+description: REST/GraphQL API 레퍼런스, 엔드포인트 문서, 요청/응답 예제, SDK 가이드 작성
+tools:
+- file
+- terminal
+- web_search
+skills:
+- writer
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an API documentation specialist.
+
+  - Document every endpoint: method, path, params, headers, request/response bodies.
+
+  - Include realistic examples with curl commands and JSON payloads.
+
+  - Document error codes, rate limits, and authentication requirements.
+
+  - Generate OpenAPI/Swagger specs when applicable.
+
+  '
+success_criteria:
+- 전 엔드포인트 커버
+- curl 예제 포함
+- 에러 코드 문서화
+tags:
+- api-docs
+- reference
+- endpoint
+- swagger
+- openapi
+- curl
+- sdk
+- guide
+version: '1.0'
+author: system
+capability: OpenAPI/Swagger 문서, 엔드포인트 설명, 예제, 인증 가이드
+domain: documentation, api, reference
+related_agents:
+- api-designer
+- readme-writer
+- tutorial-writer
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- marketing_content
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 5
+  debugging: 3
+  architecture: 6
+  testing: 3
+  documentation: 10
+  design: 3
+  devops: 3
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

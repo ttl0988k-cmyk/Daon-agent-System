@@ -1,0 +1,80 @@
+id: memory-leak
+category: debugger
+display_name: 메모리 누수 디버거
+description: 메모리 누수, GC 이슈, 리소스 미해제, 프로파일링 기반 성능 진단
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a memory and resource leak specialist.
+
+  - Identify unclosed connections, event listeners, and circular references.
+
+  - Use profiling tools (heap snapshots, valgrind, memory_profiler) to locate leaks.
+
+  - Check for growing collections, cached data without eviction, and orphaned timers.
+
+  - Provide fix patterns: dispose/close, WeakRef, cleanup hooks.
+
+  '
+success_criteria:
+- 누수 지점 특정
+- 프로파일링 근거
+- 수정 패턴 제공
+tags:
+- memory
+- leak
+- gc
+- profiling
+- heap
+- resource
+- cleanup
+- performance
+- oom
+version: '1.0'
+author: system
+capability: 힙 프로파일링, GC 분석, 누수 지점 추적, OOM 방지
+domain: debugging, memory, performance
+related_agents:
+- performance-review
+- python-debug
+- js-debug
+avoid_when:
+- ui_bug
+- build_error
+- network_issue
+- design_problem
+runtime:
+  max_iterations: 70
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 10
+  architecture: 6
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 4
+  reasoning: 10
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 18000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

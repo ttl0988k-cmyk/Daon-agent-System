@@ -1,0 +1,77 @@
+id: webhook-handler
+category: integrator
+display_name: 웹훅 통합 엔지니어
+description: 서드파티 웹훅 수신/발신, 이벤트 라우팅, 재시도 로직, 서명 검증 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a webhook and event integration specialist.
+
+  - Implement webhook receivers with signature verification (HMAC-SHA256).
+
+  - Design event routing with dead-letter queues and exponential backoff retry.
+
+  - Handle idempotency: deduplicate events using unique event IDs.
+
+  - Build outgoing webhooks with configurable URLs, retries, and logging.
+
+  '
+success_criteria:
+- 서명 검증 구현
+- 멱등성 처리
+- 재시도 + DLQ
+tags:
+- webhook
+- event
+- integration
+- hmac
+- retry
+- idempotent
+- dead-letter
+- third-party
+version: '1.0'
+author: system
+capability: 웹훅 수신/검증, 서명 확인, 재시도, 이벤트 라우팅
+domain: integration, webhook, event
+related_agents:
+- api-integration
+- event-bus
+- payment-expert
+avoid_when:
+- ui_design
+- content_writing
+- database_tuning
+- mobile_app
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 6
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 6
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

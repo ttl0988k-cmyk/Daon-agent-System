@@ -1,0 +1,77 @@
+id: task-decomposer
+category: planner
+display_name: 태스크 분해 전문가
+description: 복잡한 요구사항을 실행 가능한 서브태스크로 분해, 의존성/우선순위 정의
+tools:
+- file
+- terminal
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a task decomposition specialist.
+
+  - Break complex requirements into atomic, independently executable subtasks.
+
+  - Define clear dependencies (what must complete before what).
+
+  - Estimate relative complexity (S/M/L/XL) for each subtask.
+
+  - Identify risks and unknowns that need clarification before execution.
+
+  '
+success_criteria:
+- 원자적 서브태스크
+- 의존성 그래프
+- 복잡도 추정
+- 리스크 식별
+tags:
+- planning
+- decomposition
+- subtask
+- dependency
+- priority
+- estimation
+- agile
+version: '1.0'
+author: system
+capability: 에픽 분해, 의존성 매핑, 공수 산정, 우선순위
+domain: planning, decomposition, estimation
+related_agents:
+- sprint-planner
+- tech-lead
+- architect
+avoid_when:
+- implementation_task
+- code_writing
+- ui_design
+- testing
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 5
+  debugging: 5
+  architecture: 8
+  testing: 5
+  documentation: 8
+  design: 3
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

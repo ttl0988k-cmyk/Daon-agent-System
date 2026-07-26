@@ -1,0 +1,81 @@
+id: ml-engineer
+category: developer
+display_name: ML/AI 엔지니어
+description: 머신러닝 모델 학습, 데이터 파이프라인, LLM 연동, 추론 서빙 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior ML/AI engineer.
+
+  - Write reproducible training pipelines with fixed seeds and versioned data.
+
+  - Use PyTorch or scikit-learn with proper train/val/test splits.
+
+  - Implement model serving with FastAPI or TorchServe.
+
+  - Include experiment tracking (MLflow/W&B) and model evaluation metrics.
+
+  '
+success_criteria:
+- 재현 가능한 파이프라인
+- 평가 메트릭 포함
+- 서빙 엔드포인트 구현
+tags:
+- ml
+- ai
+- pytorch
+- tensorflow
+- scikit-learn
+- llm
+- training
+- inference
+- data-pipeline
+version: '1.0'
+author: system
+capability: 모델 학습/추론, 파이프라인, 피처 엔지니어링, MLOps
+domain: machine-learning, ai, data-science
+related_agents:
+- python-data
+- performance-review
+- data-pipeline
+avoid_when:
+- simple_crud_app
+- frontend_only_task
+- static_website
+- devops_only
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 7
+  testing: 6
+  documentation: 5
+  design: 2
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 18000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

@@ -1,0 +1,221 @@
+# ============================================================
+# Agent Template Schema v1.2
+# ============================================================
+# Dynamic Harness에서 CEO가 선택하는 정적 에이전트 템플릿의 구조 정의.
+# 각 템플릿은 하나의 YAML 파일로, api/agents/{category}/{id}.yaml 위치에 저장.
+#
+# CEO는 이 템플릿의 id를 선택하고, subtask(작업 지시문)만 동적으로 작성.
+# Compiler가 YAML을 로드하여 실행 가능한 노드로 컴파일.
+#
+# v1.1 추가 필드: capability, domain, related_agents, avoid_when
+# v1.2 추가 필드: capability_score, cost_profile, model_preference
+# ============================================================
+
+schema_version: "1.2"
+
+fields:
+  id:
+    type: string
+    required: true
+    description: "고유 식별자 (소문자, 하이픈 허용). 예: python-backend"
+
+  category:
+    type: string
+    required: true
+    enum: [developer, reviewer, designer, planner, debugger, specialist, writer, integrator, qa]
+    description: "에이전트 역할 카테고리"
+
+  display_name:
+    type: string
+    required: true
+    description: "사용자에게 표시되는 이름 (한국어 가능)"
+
+  description:
+    type: string
+    required: true
+    description: "한 줄 설명. CEO가 이걸 보고 선택함."
+
+  # ── 실행 설정 ──
+  tools:
+    type: list[string]
+    required: true
+    description: "활성화할 도구셋. 예: [file, terminal, web_search, image_gen]"
+    allowed_values:
+      - file        # 파일 읽기/쓰기
+      - terminal    # 명령어 실행
+      - web_search  # 웹 검색
+      - image_gen   # 이미지 생성
+      - browser     # 브라우저 조작
+
+  skills:
+    type: list[string]
+    required: false
+    default: []
+    description: "주입할 스킬 이름 목록 (skills/ 폴더의 스킬 id)"
+
+  # ── 모델 선호도 ──
+  model_prefs:
+    type: object
+    required: true
+    fields:
+      strength:
+        type: string
+        enum: [code, reasoning, creative, qa, debug, fast]
+        description: "ModelSelector에 전달할 강점 키워드"
+      min_context:
+        type: integer
+        default: 32000
+        description: "최소 컨텍스트 윈도우 (토큰)"
+      preferred_providers:
+        type: list[string]
+        default: [deepseek, minimax]
+        description: "선호 프로바이더 (폴백 순서)"
+
+  # ── 실행 런타임 (v1.1) ──
+  runtime:
+    type: object
+    required: true
+    description: "AIAgent 생성자에 전달할 실행 파라미터. 카테고리별 기본값 자동 설정."
+    fields:
+      max_iterations:
+        type: integer
+        default: 50
+        description: "도구 호출 최대 반복 횟수 (developer:50, reviewer:20, debugger:60)"
+      max_tokens:
+        type: integer
+        default: 16384
+        description: "최대 출력 토큰 수"
+      temperature:
+        type: float
+        default: 0.2
+        description: "생성 온도 (code:0.2, creative:0.4~0.5, review:0.1)"
+      tool_delay:
+        type: float
+        default: 0.5
+        description: "도구 호출 간 딜레이 (초)"
+      memory_scope:
+        type: string
+        enum: [project, session, none]
+        default: project
+        description: "메모리 접근 범위 (project: 프로젝트 전체, session: 현재 세션만)"
+
+  # ── 프롬프트 ──
+  system_prompt:
+    type: string
+    required: true
+    description: "고정 시스템 프롬프트 (3~7줄). 스킬 내용은 자동 주입되므로 중복 금지."
+
+  # ── 검증 ──
+  success_criteria:
+    type: list[string]
+    required: false
+    default: []
+    description: "QA 에이전트가 검증할 성공 기준 목록"
+
+  # ── 검색 태그 ──
+  tags:
+    type: list[string]
+    required: true
+    description: "시맨틱 검색용 키워드 태그. CEO가 태스크와 매칭할 때 사용."
+
+  # ── CEO 선택 보조 필드 (v1.1) ──
+  capability:
+    type: string
+    required: true
+    description: "이 에이전트가 할 수 있는 핵심 역량 한 줄 요약. CEO가 카탈로그에서 봄."
+
+  domain:
+    type: string
+    required: true
+    description: "작업 도메인 키워드 (쉼표 구분). 예: client-side, spa, web-ui"
+
+  related_agents:
+    type: list[string]
+    required: false
+    default: []
+    description: "함께 사용하면 좋은 에이전트 ID 목록. DAG 구성 시 참고."
+
+  avoid_when:
+    type: list[string]
+    required: true
+    description: |
+      이 템플릿을 선택하면 안 되는 상황 키워드 목록.
+      CEO는 태스크가 이 목록의 항목과 매칭되면 해당 템플릿을 선택하지 MUST NOT.
+      예: [backend_only_task, native_mobile_app, database_migration]
+
+  # ── Capability Score (v1.2) ──
+  capability_score:
+    type: object
+    required: true
+    description: |
+      8차원 역량 점수 (1~10). CEO가 태스크 난이도와 매칭하여 최적 에이전트 선택.
+      ModelSelector에도 전달되어 모델 선택 가중치로 활용 가능.
+    fields:
+      coding:
+        type: integer
+        range: [1, 10]
+        description: "코드 작성/수정 능력"
+      debugging:
+        type: integer
+        range: [1, 10]
+        description: "버그 진단/수정 능력"
+      architecture:
+        type: integer
+        range: [1, 10]
+        description: "시스템 설계/구조화 능력"
+      testing:
+        type: integer
+        range: [1, 10]
+        description: "테스트 작성/검증 능력"
+      documentation:
+        type: integer
+        range: [1, 10]
+        description: "문서 작성 능력"
+      design:
+        type: integer
+        range: [1, 10]
+        description: "UI/UX 디자인 능력"
+      devops:
+        type: integer
+        range: [1, 10]
+        description: "배포/인프라/CI-CD 능력"
+      reasoning:
+        type: integer
+        range: [1, 10]
+        description: "복합 추론/분석 능력"
+
+  # ── Cost Profile (v1.2) ──
+  cost_profile:
+    type: object
+    required: true
+    description: |
+      비용 프로파일. CEO가 비용 최적화 의사결정 시 사용.
+      "이 작업은 단순 CRUD니까 비싼 모델 말고 저비용 에이전트 + 저비용 모델" 판단 근거.
+    fields:
+      tier:
+        type: string
+        enum: [low, mid, high]
+        description: "비용 등급 (low: 문서/단순작업, mid: 일반 개발, high: 복잡한 추론/설계)"
+      estimated_tokens_per_run:
+        type: integer
+        description: "1회 실행 시 예상 토큰 사용량 (입력+출력 합산)"
+
+  # ── Model Preference (v1.2) ──
+  model_preference:
+    type: object
+    required: true
+    description: |
+      태스크 유형별 선호 모델 순서. CEO가 모델 할당 시 참고.
+      키: 태스크 유형 (coding, reasoning, creative, documentation, debugging 등)
+      값: 모델 ID 우선순위 리스트 (앞쪽이 우선)
+    example:
+      coding: [deepseek-v3, qwen-coder, minimax-m3]
+      reasoning: [claude-sonnet, deepseek-v3]
+
+  # ── 메타 ──
+  version:
+    type: string
+    default: "1.0"
+  author:
+    type: string
+    default: "system"

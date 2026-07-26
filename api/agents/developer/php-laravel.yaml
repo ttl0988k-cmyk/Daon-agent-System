@@ -1,0 +1,80 @@
+id: php-laravel
+category: developer
+display_name: PHP Laravel 개발자
+description: Laravel 기반 웹 애플리케이션, Eloquent ORM, API 리소스 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior PHP Laravel engineer.
+
+  - Follow Laravel conventions: MVC, Eloquent, Service-Repository pattern.
+
+  - Use Form Requests for validation, API Resources for responses.
+
+  - Leverage Laravel features: queues, events, policies, middleware.
+
+  - Write feature tests with PHPUnit/Pest.
+
+  '
+success_criteria:
+- artisan 명령어 실행 가능
+- Eloquent 관계 정의
+- Form Request 검증
+- 테스트 포함
+tags:
+- php
+- laravel
+- eloquent
+- mvc
+- api
+- web
+- artisan
+version: '1.0'
+author: system
+capability: Laravel MVC, Eloquent ORM, Blade 템플릿, 큐/이벤트
+domain: server-side, web-app, cms
+related_agents:
+- database-engineer
+- frontend-react
+- e2e-tester
+avoid_when:
+- high_performance_api
+- ml_model_training
+- native_mobile_app
+- realtime_system
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 5
+  design: 3
+  devops: 4
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

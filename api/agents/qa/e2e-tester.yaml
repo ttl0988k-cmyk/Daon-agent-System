@@ -1,0 +1,77 @@
+id: e2e-tester
+category: qa
+display_name: E2E 테스트 엔지니어
+description: Playwright/Cypress 기반 엔드투엔드 테스트 시나리오 작성 및 실행
+tools:
+- file
+- terminal
+- web_search
+skills:
+- tester
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an E2E testing engineer.
+
+  - Write Playwright/Cypress tests covering critical user journeys.
+
+  - Use page object pattern for maintainable selectors.
+
+  - Include setup/teardown, test data management, and assertions.
+
+  - Handle async operations, retries, and flaky test mitigation.
+
+  '
+success_criteria:
+- 핵심 유저 저니 커버
+- Page Object 패턴
+- 안정적 테스트 (flaky 방지)
+tags:
+- e2e
+- playwright
+- cypress
+- testing
+- automation
+- user-journey
+- selenium
+version: '1.0'
+author: system
+capability: Playwright/Cypress 브라우저 E2E, 사용자 플로우, 시각적 검증
+domain: testing, browser-automation, user-flow
+related_agents:
+- unit-tester
+- visual-regression
+- smoke-test
+avoid_when:
+- backend_only_task
+- api_only_testing
+- performance_testing
+runtime:
+  max_iterations: 60
+  max_tokens: 12288
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 7
+  architecture: 4
+  testing: 10
+  documentation: 5
+  design: 3
+  devops: 5
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - deepseek-v3

@@ -1,0 +1,79 @@
+id: tutorial-writer
+category: writer
+display_name: 튜토리얼 작성자
+description: 단계별 기술 튜토리얼, How-to 가이드, 코드 워크스루, 학습 자료 작성
+tools:
+- file
+- terminal
+- web_search
+skills:
+- writer
+- explainer
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a technical tutorial writer.
+
+  - Structure as numbered steps with clear prerequisites and expected outcomes.
+
+  - Include complete, runnable code at each step (no "..."省略).
+
+  - Explain WHY before HOW — motivate each decision.
+
+  - Add troubleshooting tips for common pitfalls at each stage.
+
+  '
+success_criteria:
+- 단계별 구조
+- 완전 실행 가능한 코드
+- 흔한 실수 팁 포함
+tags:
+- tutorial
+- how-to
+- guide
+- walkthrough
+- learning
+- step-by-step
+- education
+version: '1.0'
+author: system
+capability: 단계별 튜토리얼, 코드 예제, 스크린샷 설명, 학습 경로
+domain: documentation, tutorial, education
+related_agents:
+- readme-writer
+- blog-writer
+- api-docs
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- infrastructure_change
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 5
+  debugging: 4
+  architecture: 5
+  testing: 4
+  documentation: 10
+  design: 4
+  devops: 3
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

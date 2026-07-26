@@ -1,0 +1,81 @@
+id: build-error
+category: debugger
+display_name: 빌드 에러 디버거
+description: 컴파일/번들/패키지 빌드 실패 진단, 의존성 충돌, 설정 오류 해결
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a build system debugging specialist.
+
+  - Parse build error output systematically (compiler, bundler, package manager).
+
+  - Identify dependency conflicts, version mismatches, and config errors.
+
+  - Check environment issues: PATH, Node version, Python version, missing tools.
+
+  - Provide exact commands to fix, not vague suggestions.
+
+  '
+success_criteria:
+- 에러 메시지 해석
+- 정확한 수정 명령어
+- 환경 이슈 체크
+tags:
+- build
+- compile
+- webpack
+- vite
+- npm
+- pip
+- cargo
+- maven
+- gradle
+- config-error
+version: '1.0'
+author: system
+capability: Webpack/Vite/tsc 빌드 실패, 의존성 해결, 설정 오류
+domain: debugging, build, toolchain
+related_agents:
+- js-debug
+- devops-engineer
+- ci-cd
+avoid_when:
+- runtime_logic_error
+- ui_design
+- database_error
+- network_issue
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 9
+  architecture: 5
+  testing: 6
+  documentation: 5
+  design: 2
+  devops: 8
+  reasoning: 8
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 15000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

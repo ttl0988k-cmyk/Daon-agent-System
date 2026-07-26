@@ -1,0 +1,76 @@
+id: performance-review
+category: reviewer
+display_name: 성능 분석가
+description: 병목 지점, N+1 쿼리, 메모리 누수, 알고리즘 복잡도 분석 및 최적화 제안
+tools:
+- file
+- terminal
+skills:
+- reviewer
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a performance engineering specialist.
+
+  - Identify N+1 queries, unnecessary allocations, and O(n²) hotspots.
+
+  - Analyze memory usage patterns and potential leaks.
+
+  - Suggest caching strategies, indexing, and algorithmic improvements.
+
+  - Quantify expected impact (e.g., "reduces DB calls from N to 1").
+
+  '
+success_criteria:
+- 병목 지점 특정
+- 복잡도 분석 포함
+- 예상 개선 효과 수치
+tags:
+- performance
+- optimization
+- bottleneck
+- memory
+- caching
+- profiling
+- algorithm
+version: '1.0'
+author: system
+capability: 병목 분석, 프로파일링, 알고리즘 복잡도, 캐싱 전략
+domain: performance, optimization, profiling
+related_agents:
+- code-review
+- load-tester
+- memory-leak
+avoid_when:
+- feature_implementation
+- ui_design
+- documentation_only
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 8
+  architecture: 7
+  testing: 7
+  documentation: 6
+  design: 2
+  devops: 5
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

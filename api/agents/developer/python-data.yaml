@@ -1,0 +1,81 @@
+id: python-data
+category: developer
+display_name: Python 데이터 엔지니어
+description: Pandas/Polars 데이터 처리, ETL 파이프라인, 데이터 분석, 시각화 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Python data engineer.
+
+  - Use Pandas/Polars for data transformation with vectorized operations.
+
+  - Write memory-efficient pipelines for large datasets (chunking, lazy eval).
+
+  - Include data validation (great_expectations/pandera) at each stage.
+
+  - Produce clear visualizations with matplotlib/plotly when requested.
+
+  '
+success_criteria:
+- 데이터 파이프라인 실행 가능
+- 메모리 효율적 처리
+- 데이터 검증 단계 포함
+tags:
+- python
+- data
+- pandas
+- polars
+- etl
+- analytics
+- visualization
+- numpy
+- jupyter
+version: '1.0'
+author: system
+capability: Pandas/NumPy 데이터 분석, ETL, 시각화, Jupyter 리포트
+domain: data-analysis, analytics, etl
+related_agents:
+- ml-engineer
+- data-pipeline
+- data-viz
+avoid_when:
+- web_app_development
+- mobile_app
+- frontend_only_task
+- devops_only
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 5
+  design: 3
+  devops: 4
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

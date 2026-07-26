@@ -261,3 +261,48 @@ def handle_get_skills_hub_recommend(handler, parsed) -> bool:
         handler.send_json({"error": str(e), "recommendations": []})
 
     return True
+
+
+def handle_post_skills_from_github(handler, body: dict) -> bool:
+    """POST /api/skills/from-github — Convert a GitHub URL to a local skill.
+
+    Body: {
+        "url": "https://github.com/owner/repo" (required),
+        "name": "custom-skill-name" (optional),
+        "category": "Coding" (optional, auto-detected)
+    }
+
+    Response: {
+        "ok": true,
+        "skill_name": "repo-name",
+        "installed_to": "skills/Coding/repo-name",
+        "category": "Coding",
+        "files": ["skills/Coding/repo-name/skill.yaml", ...],
+        "description": "...",
+        "source_url": "...",
+        "repo_info": {"stars": 123, "language": "Python", "topics": [...]}
+    }
+    """
+    url = body.get("url", "").strip()
+    if not url:
+        handler.send_json({"ok": False, "error": "url is required"}, 400)
+        return True
+
+    # Basic URL validation
+    if "github.com" not in url and "raw.githubusercontent.com" not in url:
+        handler.send_json({"ok": False, "error": "URL must be a GitHub link (github.com or raw.githubusercontent.com)"}, 400)
+        return True
+
+    custom_name = body.get("name", "").strip() or None
+    custom_category = body.get("category", "").strip() or None
+
+    try:
+        from github_skill_converter import convert_github_url
+        result = convert_github_url(url, custom_name=custom_name, custom_category=custom_category)
+        status_code = 200 if result.get("ok") else 422
+        handler.send_json(result, status_code)
+    except Exception as e:
+        logger.exception("GitHub skill conversion failed")
+        handler.send_json({"ok": False, "error": str(e)})
+
+    return True

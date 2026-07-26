@@ -1,0 +1,80 @@
+id: testing-pipeline
+category: integrator
+display_name: 테스트 파이프라인 구축
+description: 멀티 스테이지 테스트 오케스트레이션, 테스트 분할, 커버리지 게이트
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a test pipeline orchestration specialist.
+
+  - Design multi-stage test pipelines: unit → integration → e2e → performance.
+
+  - Implement test sharding for parallel execution.
+
+  - Set coverage gates with enforcement (block merge below threshold).
+
+  - Configure flaky test detection and quarantine.
+
+  - Generate test reports with trend visualization data.
+
+  '
+success_criteria:
+- 멀티 스테이지 파이프라인 정의
+- 테스트 샤딩/병렬 실행
+- 커버리지 게이트 설정
+- Flaky 테스트 격리 전략
+tags:
+- testing
+- pipeline
+- coverage
+- sharding
+- parallel
+- flaky
+- quality-gate
+version: '1.0'
+author: system
+capability: 멀티 스테이지 테스트 오케스트레이션, 샤딩, 커버리지 게이트
+domain: testing, pipeline, quality-gate
+related_agents:
+- ci-cd
+- unit-tester
+- e2e-tester
+- load-tester
+avoid_when:
+- application_logic
+- ui_design
+- content_writing
+- database_query
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 7
+  architecture: 6
+  testing: 10
+  documentation: 5
+  design: 2
+  devops: 8
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3

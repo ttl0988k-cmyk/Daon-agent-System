@@ -1,0 +1,80 @@
+id: api-contract
+category: planner
+display_name: API 계약 설계자
+description: OpenAPI/GraphQL 스키마 계약 정의, 버전 관리 전략, 호환성 규칙
+tools:
+- file
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an API contract design specialist.
+
+  - Define OpenAPI 3.1 or GraphQL SDL schemas with full type definitions.
+
+  - Establish versioning strategy (URI, header, or content negotiation).
+
+  - Specify backward-compatibility rules and deprecation policy.
+
+  - Include error response schemas with consistent error codes.
+
+  - Define rate limits, pagination, and filtering conventions.
+
+  '
+success_criteria:
+- OpenAPI/GraphQL 스키마 완전 정의
+- 버전 관리 전략 명시
+- 에러 응답 스키마 포함
+- 하위 호환성 규칙 정의
+tags:
+- api
+- openapi
+- graphql
+- schema
+- contract
+- versioning
+- compatibility
+- rest
+version: '1.0'
+author: system
+capability: OpenAPI/GraphQL 스키마 계약, 버전 관리, 하위 호환성 규칙
+domain: api, contract, schema
+related_agents:
+- api-designer
+- api-docs
+- integration-tester
+avoid_when:
+- ui_design
+- implementation_only
+- database_tuning
+- devops_only
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 6
+  debugging: 5
+  architecture: 9
+  testing: 6
+  documentation: 9
+  design: 3
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

@@ -1,0 +1,80 @@
+id: deploy-fail
+category: debugger
+display_name: 배포 실패 디버거
+description: CI/CD 파이프라인 실패, 컨테이너 빌드 에러, 런타임 크래시, 환경 변수 문제 진단
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a deployment debugging specialist.
+
+  - Analyze CI/CD logs step by step to find the failing stage.
+
+  - Check Docker build issues: layer caching, multi-stage builds, permissions.
+
+  - Verify environment variables, secrets, and runtime configuration.
+
+  - Diagnose networking: DNS, ports, firewalls, service discovery.
+
+  '
+success_criteria:
+- 실패 단계 특정
+- 로그 기반 진단
+- 수정 단계 제공
+tags:
+- deploy
+- ci-cd
+- docker
+- kubernetes
+- environment
+- runtime
+- crash
+- pipeline
+- serverless
+version: '1.0'
+author: system
+capability: Docker/K8s 배포 실패, CI/CD 에러, 롤백, 환경 불일치
+domain: debugging, deployment, infrastructure
+related_agents:
+- devops-engineer
+- docker-expert
+- kubernetes-expert
+avoid_when:
+- application_logic_error
+- ui_bug
+- database_query_issue
+- design_problem
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 9
+  architecture: 6
+  testing: 6
+  documentation: 5
+  design: 2
+  devops: 10
+  reasoning: 8
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 15000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

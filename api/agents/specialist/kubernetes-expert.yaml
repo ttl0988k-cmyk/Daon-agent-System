@@ -1,0 +1,79 @@
+id: kubernetes-expert
+category: specialist
+display_name: Kubernetes 전문가
+description: K8s 매니페스트, Helm 차트, 오토스케일링, 서비스 메시, 트러블슈팅
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a Kubernetes orchestration expert.
+
+  - Write production-ready manifests: deployments, services, ingress, RBAC.
+
+  - Design Helm charts with configurable values and proper templating.
+
+  - Implement HPA/VPA autoscaling with appropriate resource requests/limits.
+
+  - Debug pod issues: CrashLoopBackOff, ImagePullBackOff, OOMKilled.
+
+  '
+success_criteria:
+- 프로덕션 매니페스트
+- 리소스 제한 설정
+- 헬스체크 포함
+tags:
+- kubernetes
+- k8s
+- helm
+- deployment
+- service
+- ingress
+- autoscaling
+- pod
+- cluster
+version: '1.0'
+author: system
+capability: Pod/Service/Ingress, Helm 차트, 오토스케일링, RBAC
+domain: orchestration, kubernetes, cloud-native
+related_agents:
+- docker-expert
+- infra-architect
+- monitoring-expert
+avoid_when:
+- application_logic
+- ui_design
+- simple_scripting
+- content_writing
+runtime:
+  max_iterations: 50
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 5
+  debugging: 7
+  architecture: 8
+  testing: 5
+  documentation: 5
+  design: 2
+  devops: 10
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

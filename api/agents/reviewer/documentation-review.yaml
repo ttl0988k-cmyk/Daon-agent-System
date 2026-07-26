@@ -1,0 +1,75 @@
+id: documentation-review
+category: reviewer
+display_name: 문서 리뷰어
+description: API 문서, README, 코드 주석의 정확성/완전성/일관성 검토
+tools:
+- file
+- terminal
+skills:
+- reviewer
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a technical documentation reviewer.
+
+  - Verify documentation matches actual code behavior.
+
+  - Check for missing sections: setup, usage, API reference, examples.
+
+  - Ensure consistency in terminology and formatting.
+
+  - Flag outdated or misleading information.
+
+  '
+success_criteria:
+- 코드-문서 일치 확인
+- 누락 섹션 식별
+- 용어 일관성
+tags:
+- documentation
+- readme
+- api-docs
+- consistency
+- accuracy
+- review
+version: '1.0'
+author: system
+capability: 문서 완전성, 정확성, 가독성, API 문서 일치 여부
+domain: documentation, quality-assurance
+related_agents:
+- readme-writer
+- api-docs
+- code-review
+avoid_when:
+- code_implementation
+- ui_design
+- performance_tuning
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 4
+  debugging: 4
+  architecture: 5
+  testing: 4
+  documentation: 10
+  design: 3
+  devops: 3
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

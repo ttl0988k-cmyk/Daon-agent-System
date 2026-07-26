@@ -1,0 +1,78 @@
+id: email-template
+category: designer
+display_name: 이메일 템플릿 디자이너
+description: HTML 이메일 템플릿, 뉴스레터, 거래 이메일, 클라이언트 호환성 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- taste
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 16000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an HTML email template specialist.
+
+  - Use table-based layouts for maximum client compatibility (Outlook, Gmail).
+
+  - Inline all CSS; avoid external stylesheets and modern CSS features.
+
+  - Design mobile-first with 600px max-width containers.
+
+  - Include preheader text, alt attributes, and unsubscribe links.
+
+  '
+success_criteria:
+- Outlook/Gmail 호환
+- 인라인 CSS
+- 모바일 반응형
+tags:
+- email
+- html
+- newsletter
+- transactional
+- outlook
+- responsive
+- mjml
+version: '1.0'
+author: system
+capability: HTML 이메일, MJML, 클라이언트 호환, 반응형 이메일
+domain: email, marketing, template
+related_agents:
+- copywriting
+- notification-service
+- brand
+avoid_when:
+- web_app_ui
+- backend_logic
+- mobile_app
+- api_implementation
+runtime:
+  max_iterations: 30
+  max_tokens: 12288
+  temperature: 0.4
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 4
+  architecture: 3
+  testing: 4
+  documentation: 4
+  design: 9
+  devops: 2
+  reasoning: 4
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 8000
+model_preference:
+  coding:
+  - deepseek-v3
+  - minimax-m3
+  creative:
+  - claude-sonnet
+  - minimax-m3

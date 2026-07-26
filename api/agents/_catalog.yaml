@@ -1,0 +1,1896 @@
+# Agent Template Catalog v1.2
+# CEO 에이전트가 이 카탈로그에서 템플릿 ID를 선택하여 DAG를 구성합니다.
+# 총 100개 템플릿, 9개 카테고리
+# v1.2: cost_tier 필드 추가 (low/mid/high) — 비용 최적화 의사결정용
+
+version: '1.2'
+total_templates: 100
+categories:
+  debugger:
+    description: 디버깅 및 문제 진단 전문 에이전트
+    templates:
+    - id: build-error
+      display_name: 빌드 에러 디버거
+      tags:
+      - build
+      - compile
+      - webpack
+      - vite
+      - npm
+      - pip
+      - cargo
+      - maven
+      - gradle
+      - config-error
+      capability: Webpack/Vite/tsc 빌드 실패, 의존성 해결, 설정 오류
+      domain: debugging, build, toolchain
+      avoid_when:
+      - runtime_logic_error
+      - ui_design
+      - database_error
+      - network_issue
+      cost_tier: high
+    - id: concurrency-debug
+      display_name: 동시성 디버거
+      tags:
+      - concurrency
+      - race-condition
+      - deadlock
+      - thread
+      - async
+      - synchronization
+      - parallel
+      - mutex
+      capability: 레이스 컨디션, 데드락, 스레드 안전성, async 버그
+      domain: debugging, concurrency, threading
+      avoid_when:
+      - ui_bug
+      - css_issue
+      - build_error
+      - documentation_task
+      cost_tier: high
+    - id: css-debug
+      display_name: CSS 레이아웃 디버거
+      tags:
+      - css
+      - layout
+      - flexbox
+      - grid
+      - responsive
+      - z-index
+      - specificity
+      - debugging
+      capability: Flexbox/Grid 오류, z-index 충돌, 반응형 붕괴, 특정도 문제
+      domain: debugging, css, layout
+      avoid_when:
+      - backend_error
+      - api_issue
+      - database_error
+      - infrastructure_failure
+      cost_tier: high
+    - id: data-corruption
+      display_name: 데이터 손상 디버거
+      tags:
+      - data
+      - corruption
+      - database
+      - encoding
+      - migration
+      - integrity
+      - sql
+      - repair
+      capability: 인코딩 오류, FK 위반, 고아 레코드, 마이그레이션 실패 추적
+      domain: debugging, data-integrity, database
+      avoid_when:
+      - ui_bug
+      - css_issue
+      - build_error
+      - network_issue
+      cost_tier: high
+    - id: deploy-fail
+      display_name: 배포 실패 디버거
+      tags:
+      - deploy
+      - ci-cd
+      - docker
+      - kubernetes
+      - environment
+      - runtime
+      - crash
+      - pipeline
+      - serverless
+      capability: Docker/K8s 배포 실패, CI/CD 에러, 롤백, 환경 불일치
+      domain: debugging, deployment, infrastructure
+      avoid_when:
+      - application_logic_error
+      - ui_bug
+      - database_query_issue
+      - design_problem
+      cost_tier: high
+    - id: js-debug
+      display_name: JavaScript/TS 디버거
+      tags:
+      - javascript
+      - typescript
+      - debug
+      - react
+      - async
+      - console
+      - bundler
+      - webpack
+      - vite
+      capability: JS/TS 런타임 에러, Promise 체인, 브라우저 콘솔, 번들 이슈
+      domain: debugging, javascript, browser
+      avoid_when:
+      - python_error
+      - css_issue
+      - database_error
+      - infrastructure_failure
+      cost_tier: high
+    - id: memory-leak
+      display_name: 메모리 누수 디버거
+      tags:
+      - memory
+      - leak
+      - gc
+      - profiling
+      - heap
+      - resource
+      - cleanup
+      - performance
+      - oom
+      capability: 힙 프로파일링, GC 분석, 누수 지점 추적, OOM 방지
+      domain: debugging, memory, performance
+      avoid_when:
+      - ui_bug
+      - build_error
+      - network_issue
+      - design_problem
+      cost_tier: high
+    - id: network-debug
+      display_name: 네트워크 디버거
+      tags:
+      - network
+      - http
+      - cors
+      - dns
+      - ssl
+      - proxy
+      - timeout
+      - api
+      - connectivity
+      - websocket
+      capability: DNS, CORS, 타임아웃, SSL, 프록시, HTTP 상태 코드 진단
+      domain: debugging, network, connectivity
+      avoid_when:
+      - application_logic_error
+      - ui_bug
+      - database_query_issue
+      - build_error
+      cost_tier: high
+    - id: python-debug
+      display_name: Python 디버거
+      tags:
+      - python
+      - debug
+      - traceback
+      - pdb
+      - runtime-error
+      - logic-bug
+      - exception
+      capability: Python 트레이스백 분석, 예외 추적, pdb 로깅, 비동기 버그
+      domain: debugging, python, runtime
+      avoid_when:
+      - javascript_error
+      - css_issue
+      - infrastructure_failure
+      - design_problem
+      cost_tier: high
+    - id: regression
+      display_name: 리그레션 디버거
+      tags:
+      - regression
+      - git-bisect
+      - debugging
+      - diff
+      - side-effect
+      - reproduction
+      capability: git bisect, 커밋 diff 분석, 최소 재현 단계, 타겟 수정
+      domain: debugging, regression, git
+      avoid_when:
+      - new_feature_development
+      - ui_design
+      - documentation_only
+      - infrastructure_setup
+      cost_tier: high
+  designer:
+    description: UI/UX 디자인 전문 에이전트
+    templates:
+    - id: animation-motion
+      display_name: 모션/애니메이션 디자이너
+      tags:
+      - animation
+      - motion
+      - gsap
+      - css-animation
+      - svg
+      - micro-interaction
+      - transition
+      - lottie
+      capability: GSAP/Framer Motion 애니메이션, 전환 효과, 인터랙션
+      domain: animation, motion, interaction
+      avoid_when:
+      - backend_logic
+      - database_work
+      - api_implementation
+      - static_content
+      cost_tier: mid
+    - id: brand
+      display_name: 브랜드 아이덴티티 디자이너
+      tags:
+      - brand
+      - identity
+      - color
+      - typography
+      - logo
+      - tone
+      - guidelines
+      - style-guide
+      capability: 컬러 팔레트, 타이포그래피, 로고 규칙, 톤앤매너 가이드
+      domain: branding, identity, style-guide
+      avoid_when:
+      - code_implementation
+      - backend_logic
+      - database_work
+      - api_implementation
+      cost_tier: mid
+    - id: dashboard-ui
+      display_name: 대시보드 UI 디자이너
+      tags:
+      - dashboard
+      - data-viz
+      - charts
+      - kpi
+      - realtime
+      - grid
+      - analytics
+      - monitoring-ui
+      capability: 관리자 대시보드, 차트/테이블 레이아웃, 데이터 디스플레이
+      domain: web-design, admin, data-display
+      avoid_when:
+      - backend_logic
+      - api_implementation
+      - mobile_app
+      - marketing_page
+      cost_tier: mid
+    - id: data-viz
+      display_name: 데이터 시각화 디자이너
+      tags:
+      - data-viz
+      - d3
+      - chart
+      - infographic
+      - visualization
+      - interactive
+      - svg
+      - canvas
+      capability: D3/ECharts 차트, 인터랙티브 시각화, 대시보드 그래프
+      domain: visualization, charts, data-display
+      avoid_when:
+      - backend_logic
+      - api_implementation
+      - mobile_app
+      - email_template
+      cost_tier: mid
+    - id: design-system
+      display_name: 디자인 시스템 엔지니어
+      tags:
+      - design-system
+      - tokens
+      - components
+      - theme
+      - style-guide
+      - css-variables
+      - library
+      capability: 디자인 토큰, 컴포넌트 라이브러리, 테마, 일관성 규칙
+      domain: design-system, components, tokens
+      avoid_when:
+      - backend_logic
+      - api_implementation
+      - database_work
+      - one_off_page
+      cost_tier: mid
+    - id: email-template
+      display_name: 이메일 템플릿 디자이너
+      tags:
+      - email
+      - html
+      - newsletter
+      - transactional
+      - outlook
+      - responsive
+      - mjml
+      capability: HTML 이메일, MJML, 클라이언트 호환, 반응형 이메일
+      domain: email, marketing, template
+      avoid_when:
+      - web_app_ui
+      - backend_logic
+      - mobile_app
+      - api_implementation
+      cost_tier: mid
+    - id: icon-set
+      display_name: 아이콘 세트 디자이너
+      tags:
+      - icon
+      - svg
+      - design-system
+      - grid
+      - stroke
+      - vector
+      - ui-icons
+      capability: SVG 아이콘 설계, 24x24 그리드, 일관된 stroke/fill, 명명 규칙
+      domain: icons, svg, design-system
+      avoid_when:
+      - backend_logic
+      - api_implementation
+      - database_work
+      - full_page_design
+      cost_tier: mid
+    - id: landing-page
+      display_name: 랜딩페이지 디자이너
+      tags:
+      - landing-page
+      - conversion
+      - hero
+      - cta
+      - responsive
+      - marketing
+      - css
+      - animation
+      capability: HTML/CSS 랜딩페이지, 히어로 섹션, CTA, 반응형 레이아웃
+      domain: web-design, marketing, conversion
+      avoid_when:
+      - backend_logic
+      - database_work
+      - api_implementation
+      - mobile_app
+      cost_tier: mid
+    - id: mobile-app
+      display_name: 모바일 앱 UI 디자이너
+      tags:
+      - mobile
+      - ios
+      - android
+      - ui
+      - ux
+      - design
+      - material
+      - hig
+      - navigation
+      - layout
+      capability: iOS/Android UI 설계, 네비게이션 플로우, 터치 타겟, HIG/Material
+      domain: mobile-design, ui-ux, platform
+      avoid_when:
+      - web_only_task
+      - backend_logic
+      - api_implementation
+      - desktop_app
+      cost_tier: mid
+    - id: wireframe
+      display_name: 와이어프레임 설계자
+      tags:
+      - wireframe
+      - ux
+      - user-flow
+      - layout
+      - prototype
+      - information-architecture
+      - lo-fi
+      capability: 저충실도 와이어프레임, 정보 위계, 사용자 플로우 맵
+      domain: ux, information-architecture, prototype
+      avoid_when:
+      - high_fidelity_design
+      - code_implementation
+      - backend_logic
+      - api_implementation
+      cost_tier: mid
+  developer:
+    description: 개발 전문 에이전트 (언어/프레임워크별)
+    templates:
+    - id: api-designer
+      display_name: API 설계 전문가
+      tags:
+      - api
+      - rest
+      - graphql
+      - openapi
+      - swagger
+      - schema
+      - contract
+      - design
+      - specification
+      capability: REST/GraphQL 스키마 설계, 버전 관리, 문서화, 계약 정의
+      domain: api, contract, interface
+      avoid_when:
+      - implementation_only
+      - ui_design
+      - database_tuning
+      - devops_only
+      cost_tier: mid
+    - id: csharp-dotnet
+      display_name: C# .NET 개발자
+      tags:
+      - csharp
+      - dotnet
+      - aspnet
+      - entity-framework
+      - blazor
+      - api
+      - enterprise
+      capability: ASP.NET Core API, Entity Framework, Azure 통합, Blazor
+      domain: enterprise, server-side, backend-service
+      avoid_when:
+      - python_only_codebase
+      - frontend_only_task
+      - ml_model_training
+      - linux_only_deploy
+      cost_tier: mid
+    - id: database-engineer
+      display_name: 데이터베이스 엔지니어
+      tags:
+      - database
+      - sql
+      - postgresql
+      - mysql
+      - mongodb
+      - redis
+      - schema
+      - migration
+      - orm
+      - query
+      capability: 스키마 설계, 쿼리 최적화, 인덱싱, 마이그레이션, 복제
+      domain: data-layer, storage, optimization
+      avoid_when:
+      - frontend_only_task
+      - ui_design
+      - mobile_app
+      - documentation_only
+      cost_tier: mid
+    - id: devops-engineer
+      display_name: DevOps 엔지니어
+      tags:
+      - devops
+      - docker
+      - kubernetes
+      - terraform
+      - ci-cd
+      - github-actions
+      - infrastructure
+      - monitoring
+      capability: CI/CD, 컨테이너, IaC, 모니터링, 클라우드 인프라 운영
+      domain: infrastructure, operations, automation
+      avoid_when:
+      - application_code_writing
+      - ui_design
+      - ml_model_training
+      - content_writing
+      cost_tier: mid
+    - id: electron-desktop
+      display_name: Electron 데스크톱 개발자
+      tags:
+      - electron
+      - desktop
+      - tauri
+      - ipc
+      - native
+      - cross-platform
+      - gui
+      capability: Electron 데스크톱 앱, IPC, 네이티브 API, 자동 업데이트
+      domain: desktop, cross-platform, app
+      avoid_when:
+      - web_only_task
+      - mobile_app
+      - backend_only_task
+      - server_infra
+      cost_tier: mid
+    - id: frontend-react
+      display_name: React 프론트엔드 개발자
+      tags:
+      - react
+      - frontend
+      - nextjs
+      - typescript
+      - jsx
+      - hooks
+      - spa
+      - component
+      - ui
+      capability: React 컴포넌트, 상태관리, SPA 라우팅, API 연동 UI
+      domain: client-side, spa, web-ui
+      avoid_when:
+      - backend_only_task
+      - native_mobile_app
+      - database_migration
+      - server_infra
+      cost_tier: mid
+    - id: frontend-svelte
+      display_name: Svelte 프론트엔드 개발자
+      tags:
+      - svelte
+      - sveltekit
+      - frontend
+      - runes
+      - typescript
+      - ssr
+      - lightweight
+      capability: Svelte 컴포넌트, SvelteKit 라우팅, stores, SSR
+      domain: client-side, spa, web-ui
+      avoid_when:
+      - react_project
+      - vue_project
+      - backend_only_task
+      - native_mobile_app
+      cost_tier: mid
+    - id: frontend-vue
+      display_name: Vue 프론트엔드 개발자
+      tags:
+      - vue
+      - frontend
+      - nuxt
+      - composition-api
+      - pinia
+      - typescript
+      - spa
+      capability: Vue 컴포넌트, Composition API, Pinia 상태관리, Nuxt SSR
+      domain: client-side, spa, web-ui
+      avoid_when:
+      - react_project
+      - backend_only_task
+      - native_mobile_app
+      - database_migration
+      cost_tier: mid
+    - id: fullstack
+      display_name: 풀스택 개발자
+      tags:
+      - fullstack
+      - frontend
+      - backend
+      - api
+      - integration
+      - end-to-end
+      capability: 프론트+백엔드 통합 구현, API 연동, 배포까지 원스톱
+      domain: full-stack, web-app, prototype
+      avoid_when:
+      - deep_specialization_needed
+      - ml_model_training
+      - embedded_systems
+      cost_tier: mid
+    - id: go-engineer
+      display_name: Go 백엔드 개발자
+      tags:
+      - go
+      - golang
+      - backend
+      - microservice
+      - concurrency
+      - cli
+      - grpc
+      capability: 마이크로서비스, gRPC, 동시성 처리, CLI 도구, 네트워크 서비스
+      domain: server-side, microservices, cli
+      avoid_when:
+      - frontend_only_task
+      - ml_model_training
+      - rapid_prototyping
+      - scripting_task
+      cost_tier: mid
+    - id: java-spring
+      display_name: Java Spring 개발자
+      tags:
+      - java
+      - spring
+      - springboot
+      - jpa
+      - hibernate
+      - enterprise
+      - maven
+      - gradle
+      capability: Spring Boot 엔터프라이즈 API, JPA, 트랜잭션, 배치 처리
+      domain: enterprise, server-side, backend-service
+      avoid_when:
+      - lightweight_script
+      - frontend_only_task
+      - startup_mvp
+      - ml_model_training
+      cost_tier: mid
+    - id: ml-engineer
+      display_name: ML/AI 엔지니어
+      tags:
+      - ml
+      - ai
+      - pytorch
+      - tensorflow
+      - scikit-learn
+      - llm
+      - training
+      - inference
+      - data-pipeline
+      capability: 모델 학습/추론, 파이프라인, 피처 엔지니어링, MLOps
+      domain: machine-learning, ai, data-science
+      avoid_when:
+      - simple_crud_app
+      - frontend_only_task
+      - static_website
+      - devops_only
+      cost_tier: high
+    - id: mobile-flutter
+      display_name: Flutter 모바일 개발자
+      tags:
+      - flutter
+      - dart
+      - mobile
+      - ios
+      - android
+      - cross-platform
+      - riverpod
+      - bloc
+      capability: iOS/Android 크로스플랫폼 앱, 위젯, 상태관리, 플랫폼 채널
+      domain: mobile, cross-platform, app
+      avoid_when:
+      - web_only_task
+      - backend_only_task
+      - desktop_app
+      - server_infra
+      cost_tier: mid
+    - id: mobile-react-native
+      display_name: React Native 모바일 개발자
+      tags:
+      - react-native
+      - expo
+      - mobile
+      - ios
+      - android
+      - typescript
+      - cross-platform
+      capability: React Native iOS/Android 앱, 네이티브 모듈, Expo
+      domain: mobile, cross-platform, app
+      avoid_when:
+      - web_only_task
+      - backend_only_task
+      - desktop_app
+      - high_performance_game
+      cost_tier: mid
+    - id: nodejs-backend
+      display_name: Node.js 백엔드 개발자
+      tags:
+      - nodejs
+      - express
+      - fastify
+      - nestjs
+      - backend
+      - typescript
+      - api
+      - websocket
+      capability: Express/NestJS API, 미들웨어, WebSocket 서버, npm 생태계
+      domain: server-side, api, backend-service
+      avoid_when:
+      - python_only_codebase
+      - native_mobile_app
+      - frontend_only_task
+      - ml_model_training
+      cost_tier: mid
+    - id: php-laravel
+      display_name: PHP Laravel 개발자
+      tags:
+      - php
+      - laravel
+      - eloquent
+      - mvc
+      - api
+      - web
+      - artisan
+      capability: Laravel MVC, Eloquent ORM, Blade 템플릿, 큐/이벤트
+      domain: server-side, web-app, cms
+      avoid_when:
+      - high_performance_api
+      - ml_model_training
+      - native_mobile_app
+      - realtime_system
+      cost_tier: mid
+    - id: python-backend
+      display_name: Python 백엔드 개발자
+      tags:
+      - python
+      - backend
+      - api
+      - fastapi
+      - flask
+      - django
+      - rest
+      - server
+      - async
+      - pydantic
+      capability: REST/GraphQL API 구현, 비즈니스 로직, 데이터 모델링, 비동기 처리
+      domain: server-side, api, backend-service
+      avoid_when:
+      - native_mobile_app
+      - frontend_only_task
+      - static_website
+      - ml_model_training
+      cost_tier: mid
+    - id: python-data
+      display_name: Python 데이터 엔지니어
+      tags:
+      - python
+      - data
+      - pandas
+      - polars
+      - etl
+      - analytics
+      - visualization
+      - numpy
+      - jupyter
+      capability: Pandas/NumPy 데이터 분석, ETL, 시각화, Jupyter 리포트
+      domain: data-analysis, analytics, etl
+      avoid_when:
+      - web_app_development
+      - mobile_app
+      - frontend_only_task
+      - devops_only
+      cost_tier: mid
+    - id: ruby-rails
+      display_name: Ruby on Rails 개발자
+      tags:
+      - ruby
+      - rails
+      - activerecord
+      - mvc
+      - web
+      - rspec
+      - hotwire
+      capability: Rails MVC, ActiveRecord, 핫와이어, 컨벤션 기반 개발
+      domain: server-side, web-app, startup
+      avoid_when:
+      - high_performance_api
+      - ml_model_training
+      - enterprise_java
+      - realtime_system
+      cost_tier: mid
+    - id: rust-engineer
+      display_name: Rust 시스템 개발자
+      tags:
+      - rust
+      - systems
+      - cli
+      - performance
+      - memory-safe
+      - tokio
+      - async
+      capability: 시스템 프로그래밍, 고성능 서비스, WASM, 메모리 안전 코드
+      domain: systems, performance, embedded
+      avoid_when:
+      - simple_crud_app
+      - rapid_prototyping
+      - frontend_only_task
+      - scripting_task
+      cost_tier: high
+    - id: scala-engineer
+      display_name: Scala 엔지니어
+      tags:
+      - scala
+      - akka
+      - spark
+      - zio
+      - cats-effect
+      - functional
+      - distributed
+      - jvm
+      capability: 분산 시스템, 스트림 처리, 함수형 프로그래밍, Spark 데이터
+      domain: distributed, data-processing, functional
+      avoid_when:
+      - simple_crud_app
+      - frontend_only_task
+      - rapid_prototyping
+      - scripting_task
+      cost_tier: mid
+    - id: typescript-fullstack
+      display_name: TypeScript 풀스택 개발자
+      tags:
+      - typescript
+      - fullstack
+      - nextjs
+      - trpc
+      - prisma
+      - zod
+      - react
+      - server-components
+      capability: Next.js + tRPC + Prisma 타입 안전 풀스택, 서버 컴포넌트
+      domain: full-stack, web-app, type-safe
+      avoid_when:
+      - python_only_codebase
+      - native_mobile_app
+      - ml_model_training
+      - embedded_systems
+      cost_tier: mid
+  integrator:
+    description: 시스템 통합 및 자동화 전문 에이전트
+    templates:
+    - id: api-integration
+      display_name: API 통합 엔지니어
+      tags:
+      - api-integration
+      - third-party
+      - sdk
+      - rate-limit
+      - retry
+      - circuit-breaker
+      - mapping
+      capability: 외부 API 연동, SDK 래핑, OAuth 플로우, 레이트 리밋 처리
+      domain: integration, third-party, sdk
+      avoid_when:
+      - ui_design
+      - content_writing
+      - database_tuning
+      - mobile_app
+      cost_tier: mid
+    - id: ci-cd
+      display_name: CI/CD 파이프라인 엔지니어
+      tags:
+      - ci-cd
+      - github-actions
+      - gitlab-ci
+      - pipeline
+      - automation
+      - deploy
+      - test
+      - build
+      capability: GitHub Actions/GitLab CI 파이프라인, 스테이지, 캐싱, 아티팩트
+      domain: automation, ci-cd, pipeline
+      avoid_when:
+      - application_logic
+      - ui_design
+      - content_writing
+      - database_query
+      cost_tier: mid
+    - id: data-pipeline
+      display_name: 데이터 파이프라인 엔지니어
+      tags:
+      - data-pipeline
+      - etl
+      - airflow
+      - prefect
+      - orchestration
+      - transform
+      - warehouse
+      - spark
+      capability: Airflow/dbt ETL, 배치/스트림 변환, 데이터 품질 체크
+      domain: data-engineering, etl, pipeline
+      avoid_when:
+      - ui_design
+      - mobile_app
+      - content_writing
+      - simple_api
+      cost_tier: mid
+    - id: deploy-automation
+      display_name: 배포 자동화 엔지니어
+      tags:
+      - deploy
+      - ci-cd
+      - github-actions
+      - gitlab-ci
+      - jenkins
+      - canary
+      - blue-green
+      - rollback
+      capability: 블루그린/카나리 배포, 헬스체크, 롤백 트리거, 알림
+      domain: deployment, automation, release
+      avoid_when:
+      - application_logic
+      - ui_design
+      - content_writing
+      - database_query
+      cost_tier: mid
+    - id: event-bus
+      display_name: 이벤트 버스 설계자
+      tags:
+      - event-bus
+      - kafka
+      - rabbitmq
+      - redis-streams
+      - event-driven
+      - cqrs
+      - event-sourcing
+      - messaging
+      capability: Kafka/RabbitMQ/Redis Streams, 소비자 그룹, DLQ, CQRS
+      domain: messaging, event-driven, streaming
+      avoid_when:
+      - ui_design
+      - content_writing
+      - simple_crud
+      - mobile_app
+      cost_tier: mid
+    - id: migration-runner
+      display_name: DB 마이그레이션 실행자
+      tags:
+      - migration
+      - database
+      - schema-change
+      - rollback
+      - zero-downtime
+      - alembic
+      - flyway
+      - liquibase
+      capability: Alembic/Flyway 마이그레이션 실행, 롤백, 스키마 diff
+      domain: database, migration, schema
+      avoid_when:
+      - ui_design
+      - content_writing
+      - frontend_task
+      - mobile_app
+      cost_tier: mid
+    - id: notification-service
+      display_name: 알림 서비스 구축
+      tags:
+      - notification
+      - email
+      - sms
+      - push
+      - webhook
+      - template
+      - queue
+      - delivery
+      capability: 멀티채널 알림(이메일/SMS/푸시), 템플릿, 큐, 상태 추적
+      domain: notification, messaging, delivery
+      avoid_when:
+      - ui_design
+      - content_writing
+      - database_tuning
+      - mobile_app
+      cost_tier: mid
+    - id: sync-service
+      display_name: 데이터 동기화 서비스
+      tags:
+      - sync
+      - cdc
+      - debezium
+      - replication
+      - conflict-resolution
+      - idempotent
+      - real-time
+      capability: CDC/폴링 동기화, 충돌 해결, 멱등성, 체크포인트
+      domain: data-sync, cdc, replication
+      avoid_when:
+      - ui_design
+      - content_writing
+      - mobile_app
+      - simple_api
+      cost_tier: mid
+    - id: testing-pipeline
+      display_name: 테스트 파이프라인 구축
+      tags:
+      - testing
+      - pipeline
+      - coverage
+      - sharding
+      - parallel
+      - flaky
+      - quality-gate
+      capability: 멀티 스테이지 테스트 오케스트레이션, 샤딩, 커버리지 게이트
+      domain: testing, pipeline, quality-gate
+      avoid_when:
+      - application_logic
+      - ui_design
+      - content_writing
+      - database_query
+      cost_tier: mid
+    - id: webhook-handler
+      display_name: 웹훅 통합 엔지니어
+      tags:
+      - webhook
+      - event
+      - integration
+      - hmac
+      - retry
+      - idempotent
+      - dead-letter
+      - third-party
+      capability: 웹훅 수신/검증, 서명 확인, 재시도, 이벤트 라우팅
+      domain: integration, webhook, event
+      avoid_when:
+      - ui_design
+      - content_writing
+      - database_tuning
+      - mobile_app
+      cost_tier: mid
+  planner:
+    description: 아키텍처 및 프로젝트 계획 전문 에이전트
+    templates:
+    - id: api-contract
+      display_name: API 계약 설계자
+      tags:
+      - api
+      - openapi
+      - graphql
+      - schema
+      - contract
+      - versioning
+      - compatibility
+      - rest
+      capability: OpenAPI/GraphQL 스키마 계약, 버전 관리, 하위 호환성 규칙
+      domain: api, contract, schema
+      avoid_when:
+      - ui_design
+      - implementation_only
+      - database_tuning
+      - devops_only
+      cost_tier: low
+    - id: architect
+      display_name: 소프트웨어 아키텍트
+      tags:
+      - architecture
+      - system-design
+      - tech-stack
+      - modules
+      - scalability
+      - patterns
+      - microservices
+      capability: 시스템 설계, 트레이드오프 분석, 패턴 선택, 확장성 계획
+      domain: architecture, system-design, planning
+      avoid_when:
+      - simple_bug_fix
+      - ui_styling
+      - content_writing
+      - single_file_change
+      cost_tier: low
+    - id: database-schema
+      display_name: DB 스키마 설계자
+      tags:
+      - database
+      - schema
+      - erd
+      - normalization
+      - indexing
+      - data-model
+      - relational
+      - nosql
+      capability: ERD 설계, 정규화, 인덱스 전략, 관계 정의, 마이그레이션 DDL
+      domain: database, schema, data-modeling
+      avoid_when:
+      - frontend_only_task
+      - ui_design
+      - mobile_app
+      - documentation_only
+      cost_tier: low
+    - id: infra-architect
+      display_name: 인프라 아키텍트
+      tags:
+      - infrastructure
+      - cloud
+      - aws
+      - azure
+      - gcp
+      - networking
+      - terraform
+      - high-availability
+      - disaster-recovery
+      capability: 클라우드 아키텍처, 네트워크 토폴로지, HA/DR, 비용 최적화
+      domain: infrastructure, cloud, networking
+      avoid_when:
+      - application_code
+      - ui_design
+      - content_writing
+      - simple_bug_fix
+      cost_tier: low
+    - id: migration-planner
+      display_name: 마이그레이션 플래너
+      tags:
+      - migration
+      - upgrade
+      - compatibility
+      - phased
+      - rollback
+      - framework
+      - database
+      - legacy
+      capability: 레거시 전환 계획, 호환성 매트릭스, 롤백 전략, 단계별 로드맵
+      domain: migration, upgrade, transition
+      avoid_when:
+      - greenfield_project
+      - simple_bug_fix
+      - ui_design
+      - content_writing
+      cost_tier: low
+    - id: sprint-planner
+      display_name: 스프린트 플래너
+      tags:
+      - agile
+      - sprint
+      - scrum
+      - backlog
+      - user-story
+      - estimation
+      - planning
+      - velocity
+      capability: 스프린트 계획, 백로그 우선순위, 스토리 포인트, 벨로시티
+      domain: agile, planning, process
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - infrastructure_change
+      cost_tier: low
+    - id: task-decomposer
+      display_name: 태스크 분해 전문가
+      tags:
+      - planning
+      - decomposition
+      - subtask
+      - dependency
+      - priority
+      - estimation
+      - agile
+      capability: 에픽 분해, 의존성 매핑, 공수 산정, 우선순위
+      domain: planning, decomposition, estimation
+      avoid_when:
+      - implementation_task
+      - code_writing
+      - ui_design
+      - testing
+      cost_tier: low
+    - id: tech-lead
+      display_name: 테크 리드
+      tags:
+      - tech-lead
+      - standards
+      - workflow
+      - adr
+      - technical-debt
+      - conventions
+      - process
+      capability: 기술 의사결정, 표준 수립, 멘토링 가이드, 프로세스 정의
+      domain: leadership, standards, decision
+      avoid_when:
+      - simple_implementation
+      - ui_styling
+      - content_writing
+      - single_bug_fix
+      cost_tier: low
+  qa:
+    description: 테스트 및 품질 보증 전문 에이전트
+    templates:
+    - id: e2e-tester
+      display_name: E2E 테스트 엔지니어
+      tags:
+      - e2e
+      - playwright
+      - cypress
+      - testing
+      - automation
+      - user-journey
+      - selenium
+      capability: Playwright/Cypress 브라우저 E2E, 사용자 플로우, 시각적 검증
+      domain: testing, browser-automation, user-flow
+      avoid_when:
+      - backend_only_task
+      - api_only_testing
+      - performance_testing
+      cost_tier: mid
+    - id: fuzz-test
+      display_name: 퍼즈 테스터
+      tags:
+      - fuzz
+      - property-based
+      - hypothesis
+      - fast-check
+      - edge-case
+      - adversarial
+      - invariant
+      capability: 적대적 입력 생성, 속성 기반 테스트, 불변 조건 검증
+      domain: testing, security, edge-case
+      avoid_when:
+      - ui_testing
+      - visual_design
+      - documentation_only
+      cost_tier: mid
+    - id: integration-tester
+      display_name: 통합 테스트 엔지니어
+      tags:
+      - integration-test
+      - api
+      - contract
+      - data-flow
+      - testcontainers
+      - docker-compose
+      capability: 서비스 간 API 테스트, 계약 테스트, 데이터 플로우 검증
+      domain: testing, integration, contract
+      avoid_when:
+      - unit_testing_only
+      - ui_design
+      - documentation_only
+      cost_tier: mid
+    - id: load-tester
+      display_name: 부하 테스트 엔지니어
+      tags:
+      - load-test
+      - performance
+      - k6
+      - locust
+      - stress
+      - throughput
+      - latency
+      - scaling
+      capability: k6/Locust 부하 테스트, 동시 사용자, 임계값, 리포트
+      domain: testing, performance, stress
+      avoid_when:
+      - unit_testing
+      - ui_design
+      - feature_implementation
+      cost_tier: mid
+    - id: smoke-test
+      display_name: 스모크 테스터
+      tags:
+      - smoke-test
+      - deployment
+      - health-check
+      - verification
+      - critical-path
+      - monitoring
+      capability: 배포 후 핵심 경로 검증, 헬스체크, 빠른 실패
+      domain: testing, deployment, verification
+      avoid_when:
+      - deep_testing_needed
+      - ui_design
+      - feature_implementation
+      cost_tier: mid
+    - id: unit-tester
+      display_name: 유닛 테스트 엔지니어
+      tags:
+      - unit-test
+      - pytest
+      - jest
+      - vitest
+      - mocking
+      - tdd
+      - boundary
+      - coverage
+      capability: pytest/jest/JUnit 단위 테스트, 모킹, 엣지 케이스
+      domain: testing, unit-test, isolation
+      avoid_when:
+      - ui_testing
+      - integration_testing
+      - performance_testing
+      cost_tier: mid
+    - id: visual-regression
+      display_name: 시각적 회귀 테스터
+      tags:
+      - visual-regression
+      - screenshot
+      - playwright
+      - percy
+      - chromatic
+      - ui-testing
+      - snapshot
+      capability: 스크린샷 비교, 픽셀 diff, 반응형 뷰포트, 동적 콘텐츠 마스킹
+      domain: testing, visual, screenshot
+      avoid_when:
+      - backend_only_task
+      - api_testing
+      - performance_testing
+      cost_tier: mid
+  reviewer:
+    description: 코드 리뷰 및 감사 전문 에이전트
+    templates:
+    - id: accessibility-review
+      display_name: 접근성 리뷰어
+      tags:
+      - accessibility
+      - a11y
+      - wcag
+      - aria
+      - screen-reader
+      - keyboard
+      - contrast
+      - semantic-html
+      capability: WCAG 준수, ARIA, 대비율, 스크린리더, 키보드 네비게이션
+      domain: accessibility, compliance, inclusive-design
+      avoid_when:
+      - backend_only_task
+      - api_design
+      - database_work
+      - devops_only
+      cost_tier: low
+    - id: architecture-review
+      display_name: 아키텍처 리뷰어
+      tags:
+      - architecture
+      - design
+      - coupling
+      - cohesion
+      - scalability
+      - technical-debt
+      - patterns
+      capability: 설계 패턴 평가, 결합도/응집도, 확장성, 기술 부채 분석
+      domain: architecture, design-patterns, scalability
+      avoid_when:
+      - simple_bug_fix
+      - ui_styling
+      - documentation_only
+      cost_tier: low
+    - id: code-review
+      display_name: 코드 리뷰어
+      tags:
+      - review
+      - code-quality
+      - bug
+      - anti-pattern
+      - refactoring
+      - best-practices
+      capability: 코드 품질, 가독성, 베스트 프랙티스, 리팩토링 제안
+      domain: quality-assurance, code-quality
+      avoid_when:
+      - implementation_task
+      - design_task
+      - infrastructure_change
+      cost_tier: low
+    - id: dependency-audit
+      display_name: 의존성 감사관
+      tags:
+      - dependency
+      - supply-chain
+      - cve
+      - license
+      - npm
+      - pip
+      - cargo
+      - version
+      - audit
+      capability: 취약 의존성, 라이선스 충돌, 미사용 패키지, 공급망 보안
+      domain: supply-chain, licensing, vulnerability
+      avoid_when:
+      - feature_implementation
+      - ui_design
+      - infrastructure_change
+      cost_tier: low
+    - id: documentation-review
+      display_name: 문서 리뷰어
+      tags:
+      - documentation
+      - readme
+      - api-docs
+      - consistency
+      - accuracy
+      - review
+      capability: 문서 완전성, 정확성, 가독성, API 문서 일치 여부
+      domain: documentation, quality-assurance
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - performance_tuning
+      cost_tier: low
+    - id: performance-review
+      display_name: 성능 분석가
+      tags:
+      - performance
+      - optimization
+      - bottleneck
+      - memory
+      - caching
+      - profiling
+      - algorithm
+      capability: 병목 분석, 프로파일링, 알고리즘 복잡도, 캐싱 전략
+      domain: performance, optimization, profiling
+      avoid_when:
+      - feature_implementation
+      - ui_design
+      - documentation_only
+      cost_tier: low
+    - id: security-audit
+      display_name: 보안 감사관
+      tags:
+      - security
+      - audit
+      - vulnerability
+      - owasp
+      - xss
+      - csrf
+      - injection
+      - authentication
+      - secrets
+      capability: 취약점 스캔, OWASP Top 10, 시크릿 노출, 인젝션 검사
+      domain: security, compliance, vulnerability
+      avoid_when:
+      - feature_implementation
+      - ui_design
+      - performance_tuning_only
+      cost_tier: low
+    - id: test-coverage
+      display_name: 테스트 커버리지 분석가
+      tags:
+      - test
+      - coverage
+      - edge-case
+      - unit-test
+      - integration-test
+      - quality
+      capability: 커버리지 갭 분석, 미테스트 경로, 테스트 품질 평가
+      domain: testing, quality-assurance, coverage
+      avoid_when:
+      - feature_implementation
+      - ui_design
+      - infrastructure_change
+      cost_tier: low
+  specialist:
+    description: 특수 분야 전문 에이전트
+    templates:
+    - id: auth-expert
+      display_name: 인증/인가 전문가
+      tags:
+      - auth
+      - oauth2
+      - jwt
+      - sso
+      - mfa
+      - rbac
+      - session
+      - security
+      - token
+      - oidc
+      capability: OAuth2/JWT/SSO 구현, RBAC, 세션 관리, MFA
+      domain: authentication, authorization, security
+      avoid_when:
+      - ui_design
+      - content_writing
+      - database_tuning
+      - devops_only
+      cost_tier: mid
+    - id: aws-expert
+      display_name: AWS 클라우드 전문가
+      tags:
+      - aws
+      - cloud
+      - lambda
+      - serverless
+      - s3
+      - dynamodb
+      - cloudformation
+      - cdk
+      - iam
+      - vpc
+      capability: Lambda, EC2, S3, DynamoDB, IAM, CloudFormation 설계/운영
+      domain: cloud, aws, serverless
+      avoid_when:
+      - application_logic
+      - ui_design
+      - on_premise_only
+      - content_writing
+      cost_tier: mid
+    - id: cron-automation
+      display_name: 자동화/스케줄링 전문가
+      tags:
+      - cron
+      - automation
+      - scheduling
+      - batch
+      - workflow
+      - event-driven
+      - retry
+      - idempotent
+      capability: 스케줄러, 주기적 태스크, 큐 기반 자동화, 타임존 처리
+      domain: automation, scheduling, periodic
+      avoid_when:
+      - ui_design
+      - realtime_interaction
+      - content_writing
+      - mobile_app
+      cost_tier: mid
+    - id: docker-expert
+      display_name: Docker 전문가
+      tags:
+      - docker
+      - container
+      - dockerfile
+      - compose
+      - multi-stage
+      - image
+      - orchestration
+      - security
+      capability: Dockerfile 최적화, 멀티스테이지, compose, 볼륨, 네트워킹
+      domain: containerization, docker, packaging
+      avoid_when:
+      - application_logic
+      - ui_design
+      - database_query
+      - content_writing
+      cost_tier: mid
+    - id: excel-automation
+      display_name: Excel/스프레드시트 자동화 전문가
+      tags:
+      - excel
+      - openpyxl
+      - xlsxwriter
+      - spreadsheet
+      - automation
+      - report
+      - csv
+      - data
+      capability: openpyxl/xlsxwriter Excel 생성, 차트, 수식, 대용량 처리
+      domain: spreadsheet, automation, reporting
+      avoid_when:
+      - web_app_ui
+      - api_development
+      - mobile_app
+      - realtime_system
+      cost_tier: mid
+    - id: ffmpeg-expert
+      display_name: FFmpeg 미디어 전문가
+      tags:
+      - ffmpeg
+      - video
+      - audio
+      - transcode
+      - codec
+      - streaming
+      - media
+      - editing
+      - filter
+      capability: 비디오/오디오 트랜스코딩, 스트리밍, 코덱, 필터 체인
+      domain: media, video, audio, processing
+      avoid_when:
+      - web_app_ui
+      - database_work
+      - api_design
+      - mobile_app
+      cost_tier: mid
+    - id: git-expert
+      display_name: Git 전문가
+      tags:
+      - git
+      - version-control
+      - rebase
+      - merge
+      - conflict
+      - branch
+      - cherry-pick
+      - workflow
+      capability: rebase, merge 충돌, cherry-pick, 히스토리 재작성, 워크플로우
+      domain: version-control, git, workflow
+      avoid_when:
+      - application_code
+      - ui_design
+      - database_work
+      - infrastructure_change
+      cost_tier: mid
+    - id: graphql-expert
+      display_name: GraphQL 전문가
+      tags:
+      - graphql
+      - schema
+      - resolver
+      - apollo
+      - relay
+      - subscription
+      - dataloader
+      - api
+      capability: 스키마/리졸버, 서브스크립션, Apollo, 페더레이션, N+1 방지
+      domain: api, graphql, data-fetching
+      avoid_when:
+      - rest_only_project
+      - ui_design
+      - database_tuning
+      - devops_only
+      cost_tier: mid
+    - id: kubernetes-expert
+      display_name: Kubernetes 전문가
+      tags:
+      - kubernetes
+      - k8s
+      - helm
+      - deployment
+      - service
+      - ingress
+      - autoscaling
+      - pod
+      - cluster
+      capability: Pod/Service/Ingress, Helm 차트, 오토스케일링, RBAC
+      domain: orchestration, kubernetes, cloud-native
+      avoid_when:
+      - application_logic
+      - ui_design
+      - simple_scripting
+      - content_writing
+      cost_tier: mid
+    - id: monitoring-expert
+      display_name: 모니터링/관측성 전문가
+      tags:
+      - monitoring
+      - observability
+      - prometheus
+      - grafana
+      - logging
+      - tracing
+      - alerting
+      - slo
+      - opentelemetry
+      capability: Prometheus/Grafana, 알ERT 규칙, 로깅, 분산 트레이싱
+      domain: observability, monitoring, alerting
+      avoid_when:
+      - application_logic
+      - ui_design
+      - content_writing
+      - database_query
+      cost_tier: mid
+    - id: payment-expert
+      display_name: 결제 시스템 전문가
+      tags:
+      - payment
+      - stripe
+      - pg
+      - webhook
+      - subscription
+      - refund
+      - billing
+      - commerce
+      capability: Stripe/PayPal 결제, 구독 빌링, 웹훅 처리, PCI 준수
+      domain: payment, billing, fintech
+      avoid_when:
+      - ui_design
+      - content_writing
+      - database_tuning
+      - devops_only
+      cost_tier: mid
+    - id: pdf-generation
+      display_name: PDF 생성 전문가
+      tags:
+      - pdf
+      - reportlab
+      - weasyprint
+      - puppeteer
+      - document
+      - report
+      - template
+      - cjk
+      capability: reportlab/weasyprint/puppeteer PDF, CJK 폰트, 테이블, 템플릿
+      domain: document, pdf, reporting
+      avoid_when:
+      - web_app_ui
+      - api_development
+      - mobile_app
+      - realtime_system
+      cost_tier: mid
+    - id: scraping-expert
+      display_name: 웹 스크래핑 전문가
+      tags:
+      - scraping
+      - crawling
+      - playwright
+      - beautifulsoup
+      - selenium
+      - data-extraction
+      - automation
+      capability: 웹 크롤링, BeautifulSoup/Scrapy, Playwright 자동화, 데이터 추출
+      domain: scraping, crawling, data-extraction
+      avoid_when:
+      - api_development
+      - ui_design
+      - mobile_app
+      - infrastructure_change
+      cost_tier: mid
+    - id: terraform-expert
+      display_name: Terraform IaC 전문가
+      tags:
+      - terraform
+      - iac
+      - infrastructure
+      - cloud
+      - module
+      - state
+      - provisioning
+      - multi-cloud
+      capability: IaC 모듈, 프로바이더, 상태 관리, 워크스페이스, 정책
+      domain: infrastructure-as-code, terraform, provisioning
+      avoid_when:
+      - application_logic
+      - ui_design
+      - database_query
+      - content_writing
+      cost_tier: mid
+    - id: websocket-expert
+      display_name: 실시간 통신 전문가
+      tags:
+      - websocket
+      - realtime
+      - socket-io
+      - sse
+      - chat
+      - notification
+      - pub-sub
+      - bidirectional
+      capability: 실시간 양방향 통신, Socket.IO, pub/sub, 재연결 로직
+      domain: realtime, websocket, streaming
+      avoid_when:
+      - static_website
+      - batch_processing_only
+      - ui_design
+      - documentation_only
+      cost_tier: mid
+  writer:
+    description: 문서 및 콘텐츠 작성 전문 에이전트
+    templates:
+    - id: api-docs
+      display_name: API 문서 작성자
+      tags:
+      - api-docs
+      - reference
+      - endpoint
+      - swagger
+      - openapi
+      - curl
+      - sdk
+      - guide
+      capability: OpenAPI/Swagger 문서, 엔드포인트 설명, 예제, 인증 가이드
+      domain: documentation, api, reference
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - marketing_content
+      cost_tier: low
+    - id: blog-writer
+      display_name: 기술 블로그 작성자
+      tags:
+      - blog
+      - article
+      - writing
+      - technical-writing
+      - opinion
+      - experience
+      - sharing
+      capability: 기술 블로그 포스트, 마크다운, SEO, 코드 스니펫
+      domain: content, blog, technical-writing
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - api_design
+      cost_tier: low
+    - id: changelog-writer
+      display_name: 체인지로그 작성자
+      tags:
+      - changelog
+      - release-notes
+      - version
+      - migration
+      - breaking-change
+      - history
+      capability: Keep a Changelog 형식, 릴리스 노트, 시맨틱 버저닝
+      domain: documentation, changelog, release
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - api_design
+      cost_tier: low
+    - id: commit-message
+      display_name: 커밋 메시지 작성자
+      tags:
+      - git
+      - commit
+      - conventional-commits
+      - message
+      - changelog
+      - versioning
+      capability: Conventional Commits, 72자 제목, WHY 설명, Breaking Changes
+      domain: git, commit, versioning
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - infrastructure_change
+      cost_tier: low
+    - id: copywriting
+      display_name: 카피라이터
+      tags:
+      - copywriting
+      - marketing
+      - landing-page
+      - cta
+      - headline
+      - conversion
+      - content
+      capability: 전환 카피, 헤드라인, CTA, A/B 변형, 오디언스 톤 매칭
+      domain: marketing, copy, conversion
+      avoid_when:
+      - code_implementation
+      - api_design
+      - database_work
+      - testing
+      cost_tier: low
+    - id: incident-report
+      display_name: 인시던트 리포트 작성자
+      tags:
+      - incident
+      - postmortem
+      - outage
+      - root-cause
+      - timeline
+      - action-items
+      - reliability
+      capability: 포스트모템, 타임라인, 루트 원인, 액션 아이템, 블레임리스
+      domain: documentation, incident, postmortem
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - feature_development
+      - marketing_content
+      cost_tier: low
+    - id: pr-description
+      display_name: PR 설명 작성자
+      tags:
+      - pr
+      - pull-request
+      - github
+      - gitlab
+      - review
+      - description
+      - documentation
+      capability: PR 요약/동기/변경/테스트 구조화, 리뷰어 체크리스트
+      domain: git, pull-request, review
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - infrastructure_change
+      cost_tier: low
+    - id: readme-writer
+      display_name: README 작성자
+      tags:
+      - readme
+      - documentation
+      - guide
+      - install
+      - usage
+      - contributing
+      - markdown
+      capability: 프로젝트 README, 설치/사용법, 배지, 기여 가이드
+      domain: documentation, readme, project
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - infrastructure_change
+      cost_tier: low
+    - id: rfc-writer
+      display_name: RFC/ADR 작성자
+      tags:
+      - rfc
+      - adr
+      - specification
+      - design-doc
+      - proposal
+      - architecture-decision
+      - trade-off
+      capability: RFC/디자인 독, 대안 분석, 의사결정 기록, 이해관계자 리뷰
+      domain: documentation, proposal, decision
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - simple_bug_fix
+      cost_tier: low
+    - id: tutorial-writer
+      display_name: 튜토리얼 작성자
+      tags:
+      - tutorial
+      - how-to
+      - guide
+      - walkthrough
+      - learning
+      - step-by-step
+      - education
+      capability: 단계별 튜토리얼, 코드 예제, 스크린샷 설명, 학습 경로
+      domain: documentation, tutorial, education
+      avoid_when:
+      - code_implementation
+      - ui_design
+      - testing
+      - infrastructure_change
+      cost_tier: low

@@ -1,0 +1,78 @@
+id: terraform-expert
+category: specialist
+display_name: Terraform IaC 전문가
+description: Terraform 모듈 설계, 상태 관리, 멀티클라우드 인프라, 드리프트 감지
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a Terraform infrastructure-as-code expert.
+
+  - Write modular, reusable Terraform configurations with proper variables/outputs.
+
+  - Manage state safely: remote backends, locking, import existing resources.
+
+  - Design for multi-environment (dev/staging/prod) with workspaces or directories.
+
+  - Implement drift detection and plan-before-apply workflows.
+
+  '
+success_criteria:
+- 모듈화 설계
+- 상태 관리 안전
+- 멀티 환경 지원
+tags:
+- terraform
+- iac
+- infrastructure
+- cloud
+- module
+- state
+- provisioning
+- multi-cloud
+version: '1.0'
+author: system
+capability: IaC 모듈, 프로바이더, 상태 관리, 워크스페이스, 정책
+domain: infrastructure-as-code, terraform, provisioning
+related_agents:
+- aws-expert
+- infra-architect
+- devops-engineer
+avoid_when:
+- application_logic
+- ui_design
+- database_query
+- content_writing
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 6
+  architecture: 8
+  testing: 5
+  documentation: 5
+  design: 2
+  devops: 10
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

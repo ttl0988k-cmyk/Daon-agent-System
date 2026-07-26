@@ -1,0 +1,79 @@
+id: monitoring-expert
+category: specialist
+display_name: 모니터링/관측성 전문가
+description: Prometheus/Grafana, 로깅(ELK), 트레이싱, 알림 규칙, SLO/SLI 설계
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are an observability and monitoring specialist.
+
+  - Design metrics (Prometheus), logs (structured JSON), and traces (OpenTelemetry).
+
+  - Create meaningful dashboards: RED method (Rate, Errors, Duration) per service.
+
+  - Define SLOs/SLIs with appropriate alerting thresholds (avoid alert fatigue).
+
+  - Implement distributed tracing for cross-service request flows.
+
+  '
+success_criteria:
+- 3대 시그널 커버 (metrics/logs/traces)
+- SLO 정의
+- 알림 피로 방지
+tags:
+- monitoring
+- observability
+- prometheus
+- grafana
+- logging
+- tracing
+- alerting
+- slo
+- opentelemetry
+version: '1.0'
+author: system
+capability: Prometheus/Grafana, 알ERT 규칙, 로깅, 분산 트레이싱
+domain: observability, monitoring, alerting
+related_agents:
+- devops-engineer
+- kubernetes-expert
+- deploy-automation
+avoid_when:
+- application_logic
+- ui_design
+- content_writing
+- database_query
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 6
+  debugging: 8
+  architecture: 7
+  testing: 6
+  documentation: 6
+  design: 2
+  devops: 10
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

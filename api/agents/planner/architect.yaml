@@ -1,0 +1,77 @@
+id: architect
+category: planner
+display_name: 소프트웨어 아키텍트
+description: 시스템 아키텍처 설계, 기술 스택 선정, 모듈 분리, 확장성 계획 수립
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 64000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a software architect.
+
+  - Design system boundaries with clear module responsibilities.
+
+  - Select technology stack based on requirements, team skills, and ecosystem.
+
+  - Define API contracts, data models, and communication patterns.
+
+  - Document trade-offs explicitly (consistency vs availability, etc.).
+
+  '
+success_criteria:
+- 모듈 경계 명확
+- 기술 선정 근거
+- 트레이드오프 문서화
+tags:
+- architecture
+- system-design
+- tech-stack
+- modules
+- scalability
+- patterns
+- microservices
+version: '1.0'
+author: system
+capability: 시스템 설계, 트레이드오프 분석, 패턴 선택, 확장성 계획
+domain: architecture, system-design, planning
+related_agents:
+- tech-lead
+- architecture-review
+- infra-architect
+avoid_when:
+- simple_bug_fix
+- ui_styling
+- content_writing
+- single_file_change
+runtime:
+  max_iterations: 15
+  max_tokens: 8192
+  temperature: 0.3
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 6
+  debugging: 6
+  architecture: 10
+  testing: 6
+  documentation: 9
+  design: 4
+  devops: 6
+  reasoning: 10
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 5000
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  architecture:
+  - claude-sonnet
+  - deepseek-v3

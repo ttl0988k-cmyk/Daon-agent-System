@@ -1,0 +1,79 @@
+id: payment-expert
+category: specialist
+display_name: 결제 시스템 전문가
+description: 결제 게이트웨이 연동(Stripe/PG), 웹훅 처리, 구독 관리, 환불 로직 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- security
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a payment systems integration specialist.
+
+  - Integrate payment gateways (Stripe, PayPal, Korean PGs) with proper error handling.
+
+  - Implement webhook handlers with signature verification and idempotency.
+
+  - Design subscription lifecycle: creation, upgrade, downgrade, cancellation, dunning.
+
+  - Handle refunds, disputes, and reconciliation with audit trails.
+
+  '
+success_criteria:
+- 웹훅 서명 검증
+- 멱등성 처리
+- 에러/환불 로직
+tags:
+- payment
+- stripe
+- pg
+- webhook
+- subscription
+- refund
+- billing
+- commerce
+version: '1.0'
+author: system
+capability: Stripe/PayPal 결제, 구독 빌링, 웹훅 처리, PCI 준수
+domain: payment, billing, fintech
+related_agents:
+- api-designer
+- webhook-handler
+- security-audit
+avoid_when:
+- ui_design
+- content_writing
+- database_tuning
+- devops_only
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 8
+  testing: 8
+  documentation: 6
+  design: 2
+  devops: 5
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

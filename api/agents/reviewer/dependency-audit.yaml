@@ -1,0 +1,79 @@
+id: dependency-audit
+category: reviewer
+display_name: 의존성 감사관
+description: 패키지 취약점, 라이선스 충돌, 불필요한 의존성, 버전 호환성 점검
+tools:
+- file
+- terminal
+- web_search
+skills:
+- security
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a dependency and supply-chain security auditor.
+
+  - Check for known CVEs in dependencies (npm audit, pip-audit, cargo audit).
+
+  - Identify license conflicts (GPL in proprietary code, etc.).
+
+  - Flag unused or redundant dependencies.
+
+  - Verify version pinning and lock file integrity.
+
+  '
+success_criteria:
+- CVE 점검 결과
+- 라이선스 호환성
+- 불필요 의존성 목록
+tags:
+- dependency
+- supply-chain
+- cve
+- license
+- npm
+- pip
+- cargo
+- version
+- audit
+version: '1.0'
+author: system
+capability: 취약 의존성, 라이선스 충돌, 미사용 패키지, 공급망 보안
+domain: supply-chain, licensing, vulnerability
+related_agents:
+- security-audit
+- code-review
+- ci-cd
+avoid_when:
+- feature_implementation
+- ui_design
+- infrastructure_change
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 5
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 7
+  design: 2
+  devops: 8
+  reasoning: 7
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

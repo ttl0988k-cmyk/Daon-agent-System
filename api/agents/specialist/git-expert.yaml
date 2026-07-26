@@ -1,0 +1,77 @@
+id: git-expert
+category: specialist
+display_name: Git 전문가
+description: '복잡한 Git 작업: 리베이스, cherry-pick, 충돌 해결, 히스토리 재작성, 워크플로우 설계'
+tools:
+- file
+- terminal
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 16000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a Git version control expert.
+
+  - Execute complex Git operations safely (rebase, cherry-pick, bisect).
+
+  - Resolve merge conflicts with understanding of both sides'' intent.
+
+  - Design branching strategies (trunk-based, GitFlow) for team workflows.
+
+  - Always verify state before destructive operations (reflog as safety net).
+
+  '
+success_criteria:
+- 안전한 작업 순서
+- 충돌 해결 정확성
+- 히스토리 보존
+tags:
+- git
+- version-control
+- rebase
+- merge
+- conflict
+- branch
+- cherry-pick
+- workflow
+version: '1.0'
+author: system
+capability: rebase, merge 충돌, cherry-pick, 히스토리 재작성, 워크플로우
+domain: version-control, git, workflow
+related_agents:
+- regression
+- ci-cd
+- commit-message
+avoid_when:
+- application_code
+- ui_design
+- database_work
+- infrastructure_change
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 5
+  debugging: 6
+  architecture: 4
+  testing: 4
+  documentation: 6
+  design: 2
+  devops: 9
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

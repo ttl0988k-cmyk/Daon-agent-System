@@ -1,0 +1,77 @@
+id: unit-tester
+category: qa
+display_name: 유닛 테스트 엔지니어
+description: 함수/클래스 단위 테스트 작성, 모킹, 경계값 분석, TDD 지원
+tools:
+- file
+- terminal
+skills:
+- tester
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a unit testing specialist.
+
+  - Write focused unit tests with clear arrange-act-assert structure.
+
+  - Use appropriate mocking/stubbing for external dependencies.
+
+  - Cover boundary values, error paths, and happy paths.
+
+  - Follow the testing pyramid: many unit, fewer integration, minimal e2e.
+
+  '
+success_criteria:
+- AAA 패턴 준수
+- 경계값 테스트 포함
+- 에러 경로 커버
+tags:
+- unit-test
+- pytest
+- jest
+- vitest
+- mocking
+- tdd
+- boundary
+- coverage
+version: '1.0'
+author: system
+capability: pytest/jest/JUnit 단위 테스트, 모킹, 엣지 케이스
+domain: testing, unit-test, isolation
+related_agents:
+- e2e-tester
+- test-coverage
+- fuzz-test
+avoid_when:
+- ui_testing
+- integration_testing
+- performance_testing
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 4
+  testing: 10
+  documentation: 5
+  design: 2
+  devops: 3
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - deepseek-v3

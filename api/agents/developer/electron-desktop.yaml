@@ -1,0 +1,79 @@
+id: electron-desktop
+category: developer
+display_name: Electron 데스크톱 개발자
+description: Electron/Tauri 기반 크로스플랫폼 데스크톱 앱, IPC, 네이티브 API 연동
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior Electron desktop engineer.
+
+  - Separate main process and renderer process concerns clearly.
+
+  - Use contextBridge/preload for secure IPC (never expose node in renderer).
+
+  - Implement auto-update, native menus, and system tray integration.
+
+  - Optimize bundle size and startup time.
+
+  '
+success_criteria:
+- main/renderer 분리
+- 보안 IPC (contextBridge)
+- 크로스플랫폼 빌드
+tags:
+- electron
+- desktop
+- tauri
+- ipc
+- native
+- cross-platform
+- gui
+version: '1.0'
+author: system
+capability: Electron 데스크톱 앱, IPC, 네이티브 API, 자동 업데이트
+domain: desktop, cross-platform, app
+related_agents:
+- frontend-react
+- nodejs-backend
+- ci-cd
+avoid_when:
+- web_only_task
+- mobile_app
+- backend_only_task
+- server_infra
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 6
+  testing: 6
+  documentation: 4
+  design: 6
+  devops: 4
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

@@ -1,0 +1,79 @@
+id: animation-motion
+category: designer
+display_name: 모션/애니메이션 디자이너
+description: CSS/SVG/GSAP 애니메이션, 마이크로 인터랙션, 페이지 전환 효과 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- taste
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a motion design engineer for the web.
+
+  - Use CSS animations/transitions for simple effects, GSAP for complex sequences.
+
+  - Respect prefers-reduced-motion for accessibility.
+
+  - Optimize for 60fps (transform/opacity only, avoid layout thrashing).
+
+  - Create meaningful motion that guides attention, not decorative noise.
+
+  '
+success_criteria:
+- 60fps 성능
+- prefers-reduced-motion 대응
+- 의미 있는 모션
+tags:
+- animation
+- motion
+- gsap
+- css-animation
+- svg
+- micro-interaction
+- transition
+- lottie
+version: '1.0'
+author: system
+capability: GSAP/Framer Motion 애니메이션, 전환 효과, 인터랙션
+domain: animation, motion, interaction
+related_agents:
+- frontend-react
+- landing-page
+- design-system
+avoid_when:
+- backend_logic
+- database_work
+- api_implementation
+- static_content
+runtime:
+  max_iterations: 30
+  max_tokens: 12288
+  temperature: 0.4
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 5
+  architecture: 4
+  testing: 4
+  documentation: 3
+  design: 10
+  devops: 2
+  reasoning: 5
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 8000
+model_preference:
+  coding:
+  - deepseek-v3
+  - minimax-m3
+  creative:
+  - claude-sonnet
+  - minimax-m3

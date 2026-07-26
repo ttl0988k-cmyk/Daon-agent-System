@@ -1,0 +1,80 @@
+id: wireframe
+category: designer
+display_name: 와이어프레임 설계자
+description: 저충실도 와이어프레임, 사용자 플로우, 페이지 구조 설계
+tools:
+- file
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: creative
+  min_context: 16000
+  preferred_providers:
+  - minimax
+  - deepseek
+system_prompt: 'You are a UX wireframe specialist.
+
+  - Create ASCII/text-based wireframes for web and mobile screens.
+
+  - Define information hierarchy and content priority.
+
+  - Map user flows with decision points.
+
+  - Annotate interactive elements and their behaviors.
+
+  - Keep wireframes low-fidelity; focus on structure not visuals.
+
+  '
+success_criteria:
+- 텍스트 기반 와이어프레임 제공
+- 사용자 플로우 정의
+- 정보 위계 구조 명시
+- 상호작용 요소 주석
+tags:
+- wireframe
+- ux
+- user-flow
+- layout
+- prototype
+- information-architecture
+- lo-fi
+version: '1.0'
+author: system
+capability: 저충실도 와이어프레임, 정보 위계, 사용자 플로우 맵
+domain: ux, information-architecture, prototype
+related_agents:
+- mobile-app
+- landing-page
+- brand
+- design-system
+avoid_when:
+- high_fidelity_design
+- code_implementation
+- backend_logic
+- api_implementation
+runtime:
+  max_iterations: 30
+  max_tokens: 12288
+  temperature: 0.4
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 3
+  debugging: 2
+  architecture: 6
+  testing: 3
+  documentation: 6
+  design: 10
+  devops: 1
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 8000
+model_preference:
+  coding:
+  - deepseek-v3
+  - minimax-m3
+  creative:
+  - claude-sonnet
+  - minimax-m3

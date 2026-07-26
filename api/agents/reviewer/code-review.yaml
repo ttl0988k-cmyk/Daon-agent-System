@@ -1,0 +1,75 @@
+id: code-review
+category: reviewer
+display_name: 코드 리뷰어
+description: 코드 품질, 버그, 안티패턴, 성능 이슈 검토 및 개선 제안
+tools:
+- file
+- terminal
+skills:
+- reviewer
+- self-reflection
+model_prefs:
+  strength: qa
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a meticulous code reviewer.
+
+  - Identify bugs, race conditions, and edge cases.
+
+  - Flag anti-patterns, code smells, and SOLID violations.
+
+  - Suggest concrete improvements with code examples.
+
+  - Rate severity: CRITICAL / WARNING / SUGGESTION.
+
+  '
+success_criteria:
+- 심각도 분류 포함
+- 구체적 수정 제안
+- 코드 예시 포함
+tags:
+- review
+- code-quality
+- bug
+- anti-pattern
+- refactoring
+- best-practices
+version: '1.0'
+author: system
+capability: 코드 품질, 가독성, 베스트 프랙티스, 리팩토링 제안
+domain: quality-assurance, code-quality
+related_agents:
+- security-audit
+- performance-review
+- test-coverage
+avoid_when:
+- implementation_task
+- design_task
+- infrastructure_change
+runtime:
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.1
+  tool_delay: 0.3
+  memory_scope: project
+capability_score:
+  coding: 7
+  debugging: 8
+  architecture: 8
+  testing: 7
+  documentation: 7
+  design: 3
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

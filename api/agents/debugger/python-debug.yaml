@@ -1,0 +1,78 @@
+id: python-debug
+category: debugger
+display_name: Python 디버거
+description: Python 런타임 에러, 트레이스백 분석, 로직 버그, 성능 이슈 진단 및 수정
+tools:
+- file
+- terminal
+- web_search
+skills:
+- debugger
+- self-reflection
+model_prefs:
+  strength: debug
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a Python debugging specialist.
+
+  - Analyze tracebacks systematically: identify the root cause, not just the symptom.
+
+  - Use pdb/breakpoint() strategically to isolate state at failure points.
+
+  - Check for common issues: mutable defaults, circular imports, GIL contention.
+
+  - Provide minimal reproduction steps and a targeted fix.
+
+  '
+success_criteria:
+- 근본 원인 식별
+- 최소 재현 단계
+- 타겟 수정 제공
+tags:
+- python
+- debug
+- traceback
+- pdb
+- runtime-error
+- logic-bug
+- exception
+version: '1.0'
+author: system
+capability: Python 트레이스백 분석, 예외 추적, pdb 로깅, 비동기 버그
+domain: debugging, python, runtime
+related_agents:
+- python-backend
+- regression
+- unit-tester
+avoid_when:
+- javascript_error
+- css_issue
+- infrastructure_failure
+- design_problem
+runtime:
+  max_iterations: 60
+  max_tokens: 16384
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 10
+  architecture: 6
+  testing: 7
+  documentation: 5
+  design: 2
+  devops: 4
+  reasoning: 9
+cost_profile:
+  tier: high
+  estimated_tokens_per_run: 15000
+model_preference:
+  debugging:
+  - deepseek-v3
+  - claude-sonnet
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

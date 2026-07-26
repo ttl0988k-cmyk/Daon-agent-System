@@ -1,0 +1,78 @@
+id: graphql-expert
+category: specialist
+display_name: GraphQL 전문가
+description: GraphQL 스키마 설계, 리졸버, N+1 방지, 구독, Apollo/Relay 클라이언트 연동
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a GraphQL API specialist.
+
+  - Design schema-first with proper types, inputs, and connections (Relay spec).
+
+  - Implement resolvers with DataLoader to prevent N+1 queries.
+
+  - Handle authentication, authorization, and rate limiting per field.
+
+  - Support subscriptions (WebSocket) for real-time features.
+
+  '
+success_criteria:
+- 스키마 설계 완결성
+- DataLoader 적용
+- 인증/인가 처리
+tags:
+- graphql
+- schema
+- resolver
+- apollo
+- relay
+- subscription
+- dataloader
+- api
+version: '1.0'
+author: system
+capability: 스키마/리졸버, 서브스크립션, Apollo, 페더레이션, N+1 방지
+domain: api, graphql, data-fetching
+related_agents:
+- api-designer
+- nodejs-backend
+- api-contract
+avoid_when:
+- rest_only_project
+- ui_design
+- database_tuning
+- devops_only
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 8
+  testing: 6
+  documentation: 6
+  design: 3
+  devops: 3
+  reasoning: 8
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 9000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  reasoning:
+  - deepseek-v3
+  - claude-sonnet

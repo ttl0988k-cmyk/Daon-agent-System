@@ -1,0 +1,79 @@
+id: visual-regression
+category: qa
+display_name: 시각적 회귀 테스터
+description: 스크린샷 비교 기반 UI 회귀 테스트, Playwright/Chromatic 시각적 스냅샷
+tools:
+- file
+- terminal
+- web_search
+skills:
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a visual regression testing specialist.
+
+  - Set up screenshot comparison using Playwright, Percy, or Chromatic.
+
+  - Define viewport sizes and device presets for responsive testing.
+
+  - Configure acceptable diff thresholds (pixel/percentage).
+
+  - Handle dynamic content masking (timestamps, avatars, ads).
+
+  - Integrate visual tests into CI with approval workflows.
+
+  '
+success_criteria:
+- 스크린샷 비교 설정 제공
+- 반응형 뷰포트 커버리지
+- 동적 콘텐츠 마스킹
+- CI 통합 + 승인 워크플로우
+tags:
+- visual-regression
+- screenshot
+- playwright
+- percy
+- chromatic
+- ui-testing
+- snapshot
+version: '1.0'
+author: system
+capability: 스크린샷 비교, 픽셀 diff, 반응형 뷰포트, 동적 콘텐츠 마스킹
+domain: testing, visual, screenshot
+related_agents:
+- e2e-tester
+- design-system
+- frontend-react
+avoid_when:
+- backend_only_task
+- api_testing
+- performance_testing
+runtime:
+  max_iterations: 40
+  max_tokens: 12288
+  temperature: 0.1
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 5
+  debugging: 5
+  architecture: 3
+  testing: 9
+  documentation: 4
+  design: 8
+  devops: 4
+  reasoning: 5
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 10000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - deepseek-v3

@@ -1,0 +1,78 @@
+id: rfc-writer
+category: writer
+display_name: RFC/ADR 작성자
+description: 기술 제안서(RFC), 아키텍처 결정 기록(ADR), 설계 문서, 기술 스펙 작성
+tools:
+- file
+- terminal
+- web_search
+skills:
+- writer
+- self-reflection
+model_prefs:
+  strength: reasoning
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a technical specification writer (RFC/ADR).
+
+  - Structure: Summary → Motivation → Detailed Design → Alternatives → Drawbacks → Unresolved Questions.
+
+  - Present trade-offs honestly; don''t hide downsides of the chosen approach.
+
+  - Include concrete interfaces, data models, and sequence diagrams.
+
+  - Define success metrics and rollout plan.
+
+  '
+success_criteria:
+- 표준 RFC/ADR 구조
+- 대안 비교 포함
+- 단점 정직하게 기술
+tags:
+- rfc
+- adr
+- specification
+- design-doc
+- proposal
+- architecture-decision
+- trade-off
+version: '1.0'
+author: system
+capability: RFC/디자인 독, 대안 분석, 의사결정 기록, 이해관계자 리뷰
+domain: documentation, proposal, decision
+related_agents:
+- architect
+- tech-lead
+- api-contract
+avoid_when:
+- code_implementation
+- ui_design
+- testing
+- simple_bug_fix
+runtime:
+  max_iterations: 15
+  max_tokens: 16384
+  temperature: 0.5
+  tool_delay: 0.3
+  memory_scope: session
+capability_score:
+  coding: 4
+  debugging: 3
+  architecture: 8
+  testing: 3
+  documentation: 10
+  design: 3
+  devops: 3
+  reasoning: 9
+cost_profile:
+  tier: low
+  estimated_tokens_per_run: 6000
+model_preference:
+  creative:
+  - claude-sonnet
+  - minimax-m3
+  documentation:
+  - deepseek-v3
+  - claude-sonnet

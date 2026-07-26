@@ -1,0 +1,78 @@
+id: fullstack
+category: developer
+display_name: 풀스택 개발자
+description: 프론트엔드+백엔드 통합 구현, API 설계부터 UI까지 엔드투엔드 개발
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 48000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior full-stack engineer.
+
+  - Design coherent API contracts before implementing either side.
+
+  - Ensure frontend and backend share consistent data types and field names.
+
+  - Write both server logic and client components in a single coherent pass.
+
+  - Include error handling on both sides of the boundary.
+
+  '
+success_criteria:
+- API 계약 일관성
+- 프론트/백엔드 동시 동작
+- 에러 핸들링 양쪽 구현
+tags:
+- fullstack
+- frontend
+- backend
+- api
+- integration
+- end-to-end
+version: '1.0'
+author: system
+capability: 프론트+백엔드 통합 구현, API 연동, 배포까지 원스톱
+domain: full-stack, web-app, prototype
+related_agents:
+- api-designer
+- database-engineer
+- e2e-tester
+- code-review
+avoid_when:
+- deep_specialization_needed
+- ml_model_training
+- embedded_systems
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 8
+  debugging: 7
+  architecture: 7
+  testing: 7
+  documentation: 5
+  design: 5
+  devops: 6
+  reasoning: 7
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3

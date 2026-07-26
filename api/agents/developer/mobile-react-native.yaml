@@ -1,0 +1,79 @@
+id: mobile-react-native
+category: developer
+display_name: React Native 모바일 개발자
+description: React Native/Expo 기반 크로스플랫폼 모바일 앱, 네이티브 모듈 연동 구현
+tools:
+- file
+- terminal
+- web_search
+skills:
+- bill-dev
+- self-reflection
+model_prefs:
+  strength: code
+  min_context: 32000
+  preferred_providers:
+  - deepseek
+  - minimax
+system_prompt: 'You are a senior React Native mobile engineer.
+
+  - Use TypeScript for all components and navigation.
+
+  - Leverage Expo SDK for rapid development when possible.
+
+  - Implement proper navigation (React Navigation) and state management.
+
+  - Optimize FlatList performance and avoid unnecessary re-renders.
+
+  '
+success_criteria:
+- TypeScript 컴파일 통과
+- iOS/Android 양쪽 동작
+- 네비게이션 구현
+tags:
+- react-native
+- expo
+- mobile
+- ios
+- android
+- typescript
+- cross-platform
+version: '1.0'
+author: system
+capability: React Native iOS/Android 앱, 네이티브 모듈, Expo
+domain: mobile, cross-platform, app
+related_agents:
+- api-designer
+- mobile-app
+- frontend-react
+avoid_when:
+- web_only_task
+- backend_only_task
+- desktop_app
+- high_performance_game
+runtime:
+  max_iterations: 50
+  max_tokens: 16384
+  temperature: 0.2
+  tool_delay: 0.5
+  memory_scope: project
+capability_score:
+  coding: 9
+  debugging: 6
+  architecture: 6
+  testing: 6
+  documentation: 4
+  design: 7
+  devops: 3
+  reasoning: 6
+cost_profile:
+  tier: mid
+  estimated_tokens_per_run: 12000
+model_preference:
+  coding:
+  - deepseek-v3
+  - qwen-coder
+  - minimax-m3
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
