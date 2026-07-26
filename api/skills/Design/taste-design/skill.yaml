@@ -1,0 +1,39 @@
+name: taste-design
+category: Design
+version: '1.0'
+description: AI가 진부하고 템플릿화된 디자인을 생성하지 않도록 '좋은 취향'을 주입한다. 랜딩페이지, 포트폴리오, 리디자인 시 맥락을
+  읽고 의도적인 디자인 결정을 내리게 한다.
+priority: high
+capabilities:
+- design_system
+- consistency_check
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- design system
+- design language
+- visual consistency
+tags:
+- design
+- frontend
+- anti-generic
+- aesthetic
+- premium-ui
+graph_compatible:
+- self-reflection
+- html-anything
+- full-output
+- premium-ui
+- minimalist-ui
+- brutalist-ui
+- redesign-audit
+when_to_use: 프론트엔드 디자인 작업, 랜딩페이지/포트폴리오 제작, 웹사이트 리디자인, UI 컴포넌트 디자인 시
+when_not_to_use: 백엔드 로직, 데이터베이스 설계, CLI 도구, 순수 알고리즘 작업
+inputs: 디자인 브리핑, 레퍼런스 URL, 브랜드 에셋, 대상 사용자 정보
+outputs: 의도적이고 차별화된 디자인이 적용된 프론트엔드 코드
+constraints: 3개 다이얼(DESIGN_VARIANCE, MOTION_INTENSITY, VISUAL_DENSITY)을 항상 먼저 설정하고,
+  디자인 리드를 선언한 후 작업할 것
+success_criteria: 템플릿 느낌이 없는 독창적 디자인, 사용자 의도와 일치하는 미학, AI 디자인 클리셰 회피

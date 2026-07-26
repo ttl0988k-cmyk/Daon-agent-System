@@ -1,0 +1,33 @@
+name: debugger
+category: Coding
+version: '1.0'
+description: 체계적인 디버깅과 버그 수정을 위한 가이드라인을 제공한다
+priority: high
+capabilities:
+- debugging
+- error_analysis
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- debug
+- fix bug
+- error
+- 디버그
+- 버그
+tags:
+- debugging
+- troubleshooting
+- bug-fix
+- root-cause
+graph_compatible:
+- bill-dev
+- self-reflection
+when_to_use: 에러/버그 진단, 스택 트레이스 분석, 런타임 문제 해결 시
+when_not_to_use: 새 기능 구현, 문서 작성, UI 디자인
+inputs: 에러 메시지, 스택 트레이스, 문제 재현 단계, 관련 코드
+outputs: 근본 원인 분석, 수정 코드, 예방 권고사항
+constraints: 추측 기반 수정 금지, 활성 서버 프로세스 kill 금지
+success_criteria: 근본 원인 식별, 검증된 수정안 제시, 동일 유형 재발 방지책 포함

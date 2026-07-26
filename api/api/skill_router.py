@@ -26,8 +26,9 @@ from typing import Any
 
 _logger = logging.getLogger(__name__)
 
-# ── Task → Capability mapping ──────────────────────────────────────────────
-# Maps task keywords/patterns to required capabilities
+# ── Task → Capability mapping (fallback / legacy) ─────────────────────────
+# Maps task keywords/patterns to required capabilities.
+# These are used as a FALLBACK when no skill.yaml triggers match.
 
 TASK_CAPABILITY_MAP = [
     # (regex pattern, required_capability, priority 1-5)
@@ -57,8 +58,8 @@ TASK_CAPABILITY_MAP = [
      "Planning", 4),
 ]
 
-# ── Capability → Skill/MCP mapping ─────────────────────────────────────────
-# Maps capabilities to recommended skills and MCP servers
+# ── Capability → Skill/MCP mapping (fallback / legacy) ─────────────────────
+# Static fallback. Dynamic skill.yaml triggers take precedence at runtime.
 
 CAPABILITY_SKILL_MAP = {
     "API Reading": {
@@ -114,9 +115,52 @@ CAPABILITY_SKILL_MAP = {
 }
 
 
+# ── Dynamic trigger index from skill.yaml ──────────────────────────────────
+# Built lazily from the SkillRegistry; maps trigger keywords → skill names.
+
+_trigger_index_cache: dict | None = None
+_trigger_index_ts: float = 0.0
+
+
+def _build_trigger_index() -> list[tuple[str, str, str]]:
+    """Build a trigger index from all registered skills' skill.yaml triggers.
+
+    Returns a list of (trigger_keyword_lower, skill_name, category) tuples.
+    Cached for 60 seconds to avoid re-scanning on every request.
+    """
+    global _trigger_index_cache, _trigger_index_ts
+    import time
+    now = time.time()
+    if _trigger_index_cache is not None and (now - _trigger_index_ts) < 60:
+        return _trigger_index_cache
+
+    index: list[tuple[str, str, str]] = []
+    try:
+        from api.skill_registry import get_skill_registry
+        registry = get_skill_registry()
+        for entry in registry._all_entries:
+            for trigger_kw in (entry.trigger or []):
+                kw = str(trigger_kw).strip().lower()
+                if kw:
+                    index.append((kw, entry.name, entry.category))
+    except Exception as e:
+        _logger.warning("[SkillRouter] Failed to build trigger index: %s", e)
+
+    _trigger_index_cache = index
+    _trigger_index_ts = now
+    return index
+
+
 def route_skills_for_task(task_description: str, diagnosis_history: list[dict] = None) -> dict:
     """
     Given a user task, determine which skills and MCP servers should be activated.
+
+    Routing pipeline:
+        Step 0: Dynamic trigger matching from skill.yaml (highest priority)
+        Step 1: Legacy capability classification (fallback patterns)
+        Step 2: Diagnosis history weighting
+        Step 3: Capability → skills/MCPs mapping (static fallback)
+        Step 4: Build response
 
     Args:
         task_description: The user's task/message text (Korean or English)
@@ -132,7 +176,29 @@ def route_skills_for_task(task_description: str, diagnosis_history: list[dict] =
     """
     task_lower = task_description.lower()
 
-    # Step 1: Classify task → which capabilities are needed?
+    activated_skills = set()
+    activated_mcps = set()
+    prompt_additions = []
+    routing_explanation_parts = []
+
+    # ── Step 0: Dynamic trigger matching from skill.yaml ───────────────────
+    # Match task text against trigger keywords defined in each skill's skill.yaml.
+    # This is the PRIMARY routing mechanism for the new categorized structure.
+    trigger_index = _build_trigger_index()
+    trigger_matched_skills: dict[str, list[str]] = {}  # skill_name → [matched keywords]
+
+    for trigger_kw, skill_name, category in trigger_index:
+        if trigger_kw in task_lower:
+            trigger_matched_skills.setdefault(skill_name, []).append(trigger_kw)
+
+    if trigger_matched_skills:
+        for skill_name, matched_kws in sorted(trigger_matched_skills.items()):
+            activated_skills.add(skill_name)
+            routing_explanation_parts.append(
+                f"[trigger] {skill_name}: 매칭 키워드 '{', '.join(matched_kws)}'"
+            )
+
+    # ── Step 1: Legacy capability classification (fallback) ────────────────
     required_caps = set()
     cap_reasons = {}
 
@@ -142,11 +208,11 @@ def route_skills_for_task(task_description: str, diagnosis_history: list[dict] =
             if capability not in cap_reasons or priority > cap_reasons[capability][0]:
                 cap_reasons[capability] = (priority, pattern)
 
-    # If no specific patterns match, default to basic capabilities
-    if not required_caps:
+    # If no trigger matches AND no capability patterns match, default to basic
+    if not trigger_matched_skills and not required_caps:
         required_caps = {"Planning", "Communication"}
 
-    # Step 2: Weight by diagnosis history (LACKING capabilities get higher priority)
+    # ── Step 2: Weight by diagnosis history ────────────────────────────────
     lacking_caps = set()
     if diagnosis_history:
         for diag in diagnosis_history[-3:]:  # Last 3 diagnoses
@@ -157,12 +223,7 @@ def route_skills_for_task(task_description: str, diagnosis_history: list[dict] =
     # Merge: required + lacking (lacking gets priority)
     all_caps = required_caps | lacking_caps
 
-    # Step 3: Map capabilities → skills/MCPs
-    activated_skills = set()
-    activated_mcps = set()
-    prompt_additions = []
-    routing_explanation_parts = []
-
+    # ── Step 3: Map capabilities → skills/MCPs (static fallback) ───────────
     for cap_name in sorted(all_caps):
         mapping = CAPABILITY_SKILL_MAP.get(cap_name, {})
         skills = mapping.get("skills", [])
@@ -187,7 +248,7 @@ def route_skills_for_task(task_description: str, diagnosis_history: list[dict] =
             f"{cap_name}: {', '.join(tags)} → Skills: {skills or '없음'}, MCPs: {mcps or '없음'}"
         )
 
-    # Step 4: Build response
+    # ── Step 4: Build response ─────────────────────────────────────────────
     return {
         "ok": True,
         "activated_skills": sorted(activated_skills),
@@ -196,6 +257,7 @@ def route_skills_for_task(task_description: str, diagnosis_history: list[dict] =
         "routing_explanation": routing_explanation_parts,
         "required_capabilities": sorted(required_caps),
         "lacking_capabilities": sorted(lacking_caps),
+        "trigger_matched_skills": sorted(trigger_matched_skills.keys()),
         "summary": _build_routing_summary(activated_skills, activated_mcps, all_caps),
     }
 

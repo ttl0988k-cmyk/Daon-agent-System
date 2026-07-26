@@ -54,6 +54,12 @@ async function loadInitialData() {
     // API 키가 설정된 프로바이더가 하나도 없거나 local만 있는 경우 설정창 자동 표시
     // 💡 앱 시작 시 프로바이더 설정창 바로 열기
     setTimeout(() => { openSettingsModal(); }, 300);
+
+    // 4. Preload Skills & MCP data in background (non-blocking)
+    //    사이드바 메뉴를 클릭하기 전에 데이터를 미리 로드하여 패널 전환 시 즉시 표시
+    loadSkills().catch(e => console.warn('[preload] skills:', e));
+    refreshMcpServers().catch(e => console.warn('[preload] mcp servers:', e));
+    loadMcpPresets().catch(e => console.warn('[preload] mcp presets:', e));
   } catch (e) {
     console.error("Init load failed:", e);
   }
@@ -934,7 +940,7 @@ function showNoProviderBanner() {
   const banner = document.createElement('div');
   banner.id = 'noProviderBanner';
   banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(90deg,#ff6b35,#f7931e);color:white;padding:10px 16px;text-align:center;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-banner.innerHTML = `⚠️ 연동된 AI 모델(API 키)이 없습니다. 설정에서 API 키를 입력해 주세요. <button onclick="document.getElementById('noProviderBanner').remove()" style="margin-left:12px;background:rgba(255,255,255,0.3);border:none;color:white;padding:2px 8px;border-radius:4px;cursor:pointer;">닫기</button>`;
+  banner.innerHTML = `⚠️ 연동된 AI 모델(API 키)이 없습니다. 설정에서 API 키를 입력해 주세요. <button onclick="document.getElementById('noProviderBanner').remove()" style="margin-left:12px;background:rgba(255,255,255,0.3);border:none;color:white;padding:2px 8px;border-radius:4px;cursor:pointer;">닫기</button>`;
   document.body.insertBefore(banner, document.body.firstChild);
 }
 

@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import time
+import yaml
 from pathlib import Path
 from typing import Optional
 
@@ -89,6 +90,7 @@ class SkillEntry:
         "inputs", "outputs", "examples", "constraints", "success_criteria",
         "graph_requires", "graph_compatible", "graph_conflicts",
         "style_card_refs",
+        "trigger", "capabilities", "enabled",
     )
 
     def __init__(
@@ -101,6 +103,8 @@ class SkillEntry:
         graph_requires: list = None, graph_compatible: list = None,
         graph_conflicts: list = None,
         style_card_refs: list = None,
+        trigger: list = None, capabilities: list = None,
+        enabled: bool = True,
     ):
         self.name = name
         self.path = path
@@ -125,6 +129,9 @@ class SkillEntry:
         self.graph_compatible = graph_compatible or []
         self.graph_conflicts = graph_conflicts or []
         self.style_card_refs = style_card_refs or []
+        self.trigger = trigger or []
+        self.capabilities = capabilities or []
+        self.enabled = enabled
 
     def to_catalog_line(self) -> str:
         """Return a one-line summary for the CEO skill catalog."""
@@ -214,64 +221,149 @@ class SkillRegistry:
                 if stem_key not in self._skills:
                     self._skills[stem_key] = entry
 
+    # Directories to skip during scanning (deactivated skills)
+    _SKIP_DIRS = {"Archive", "archive", "_archive"}
+
     def _scan_directory(self, directory: Path, source: str, manifest: dict = None) -> None:
         """Scan a single directory for skill files and collect them into _all_entries.
 
-        For curated skills (source='curated'): scans flat .md files directly.
-        For auto-distilled skills (source='auto'): scans subdirectories for SKILL.md files.
+        Supports two structures:
+          - New categorized: Category/skill-name/SKILL.md + skill.yaml
+          - Legacy flat: *.md files directly in directory
+          - Auto-distilled: subdirectories with SKILL.md files
+
+        Skips Archive/ directories (deactivated skills).
         """
         if source == "auto":
+            # Auto-distilled: scan subdirectories for SKILL.md
             file_iter = sorted(directory.rglob("SKILL.md"))
-            get_name = lambda p: p.parent.name
+            for md_file in file_iter:
+                # Skip Archive directories
+                if any(part in self._SKIP_DIRS for part in md_file.relative_to(directory).parts):
+                    continue
+                if md_file.name.startswith("_"):
+                    continue
+                self._load_skill_entry(md_file, md_file.parent.name, source, manifest)
         else:
-            file_iter = sorted(directory.rglob("*.md"))
-            get_name = lambda p: p.stem
+            # Curated / Bundled: detect new categorized structure
+            # New structure: Category/skill-name/SKILL.md
+            skill_mds = sorted(directory.rglob("SKILL.md"))
+            loaded_dirs = set()
 
-        for md_file in file_iter:
-            if md_file.name.startswith("_"):
-                continue
-            name = get_name(md_file)
-            try:
-                raw_content = md_file.read_text(encoding="utf-8")
-                meta, body = self._parse_frontmatter(raw_content)
-                title = self._extract_title(body, meta.get("name", name))
+            for md_file in skill_mds:
+                # Skip Archive directories
+                rel_parts = md_file.relative_to(directory).parts
+                if any(part in self._SKIP_DIRS for part in rel_parts):
+                    continue
+                if md_file.name.startswith("_"):
+                    continue
+                skill_dir = md_file.parent
+                loaded_dirs.add(skill_dir.resolve())
+                name = skill_dir.name
+                self._load_skill_entry(md_file, name, source, manifest)
 
-                # Determine lifecycle status
-                if source in ("curated", "bundled"):
-                    lifecycle = SKILL_APPROVED
-                elif manifest and name in manifest:
-                    lifecycle = manifest[name].get("status", SKILL_DRAFT)
-                else:
-                    lifecycle = SKILL_DRAFT
+            # Fallback: also scan flat .md files (legacy structure)
+            # Only pick up .md files NOT already covered by SKILL.md structure
+            for md_file in sorted(directory.rglob("*.md")):
+                if md_file.name == "SKILL.md":
+                    continue  # Already handled above
+                if md_file.name.startswith("_"):
+                    continue
+                # Skip Archive directories
+                if any(part in self._SKIP_DIRS for part in md_file.relative_to(directory).parts):
+                    continue
+                # Skip if this .md is inside a skill folder that was already loaded
+                if md_file.parent.resolve() in loaded_dirs:
+                    continue
+                name = md_file.stem
+                self._load_skill_entry(md_file, name, source, manifest)
 
-                entry = SkillEntry(
-                    name=meta.get("name", name),
-                    path=md_file,
-                    title=title,
-                    source=source,
-                    content=body,
-                    lifecycle=lifecycle,
-                    version=str(meta.get("version", "1.0")),
-                    category=meta.get("category", "general"),
-                    priority=meta.get("priority", "medium"),
-                    tags=meta.get("tags", []),
-                    conflicts_with=meta.get("conflicts_with", []),
-                    purpose=meta.get("purpose", ""),
-                    when_to_use=meta.get("when_to_use", ""),
-                    when_not_to_use=meta.get("when_not_to_use", ""),
-                    inputs=meta.get("inputs", meta.get("input", "")),
-                    outputs=meta.get("outputs", meta.get("output", "")),
-                    examples=meta.get("examples", ""),
-                    constraints=meta.get("constraints", ""),
-                    success_criteria=meta.get("success_criteria", ""),
-                    graph_requires=meta.get("graph_requires", []),
-                    graph_compatible=meta.get("graph_compatible", []),
-                    graph_conflicts=meta.get("graph_conflicts", []),
-                    style_card_refs=meta.get("style_card_refs", []),
-                )
-                self._all_entries.append(entry)
-            except Exception as e:
-                print(f"[SkillRegistry] Warning: Failed to load skill: {e}")
+    def _load_skill_entry(self, md_file: Path, name: str, source: str, manifest: dict = None) -> None:
+        """Load a single skill from a .md file, optionally merging skill.yaml metadata."""
+        try:
+            raw_content = md_file.read_text(encoding="utf-8")
+            meta, body = self._parse_frontmatter(raw_content)
+
+            # Try to load skill.yaml from the same directory (new structure)
+            yaml_meta = self._load_skill_yaml(md_file.parent)
+            if yaml_meta:
+                # skill.yaml takes precedence for structured fields
+                for key in ("name", "category", "version", "priority", "description",
+                            "capabilities", "trigger", "tags", "knowledge", "enabled",
+                            "when_to_use", "when_not_to_use", "inputs", "outputs",
+                            "constraints", "success_criteria",
+                            "graph_requires", "graph_compatible", "graph_conflicts"):
+                    if key in yaml_meta and yaml_meta[key]:
+                        meta[key] = yaml_meta[key]
+
+            title = self._extract_title(body, meta.get("name", name))
+
+            # Check enabled flag (default: True)
+            enabled = meta.get("enabled", True)
+            if enabled is False or str(enabled).lower() in ("false", "no", "0"):
+                return  # Skip disabled skills entirely
+
+            # Determine lifecycle status
+            if source in ("curated", "bundled"):
+                lifecycle = SKILL_APPROVED
+            elif manifest and name in manifest:
+                lifecycle = manifest[name].get("status", SKILL_DRAFT)
+            else:
+                lifecycle = SKILL_DRAFT
+
+            # Infer category from folder structure if not in metadata
+            category = meta.get("category", "general")
+            if category == "general" and md_file.parent.parent != md_file.parent:
+                # e.g. skills/Design/ui-ux-pro/SKILL.md → category = "Design"
+                parent_name = md_file.parent.parent.name
+                if parent_name and parent_name not in self._SKIP_DIRS:
+                    category = parent_name
+
+            entry = SkillEntry(
+                name=meta.get("name", name),
+                path=md_file,
+                title=title,
+                source=source,
+                content=body,
+                lifecycle=lifecycle,
+                version=str(meta.get("version", "1.0")),
+                category=category,
+                priority=meta.get("priority", "medium"),
+                tags=meta.get("tags", []),
+                conflicts_with=meta.get("conflicts_with", []),
+                purpose=meta.get("purpose", meta.get("description", "")),
+                when_to_use=meta.get("when_to_use", ""),
+                when_not_to_use=meta.get("when_not_to_use", ""),
+                inputs=meta.get("inputs", meta.get("input", "")),
+                outputs=meta.get("outputs", meta.get("output", "")),
+                examples=meta.get("examples", ""),
+                constraints=meta.get("constraints", ""),
+                success_criteria=meta.get("success_criteria", ""),
+                graph_requires=meta.get("graph_requires", []),
+                graph_compatible=meta.get("graph_compatible", []),
+                graph_conflicts=meta.get("graph_conflicts", []),
+                style_card_refs=meta.get("style_card_refs", []),
+                trigger=meta.get("trigger", []),
+                capabilities=meta.get("capabilities", []),
+                enabled=True,
+            )
+            self._all_entries.append(entry)
+        except Exception as e:
+            print(f"[SkillRegistry] Warning: Failed to load skill: {e}")
+
+    @staticmethod
+    def _load_skill_yaml(skill_dir: Path) -> dict:
+        """Load skill.yaml from a skill directory. Returns empty dict if not found."""
+        yaml_path = skill_dir / "skill.yaml"
+        if not yaml_path.exists():
+            return {}
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            _logger.warning("[SkillRegistry] Failed to parse skill.yaml at %s: %s", yaml_path, e)
+            return {}
 
     def detect_conflicts(self, skill_names: list[str]) -> list[str]:
         """Detect and return conflict warnings between the selected skills.

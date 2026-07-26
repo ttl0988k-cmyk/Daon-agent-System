@@ -1,0 +1,41 @@
+name: premium-ui
+category: Design
+version: '1.0'
+description: 에이전트가 하이엔드 에이전시처럼 디자인할 수 있게 가르친다. 웹사이트를 비싸 보이게 만드는 정확한 폰트, 간격, 그림자, 카드
+  구조, 애니메이션을 정의한다. AI 디자인을 싸구려나 제네릭하게 만드는 모든 일반적인 기본값을 차단한다.
+priority: high
+capabilities:
+- ui_generation
+- design_review
+- component_selection
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- premium design
+- luxury website
+- agency quality
+- awwwards
+- high-end ui
+tags:
+- design
+- premium
+- awwwards
+- agency-tier
+- motion
+graph_compatible:
+- self-reflection
+- taste-design
+- full-output
+- minimalist-ui
+- html-anything
+when_to_use: 프리미엄 웹사이트 디자인, Awwwards 급 UI, 에이전시 수준의 비주얼 퀄리티가 필요한 모든 프론트엔드 작업
+when_not_to_use: 데이터 대시보드, 관리자 패널, CLI 도구, 순수 기능성 폼
+inputs: 디자인 요구사항, 브랜드 가이드라인, 레퍼런스
+outputs: $150k+ 에이전시 수준의 디지털 경험을 구현한 프론트엔드 코드
+constraints: 절대 동일한 레이아웃이나 미학을 연속으로 두 번 생성하지 말 것. 프리미엄 디자인 언어를 엄격히 준수하면서 다양한 프리미엄
+  레이아웃 아키타입과 텍스처 프로필을 동적으로 결합할 것.
+success_criteria: 금지된 폰트/아이콘/그림자/레이아웃 없음, Double-Bezel 아키텍처 적용, 커스텀 큐빅-베지어, 스프링 물리
+  모션, $150k 에이전시 빌드 인상

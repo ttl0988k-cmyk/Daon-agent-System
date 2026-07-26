@@ -1,0 +1,37 @@
+name: sherlock-qa
+category: AI
+version: '1.0'
+description: 체계적인 6축 품질 평가로 코드/결과물의 완성도를 검증한다
+priority: critical
+capabilities:
+- debugging
+- root_cause_analysis
+- testing
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- debug
+- investigate
+- root cause
+- 디버그
+- 원인 분석
+tags:
+- qa
+- review
+- testing
+- code-quality
+graph_requires:
+- self-reflection
+graph_compatible:
+- bill-dev
+- security
+- contract-validator
+when_to_use: 개발된 코드/결과물에 대한 최종 품질 검증, PR 리뷰, 배포 전 점검
+when_not_to_use: 초기 기획 단계, 단순 문의 응답, 실시간 대화형 지원
+inputs: 검증 대상 코드/파일, 요구사항 명세, 적용된 스킬 목록
+outputs: 6축 평가 보고서 (PASS/FAIL), 실패 항목별 파일명/라인번호/해결방법
+constraints: 하나라도 실패 시 ❌ FAIL, 감정 없는 사실 기반 보고, 부분 구현은 실패 판정
+success_criteria: 6축 전체 PASS, 모든 요구사항 완전 구현, 보안/성능/SOLID 모두 충족

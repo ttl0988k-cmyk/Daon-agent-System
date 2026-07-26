@@ -1,0 +1,39 @@
+name: redesign-audit
+category: Design
+version: '1.0'
+description: 기존 웹사이트와 앱을 프리미엄 품질로 업그레이드한다. 현재 디자인을 감사하고, 제네릭 AI 패턴을 식별하며, 기능을 깨지 않고
+  하이엔드 디자인 표준을 적용한다. 모든 CSS 프레임워크 또는 바닐라 CSS와 함께 작동.
+priority: medium
+capabilities:
+- design_audit
+- ui_review
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- redesign
+- design audit
+- ui review
+- design critique
+tags:
+- design
+- redesign
+- audit
+- upgrade
+- anti-generic
+graph_compatible:
+- self-reflection
+- taste-design
+- full-output
+- premium-ui
+- minimalist-ui
+- html-anything
+when_to_use: 기존 웹사이트/앱 리디자인, UI 품질 개선, 디자인 감사, AI가 생성한 템플릿 코드 업그레이드
+when_not_to_use: 처음부터 새로 만드는 그린필드 프로젝트, 순수 백엔드 작업
+inputs: 기존 코드베이스, 현재 CSS/스타일링 방식, 개선 목표
+outputs: 대상화된 디자인 업그레이드가 적용된 개선된 프론트엔드 코드
+constraints: 기존 기술 스택으로 작업할 것. 프레임워크나 스타일링 라이브러리를 마이그레이션하지 말 것. 기존 기능을 깨지 말 것. 모든
+  변경 후 테스트.
+success_criteria: 디자인 감사 통과, 제네릭 AI 패턴 제거, 접근성 개선, 코드 품질 향상

@@ -1,0 +1,20 @@
+name: html-anything
+category: Coding
+version: '1.0'
+description: Converts raw text, data, or markdown into beautifully formatted, single-file
+  HTML documents (Magazine, PPT, Resume, Prototype, HyperFrames, etc.) using Tailwind
+  CSS and standard web technologies.
+priority: medium
+capabilities:
+- html_generation
+- web_development
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- html
+- web page
+- markup
+- static site

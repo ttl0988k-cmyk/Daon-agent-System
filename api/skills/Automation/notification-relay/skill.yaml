@@ -1,0 +1,36 @@
+name: notification-relay
+category: Automation
+version: '1.0'
+description: 에이전트 결과물을 Slack/Notion으로 자동 전파하는 알림 연동을 제공한다
+priority: medium
+capabilities:
+- notification_routing
+- messaging
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- notification
+- alert
+- slack
+- telegram
+- 알림
+tags:
+- slack
+- notion
+- notification
+- delivery
+- webhook
+- integration
+graph_compatible:
+- sherlock-qa
+- taste
+- landing-page
+when_to_use: 분석 보고서, 코드 리뷰, 작업 완료 알림을 Slack/Notion으로 전송할 때
+when_not_to_use: 실시간 양방향 대화, 코드 생성, UI 디자인
+inputs: 전송할 결과물(텍스트/마크다운), 대상 플랫폼(slack/notion), 채널/DB 지정
+outputs: Slack 메시지, Notion 페이지
+constraints: Slack 4000자 초과 시 분할 전송, 민감 정보(API 키 등) 전송 금지, 자동 전송 금지
+success_criteria: 플랫폼별 포맷팅 규칙 준수, 민감 정보 필터링 완료, 전송 실패 시 대안 제시

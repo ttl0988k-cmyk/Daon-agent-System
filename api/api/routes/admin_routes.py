@@ -280,6 +280,32 @@ def handle_get_skills(handler, parsed) -> bool:
     data = json.loads(raw) if isinstance(raw, str) else raw
     skills = data.get('skills', [])
 
+    # ── Merge curated skills from project skills/ directory (new categorized structure) ──
+    try:
+        from api.skill_registry import get_skill_registry
+        registry = get_skill_registry()
+
+        seen_names = set(s.get('name', '') for s in skills)
+
+        for entry in registry._all_entries:
+            if entry.source != "curated":
+                continue
+            if entry.name in seen_names:
+                continue
+            seen_names.add(entry.name)
+            skills.append({
+                "name": entry.name,
+                "description": entry.purpose or entry.title,
+                "category": entry.category,
+                "lifecycle": entry.lifecycle,
+                "source": "curated",
+                "trigger": entry.trigger,
+                "capabilities": entry.capabilities,
+            })
+    except Exception as e:
+        _logger = logging.getLogger(__name__)
+        _logger.warning("[skills] Failed to merge curated skills: %s", e, exc_info=True)
+
     # ── Merge global + profile auto-distilled skills (profile dir may differ from global dir) ──
     try:
         from api.skill_registry import get_skill_registry, _get_all_auto_skills_dirs

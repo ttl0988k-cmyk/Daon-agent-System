@@ -1,0 +1,41 @@
+name: minimalist-ui
+category: Design
+version: '1.0'
+description: 깨끗한 에디토리얼 스타일 인터페이스를 생성한다. 따뜻한 모노크롬 팔레트, 타이포그래피 대비, 플랫 벤토 그리드, 음소거 파스텔.
+  그라데이션과 무거운 그림자 없음.
+priority: medium
+capabilities:
+- ui_generation
+- design_review
+- component_selection
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- minimalist
+- clean design
+- simple ui
+- minimal
+tags:
+- design
+- minimalism
+- editorial
+- clean
+- bento-grid
+graph_compatible:
+- self-reflection
+- taste-design
+- full-output
+- premium-ui
+- html-anything
+conflicts_with:
+- brutalist-ui
+when_to_use: 미니멀리스트 웹사이트, 블로그, 문서 사이트, 개인 포트폴리오, 에디토리얼 콘텐츠 플랫폼
+when_not_to_use: 데이터 대시보드, 엔터프라이즈 앱, 게임 UI, 화려한 마케팅 랜딩페이지
+inputs: 콘텐츠 구조, 선호 색상, 브랜드 폰트
+outputs: 초미니멀, 문서 스타일, 고대비 웜 모노크롬 웹 인터페이스
+constraints: Inter, Roboto, Open Sans 금지. Lucide/Feather 아이콘 금지. Tailwind 기본 그림자 금지.
+  그라데이션, 네온, 3D 글래스모피즘 금지. 이모지 금지.
+success_criteria: 명확한 타이포그래피 계층, 절제된 파스텔 액센트, 벤토 그리드 레이아웃, 초플랫 컴포넌트, 문서형 미학

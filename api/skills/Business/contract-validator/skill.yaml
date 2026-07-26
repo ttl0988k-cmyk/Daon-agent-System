@@ -1,0 +1,33 @@
+name: contract-validator
+category: Business
+version: '1.0'
+description: Backend/Frontend 계약의 일관성을 사전 검증하여 에이전트 생성 전 오류를 차단한다
+priority: critical
+capabilities:
+- contract_analysis
+- legal_review
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- contract
+- agreement
+- terms
+- 계약
+tags:
+- contract
+- schema
+- validation
+- preflight
+graph_compatible:
+- sherlock-qa
+- bill-dev
+- self-reflection
+when_to_use: DAG 계획 수립 후 Backend/Frontend 에이전트 생성 직전의 사전 검증 단계
+when_not_to_use: 단일 에이전트 작업, 디자인 작업, 문서화 작업
+inputs: CEO DAG 계획, shared/schema.py, shared/schema.js, API 라우트 정의
+outputs: Contract Validation Report (Pass/Fail), 불일치 항목 목록
+constraints: 하나라도 위반 발견 시 ❌ FAIL, 부분 허용 없음, shared/schema.*가 Single Source of Truth
+success_criteria: 모든 API 경로/메서드 일치, 모든 스키마 필드 타입 일치, Contract Gap 없음

@@ -214,6 +214,12 @@ from api.routes.skills_hub_routes import (
     handle_get_skills_hub_recommend,
     handle_post_skills_hub_install,
 )
+from api.routes.dynamic_routes import (
+    handle_post_dynamic_run,
+    handle_get_dynamic_status,
+    handle_post_dynamic_approve,
+    handle_post_dynamic_cancel,
+)
 from api.routes.style_card_routes import (
     handle_get_style_cards,
     handle_get_style_card_content,
@@ -445,6 +451,10 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == '/api/style-cards/categories':
         return handle_get_style_cards_categories(handler, parsed)
+
+    # ── Dynamic Harness API (GET) ──
+    if parsed.path.startswith('/api/dynamic/status/'):
+        return handle_get_dynamic_status(handler, parsed)
 
     # ── KakaoTalk Bridge API (GET) ──
     if parsed.path == '/api/kakao/status':
@@ -829,6 +839,14 @@ def handle_post(handler, parsed) -> bool:
     # ── KakaoTalk Bridge API (POST) ──
     if parsed.path == '/api/kakao/send':
         return handle_post_kakao_send(handler, body)
+
+    # ── Dynamic Harness API (POST) ──
+    if parsed.path == '/api/dynamic/run':
+        return handle_post_dynamic_run(handler, body)
+    if parsed.path.startswith('/api/dynamic/approve'):
+        return handle_post_dynamic_approve(handler, body, parsed)
+    if parsed.path.startswith('/api/dynamic/cancel'):
+        return handle_post_dynamic_cancel(handler, body, parsed)
 
     return False  # 404
 

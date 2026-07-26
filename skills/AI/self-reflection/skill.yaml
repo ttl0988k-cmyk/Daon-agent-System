@@ -1,0 +1,43 @@
+name: self-reflection
+category: AI
+version: '1.0'
+description: 모든 하위 에이전트가 최종 출력 전 자체 품질 점검을 수행하게 한다
+priority: medium
+capabilities:
+- self_evaluation
+- error_analysis
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- self reflection
+- self review
+- 자기 검토
+- 반성
+tags:
+- self-check
+- verification
+- quality
+graph_compatible:
+- bill-dev
+- sherlock-qa
+- taste
+- taste-design
+- full-output
+- premium-ui
+- minimalist-ui
+- brutalist-ui
+- redesign-audit
+- landing-page
+- security
+- auto-documenter
+- contract-validator
+- html-anything
+when_to_use: 모든 에이전트 작업 완료 직전, 최종 결과 제출 전
+when_not_to_use: 작업 중간 단계, 실시간 대화, 단순 질의응답
+inputs: 완료된 작업 결과물, 원본 요구사항
+outputs: 4항목 Self-Check 결과 (Requirements/Missing/Testing/Optimization)
+constraints: 4항목 중 하나라도 미흡 시 결과 제출 전 보완 필수
+success_criteria: 4항목 모두 ✅, 모든 요구사항 충족, 누락 파일 없음, 테스트 완료, 최적 구현

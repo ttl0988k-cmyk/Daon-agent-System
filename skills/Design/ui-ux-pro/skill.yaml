@@ -1,0 +1,55 @@
+name: ui-ux-pro
+category: Design
+version: '1.0'
+description: UI/UX 설계·구현·리뷰를 위한 종합 디자인 인텔리전스. 우선순위 기반 체크리스트, 스타일/컬러/타이포그래피/레이아웃/애니메이션
+  원칙, 스택별 구현 가이드를 제공하여 일관성 있고 접근성 높은 고품질 UI를 만들도록 이끈다.
+priority: high
+capabilities:
+- ui_generation
+- ux_analysis
+- component_selection
+- design_review
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- ui design
+- ux design
+- user interface
+- user experience
+- web design
+- landing page
+- dashboard
+tags:
+- design
+- ui
+- ux
+- accessibility
+- typography
+- color
+- layout
+- animation
+- responsive
+- frontend
+graph_compatible:
+- premium-ui
+- minimalist-ui
+- brutalist-ui
+- taste-design
+- taste
+- redesign-audit
+- html-anything
+- creative-director
+- self-reflection
+- full-output
+when_to_use: 새 페이지/컴포넌트 설계, UI 리팩토링, 컬러/타이포그래피/간격/레이아웃 시스템 선택, UX/접근성/일관성 리뷰, 내비게이션/애니메이션/반응형
+  구현, 데이터 시각화 설계
+when_not_to_use: 순수 백엔드 로직, API/DB 설계, 비시각적 성능 작업, 인프라/DevOps, 시각적 변화가 없는 스크립트 작업
+inputs: 사용자 요구사항, 제품 유형(SaaS/이커머스/포트폴리오/대시보드/엔터테인먼트/도구), 타겟 사용자, 스타일 키워드, 기술 스택
+outputs: 우선순위 기반 디자인 결정, 접근성/UX 체크리스트 통과 코드, 스택별 모범 패턴 적용 결과물
+constraints: 접근성(대조비 4.5:1, 키보드 내비게이션)은 타협 불가. 스택을 가정하지 말고 프로젝트에서 감지. 0결과 시 지어내지 말고
+  기본 원칙으로 폴백.
+success_criteria: WCAG AA 접근성 통과, 모바일-데스크톱 반응형, 일관된 디자인 토큰, 의미 있는 애니메이션, CLS < 0.1,
+  터치 타겟 44px 이상
