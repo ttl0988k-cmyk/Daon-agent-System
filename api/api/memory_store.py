@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,14 @@ except Exception:  # pragma: no cover - config 임포트 실패 대비
 _MEMORY_DB_PATH = Path(STATE_DIR) / 'memory.db'
 _db_lock = threading.Lock()
 _MAX_FACTS = 500
+
+# ── Job Queue (Always-on ②): 단일 상주 워커가 순차 처리 ──
+# fire-and-forget daemon 스레드 대신 SQLite 큐 + 워커 1개로 쓰기 경쟁을 제거한다.
+_QUEUE_POLL_INTERVAL = 1.0      # 워커 폴링 주기(초)
+_QUEUE_MAX_ATTEMPTS = 3         # 작업당 최대 시도 횟수
+_QUEUE_KEEP_DONE = 200          # 완료/실패 이력 보존 개수
+_queue_worker_started = False
+_queue_worker_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +78,16 @@ def _ensure_schema() -> None:
                     summary TEXT,
                     created_at TEXT DEFAULT (datetime('now'))
                 );
+                CREATE TABLE IF NOT EXISTS job_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    payload TEXT,
+                    status TEXT DEFAULT 'pending',
+                    attempts INTEGER DEFAULT 0,
+                    created_at REAL,
+                    updated_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
                 """
             )
             conn.commit()
@@ -418,11 +437,187 @@ def _strip_code_fence(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # 백그라운드 처리
 # ---------------------------------------------------------------------------
-def process_session_async(session) -> None:
-    """채팅 완료 후 백그라운드에서 facts/profile/summary 추출.
+# Job Queue (Always-on ②): 단일 상주 워커
+# ---------------------------------------------------------------------------
+def _queue_put(kind: str, payload: dict) -> Optional[int]:
+    """큐에 작업을 등록한다. 실패 시 None(순수 부가 원칙)."""
+    try:
+        _ensure_schema()
+        now = time.time()
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO job_queue (kind, payload, status, attempts, created_at, updated_at) "
+                    "VALUES (?, ?, 'pending', 0, ?, ?)",
+                    (kind, json.dumps(payload, ensure_ascii=False), now, now),
+                )
+                conn.commit()
+                return cur.lastrowid
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        return None
 
-    session.messages 를 읽어 daemon 스레드에서 처리한다.
-    실패해도 절대 예외를 던지지 않는다(순수 부가 원칙).
+
+def _queue_claim() -> Optional[dict]:
+    """pending 작업 1건을 processing으로 전환해 반환. 없으면 None."""
+    try:
+        now = time.time()
+        with _db_lock:
+            conn = _connect()
+            try:
+                row = conn.execute(
+                    "SELECT id, kind, payload, attempts FROM job_queue "
+                    "WHERE status='pending' ORDER BY id ASC LIMIT 1"
+                ).fetchone()
+                if not row:
+                    return None
+                conn.execute(
+                    "UPDATE job_queue SET status='processing', attempts=attempts+1, updated_at=? WHERE id=?",
+                    (now, row['id']),
+                )
+                conn.commit()
+                return {
+                    'id': row['id'],
+                    'kind': row['kind'],
+                    'payload': row['payload'],
+                    'attempts': (row['attempts'] or 0) + 1,
+                }
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        return None
+
+
+def _queue_finish(job_id: int, ok: bool, attempts: int) -> None:
+    """작업 완료/실패/재시도 상태를 기록하고 이력을 정리한다."""
+    try:
+        now = time.time()
+        with _db_lock:
+            conn = _connect()
+            try:
+                if ok:
+                    status = 'done'
+                elif attempts >= _QUEUE_MAX_ATTEMPTS:
+                    status = 'failed'
+                else:
+                    status = 'pending'  # 재시도 대기
+                conn.execute(
+                    "UPDATE job_queue SET status=?, updated_at=? WHERE id=?",
+                    (status, now, job_id),
+                )
+                # 완료/실패 이력이 보존 개수를 넘으면 오래된 것부터 삭제
+                conn.execute(
+                    "DELETE FROM job_queue WHERE status IN ('done','failed') AND id NOT IN ("
+                    "  SELECT id FROM job_queue WHERE status IN ('done','failed') "
+                    "  ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (_QUEUE_KEEP_DONE,),
+                )
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _dispatch_job(kind: str, payload_raw: Optional[str]) -> None:
+    """kind별로 실제 처리 함수를 호출한다. 예외는 호출 쪽에서 잡는다."""
+    payload = {}
+    if payload_raw:
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            payload = {}
+    if kind == 'session':
+        _process_session_sync(payload)
+    # 향후 kind 추가: 'maintenance', 'backup' 등 (Always-on ①⑤⑥)
+
+
+def _process_session_sync(payload: dict) -> None:
+    """워커가 실행하는 세션 기억 추출. payload에서 snapshot을 복원한다."""
+    snapshot = payload.get('messages') or []
+    session_id = payload.get('session_id')
+    title = payload.get('title')
+    try:
+        extract_and_store_facts(snapshot, session_id)
+    except Exception:
+        pass
+    try:
+        update_profile_from_messages(snapshot)
+    except Exception:
+        pass
+    try:
+        summarize_session(snapshot, session_id, title)
+    except Exception:
+        pass
+
+
+def _queue_worker_loop() -> None:
+    """단일 상주 워커: 폴링 → claim → 처리 → 완료. 크래시 복구 포함."""
+    # 크래시 복구: 이전 실행 중 processing에 멈춘 작업을 pending으로 되돌린다.
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.execute(
+                    "UPDATE job_queue SET status='pending', updated_at=? WHERE status='processing'",
+                    (time.time(),),
+                )
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    while True:
+        job = None
+        try:
+            job = _queue_claim()
+            if job is None:
+                time.sleep(_QUEUE_POLL_INTERVAL)
+                continue
+            _dispatch_job(job['kind'], job['payload'])
+            _queue_finish(job['id'], True, job['attempts'])
+        except Exception:
+            if job is not None:
+                try:
+                    _queue_finish(job['id'], False, job['attempts'])
+                except Exception:
+                    pass
+            time.sleep(_QUEUE_POLL_INTERVAL)
+
+
+def _ensure_queue_worker() -> None:
+    """단일 워커 스레드를 1회만 시작한다(가드)."""
+    global _queue_worker_started
+    with _queue_worker_lock:
+        if _queue_worker_started:
+            return
+        _queue_worker_started = True
+        t = threading.Thread(target=_queue_worker_loop, daemon=True)
+        t.start()
+
+
+def process_session_async(session) -> None:
+    """채팅 완료 후 facts/profile/summary 추출을 큐에 등록한다.
+
+    session.messages 를 직렬화해 job_queue에 넣고, 단일 상주 워커가
+    순차 처리한다(SQLite 쓰기 경쟁 제거). 실패해도 절대 예외를 던지지
+    않는다(순수 부가 원칙).
     """
     try:
         messages = getattr(session, 'messages', None)
@@ -437,22 +632,11 @@ def process_session_async(session) -> None:
         session_id = getattr(session, 'id', None) or getattr(session, 'session_id', None)
         title = getattr(session, 'title', None)
         snapshot = list(messages)
-
-        def _worker():
-            try:
-                extract_and_store_facts(snapshot, session_id)
-            except Exception:
-                pass
-            try:
-                update_profile_from_messages(snapshot)
-            except Exception:
-                pass
-            try:
-                summarize_session(snapshot, session_id, title)
-            except Exception:
-                pass
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
+        _queue_put('session', {
+            'messages': snapshot,
+            'session_id': session_id,
+            'title': title,
+        })
+        _ensure_queue_worker()
     except Exception:
         pass
