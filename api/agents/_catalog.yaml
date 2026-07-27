@@ -1099,6 +1099,25 @@ categories:
       - ui_design
       - content_writing
       cost_tier: low
+    - id: prd-writer
+      display_name: 제품 요구사항 정의 전문가
+      tags:
+      - prd
+      - requirements
+      - product
+      - user-story
+      - scope
+      - specification
+      - discovery
+      capability: 요구사항 구체화, 사용자 스토리, 우선순위 정의, 범위 산정, 성공 지표
+      domain: requirements, product, planning
+      avoid_when:
+      - simple_bug_fix
+      - single_file_change
+      - refactoring
+      - ui_styling
+      - content_writing
+      cost_tier: low
     - id: sprint-planner
       display_name: 스프린트 플래너
       tags:

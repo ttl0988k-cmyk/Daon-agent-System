@@ -275,10 +275,17 @@ class HermesPlanner:
         if planning_mode:
             system_instruction += (
                 "\n[PLANNING MODE ENABLED]\n"
-                "The user has enabled Planning Mode. You MUST generate the FULL multi-agent DAG containing both the Planner Agent (first) and all subsequent implementation agents (Developer, QA, etc.) in a single plan.\n"
-                "The Planner Agent MUST physically write a detailed `plan.md` file in the workspace using the `write_file` tool. Do NOT just output text without saving the file.\n"
-                "The orchestrator will automatically execute the Planner Agent first, display `plan.md` to the user, pause for their approval, and then execute the remaining implementation agents.\n"
-                "Therefore, define the full plan (e.g. Planner -> Developer -> QA) now in your response."
+                "The user has enabled Planning Mode. You MUST generate the FULL multi-agent DAG containing the requirements/planning agents (first) and all subsequent implementation agents (Developer, QA, etc.) in a single plan.\n"
+                "[PRD-FIRST RULE — MANDATORY for non-trivial new builds]\n"
+                "Users are often NON-DEVELOPERS who give short, vague requests (e.g. '카페 홈페이지 하나 만들어줘'). To raise output quality, when the task is a NEW product/website/app/agent build (NOT a simple bug fix / single-file change / refactor), you MUST:\n"
+                "1. Add a PRD node FIRST using template_id 'prd-writer'. Name this node EXACTLY 'prd_planner' (the name MUST contain 'planner' so it runs in the pre-approval phase).\n"
+                "2. Then add the plan.md writing node using a planner template (e.g. 'architect' or 'task-decomposer'). Name it 'plan_planner'.\n"
+                "3. Wire them so the PRD feeds the plan: set plan_planner.input = prd_planner.output, and add edge ['prd_planner', 'plan_planner'].\n"
+                "4. The 'plan_planner' node MUST physically write a detailed `plan.md` file in the workspace using the `write_file` tool, BASED ON the PRD it receives as input. Do NOT just output text without saving the file.\n"
+                "5. Implementation agents (Developer, QA, etc.) come AFTER, depending on plan_planner.\n"
+                "Skip the PRD node ONLY for trivial tasks matching prd-writer's AVOID conditions (simple_bug_fix, single_file_change, refactoring, ui_styling, content_writing).\n"
+                "The orchestrator will automatically execute the pre-approval planning agents (prd_planner -> plan_planner) first, display `plan.md` to the user, pause for their approval, and then execute the remaining implementation agents.\n"
+                "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> Developer -> QA) now in your response."
             )
 
 
