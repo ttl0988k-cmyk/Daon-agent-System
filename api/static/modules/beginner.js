@@ -192,7 +192,8 @@ function _assistantBubble(html) {
     const box = _chatBox();
     if (!box) return null;
     const b = document.createElement('div');
-    b.className = 'message-bubble assistant';
+    // 마법사/환영 버블 마커: 첫 채팅 전송 시 _dismissBeginnerWelcome()로 일괄 제거
+    b.className = 'message-bubble assistant beginner-wizard-bubble';
     b.innerHTML = html;
     box.appendChild(b);
     if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
@@ -309,6 +310,15 @@ function _initBeginner() {
 if (document.readyState === 'complete') _initBeginner();
 else window.addEventListener('load', _initBeginner);
 
+// ── 환영/마법사 버블 일괄 제거 (채팅 첫 전송 시 호출) ──
+// 마커 클래스가 붙은 버블만 제거하므로 일반 대화 메시지는 건드리지 않는다.
+function _dismissBeginnerWelcome() {
+    const box = _chatBox();
+    if (!box) return;
+    box.querySelectorAll('.beginner-wizard-bubble').forEach(el => el.remove());
+}
+
 // 헤더 버튼 등에서 호출 가능하도록 전역 노출
 window.toggleBeginnerMode = toggleBeginnerMode;
 window.showBeginnerOverlay = function () { enterBeginnerMode(true); localStorage.setItem(BEGINNER_MODE_KEY, '1'); _showWelcomeWizard(); };
+window._dismissBeginnerWelcome = _dismissBeginnerWelcome;

@@ -406,6 +406,11 @@ async function sendPrompt() {
   if (!text && uploaded.length === 0) return;
   if (!State.activeSessionId) return;
 
+  // ── 환영/마법사 카드 제거: 첫 유효 전송 시 일회성으로 치움 (일반 대화는 영향 없음) ──
+  if (typeof window._dismissBeginnerWelcome === 'function') {
+    try { window._dismissBeginnerWelcome(); } catch (_) { }
+  }
+
   // Clear input
   input.value = '';
   input.style.height = 'auto';
