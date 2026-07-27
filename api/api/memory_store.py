@@ -365,18 +365,88 @@ def get_system_status() -> dict:
 
 
 def get_context_block(max_facts: int = 20) -> str:
-    """채팅 시스템 프롬프트에 주입할 장기 기억 요약 텍스트. 실패 시 빈 문자열."""
+    """채팅 시스템 프롬프트에 주입할 장기 기억 요약 텍스트. 실패 시 빈 문자열.
+
+    내부 메타키('_' 접두사, 예: _last_chat_ts)는 주입에서 제외한다.
+    """
     try:
         facts = list_facts(limit=max_facts)
         profile = get_profile()
         parts = []
         if profile:
-            prof_lines = ', '.join(f'{k}: {v}' for k, v in list(profile.items())[:30])
-            parts.append(f'[사용자 프로필] {prof_lines}')
+            prof_items = [(k, v) for k, v in profile.items() if not str(k).startswith('_')]
+            if prof_items:
+                prof_lines = ', '.join(f'{k}: {v}' for k, v in prof_items[:30])
+                parts.append(f'[사용자 프로필] {prof_lines}')
         if facts:
             fact_lines = '; '.join(f['content'] for f in facts[:max_facts])
             parts.append(f'[장기 기억] {fact_lines}')
         return '\n'.join(parts)
+    except Exception:
+        return ''
+
+
+# ---------------------------------------------------------------------------
+# Always-on Wake-up Hook: 마지막 채팅 시각 추적 + 장기 기억 주입
+# ---------------------------------------------------------------------------
+_WAKEUP_THRESHOLD_SECONDS = 8 * 3600.0  # 8시간
+
+
+def record_chat_activity() -> dict:
+    """채팅 시작 시 마지막 활동 시각을 갱신하고 Wake-up 여부를 판정.
+
+    profile 테이블의 내부 메타키 '_last_chat_ts'를 사용한다.
+    반환: {'is_wakeup': bool, 'elapsed_seconds': float, 'elapsed_hours': float}
+    실패해도 절대 예외를 던지지 않는다.
+    """
+    now = time.time()
+    is_wakeup = False
+    elapsed = 0.0
+    try:
+        prof = get_profile()
+        raw = prof.get('_last_chat_ts')
+        if raw:
+            try:
+                last = float(raw)
+                elapsed = now - last
+                if elapsed >= _WAKEUP_THRESHOLD_SECONDS:
+                    is_wakeup = True
+            except (ValueError, TypeError):
+                pass
+    except Exception:
+        pass
+    try:
+        set_profile('_last_chat_ts', str(now))
+    except Exception:
+        pass
+    return {'is_wakeup': is_wakeup, 'elapsed_seconds': elapsed, 'elapsed_hours': round(elapsed / 3600.0, 1)}
+
+
+def build_memory_prompt(max_facts: int = 20) -> str:
+    """시스템 프롬프트에 주입할 장기 기억 블록을 만든다.
+
+    매 채팅마다 마지막 활동 시각을 갱신하고, 8시간 이상 경과 후 재개 시
+    'Wake-up' 강조 헤더를 붙여 이전 맥락·선호·약속을 자연스럽게 잇게 한다.
+    기억이 하나도 없으면 빈 문자열. 실패해도 절대 예외를 던지지 않는다.
+    """
+    try:
+        wakeup = record_chat_activity()
+        block = get_context_block(max_facts=max_facts)
+        if not block:
+            return ''
+        if wakeup.get('is_wakeup'):
+            hours = wakeup.get('elapsed_hours', 0)
+            header = (
+                f"[DAON WAKE-UP — 마지막 대화로부터 약 {hours}시간 경과]\n"
+                "오랜만에 대화를 재개합니다. 아래 장기 기억과 사용자 프로필을 다시 불러왔으니, "
+                "이전의 맥락·선호·약속을 자연스럽게 이어가세요.\n\n"
+            )
+            return header + block
+        return (
+            "[DAON 장기 기억 — 이전 대화에서 학습한 사용자 정보]\n"
+            "아래는 당신이 기억하고 있는 사용자 프로필과 핵심 사실입니다. 대화에 자연스럽게 활용하세요.\n\n"
+            + block
+        )
     except Exception:
         return ''
 

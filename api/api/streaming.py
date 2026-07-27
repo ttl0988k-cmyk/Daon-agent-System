@@ -907,6 +907,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               f"You are running as model: {resolved_model}."
           ) + _os_ctx
 
+          # ── Always-on Wake-up Hook: 장기 기억(facts/profile) 주입 ──
+          # 매 채팅마다 마지막 활동 시각을 갱신하고, 8시간 이상 경과 후 재개 시
+          # 'Wake-up' 강조 헤더와 함께 이전 맥락을 시스템 프롬프트에 주입한다.
+          try:
+              from api.memory_store import build_memory_prompt
+              _memory_prompt = build_memory_prompt()
+              if _memory_prompt:
+                  workspace_system_msg += "\n\n" + _memory_prompt
+          except Exception as _mem_e:
+              print(f"[webui] WARNING: memory prompt injection failed: {_mem_e}", flush=True)
+
           if planning_mode:
               workspace_system_msg += (
                   "\n\n[PLANNING MODE ENABLED]\n"
