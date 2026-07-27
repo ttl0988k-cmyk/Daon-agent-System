@@ -1215,6 +1215,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       print(f"[Speak] LLM summary generation failed: {_sum_err}", flush=True)
               _voice_thread = threading.Thread(target=_async_voice_summary, daemon=True)
               _voice_thread.start()
+
+          # ── DAON 기억 시스템: facts/profile/summary 자동 추출 (백그라운드) ──
+          try:
+              from api.memory_store import process_session_async
+              process_session_async(s)
+          except Exception:
+              pass  # 기억 시스템 실패가 채팅을 깨뜨리지 않도록
         finally:
           with _ENV_LOCK:
             if os.environ.get('TERMINAL_CWD') == str(s.workspace):

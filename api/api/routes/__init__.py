@@ -27,12 +27,18 @@ from api.routes.admin_routes import (
     handle_get_skills,
     handle_get_skill_content,
     handle_get_memory,
+    handle_get_memory_facts,
+    handle_get_memory_profile,
+    handle_get_memory_summaries,
+    handle_get_memory_store_stats,
     handle_post_approval_respond,
     handle_post_skill_promote,
     handle_post_skill_reject,
     handle_post_skill_save,
     handle_post_skill_delete,
     handle_post_memory_write,
+    handle_post_memory_fact_delete,
+    handle_post_memory_profile_set,
     handle_post_cron_create,
     handle_post_cron_update,
     handle_post_cron_delete,
@@ -347,6 +353,14 @@ def handle_get(handler, parsed) -> bool:
     # ── Memory API (GET) ──
     if parsed.path == '/api/memory':
         return handle_get_memory(handler, parsed)
+    if parsed.path == '/api/memory/facts':
+        return handle_get_memory_facts(handler, parsed)
+    if parsed.path == '/api/memory/profile':
+        return handle_get_memory_profile(handler, parsed)
+    if parsed.path == '/api/memory/summaries':
+        return handle_get_memory_summaries(handler, parsed)
+    if parsed.path == '/api/memory/store/stats':
+        return handle_get_memory_store_stats(handler, parsed)
 
     # ── Profile API (GET) ──
     if parsed.path == '/api/profiles':
@@ -597,6 +611,10 @@ def handle_post(handler, parsed) -> bool:
     # ── Memory (POST) ──
     if parsed.path == '/api/memory/write':
         return handle_post_memory_write(handler, body)
+    if parsed.path == '/api/memory/fact/delete':
+        return handle_post_memory_fact_delete(handler, body)
+    if parsed.path == '/api/memory/profile/set':
+        return handle_post_memory_profile_set(handler, body)
 
     # ── Profile API (POST) ──
     if parsed.path == '/api/profile/switch':

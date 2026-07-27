@@ -422,6 +422,47 @@ def handle_get_memory(handler, parsed) -> bool:
     })
 
 
+def handle_get_memory_facts(handler, parsed) -> bool:
+    """GET /api/memory/facts — DAON 기억 시스템 facts 목록."""
+    try:
+        from api.memory_store import list_facts
+        qs = parse_qs(parsed.query) if hasattr(parsed, 'query') else {}
+        limit = int(qs.get('limit', ['100'])[0])
+        category = qs.get('category', [None])[0]
+        return j(handler, {'facts': list_facts(limit=limit, category=category)})
+    except Exception as e:
+        return j(handler, {'facts': [], 'error': str(e)})
+
+
+def handle_get_memory_profile(handler, parsed) -> bool:
+    """GET /api/memory/profile — DAON 기억 시스템 사용자 프로필."""
+    try:
+        from api.memory_store import get_profile
+        return j(handler, {'profile': get_profile()})
+    except Exception as e:
+        return j(handler, {'profile': {}, 'error': str(e)})
+
+
+def handle_get_memory_summaries(handler, parsed) -> bool:
+    """GET /api/memory/summaries — DAON 기억 시스템 세션 요약 목록."""
+    try:
+        from api.memory_store import list_summaries
+        qs = parse_qs(parsed.query) if hasattr(parsed, 'query') else {}
+        limit = int(qs.get('limit', ['50'])[0])
+        return j(handler, {'summaries': list_summaries(limit=limit)})
+    except Exception as e:
+        return j(handler, {'summaries': [], 'error': str(e)})
+
+
+def handle_get_memory_store_stats(handler, parsed) -> bool:
+    """GET /api/memory/store/stats — DAON 기억 시스템 저장소 통계."""
+    try:
+        from api.memory_store import get_store_stats
+        return j(handler, get_store_stats())
+    except Exception as e:
+        return j(handler, {'facts': 0, 'profile': 0, 'summaries': 0, 'error': str(e)})
+
+
 # ── POST route helpers ────────────────────────────────────────────────────────
 
 # ── Approval (POST) ──
@@ -579,6 +620,33 @@ def handle_post_memory_write(handler, body) -> bool:
         return bad(handler, 'section must be "memory" or "user"')
     target.write_text(body['content'], encoding='utf-8')
     return j(handler, {'ok': True, 'section': section, 'path': str(target)})
+
+
+def handle_post_memory_fact_delete(handler, body) -> bool:
+    """POST /api/memory/fact/delete — DAON 기억 시스템 fact 삭제."""
+    try:
+        from api.memory_store import delete_fact
+        fact_id = body.get('id')
+        if fact_id is None:
+            return bad(handler, 'id is required')
+        ok = delete_fact(fact_id)
+        return j(handler, {'ok': ok})
+    except Exception as e:
+        return bad(handler, str(e))
+
+
+def handle_post_memory_profile_set(handler, body) -> bool:
+    """POST /api/memory/profile/set — DAON 기억 시스템 프로필 key/value 저장."""
+    try:
+        from api.memory_store import set_profile
+        key = body.get('key')
+        value = body.get('value', '')
+        if not key:
+            return bad(handler, 'key is required')
+        ok = set_profile(key, value)
+        return j(handler, {'ok': ok, 'key': key})
+    except Exception as e:
+        return bad(handler, str(e))
 
 
 # ── Cron (POST) ──
