@@ -16,7 +16,11 @@ function initResizers() {
     const leftResizerCol = State.leftPanelVisible ? '6px' : '0px';
     const rightResizerCol = State.rightPanelVisible ? '6px' : '0px';
     const rightCol = State.rightPanelVisible ? `${rightWidth}px` : '0px';
-    container.style.gridTemplateColumns = `${leftCol} ${leftResizerCol} 1fr ${rightResizerCol} ${rightCol}`;
+    // 초보자 모드: middle(탐색기/에디터)을 0으로 접고 채팅(right)을 전면(1fr)으로
+    const midCol = State.beginnerMode ? '0px' : '1fr';
+    const rResCol = State.beginnerMode ? '0px' : rightResizerCol;
+    const rCol = State.beginnerMode ? '1fr' : rightCol;
+    container.style.gridTemplateColumns = `${leftCol} ${leftResizerCol} ${midCol} ${rResCol} ${rCol}`;
 
     const leftPanelEl = document.querySelector('.left-panel');
     if (leftPanelEl) leftPanelEl.style.display = State.leftPanelVisible ? 'flex' : 'none';
