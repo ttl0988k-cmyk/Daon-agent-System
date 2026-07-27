@@ -306,6 +306,15 @@ async function clearChatHistory() {
     showToast("기록 삭제 실패: " + e.message);
   }
 }
+// ── 내부 제어 nudging 메시지 판별 ──
+// 에이전트가 도구 호출 없이 멈췄을 때 백엔드(hermes-agent)가 role:user로 주입하는
+// 루프 제어 프롬프트는 사용자에게 보여선 안 되므로 렌더링에서 제외한다.
+function _isInternalNudgeMessage(content) {
+  if (!content) return false;
+  const sigs = ['[System: Continue now', '단문 확인 메시지만', '[시스템 안내:'];
+  return sigs.some(s => content.includes(s));
+}
+
 // ── Chat Engine (SSE integration) ──
 function renderMessages(messages, toolCalls) {
   const box = $('chatMessages');
@@ -313,6 +322,8 @@ function renderMessages(messages, toolCalls) {
 
   messages.forEach((msg, idx) => {
     if (!msg || !msg.role || msg.role === 'tool') return;
+    // 내부 제어 nudging 메시지(role:user 주입)는 채팅에 노출하지 않음
+    if (msg.role === 'user' && _isInternalNudgeMessage(msg.content)) return;
     const isUser = msg.role === 'user';
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${isUser ? 'user' : 'assistant'}`;
