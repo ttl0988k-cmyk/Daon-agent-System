@@ -1,6 +1,6 @@
 console.log("[BUILD ID]: main-v4-2026-07-25-20:16");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
-const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session } = require('electron');
+const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, exec, execSync } = require('child_process');
@@ -105,6 +105,63 @@ let serverPort = 9090;  // Updated to match DEFAULT_PORT; was 8000 which caused 
 let ttsPort = 9091;
 let watchdogTimer = null;
 let isQuitting = false;
+let tray = null;
+
+// ── Always-on: 트레이 아이콘 경로 해석 (dev / packaged 둘 다 지원) ──
+function findTrayIcon() {
+  const candidates = [
+    path.join(process.resourcesPath, 'static', 'favicon.png'),
+    path.join(process.resourcesPath, 'favicon.png'),
+    path.join(__dirname, '..', 'static', 'favicon.png'),
+    path.join(__dirname, '..', 'dist_new', 'static', 'favicon.png'),
+  ];
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch (_) { }
+  }
+  return null;
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    const iconPath = findTrayIcon();
+    // 아이콘이 없으면 16x16 빈 이미지로라도 트레이 생성 (기능 유지)
+    const image = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
+    tray.setToolTip('DAON Agent System');
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'DAON 열기',
+        click: () => {
+          if (mainWindow) {
+            if (!mainWindow.isVisible()) mainWindow.show();
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '종료',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        }
+      }
+    ]);
+    tray.setContextMenu(contextMenu);
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    });
+    console.log('[Tray] Always-on tray icon created.');
+  } catch (e) {
+    console.warn('[Tray] Failed to create tray icon (non-fatal):', e.message);
+  }
+}
 
 // --- CDP (Chrome DevTools Protocol) port for browser automation ---
 // app.commandLine.appendSwitch is NOT reliable in packaged Electron builds.
@@ -390,6 +447,17 @@ function stopWatchdog() {
 }
 
 app.whenReady().then(async () => {
+  // ── Always-on: 로그인 시 자동 시작 등록 (Windows) ──
+  try {
+    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false });
+    console.log('[AlwaysOn] Login item registered (openAtLogin=true).');
+  } catch (e) {
+    console.warn('[AlwaysOn] setLoginItemSettings failed (non-fatal):', e.message);
+  }
+
+  // ── Always-on: 트레이 아이콘 생성 (서버 백그라운드 상주) ──
+  createTray();
+
   // ── STEP 0: Show splash window safely on ready-to-show without any white/black blank flash ──
   let splashWindow = new BrowserWindow({
     width: 420,
@@ -485,6 +553,16 @@ app.whenReady().then(async () => {
     });
     mainWindow.center();
     mainWindow.setMenu(null);
+
+    // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
+    mainWindow.on('close', (event) => {
+      if (!isQuitting && tray) {
+        event.preventDefault();
+        mainWindow.hide();
+        try { tray.displayBalloon({ title: 'DAON Agent System', content: '백그라운드에서 실행 중입니다. 트레이 아이콘에서 열 수 있습니다.' }); } catch (_) { }
+        console.log('[AlwaysOn] Window hidden to tray (server keeps running).');
+      }
+    });
 
     // ── STEP 5: Load UI (force clear cache to prevent old UI loading) ──
     try {
@@ -773,5 +851,7 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
+  // Always-on: 트레이가 살아있으면 창이 모두 닫혀도 종료하지 않고 서버 유지
+  if (tray && !isQuitting) return;
   if (process.platform !== 'darwin') app.quit();
 });
