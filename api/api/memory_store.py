@@ -311,6 +311,59 @@ def get_store_stats() -> dict:
         return {'facts': 0, 'profile': 0, 'summaries': 0}
 
 
+def get_queue_stats() -> dict:
+    """job_queue의 상태별 개수 집계 (pending/processing/done/failed)."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) AS c FROM job_queue GROUP BY status"
+                ).fetchall()
+                stats = {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+                for r in rows:
+                    stats[r['status']] = r['c']
+                return stats
+            finally:
+                conn.close()
+    except Exception:
+        return {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+
+
+def get_system_status() -> dict:
+    """Always-on ⑦ 관측성: 큐/워커/유지보수/저장소 상태를 한 번에 집계.
+
+    트레이 상태 표시·Wake-up Hook·대시보드가 공유하는 단일 소스.
+    실패해도 절대 예외를 던지지 않는다(순수 부가 원칙).
+    """
+    import os as _os
+    status = {
+        'ok': True,
+        'worker_running': _queue_worker_started,
+        'queue': get_queue_stats(),
+        'store': get_store_stats(),
+        'maintenance': {
+            'last_maintenance_ts': _last_maintenance_ts,
+            'last_daily_ts': _last_daily_ts,
+        },
+        'db': {},
+    }
+    try:
+        if _MEMORY_DB_PATH.exists():
+            status['db']['path'] = str(_MEMORY_DB_PATH)
+            status['db']['size_bytes'] = _MEMORY_DB_PATH.stat().st_size
+        backup = _MEMORY_DB_PATH.with_name('memory.backup.db')
+        status['db']['backup_exists'] = backup.exists()
+        if backup.exists():
+            st = backup.stat()
+            status['db']['backup_size_bytes'] = st.st_size
+            status['db']['backup_mtime'] = st.st_mtime
+    except Exception:
+        pass
+    return status
+
+
 def get_context_block(max_facts: int = 20) -> str:
     """채팅 시스템 프롬프트에 주입할 장기 기억 요약 텍스트. 실패 시 빈 문자열."""
     try:

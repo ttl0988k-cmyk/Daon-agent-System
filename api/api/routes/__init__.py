@@ -31,6 +31,7 @@ from api.routes.admin_routes import (
     handle_get_memory_profile,
     handle_get_memory_summaries,
     handle_get_memory_store_stats,
+    handle_get_system_status,
     handle_post_approval_respond,
     handle_post_skill_promote,
     handle_post_skill_reject,
@@ -361,6 +362,10 @@ def handle_get(handler, parsed) -> bool:
         return handle_get_memory_summaries(handler, parsed)
     if parsed.path == '/api/memory/store/stats':
         return handle_get_memory_store_stats(handler, parsed)
+
+    # ── System Status API (GET) — Always-on ⑦ 관측성 ──
+    if parsed.path == '/api/system/status':
+        return handle_get_system_status(handler, parsed)
 
     # ── Profile API (GET) ──
     if parsed.path == '/api/profiles':

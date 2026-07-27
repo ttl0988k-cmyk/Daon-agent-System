@@ -106,6 +106,7 @@ let ttsPort = 9091;
 let watchdogTimer = null;
 let isQuitting = false;
 let tray = null;
+let trayStatusTimer = null;
 
 // ── Always-on: 트레이 아이콘 경로 해석 (dev / packaged 둘 다 지원) ──
 function findTrayIcon() {
@@ -121,6 +122,79 @@ function findTrayIcon() {
   return null;
 }
 
+// ── Always-on ⑦ 관측성: 트레이 상태 표시 ──
+// /api/system/status를 폴링해 트레이 툴팁/메뉴에 서버·워커·기억·큐 상태를 표시한다.
+function buildTrayMenu(status) {
+  const items = [];
+  if (status && status.ok) {
+    const q = status.queue || {};
+    const s = status.store || {};
+    const failed = q.failed || 0;
+    items.push({ label: '● 서버: 정상', enabled: false });
+    items.push({ label: status.worker_running ? '● 워커: 동작 중' : '○ 워커: 정지', enabled: false });
+    items.push({ label: `● 기억: facts ${s.facts || 0} · 프로필 ${s.profile || 0} · 요약 ${s.summaries || 0}`, enabled: false });
+    items.push({ label: `● 큐: 대기 ${q.pending || 0} · 처리중 ${q.processing || 0} · 완료 ${q.done || 0} · 실패 ${failed}`, enabled: false });
+  } else {
+    items.push({ label: '○ 서버: 응답 없음', enabled: false });
+  }
+  items.push({ type: 'separator' });
+  items.push({
+    label: 'DAON 열기',
+    click: () => {
+      if (mainWindow) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    }
+  });
+  items.push({ type: 'separator' });
+  items.push({
+    label: '종료',
+    click: () => {
+      isQuitting = true;
+      app.quit();
+    }
+  });
+  return Menu.buildFromTemplate(items);
+}
+
+function refreshTrayStatus() {
+  if (!tray) return;
+  const req = http.get({ host: '127.0.0.1', port: serverPort, path: '/api/system/status', family: 4 }, (res) => {
+    let body = '';
+    res.on('data', (c) => { body += c; });
+    res.on('end', () => {
+      try {
+        const status = JSON.parse(body);
+        tray.setContextMenu(buildTrayMenu(status));
+        if (status && status.ok) {
+          const q = status.queue || {};
+          tray.setToolTip(`DAON — 서버정상 | 큐 대기:${q.pending || 0} 실패:${q.failed || 0}`);
+        } else {
+          tray.setToolTip('DAON — 서버 오류');
+        }
+      } catch (_) {
+        tray.setContextMenu(buildTrayMenu(null));
+        tray.setToolTip('DAON — 상태 파싱 실패');
+      }
+    });
+  });
+  req.on('error', () => {
+    try {
+      tray.setContextMenu(buildTrayMenu(null));
+      tray.setToolTip('DAON — 서버 응답 없음');
+    } catch (_) { }
+  });
+  req.setTimeout(2000, () => req.destroy());
+}
+
+function startTrayStatusPolling() {
+  if (trayStatusTimer) return;
+  refreshTrayStatus();
+  trayStatusTimer = setInterval(refreshTrayStatus, 10000);
+}
+
 function createTray() {
   if (tray) return;
   try {
@@ -129,27 +203,7 @@ function createTray() {
     const image = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
     tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
     tray.setToolTip('DAON Agent System');
-    const contextMenu = Menu.buildFromTemplate([
-      {
-        label: 'DAON 열기',
-        click: () => {
-          if (mainWindow) {
-            if (!mainWindow.isVisible()) mainWindow.show();
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.focus();
-          }
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '종료',
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        }
-      }
-    ]);
-    tray.setContextMenu(contextMenu);
+    tray.setContextMenu(buildTrayMenu(null));
     tray.on('double-click', () => {
       if (mainWindow) {
         if (!mainWindow.isVisible()) mainWindow.show();
@@ -158,6 +212,7 @@ function createTray() {
       }
     });
     console.log('[Tray] Always-on tray icon created.');
+    startTrayStatusPolling();
   } catch (e) {
     console.warn('[Tray] Failed to create tray icon (non-fatal):', e.message);
   }

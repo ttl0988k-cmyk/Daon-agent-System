@@ -463,6 +463,15 @@ def handle_get_memory_store_stats(handler, parsed) -> bool:
         return j(handler, {'facts': 0, 'profile': 0, 'summaries': 0, 'error': str(e)})
 
 
+def handle_get_system_status(handler, parsed) -> bool:
+    """GET /api/system/status — Always-on ⑦ 관측성: 큐/워커/유지보수/저장소 상태."""
+    try:
+        from api.memory_store import get_system_status
+        return j(handler, get_system_status())
+    except Exception as e:
+        return j(handler, {'ok': False, 'error': str(e)})
+
+
 # ── POST route helpers ────────────────────────────────────────────────────────
 
 # ── Approval (POST) ──
