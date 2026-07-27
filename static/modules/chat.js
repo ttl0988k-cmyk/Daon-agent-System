@@ -488,9 +488,14 @@ async function _executeAgentStream(displayText, uploaded) {
   // dedup guard: 두 번 이상 호출되더라도 cleanupStreamState()는 한 번만 실행
   let _streamFinished = false;
   let _idleTimer = null;
+  // 실행 중인 도구 수. 도구가 돌아가는 동안에는 idle timer가 스트림을
+  // 조기 종료하지 않도록 억제한다 (MCP 도구는 2초 이상 소요 가능).
+  let _activeTools = 0;
 
   function resetIdleTimer() {
     clearTimeout(_idleTimer);
+    // 도구 실행 중에는 무응답 감시를 일시 중단 — 도구 결과가 올 때까지 대기.
+    if (_activeTools > 0) return;
     _idleTimer = setTimeout(function () {
       if (!_streamFinished) finishStream('idle_timeout');
     }, 2000);
@@ -650,6 +655,15 @@ async function _executeAgentStream(displayText, uploaded) {
       const isStarted = toolEvent === 'tool.started';
       setChatStatus('tool', `도구 ${isStarted ? '실행 중' : '완료'}: ${toolName}...`);
 
+      // ── 도구 실행 상태 추적: idle timer 조기 종료 방지 ──
+      // tool.started → 실행 중 카운트 증가 (idle timer 억제)
+      // tool.completed → 카운트 감소 후 idle timer 재가동
+      if (isStarted) {
+        _activeTools++;
+      } else {
+        if (_activeTools > 0) _activeTools--;
+      }
+
       // ── ask_followup_question: render choice cards inline ──
       if (toolName === 'ask_followup_question' && isStarted && data.args) {
         const question = data.args.question || '';
@@ -683,6 +697,7 @@ async function _executeAgentStream(displayText, uploaded) {
       `;
       asstBubble.appendChild(card);
       scrollToChatBottom();
+      resetIdleTimer();
     });
 
     // Monaco Editor UX를 위한 파일 편집 이벤트 리스너

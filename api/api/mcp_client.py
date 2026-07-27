@@ -67,7 +67,19 @@ class MCPServerConnection:
         """Connect to the MCP server (stdio or HTTP)."""
         with self._lock:
             if self.connected:
-                return True
+                # stdio 서버는 프로세스가 실제로 살아있는지 확인.
+                # 프로세스가 사망했는데 connected 플래그만 True로 남은
+                # 좀비 상태라면 재연결을 허용한다.
+                if self.transport != TRANSPORT_HTTP and self.process is not None \
+                        and self.process.poll() is None:
+                    return True
+                if self.transport == TRANSPORT_HTTP:
+                    return True
+                # 프로세스 사망 → 상태 초기화 후 재연결 진행
+                _logger.warning(
+                    "MCP server '%s' marked connected but process is dead; reconnecting",
+                    self.label)
+                self.connected = False
 
         if self.transport == TRANSPORT_HTTP:
             return self._connect_http()
@@ -342,6 +354,39 @@ class MCPServerConnection:
                     buffer = ''
         except Exception as e:
             _logger.debug("MCP read loop ended: %s", e)
+        finally:
+            # 루프 종료 = stdout EOF 또는 프로세스 사망.
+            # disconnect()에 의한 종료라면 process가 이미 None이므로 스킵.
+            # process가 남아있다면 자연 사망 → 좀비 연결 방지 위해 상태 전환.
+            self._mark_disconnected_if_dead()
+
+    def _mark_disconnected_if_dead(self):
+        """프로세스가 사망했는데 connected가 True로 남은 경우 상태를 정리한다.
+
+        _read_loop/_stderr_loop 종료 시 호출되어, subprocess가 비정상 종료된
+        뒤에도 connected=True가 유지되어 call_tool이 'No response'를 반환하는
+        좀비 연결 상태를 방지한다.
+        """
+        with self._lock:
+            # disconnect()가 이미 처리했으면 process=None → 아무것도 안 함
+            if self.process is None:
+                return
+            if self.transport == TRANSPORT_HTTP:
+                return
+            # 프로세스가 아직 살아있으면(일시적 루프 종료) 상태 유지
+            try:
+                if self.process.poll() is None:
+                    return
+            except Exception:
+                pass
+            _logger.warning(
+                "MCP server '%s' process died; marking disconnected", self.label)
+            self.connected = False
+            self.error = "Server process exited unexpectedly"
+            # 대기 중인 요청이 무한 대기하지 않도록 해제
+            for evt in self._pending.values():
+                evt.set()
+            self._pending.clear()
 
     def _stderr_loop(self):
         """Read stderr in background to prevent pipe buffer deadlock on Windows."""
@@ -357,6 +402,9 @@ class MCPServerConnection:
                 _logger.debug("MCP stderr [%s]: %s", self.label, line_str)
         except Exception:
             pass
+        finally:
+            # stderr EOF도 프로세스 사망 신호. 멱등 안전하게 상태 정리.
+            self._mark_disconnected_if_dead()
 
     def _send_request(self, method: str, params: dict = None, timeout: float = 10.0) -> Optional[dict]:
         """Send a JSON-RPC request and wait for response (stdio or HTTP)."""
