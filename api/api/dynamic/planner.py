@@ -279,7 +279,7 @@ class HermesPlanner:
                 "[PRD-FIRST RULE — MANDATORY for non-trivial new builds]\n"
                 "Users are often NON-DEVELOPERS who give short, vague requests (e.g. '카페 홈페이지 하나 만들어줘'). To raise output quality, when the task is a NEW product/website/app/agent build (NOT a simple bug fix / single-file change / refactor), you MUST:\n"
                 "1. Add a PRD node FIRST using template_id 'prd-writer'. Name this node EXACTLY 'prd_planner' (the name MUST contain 'planner' so it runs in the pre-approval phase).\n"
-                "2. Then add the plan.md writing node using a planner template (e.g. 'architect' or 'task-decomposer'). Name it 'plan_planner'.\n"
+                "2. Then add the plan.md writing node using template_id 'task-decomposer' (the DEFAULT for turning requirements into an executable plan). Name it 'plan_planner'. Use 'architect' instead ONLY for genuinely large/complex systems needing module boundaries, tech-stack trade-offs, or scalability analysis (e.g. multi-service backends, microservices) — do NOT use architect for a typical single website/app/agent build, that is overkill.\n"
                 "3. Wire them so the PRD feeds the plan: set plan_planner.input = prd_planner.output, and add edge ['prd_planner', 'plan_planner'].\n"
                 "4. The 'plan_planner' node MUST physically write a detailed `plan.md` file in the workspace using the `write_file` tool, BASED ON the PRD it receives as input. Do NOT just output text without saving the file.\n"
                 "5. Implementation agents (Developer, QA, etc.) come AFTER, depending on plan_planner.\n"
