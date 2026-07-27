@@ -101,6 +101,17 @@ def _ensure_schema() -> None:
                     last_error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+                CREATE TABLE IF NOT EXISTS agent_inbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender TEXT NOT NULL,
+                    recipient TEXT NOT NULL,
+                    cc TEXT,
+                    body TEXT NOT NULL,
+                    run_id TEXT,
+                    read_flag INTEGER DEFAULT 0,
+                    created_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_inbox_recipient ON agent_inbox(recipient, read_flag);
                 """
             )
             # 기존 설치본 마이그레이션: 새 컬럼이 없으면 추가(이미 있으면 무시)
@@ -449,6 +460,165 @@ def build_memory_prompt(max_facts: int = 20) -> str:
         )
     except Exception:
         return ''
+
+
+# ---------------------------------------------------------------------------
+# 에이전트 간 메시징 (to/cc/inbox) — Dynamic Harness + 일반 채팅 공용 버스
+# ---------------------------------------------------------------------------
+# 정적 페르소나(빌/셜록/프라다/토니)와 Dynamic Harness 노드가 서로 메시지를
+# 주고받을 수 있게 하는 SQLite 기반 공용 메시지함. 인메모리 state와 달리
+# 세션/채팅/배치를 넘어 영속된다.
+import re as _re
+
+# [MSG to=셜록 cc=빌]본문[/MSG] 형태의 블록을 파싱
+_MSG_BLOCK_RE = _re.compile(
+    r'\[MSG\s+to=([^\]\s]+)(?:\s+cc=([^\]]+))?\](.*?)\[/MSG\]',
+    _re.DOTALL | _re.IGNORECASE,
+)
+
+
+def send_agent_message(sender: str, recipient: str, body: str,
+                       cc: Optional[str] = None, run_id: Optional[str] = None) -> Optional[int]:
+    """에이전트 메시지를 발송한다. cc는 콤마 구분 다중 수신자.
+    recipient와 각 cc 수신자에게 각각 한 행씩 배달된다. 반환: 첫 행 id."""
+    try:
+        sender = (sender or '').strip() or 'unknown'
+        body = (body or '').strip()
+        if not recipient or not body:
+            return None
+        targets = [recipient.strip()]
+        if cc:
+            for c in str(cc).split(','):
+                c = c.strip()
+                if c and c not in targets:
+                    targets.append(c)
+        now = time.time()
+        first_id = None
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                for t in targets:
+                    cur = conn.execute(
+                        'INSERT INTO agent_inbox (sender, recipient, cc, body, run_id, read_flag, created_at) '
+                        'VALUES (?, ?, ?, ?, ?, 0, ?)',
+                        (sender, t, cc, body, run_id, now),
+                    )
+                    if first_id is None:
+                        first_id = cur.lastrowid
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return first_id
+    except Exception:
+        return None
+
+
+def get_agent_inbox(recipient: str, unread_only: bool = False, limit: int = 50) -> list:
+    """특정 에이전트의 받은 메시지함을 최신순으로 반환. 실패 시 빈 리스트."""
+    try:
+        recipient = (recipient or '').strip()
+        if not recipient:
+            return []
+        _ensure_schema()
+        q = 'SELECT id, sender, recipient, cc, body, run_id, read_flag, created_at FROM agent_inbox WHERE recipient = ?'
+        if unread_only:
+            q += ' AND read_flag = 0'
+        q += ' ORDER BY created_at DESC, id DESC LIMIT ?'
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(q, (recipient, int(limit))).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        return []
+
+
+def mark_inbox_read(recipient: str, up_to_id: Optional[int] = None) -> int:
+    """받은 메시지를 읽음 처리. up_to_id가 있으면 그 id 이하만. 반환: 처리 건수."""
+    try:
+        recipient = (recipient or '').strip()
+        if not recipient:
+            return 0
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                if up_to_id:
+                    cur = conn.execute(
+                        'UPDATE agent_inbox SET read_flag = 1 WHERE recipient = ? AND id <= ? AND read_flag = 0',
+                        (recipient, int(up_to_id)),
+                    )
+                else:
+                    cur = conn.execute(
+                        'UPDATE agent_inbox SET read_flag = 1 WHERE recipient = ? AND read_flag = 0',
+                        (recipient,),
+                    )
+                conn.commit()
+                return cur.rowcount or 0
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        return 0
+
+
+def format_inbox_prompt(recipient: str, limit: int = 20, mark_read: bool = True) -> str:
+    """시스템 프롬프트에 주입할 '받은 메시지함' 텍스트. 읽지 않은 메시지만.
+    없으면 빈 문자열. mark_read=True면 주입 후 해당 메시지를 읽음 처리."""
+    try:
+        msgs = get_agent_inbox(recipient, unread_only=True, limit=limit)
+        if not msgs:
+            return ''
+        # 오래된 순서로 정렬해 대화 흐름을 자연스럽게
+        msgs = list(reversed(msgs))
+        lines = [f"[에이전트 수신함 — {recipient}에게 도착한 메시지 {len(msgs)}건]"]
+        max_id = 0
+        for m in msgs:
+            cc = m.get('cc')
+            cc_txt = f" (참조: {cc})" if cc else ''
+            lines.append(f"- 발신 {m.get('sender')}{cc_txt}: {m.get('body')}")
+            if m.get('id', 0) > max_id:
+                max_id = m['id']
+        if mark_read and max_id:
+            mark_inbox_read(recipient, up_to_id=max_id)
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = None) -> tuple:
+    """에이전트 출력 텍스트에서 [MSG to=X cc=Y]본문[/MSG] 블록을 추출해 발송하고,
+    블록을 제거한 정제 텍스트와 발송 건수를 반환. (cleaned_text, sent_count)"""
+    try:
+        if not text:
+            return (text or '', 0)
+        sent = 0
+
+        def _sub(match):
+            nonlocal sent
+            to = match.group(1)
+            cc = match.group(2)
+            body = (match.group(3) or '').strip()
+            if to and body:
+                if send_agent_message(sender, to, body, cc=cc, run_id=run_id):
+                    sent += 1
+            return ''  # 출력에서 메시지 블록은 제거
+
+        cleaned = _MSG_BLOCK_RE.sub(_sub, text).strip()
+        return (cleaned, sent)
+    except Exception:
+        return (text or '', 0)
 
 
 # ---------------------------------------------------------------------------

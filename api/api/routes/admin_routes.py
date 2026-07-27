@@ -472,6 +472,48 @@ def handle_get_system_status(handler, parsed) -> bool:
         return j(handler, {'ok': False, 'error': str(e)})
 
 
+def handle_get_agent_inbox(handler, parsed) -> bool:
+    """GET /api/agent/inbox?recipient=NAME[&unread=1][&limit=N] — 에이전트 수신함 조회."""
+    try:
+        from api.memory_store import get_agent_inbox
+        qs = parse_qs(parsed.query) if hasattr(parsed, 'query') else {}
+        recipient = qs.get('recipient', [''])[0]
+        if not recipient:
+            return j(handler, {'messages': [], 'error': 'recipient is required'})
+        unread_only = qs.get('unread', ['0'])[0] in ('1', 'true', 'True')
+        limit = int(qs.get('limit', ['50'])[0])
+        return j(handler, {'recipient': recipient,
+                           'messages': get_agent_inbox(recipient, unread_only=unread_only, limit=limit)})
+    except Exception as e:
+        return j(handler, {'messages': [], 'error': str(e)})
+
+
+def handle_post_agent_message(handler, body) -> bool:
+    """POST /api/agent/message — 에이전트 메시지 발송.
+
+    body: {sender, recipient, body, cc?, run_id?}
+    """
+    try:
+        from api.memory_store import send_agent_message
+        sender = (body.get('sender') or '').strip()
+        recipient = (body.get('recipient') or '').strip()
+        msg_body = (body.get('body') or '').strip()
+        if not recipient or not msg_body:
+            return j(handler, {'ok': False, 'error': 'recipient and body are required'})
+        msg_id = send_agent_message(
+            sender=sender or 'api',
+            recipient=recipient,
+            body=msg_body,
+            cc=body.get('cc'),
+            run_id=body.get('run_id'),
+        )
+        if msg_id is None:
+            return j(handler, {'ok': False, 'error': 'failed to store message'})
+        return j(handler, {'ok': True, 'id': msg_id})
+    except Exception as e:
+        return j(handler, {'ok': False, 'error': str(e)})
+
+
 # ── POST route helpers ────────────────────────────────────────────────────────
 
 # ── Approval (POST) ──

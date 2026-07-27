@@ -918,6 +918,19 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _mem_e:
               print(f"[webui] WARNING: memory prompt injection failed: {_mem_e}", flush=True)
 
+          # ── 에이전트 간 메시징: 활성 프로필(페르소나)의 수신함을 주입 ──
+          # 다른 에이전트(Dynamic Harness 노드 또는 채팅)가 이 프로필 앞으로 보낸
+          # 읽지 않은 메시지를 시스템 프롬프트에 주입한다. 수신자 = 활성 프로필 이름.
+          try:
+              from api.profiles import get_active_profile_name
+              from api.memory_store import format_inbox_prompt
+              _chat_agent_name = get_active_profile_name() or 'default'
+              _inbox_prompt = format_inbox_prompt(_chat_agent_name)
+              if _inbox_prompt:
+                  workspace_system_msg += "\n\n" + _inbox_prompt
+          except Exception as _inbox_e:
+              print(f"[webui] WARNING: agent inbox injection failed: {_inbox_e}", flush=True)
+
           if planning_mode:
               workspace_system_msg += (
                   "\n\n[PLANNING MODE ENABLED]\n"

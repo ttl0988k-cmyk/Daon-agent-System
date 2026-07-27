@@ -108,10 +108,11 @@ class AgentCompiler:
                 # Load skill content from registry
                 skill_content = skill_registry.load_skills(node_skills)
 
-                # Build full prompt: template system_prompt + env + skills
+                # Build full prompt: template system_prompt + env + messaging + skills
                 base_prompt = resolved.get("system_prompt", "")
                 env_note = AgentCompiler._get_env_note()
-                full_prompt = base_prompt + env_note
+                messaging_note = AgentCompiler._get_messaging_note()
+                full_prompt = base_prompt + env_note + messaging_note
                 if skill_content:
                     full_prompt += f"\n\n{skill_content}"
 
@@ -169,8 +170,9 @@ class AgentCompiler:
             skill_content = skill_registry.load_skills(node_skills)
 
             env_note = AgentCompiler._get_env_note()
+            messaging_note = AgentCompiler._get_messaging_note()
 
-            full_prompt = base_prompt + env_note
+            full_prompt = base_prompt + env_note + messaging_note
             if persona_content:
                 full_prompt += f"\n\n{persona_content}"
             if skill_content:
@@ -212,6 +214,27 @@ class AgentCompiler:
         elif _cis_bash:
             env_note += "Bash available: heredoc, Unix commands (ls, find, grep, cat) are supported. Prefer POSIX paths.\n"
         return env_note
+
+    @staticmethod
+    def _get_messaging_note() -> str:
+        """에이전트 간 메시징(to/cc/inbox) 프로토콜 지시문.
+
+        각 노드 실행 전 수신함이 시스템 프롬프트에 주입되고, 출력의
+        [MSG to=X cc=Y]...[/MSG] 블록은 runner가 자동 파싱·발송·정제한다.
+        """
+        return (
+            "\n\n[AGENT MESSAGING]\n"
+            "You are part of a multi-agent harness. You can exchange messages with other agents.\n"
+            "- Before you run, any unread messages addressed to you are injected above as "
+            "'[에이전트 수신함]'. Read and act on them.\n"
+            "- To send a message to another agent, embed a block in your final output exactly like:\n"
+            "  [MSG to=recipient_name cc=optional_cc_name]your message body[/MSG]\n"
+            "- 'to' is required (the target agent's name). 'cc' is optional (comma-separated names).\n"
+            "- The block is delivered to the recipient's inbox and stripped from your visible output, "
+            "so put only the message inside it; keep your normal answer outside the block.\n"
+            "- Use messaging to hand off results, request help, or coordinate — not for content meant "
+            "for the user.\n"
+        )
 
     @staticmethod
     def _inject_mcp_tools(toolsets: list[str]) -> list[str]:

@@ -364,9 +364,20 @@ def _run_node_with_retries(
                 def stream_cb(chunk):
                     buffer.write(chunk)
 
+                # ── 에이전트 간 메시징: 실행 전 수신함(inbox)을 시스템 프롬프트에 주입 ──
+                _sys_prompt = node["system_prompt"]
+                try:
+                    from api.memory_store import format_inbox_prompt
+                    _inbox_prompt = format_inbox_prompt(agent_name)
+                    if _inbox_prompt:
+                        _sys_prompt = (_sys_prompt or "") + "\n\n" + _inbox_prompt
+                        _log.info("[DynamicHermes] Injected inbox for node '%s'.", agent_name)
+                except Exception as _inbox_e:
+                    _log.debug("[DynamicHermes] inbox injection skipped for '%s': %s", agent_name, _inbox_e)
+
                 res = agent.run_conversation(
                     user_message=agent_query,
-                    system_message=node["system_prompt"],
+                    system_message=_sys_prompt,
                     stream_callback=stream_cb
                 )
                 buffer.flush()
@@ -375,6 +386,18 @@ def _run_node_with_retries(
                 if res.get("id") == "partial-stream-stub":
                     raise RuntimeError("Stream dropped mid-generation (partial stub returned). Triggering fallback.")
                 assistant_content = _extract_assistant_content(res.get("messages", []))
+
+                # ── 에이전트 간 메시징: 출력의 [MSG to=X cc=Y]...[/MSG] 블록을 파싱·발송 ──
+                try:
+                    from api.memory_store import parse_and_dispatch_messages
+                    _run_id = (mission_tracker or {}).get("run_id") if isinstance(mission_tracker, dict) else None
+                    assistant_content, _sent_msgs = parse_and_dispatch_messages(
+                        agent_name, assistant_content, run_id=_run_id
+                    )
+                    if _sent_msgs:
+                        _log.info("[DynamicHermes] Node '%s' dispatched %d agent message(s).", agent_name, _sent_msgs)
+                except Exception as _msg_e:
+                    _log.debug("[DynamicHermes] message dispatch skipped for '%s': %s", agent_name, _msg_e)
 
                 if log_callback:
                     log_callback(f"{agent_name} ({model_name})", "\n", "done")

@@ -32,6 +32,8 @@ from api.routes.admin_routes import (
     handle_get_memory_summaries,
     handle_get_memory_store_stats,
     handle_get_system_status,
+    handle_get_agent_inbox,
+    handle_post_agent_message,
     handle_post_approval_respond,
     handle_post_skill_promote,
     handle_post_skill_reject,
@@ -367,6 +369,10 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == '/api/system/status':
         return handle_get_system_status(handler, parsed)
 
+    # ── Agent Messaging API (GET) — 에이전트 간 메시징 수신함 ──
+    if parsed.path == '/api/agent/inbox':
+        return handle_get_agent_inbox(handler, parsed)
+
     # ── Profile API (GET) ──
     if parsed.path == '/api/profiles':
         return handle_get_profiles(handler, parsed)
@@ -620,6 +626,10 @@ def handle_post(handler, parsed) -> bool:
         return handle_post_memory_fact_delete(handler, body)
     if parsed.path == '/api/memory/profile/set':
         return handle_post_memory_profile_set(handler, body)
+
+    # ── Agent Messaging API (POST) — 에이전트 간 메시지 발송 ──
+    if parsed.path == '/api/agent/message':
+        return handle_post_agent_message(handler, body)
 
     # ── Profile API (POST) ──
     if parsed.path == '/api/profile/switch':
