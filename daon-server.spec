@@ -20,7 +20,7 @@ a = Analysis(
     ['server.py'],
     pathex=[],
     binaries=nvidia_binaries,
-    datas=[('dist_new/static', 'static'), ('dist_new/api/api', 'api'), ('dist_new/data', 'data'), ('dist_new/hermes-agent', 'hermes-agent'), ('dist_new/skills', 'skills'), ('dist_new/config.yaml', '.'), ('dist_new/index.html', '.'), ('dist_new/.env', '.env')],
+    datas=[('dist_new/static', 'static'), ('dist_new/api/api', 'api'), ('api/agents', 'agents'), ('dist_new/data', 'data'), ('dist_new/hermes-agent', 'hermes-agent'), ('dist_new/skills', 'skills'), ('dist_new/config.yaml', '.'), ('dist_new/index.html', '.'), ('dist_new/.env', '.env')],
     hiddenimports=['jinja2', 'markdown', 'watchfiles', 'requests', 'websockets', 'psutil', 'playwright', 'pypdf', 'PIL', 'python_multipart', 'tts_server', 'ctranslate2', 'faster_whisper', 'tokenizers', 'numpy', 'aiohttp', 'pydantic', 'yaml', 'dotenv'],
     hookspath=[],
     hooksconfig={},

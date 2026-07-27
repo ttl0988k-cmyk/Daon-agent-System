@@ -68,6 +68,10 @@
       {
         "from": "data",
         "to": "data"
+      },
+      {
+        "from": "api/agents",
+        "to": "agents"
       }
     ]
   },
