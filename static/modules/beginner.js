@@ -209,31 +209,17 @@ function _userBubble(text) {
     if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
 }
 
-// ── 마법사 환영 (카드) ──
+// ── 마법사 환영 (카드 없음, 단순 안내) ──
 function _showWelcomeWizard() {
     const box = _chatBox();
     if (!box) return;
     box.innerHTML = '';
-    let cards = WIZARD_CARDS.map(c =>
-        `<div class="beginner-wcard" data-key="${c.key}">
-       <div class="bw-ic">${c.icon}</div>
-       <div class="bw-lb">${c.label}</div>
-       <div class="bw-sb">${c.sub}</div>
-     </div>`).join('');
     const html =
         `<div style="font-size:22px;">🌱</div>
      <div style="font-size:16px; font-weight:700; margin:6px 0 2px;">DAON에 오신 걸 환영해요!</div>
-     <div style="font-size:13px; color:var(--muted);">무엇을 만들어볼까요? 카드를 고르면 몇 가지 질문만 드릴게요.</div>
-     <div class="beginner-welcome-cards">${cards}</div>
-     <div style="font-size:11px; color:var(--muted); margin-top:12px;">💡 또는 아래 입력창에 바로 적어도 돼요. (예: 블로그 API 만들어줘)</div>`;
-    const bubble = _assistantBubble(html);
-    if (!bubble) return;
-    bubble.querySelectorAll('.beginner-wcard').forEach(el => {
-        el.addEventListener('click', () => {
-            bubble.querySelectorAll('.beginner-wcard').forEach(x => x.setAttribute('disabled', ''));
-            startWizard(el.getAttribute('data-key'));
-        });
-    });
+     <div style="font-size:13px; color:var(--muted);">무엇을 만들어볼까요? 아래 입력창에 바로 적어주세요.</div>
+     <div style="font-size:11px; color:var(--muted); margin-top:12px;">💡 예: 블로그 API 만들어줘, 포트폴리오 웹사이트 만들어줘, 유튜브 자동화 스크립트 짜줘</div>`;
+    _assistantBubble(html);
 }
 
 // ── 마법사 시작/진행 ──
@@ -285,18 +271,10 @@ function finishWizard(key, answers) {
 // ── 초기화 (모든 스크립트 로드 후) ──
 function _initBeginner() {
     _injectStyles();
-    let mode = localStorage.getItem(BEGINNER_MODE_KEY);
-    if (mode === null) mode = '1'; // 첫 방문 = 초보자
-    if (mode === '1') enterBeginnerMode(false);
-    else {
-        const btn = document.getElementById('showBeginnerBtn');
-        if (btn) { btn.innerHTML = '🌱 처음'; btn.title = '초보자 모드 (채팅 전면)'; }
-    }
-    // 초보자 모드면 환영 마법사 표시 (채팅이 비어있을 때만)
-    if (mode === '1') {
-        const box = _chatBox();
-        if (box && box.children.length === 0) _showWelcomeWizard();
-    }
+    // 앱 시작 시 무조건 초보자 모드 (localStorage 이전 값 무시)
+    enterBeginnerMode(false);
+    const box = _chatBox();
+    if (box && box.children.length === 0) _showWelcomeWizard();
 }
 
 if (document.readyState === 'complete') _initBeginner();
