@@ -35,6 +35,7 @@ _MAX_FACTS = 500
 _QUEUE_POLL_INTERVAL = 1.0      # 워커 폴링 주기(초)
 _QUEUE_MAX_ATTEMPTS = 3         # 작업당 최대 시도 횟수
 _QUEUE_KEEP_DONE = 200          # 완료/실패 이력 보존 개수
+_QUEUE_RETRY_BACKOFF = (5.0, 30.0, 120.0)  # 시도별 재시도 대기(초, 지수 백오프)
 _queue_worker_started = False
 _queue_worker_lock = threading.Lock()
 
@@ -83,13 +84,30 @@ def _ensure_schema() -> None:
                     kind TEXT NOT NULL,
                     payload TEXT,
                     status TEXT DEFAULT 'pending',
+                    priority INTEGER DEFAULT 0,
                     attempts INTEGER DEFAULT 0,
                     created_at REAL,
-                    updated_at REAL
+                    updated_at REAL,
+                    started_at REAL,
+                    finished_at REAL,
+                    next_retry_at REAL,
+                    last_error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
                 """
             )
+            # 기존 설치본 마이그레이션: 새 컬럼이 없으면 추가(이미 있으면 무시)
+            for _ddl in (
+                "ALTER TABLE job_queue ADD COLUMN priority INTEGER DEFAULT 0",
+                "ALTER TABLE job_queue ADD COLUMN started_at REAL",
+                "ALTER TABLE job_queue ADD COLUMN finished_at REAL",
+                "ALTER TABLE job_queue ADD COLUMN next_retry_at REAL",
+                "ALTER TABLE job_queue ADD COLUMN last_error TEXT",
+            ):
+                try:
+                    conn.execute(_ddl)
+                except Exception:
+                    pass
             conn.commit()
         except Exception:
             pass
@@ -439,8 +457,8 @@ def _strip_code_fence(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # Job Queue (Always-on ②): 단일 상주 워커
 # ---------------------------------------------------------------------------
-def _queue_put(kind: str, payload: dict) -> Optional[int]:
-    """큐에 작업을 등록한다. 실패 시 None(순수 부가 원칙)."""
+def _queue_put(kind: str, payload: dict, priority: int = 0) -> Optional[int]:
+    """큐에 작업을 등록한다. priority가 높을수록 먼저 처리. 실패 시 None."""
     try:
         _ensure_schema()
         now = time.time()
@@ -448,9 +466,10 @@ def _queue_put(kind: str, payload: dict) -> Optional[int]:
             conn = _connect()
             try:
                 cur = conn.execute(
-                    "INSERT INTO job_queue (kind, payload, status, attempts, created_at, updated_at) "
-                    "VALUES (?, ?, 'pending', 0, ?, ?)",
-                    (kind, json.dumps(payload, ensure_ascii=False), now, now),
+                    "INSERT INTO job_queue "
+                    "(kind, payload, status, priority, attempts, created_at, updated_at) "
+                    "VALUES (?, ?, 'pending', ?, 0, ?, ?)",
+                    (kind, json.dumps(payload, ensure_ascii=False), priority, now, now),
                 )
                 conn.commit()
                 return cur.lastrowid
@@ -464,7 +483,11 @@ def _queue_put(kind: str, payload: dict) -> Optional[int]:
 
 
 def _queue_claim() -> Optional[dict]:
-    """pending 작업 1건을 processing으로 전환해 반환. 없으면 None."""
+    """처리 가능한 작업 1건을 processing으로 전환해 반환. 없으면 None.
+
+    우선순위(priority DESC) → 대기순(id ASC)으로 선택하며,
+    next_retry_at이 미래인 재시도 대기 작업은 건너뛴다.
+    """
     try:
         now = time.time()
         with _db_lock:
@@ -472,13 +495,16 @@ def _queue_claim() -> Optional[dict]:
             try:
                 row = conn.execute(
                     "SELECT id, kind, payload, attempts FROM job_queue "
-                    "WHERE status='pending' ORDER BY id ASC LIMIT 1"
+                    "WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at <= ?) "
+                    "ORDER BY priority DESC, id ASC LIMIT 1",
+                    (now,),
                 ).fetchone()
                 if not row:
                     return None
                 conn.execute(
-                    "UPDATE job_queue SET status='processing', attempts=attempts+1, updated_at=? WHERE id=?",
-                    (now, row['id']),
+                    "UPDATE job_queue SET status='processing', attempts=attempts+1, "
+                    "started_at=?, updated_at=? WHERE id=?",
+                    (now, now, row['id']),
                 )
                 conn.commit()
                 return {
@@ -496,8 +522,13 @@ def _queue_claim() -> Optional[dict]:
         return None
 
 
-def _queue_finish(job_id: int, ok: bool, attempts: int) -> None:
-    """작업 완료/실패/재시도 상태를 기록하고 이력을 정리한다."""
+def _queue_finish(job_id: int, ok: bool, attempts: int, last_error: Optional[str] = None) -> None:
+    """작업 완료/실패/재시도 상태를 기록하고 이력을 정리한다.
+
+    - done: finished_at 기록.
+    - failed(최대 시도 초과): finished_at + last_error 기록.
+    - pending(재시도): next_retry_at을 지수 백오프로 설정, last_error 기록.
+    """
     try:
         now = time.time()
         with _db_lock:
@@ -505,13 +536,22 @@ def _queue_finish(job_id: int, ok: bool, attempts: int) -> None:
             try:
                 if ok:
                     status = 'done'
+                    next_retry_at = None
+                    finished_at = now
                 elif attempts >= _QUEUE_MAX_ATTEMPTS:
                     status = 'failed'
+                    next_retry_at = None
+                    finished_at = now
                 else:
                     status = 'pending'  # 재시도 대기
+                    idx = min(max(attempts - 1, 0), len(_QUEUE_RETRY_BACKOFF) - 1)
+                    next_retry_at = now + _QUEUE_RETRY_BACKOFF[idx]
+                    finished_at = None
                 conn.execute(
-                    "UPDATE job_queue SET status=?, updated_at=? WHERE id=?",
-                    (status, now, job_id),
+                    "UPDATE job_queue SET status=?, updated_at=?, finished_at=?, "
+                    "next_retry_at=?, last_error=? WHERE id=?",
+                    (status, now, finished_at, next_retry_at,
+                     (last_error or '')[:500] or None, job_id),
                 )
                 # 완료/실패 이력이 보존 개수를 넘으면 오래된 것부터 삭제
                 conn.execute(
@@ -592,10 +632,10 @@ def _queue_worker_loop() -> None:
                 continue
             _dispatch_job(job['kind'], job['payload'])
             _queue_finish(job['id'], True, job['attempts'])
-        except Exception:
+        except Exception as exc:
             if job is not None:
                 try:
-                    _queue_finish(job['id'], False, job['attempts'])
+                    _queue_finish(job['id'], False, job['attempts'], str(exc))
                 except Exception:
                     pass
             time.sleep(_QUEUE_POLL_INTERVAL)
