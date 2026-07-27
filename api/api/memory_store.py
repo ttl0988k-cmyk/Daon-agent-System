@@ -14,6 +14,7 @@ DAON 기억 시스템 (Memory Store)
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import threading
 import time
@@ -38,6 +39,12 @@ _QUEUE_KEEP_DONE = 200          # 완료/실패 이력 보존 개수
 _QUEUE_RETRY_BACKOFF = (5.0, 30.0, 120.0)  # 시도별 재시도 대기(초, 지수 백오프)
 _queue_worker_started = False
 _queue_worker_lock = threading.Lock()
+
+# ── 유지보수 (Always-on ①⑤⑥): 워커가 자체 주기 점검 (외부 cron 불필요) ──
+_MAINTENANCE_INTERVAL = 3600.0   # facts 상한 정리 점검 주기(초, 1시간)
+_DAILY_INTERVAL = 86400.0        # VACUUM + 백업 주기(초, 24시간)
+_last_maintenance_ts = 0.0       # 마지막 정리 시각(워커 시작 시 즉시 1회 실행)
+_last_daily_ts = 0.0             # 마지막 일일 정비 시각
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +610,82 @@ def _process_session_sync(payload: dict) -> None:
         pass
 
 
+def _run_maintenance() -> None:
+    """⑤ 가벼운 정리: facts가 상한(_MAX_FACTS)을 넘으면 오래된 것부터 삭제."""
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.execute(
+                    "DELETE FROM facts WHERE id NOT IN ("
+                    "  SELECT id FROM facts ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (_MAX_FACTS,),
+                )
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _run_daily() -> None:
+    """⑤⑥ 일일 정비: WAL 체크포인트 → 백업 복사 → VACUUM."""
+    try:
+        # 1) WAL을 본 DB에 반영(백업 정합성) + 용량 축소
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        # 2) ⑥ 백업: memory.db → memory.backup.db (잠금 밖에서 파일 복사)
+        try:
+            if _MEMORY_DB_PATH.exists():
+                backup_path = _MEMORY_DB_PATH.with_name('memory.backup.db')
+                shutil.copy2(str(_MEMORY_DB_PATH), str(backup_path))
+        except Exception:
+            pass
+        # 3) ⑤ VACUUM으로 단편화 정리(단일 워커라 잠금 경쟁 없음)
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.execute('VACUUM')
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _maybe_run_maintenance() -> None:
+    """워커 루프에서 매 폴링 호출. 주기가 됐을 때만 정리/일일 정비를 실행."""
+    global _last_maintenance_ts, _last_daily_ts
+    now = time.time()
+    if now - _last_maintenance_ts >= _MAINTENANCE_INTERVAL:
+        _last_maintenance_ts = now
+        try:
+            _run_maintenance()
+        except Exception:
+            pass
+    if now - _last_daily_ts >= _DAILY_INTERVAL:
+        _last_daily_ts = now
+        try:
+            _run_daily()
+        except Exception:
+            pass
+
+
 def _queue_worker_loop() -> None:
     """단일 상주 워커: 폴링 → claim → 처리 → 완료. 크래시 복구 포함."""
     # 크래시 복구: 이전 실행 중 processing에 멈춘 작업을 pending으로 되돌린다.
@@ -624,6 +707,7 @@ def _queue_worker_loop() -> None:
         pass
 
     while True:
+        _maybe_run_maintenance()
         job = None
         try:
             job = _queue_claim()
