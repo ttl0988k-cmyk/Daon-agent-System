@@ -209,17 +209,46 @@ function _userBubble(text) {
     if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
 }
 
-// ── 마법사 환영 (카드 없음, 단순 안내) ──
+// ── 마법사 환영 (카드: 접었다 펼 수 있음) ──
 function _showWelcomeWizard() {
     const box = _chatBox();
     if (!box) return;
     box.innerHTML = '';
+    const cards = WIZARD_CARDS.map(c =>
+        `<div class="beginner-wcard" data-key="${c.key}">
+       <div class="bw-ic">${c.icon}</div>
+       <div class="bw-lb">${c.label}</div>
+       <div class="bw-sb">${c.sub}</div>
+     </div>`).join('');
     const html =
         `<div style="font-size:22px;">🌱</div>
      <div style="font-size:16px; font-weight:700; margin:6px 0 2px;">DAON에 오신 걸 환영해요!</div>
-     <div style="font-size:13px; color:var(--muted);">무엇을 만들어볼까요? 아래 입력창에 바로 적어주세요.</div>
-     <div style="font-size:11px; color:var(--muted); margin-top:12px;">💡 예: 블로그 API 만들어줘, 포트폴리오 웹사이트 만들어줘, 유튜브 자동화 스크립트 짜줘</div>`;
-    _assistantBubble(html);
+     <div style="font-size:13px; color:var(--muted);">무엇을 만들어볼까요? 아래 입력창에 바로 적거나, 카드를 펼쳐서 골라보세요.</div>
+     <div class="beginner-cards-toggle" style="display:inline-flex; align-items:center; gap:6px; margin-top:12px; cursor:pointer; user-select:none; font-size:12px; font-weight:600; color:var(--accent);">
+       <span class="bct-arrow">▸</span> 빠른 시작 카드
+     </div>
+     <div class="beginner-welcome-cards" style="display:none;">${cards}</div>
+     <div style="font-size:11px; color:var(--muted); margin-top:12px;">💡 예: 블로그 API 만들어줘, 포트폴리오 웹사이트 만들어줘</div>`;
+    const bubble = _assistantBubble(html);
+    if (!bubble) return;
+    // 카드 접기/펼치기 토글
+    const toggle = bubble.querySelector('.beginner-cards-toggle');
+    const grid = bubble.querySelector('.beginner-welcome-cards');
+    const arrow = bubble.querySelector('.bct-arrow');
+    if (toggle && grid) {
+        toggle.addEventListener('click', () => {
+            const open = grid.style.display !== 'none';
+            grid.style.display = open ? 'none' : 'grid';
+            if (arrow) arrow.textContent = open ? '▸' : '▾';
+        });
+    }
+    // 카드 클릭 → 마법사 시작
+    bubble.querySelectorAll('.beginner-wcard').forEach(el => {
+        el.addEventListener('click', () => {
+            bubble.querySelectorAll('.beginner-wcard').forEach(x => x.setAttribute('disabled', ''));
+            startWizard(el.getAttribute('data-key'));
+        });
+    });
 }
 
 // ── 마법사 시작/진행 ──
