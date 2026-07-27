@@ -284,6 +284,7 @@ class HermesDynamicRunner:
                     'preview_id': preview_id,
                     'path': plan_file_path,
                     'line_changes': [],
+                    'is_plan': True,
                     'source_agent': 'Planner',
                     'message': f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다.",
                     'created_at': time.strftime('%Y-%m-%dT%H:%M:%S')
@@ -296,6 +297,7 @@ class HermesDynamicRunner:
                         'preview_id': preview_id,
                         'path': plan_file_path,
                         'line_changes': [],
+                        'is_plan': True,
                         'message': f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다.",
                         'status': 'pending'
                     }))

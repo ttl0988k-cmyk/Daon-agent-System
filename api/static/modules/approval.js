@@ -3,6 +3,11 @@
  *
  * Provides Roo Code-style inline approval cards that appear inside
  * the chat message stream (#chatMessages) or harness console (#harnessConsole).
+ *
+ * Fixes applied:
+ * - [B] plan.md(is_plan) 승인 시 원본 diffActiveBar를 호출하지 않아 이중 UI 제거
+ * - [C] is_plan 승인/거절 시 apply-preview / reject-preview 호출 스킵 + 잔존 bar 숨김
+ * - [D] SSE 이벤트를 놓쳐도 복구하도록 /api/approval/pending 폴링 추가
  */
 
 function showInlineApproval(data, container) {
@@ -24,6 +29,7 @@ function showInlineApproval(data, container) {
     card.id = 'inlineApprovalCard';
     card.setAttribute('data-preview-id', previewId);
     card.setAttribute('data-session-id', sid);
+    card.setAttribute('data-is-plan', isPlan ? '1' : '');
     var icon, title, body;
     if (isSkillSave) {
         icon = '\u{1F4BE}';
@@ -34,8 +40,8 @@ function showInlineApproval(data, container) {
         title = '위험한 명령 - 승인 필요';
         body = data.description || data.message || '';
     } else if (isPlan) {
-        icon = '\u{1FA83}';
-        title = 'Orchestrator 실행 계획 승인';
+        icon = '\u{1F4CB}';
+        title = '실행 계획 승인';
         body = data.message || '실행 계획을 검토하고 승인해주세요.';
     } else {
         icon = '\u{1F4C4}';
@@ -52,8 +58,8 @@ function showInlineApproval(data, container) {
         + '</div>'
         + '<div class="inline-approval-card-body">' + body + '</div>'
         + '<div class="inline-approval-card-actions">'
-        + '<button class="ia-approve-btn" onclick="handleInlineApproval(true, this)">\u2705 승인</button>'
-        + '<button class="ia-reject-btn" onclick="handleInlineApproval(false, this)">\u274C 거절</button>'
+        + '<button class="ia-approve-btn" onclick="handleInlineApproval(true, this)">승인</button>'
+        + '<button class="ia-reject-btn" onclick="handleInlineApproval(false, this)">거절</button>'
         + '</div>'
         + '</div>';
     var existing = document.getElementById('inlineApprovalCard');
@@ -67,6 +73,7 @@ async function handleInlineApproval(approved, btnEl) {
     if (!card) return;
     var sid = card.getAttribute('data-session-id');
     var previewId = card.getAttribute('data-preview-id');
+    var isPlan = card.getAttribute('data-is-plan') === '1';
     var actions = card.querySelector('.inline-approval-card-actions');
     if (actions) {
         actions.innerHTML = '<span style="color:var(--text2);font-size:12px;padding:8px;">처리 중...</span>';
@@ -77,7 +84,8 @@ async function handleInlineApproval(approved, btnEl) {
                 method: 'POST',
                 body: JSON.stringify({ session_id: sid, preview_id: previewId, reviewer: 'user' })
             });
-            if (previewId && apprRes.ok) {
+            // [C] plan.md 승인은 diff 적용 대상이 아니므로 apply-preview 스킵
+            if (previewId && apprRes.ok && !isPlan) {
                 try {
                     await api('/api/file/apply-preview', {
                         method: 'POST',
@@ -97,7 +105,8 @@ async function handleInlineApproval(approved, btnEl) {
                 method: 'POST',
                 body: JSON.stringify({ session_id: sid, reason: 'User rejected via inline card' })
             });
-            if (previewId) {
+            // [C] plan.md 거절은 reject-preview 스킵
+            if (previewId && !isPlan) {
                 try {
                     await api('/api/file/reject-preview', {
                         method: 'POST',
@@ -116,6 +125,9 @@ async function handleInlineApproval(approved, btnEl) {
             actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
         }
     }
+    // [C] 혹시 남아있을 수 있는 diff 패널 상단 bar 숨김
+    var leftoverBar = document.getElementById('diffActiveBar');
+    if (leftoverBar) leftoverBar.style.display = 'none';
     if (typeof _resetApprovalButtons === 'function') _resetApprovalButtons();
     setTimeout(function () {
         var resolved = document.querySelector('.inline-approval-card.resolved');
@@ -209,7 +221,37 @@ _showApprovalBanner = function (data) {
     else if (isHarnessVisible) container = document.getElementById('harnessConsole');
     else container = document.getElementById('chatMessages');
     showInlineApproval(data, container);
-    if (_origShowApprovalBanner && _origShowApprovalBanner !== _showApprovalBanner) {
+    // [B] plan.md(is_plan) 승인은 diff 패널과 무관하므로 원본 diffActiveBar 호출을 스킵해 이중 UI를 막는다.
+    if (_origShowApprovalBanner && _origShowApprovalBanner !== _showApprovalBanner && !data.is_plan) {
         try { _origShowApprovalBanner(data); } catch (e) { }
     }
 };
+
+// ── [D] Approval 폴링: SSE 이벤트를 놓쳐도 복구 ──
+var _approvalPollTimer = null;
+function _resolveApprovalContainer() {
+    var chatContent = document.getElementById('chatModeContent');
+    var harnessContent = document.getElementById('harnessModeContent');
+    var isHarnessVisible = harnessContent && harnessContent.style.display !== 'none'
+        && (!chatContent || chatContent.style.display === 'none');
+    if (isHarnessVisible) return document.getElementById('harnessConsole');
+    return document.getElementById('chatMessages');
+}
+async function _pollApprovalOnce() {
+    try {
+        var sid = (typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null;
+        if (!sid) return;
+        // 이미 카드가 표시되어 있으면 중복 표시 방지
+        if (document.getElementById('inlineApprovalCard')) return;
+        var res = await api('/api/approval/pending?session_id=' + encodeURIComponent(sid), { method: 'GET' });
+        if (res && res.has_pending && res.pending && res.pending.status === 'pending') {
+            var container = _resolveApprovalContainer();
+            if (container) showInlineApproval(res.pending, container);
+        }
+    } catch (e) { /* 폴링 실패는 조용히 무시 */ }
+}
+function ensureApprovalPolling() {
+    if (_approvalPollTimer) return;
+    _approvalPollTimer = setInterval(_pollApprovalOnce, 2000);
+}
+ensureApprovalPolling();

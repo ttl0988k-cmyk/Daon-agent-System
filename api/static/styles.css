@@ -3694,28 +3694,24 @@
 
     .inline-approval-card {
       margin: 8px 0;
-      border-radius: 8px;
+      border-radius: 6px;
       background: var(--bg2);
-      border: 1px solid var(--warning-orange, #e67e22);
-      animation: approval-pulse 2s infinite;
+      border: 1px solid var(--border);
       overflow: hidden;
     }
 
     .inline-approval-card.resolved {
-      animation: none;
       border-color: var(--border);
-      opacity: 0.8;
+      opacity: 0.75;
       transition: opacity 0.3s;
     }
 
     .inline-approval-card.resolved.approved {
-      border-color: var(--success);
-      background: rgba(16, 185, 129, 0.06);
+      border-color: var(--border);
     }
 
     .inline-approval-card.resolved.rejected {
-      border-color: var(--danger);
-      background: rgba(239, 68, 68, 0.06);
+      border-color: var(--border);
     }
 
     .inline-approval-card-inner {
@@ -3730,14 +3726,15 @@
     }
 
     .inline-approval-card-icon {
-      font-size: 16px;
+      font-size: 14px;
       flex-shrink: 0;
+      opacity: 0.8;
     }
 
     .inline-approval-card-title {
       font-size: 13px;
-      font-weight: 700;
-      color: var(--warning-orange, #e67e22);
+      font-weight: 600;
+      color: var(--text);
     }
 
     .inline-approval-card-body {
@@ -3764,40 +3761,33 @@
 
     .ia-approve-btn,
     .ia-reject-btn {
-      padding: 6px 14px;
+      padding: 5px 14px;
       border-radius: 5px;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
-      border: 1px solid transparent;
-      transition: background 0.2s, transform 0.1s;
+      border: 1px solid var(--border);
+      transition: background 0.15s;
     }
 
     .ia-approve-btn {
-      background: var(--warning-orange, #e67e22);
+      background: var(--accent);
       color: #fff;
-      border-color: var(--warning-orange, #e67e22);
+      border-color: var(--accent);
     }
 
     .ia-approve-btn:hover {
-      background: #d35400;
-      transform: scale(1.02);
+      filter: brightness(0.92);
     }
 
     .ia-reject-btn {
       background: transparent;
-      color: var(--danger);
-      border-color: var(--danger);
+      color: var(--text2);
+      border-color: var(--border);
     }
 
     .ia-reject-btn:hover {
-      background: rgba(239, 68, 68, 0.1);
-      transform: scale(1.02);
-    }
-
-    .ia-approve-btn:active,
-    .ia-reject-btn:active {
-      transform: scale(0.97);
+      background: var(--bg3);
     }
 
     /* ═══════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@ const WIZARD_FLOWS = {
         title: '🎯 앱 만들기',
         steps: [
             {
-                q: '어떤 앱을 만들까요?', opts: [
+                q: '어떤 앱을 만들까요?', ph: '예: 가계부, 습관 트래커, 단어장', opts: [
                     { l: '✅ 할 일 관리 앱', v: '할 일(Todo) 관리 앱' },
                     { l: '🧮 계산기', v: '계산기 앱' },
                     { l: '📝 메모장', v: '메모장 앱' },
@@ -41,10 +41,10 @@ const WIZARD_FLOWS = {
         title: '🌐 웹사이트 만들기',
         steps: [
             {
-                q: '무슨 사이트를 만들까요?', opts: [
+                q: '무슨 사이트를 만들까요?', ph: '예: 베이커리 카페, 네일샵, 동물병원 소개', opts: [
                     { l: '💼 포트폴리오', v: '개인 포트폴리오 사이트' },
                     { l: '🚀 제품 랜딩', v: '제품/서비스 소개 랜딩페이지' },
-                    { l: '🍽️ 가게 소개', v: '카페/가게 소개 사이트' },
+                    { l: '🍽️ 가게/매장 소개', v: '카페·식당·미용실 같은 가게/매장 소개 사이트' },
                     { l: '📰 블로그', v: '블로그/아티클 사이트' },
                 ]
             },
@@ -69,7 +69,7 @@ const WIZARD_FLOWS = {
         title: '🤖 AI 에이전트 만들기',
         steps: [
             {
-                q: '무엇을 도와주는 에이전트?', opts: [
+                q: '무엇을 도와주는 에이전트?', ph: '예: 영수증 정리, 뉴스 요약, 예약 관리', opts: [
                     { l: '📧 이메일 요약', v: '이메일을 요약해주는' },
                     { l: '📅 일정 정리', v: '일정을 정리해주는' },
                     { l: '🔍 리서치', v: '주제를 조사해 리포트해주는' },
@@ -96,7 +96,7 @@ const WIZARD_FLOWS = {
         title: '📺 유튜브 자동화',
         steps: [
             {
-                q: '어떤 자동화?', opts: [
+                q: '어떤 자동화?', ph: '예: 쇼츠 대본, 댓글 분석, 업로드 예약', opts: [
                     { l: '✍️ 스크립트 작성', v: '영상 스크립트를 자동 작성하는' },
                     { l: '🖼️ 썸네일 문구', v: '썸네일 텍스트를 생성하는' },
                     { l: '📑 제목/설명', v: '제목/설명/해시태그를 생성하는' },
@@ -171,7 +171,7 @@ function enterBeginnerMode(animate) {
 function exitBeginnerMode() {
     if (typeof State !== 'undefined') State.beginnerMode = false;
     const btn = document.getElementById('showBeginnerBtn');
-    if (btn) { btn.innerHTML = '🌱 처음'; btn.title = '초보자 모드 (채팅 전면)'; }
+    if (btn) { btn.innerHTML = '🌱 초기화면'; btn.title = '초보자 모드 (채팅 전면)'; }
     _relayout();
     // 슬라이드 후 에디터 재배치
     setTimeout(() => { if (typeof State !== 'undefined' && State.editor) State.editor.layout(); }, 360);
@@ -214,7 +214,9 @@ function _userBubble(text) {
 function _showWelcomeWizard() {
     const box = _chatBox();
     if (!box) return;
-    box.innerHTML = '';
+    // 기존 환영/마법사 버블만 정리한다. box.innerHTML=''는 현재 세션 대화를 DOM에서
+    // 삭제해 "초기화면 진입 시 대화 소실" 버그를 일으키므로 사용하지 않는다.
+    _dismissBeginnerWelcome();
     const cards = WIZARD_CARDS.map(c =>
         `<div class="beginner-wcard" data-key="${c.key}">
        <div class="bw-ic">${c.icon}</div>
@@ -269,33 +271,94 @@ function renderStep(key, idx, answers) {
     const html =
         `<div class="beginner-wiz-step">질문 ${idx + 1} / ${flow.steps.length}</div>
      <div class="beginner-wiz-q">${step.q}</div>
-     <div class="beginner-choice-wrap">${opts}</div>`;
+     <div class="beginner-choice-wrap">${opts}</div>
+     <div class="beginner-wiz-custom" style="margin-top:10px; display:flex; gap:6px; align-items:center;">
+       <input type="text" class="beginner-wiz-input" placeholder="${step.ph || '또는 직접 입력 후 Enter'}" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border2); background:var(--bg2); color:var(--fg); font-size:13px;">
+       <button class="beginner-choice beginner-wiz-submit" style="white-space:nowrap;">입력</button>
+     </div>`;
     const bubble = _assistantBubble(html);
     if (!bubble) return;
-    bubble.querySelectorAll('.beginner-choice').forEach(btn => {
+    const input = bubble.querySelector('.beginner-wiz-input');
+    const submitBtn = bubble.querySelector('.beginner-wiz-submit');
+    // 다음 단계로 진행 (선택 버튼 / 직접 입력 공용)
+    const advance = (answerVal, displayVal) => {
+        answers[idx] = answerVal;
+        _userBubble(displayVal || answerVal);
+        if (input) input.disabled = true;
+        if (submitBtn) submitBtn.setAttribute('disabled', '');
+        if (idx + 1 < flow.steps.length) renderStep(key, idx + 1, answers);
+        else finishWizard(key, answers);
+    };
+    bubble.querySelectorAll('.beginner-choice[data-i]').forEach(btn => {
         btn.addEventListener('click', () => {
             bubble.querySelectorAll('.beginner-choice').forEach(x => x.setAttribute('disabled', ''));
             const i = parseInt(btn.getAttribute('data-i'), 10);
-            answers[idx] = step.opts[i].v;
-            _userBubble(step.opts[i].l);
-            if (idx + 1 < flow.steps.length) renderStep(key, idx + 1, answers);
-            else finishWizard(key, answers);
+            advance(step.opts[i].v, step.opts[i].l);
         });
+    });
+    // 직접 입력: "입력" 버튼 클릭 또는 Enter 키
+    const submitCustom = () => {
+        const v = (input && input.value || '').trim();
+        if (!v) { if (input) input.focus(); return; }
+        bubble.querySelectorAll('.beginner-choice').forEach(x => x.setAttribute('disabled', ''));
+        advance(v);
+    };
+    if (submitBtn) submitBtn.addEventListener('click', submitCustom);
+    if (input) input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        submitCustom();
     });
 }
 
 function finishWizard(key, answers) {
     const flow = WIZARD_FLOWS[key];
     const brief = flow.build(answers);
-    // 자율 플래닝(Harness) 자동 ON
+    // ── 최종 확인 단계: 실행 전 답변 요약 + 지시문 직접 수정 ──
+    const summary = flow.steps.map((s, i) =>
+        `<div style="font-size:12px; margin:2px 0;"><span style="color:var(--muted);">${s.q}</span> <strong>${_escAttr(answers[i] || '')}</strong></div>`).join('');
+    const html =
+        `<div style="font-size:16px; font-weight:700; margin-bottom:8px;">✅ 시작 전 확인</div>
+     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">선택한 내용</div>
+     ${summary}
+     <div style="font-size:12px; color:var(--muted); margin:10px 0 4px;">아래 지시문을 자유롭게 수정할 수 있어요</div>
+     <textarea class="beginner-confirm-text" rows="4" style="width:100%; box-sizing:border-box; padding:8px 10px; border-radius:8px; border:1px solid var(--border2); background:var(--bg2); color:var(--fg); font-size:13px; resize:vertical;">${_escAttr(brief)}</textarea>
+     <div style="display:flex; gap:8px; margin-top:10px;">
+       <button class="beginner-choice beginner-confirm-go" style="flex:1;">🚀 이대로 시작</button>
+       <button class="beginner-choice beginner-confirm-redo" style="white-space:nowrap;">↩ 다시 선택</button>
+     </div>`;
+    const bubble = _assistantBubble(html);
+    if (!bubble) { _launchWizardResult(brief); return; }
+    const ta = bubble.querySelector('.beginner-confirm-text');
+    const goBtn = bubble.querySelector('.beginner-confirm-go');
+    const redoBtn = bubble.querySelector('.beginner-confirm-redo');
+    if (goBtn) goBtn.addEventListener('click', () => {
+        const finalText = (ta && ta.value || '').trim() || brief;
+        bubble.querySelectorAll('.beginner-choice').forEach(x => x.setAttribute('disabled', ''));
+        if (ta) ta.disabled = true;
+        _launchWizardResult(finalText);
+    });
+    if (redoBtn) redoBtn.addEventListener('click', () => {
+        _dismissBeginnerWelcome();
+        startWizard(key);
+    });
+}
+
+// 마법사 결과 실행: 플래닝 ON → IDE 전환 → 프롬프트 전송
+function _launchWizardResult(brief) {
     const t = document.getElementById('planningModeToggle');
     if (t) t.checked = true;
-    // IDE 슬라이드 인 후 전송
     exitBeginnerMode();
     localStorage.setItem(BEGINNER_MODE_KEY, '0');
     const inp = document.getElementById('promptInput');
     if (inp) inp.value = brief;
     setTimeout(() => { if (typeof sendPrompt === 'function') sendPrompt(); }, 360);
+}
+
+// textarea/속성용 최소 HTML 이스케이프
+function _escAttr(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
 }
 
 // ── 초기화 (모든 스크립트 로드 후) ──
