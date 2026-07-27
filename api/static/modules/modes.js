@@ -355,3 +355,61 @@ async function consumeSuggestedMode() {
     hideModeSuggestions();
     return mode || _currentMode;
 }
+
+// ── Automatic Mode Switching ──────────────────────────────────────────
+// Confidence threshold (0-100) above which the agent mode is switched
+// automatically on send, without the user having to click a suggestion.
+// Manual switching (mode tabs + suggestion clicks) always takes priority.
+var AUTO_MODE_SWITCH_THRESHOLD = 80;
+
+/**
+ * Called by sendPrompt() right before the message is executed.
+ *
+ * Priority order:
+ *   1. If the user manually clicked a suggestion button (_pendingSuggestedMode),
+ *      that mode wins (already applied by selectSuggestedMode).
+ *   2. Otherwise, ask the backend for intent detection. If the top suggestion's
+ *      confidence >= AUTO_MODE_SWITCH_THRESHOLD and it differs from the current
+ *      mode, switch automatically and notify via toast.
+ *   3. On any error / low confidence, keep the current mode (never block the send).
+ *
+ * Returns the mode that will be used for this send.
+ */
+async function applyAutoModeForSend(text) {
+    // 1) Manual click always wins.
+    if (_pendingSuggestedMode) {
+        var manual = _pendingSuggestedMode;
+        _pendingSuggestedMode = null;
+        hideModeSuggestions();
+        return manual;
+    }
+
+    // 2) Automatic detection.
+    text = (text || '').trim();
+    if (text.length < 3) {
+        hideModeSuggestions();
+        return _currentMode;
+    }
+
+    try {
+        var data = await api('/api/mode/intent', {
+            method: 'POST',
+            body: { message: text }
+        });
+        var suggestions = (data && data.suggestions) || [];
+        if (suggestions.length > 0) {
+            var top = suggestions[0];
+            var conf = Number(top.confidence) || 0;
+            if (conf >= AUTO_MODE_SWITCH_THRESHOLD && top.mode && top.mode !== _currentMode) {
+                await switchAgentMode(top.mode);
+                showToast((top.icon || '') + ' ' + (top.label || top.mode) + ' 모드로 자동 전환 (' + conf + '%)');
+            }
+        }
+    } catch (e) {
+        // Never let intent detection break the send flow.
+        console.error('Auto mode switch failed:', e);
+    }
+
+    hideModeSuggestions();
+    return _currentMode;
+}

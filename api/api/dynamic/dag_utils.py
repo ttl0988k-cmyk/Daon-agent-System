@@ -64,26 +64,9 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             _log.info("DynamicModelSelector unavailable, using static chain: %s", e)
 
     # --- Fallback: Static model enforcement (Phase 1-2) ---
-    if preferred_model:
-        try:
-            from api.managers import model_manager
-            _, provider, _ = model_manager.resolve_model_provider(preferred_model)
-        except Exception as e:
-            _log.warning("Failed to resolve model provider: %s", e)
-            provider = None
-
-        pm_lower = preferred_model.lower()
-        if provider == 'openrouter' or 'openrouter' in pm_lower:
-            # Let OpenRouter through if explicitly chosen
-            pass
-        elif provider in ('minimax', 'deepseek', 'nvidia'):
-            pass
-        elif ("minimax" in pm_lower or "deepseek" in pm_lower or "nvidia" in pm_lower or "nemotron" in pm_lower) and "openrouter" not in pm_lower:
-            pass
-        else:
-            # Only fallback if completely unknown
-            preferred_model = "MiniMax-M3"
-    else:
+    # Accept ANY model the CEO assigned — user-registered providers are valid.
+    # Only fall back to MiniMax-M3 when no model was specified at all.
+    if not preferred_model:
         preferred_model = "MiniMax-M3"
 
     # Need to load resolve_model_provider dynamically
@@ -91,7 +74,7 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
         from api.managers import model_manager
         resolve_model_provider = model_manager.resolve_model_provider
     except ImportError:
-        def resolve_model_provider(m): return m, 'custom', 'http://127.0.0.1:11434/v1'
+        def resolve_model_provider(m): return m, 'custom', None
 
     chain_configs: list[dict] = []
     seen_models: set[str] = set()
@@ -113,13 +96,9 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             key = os.getenv('OPENAI_API_KEY')
         elif p == 'anthropic':
             key = os.getenv('ANTHROPIC_API_KEY')
-        elif p == 'ollama-cloud' or p == 'ollama':
-            key = os.getenv('OLLAMA_API_KEY')
         elif p == 'nvidia':
             key = os.getenv('NVIDIA_API_KEY')
 
-        if p == 'custom' and not key:
-            key = 'ollama'
         return {"model": m, "provider": p, "base_url": b, "api_key": key}
 
     # 1. Preferred model (if any)

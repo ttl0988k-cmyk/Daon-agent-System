@@ -523,9 +523,14 @@ class MCPManager:
     def _load_config(self):
         if not self._config_path.exists():
             # Load defaults if config doesn't exist
-            # filesystem + playwright + memory + playmcp-gateway are always registered;
+            # filesystem + playwright + playmcp-gateway are always registered;
+            # NOTE: the external Memory MCP (@modelcontextprotocol/server-memory) is NOT
+            # auto-registered. DAON's own memory_store (memory.db) already handles long-term
+            # facts/profile, so auto-enabling Memory MCP would only duplicate injected context
+            # (extra tokens) without adding value. Users can still enable it manually via the
+            # MCP UI panel if they want the knowledge-graph backend.
             # other servers should be explicitly enabled by the user via the MCP UI panel.
-            defaults = ['filesystem', 'playwright', 'memory']
+            defaults = ['filesystem', 'playwright']
             for preset_id in defaults:
                 if preset_id in MCP_PRESETS:
                     preset = MCP_PRESETS[preset_id]

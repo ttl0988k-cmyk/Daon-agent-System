@@ -203,10 +203,8 @@ class HermesPlanner:
             available_models_data = model_manager.get_available_models()
             model_list: list[str] = []
             for group in available_models_data:
-                provider_lower = group.get('provider', '').lower()
-                if provider_lower in ('minimax', 'deepseek', 'nvidia'):
-                    for m in group.get('models', []):
-                        model_list.append(m['id'])
+                for m in group.get('models', []):
+                    model_list.append(m['id'])
             dynamic_model_list = ", ".join(f"'{m}'" for m in model_list) if model_list else "'MiniMax-M3', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'"
         except Exception as e:
             _log.warning("Failed to resolve dynamic model list: %s", e)

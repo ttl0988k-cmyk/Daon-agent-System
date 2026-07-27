@@ -443,7 +443,16 @@ async function sendPrompt() {
   box.appendChild(userBubble);
   scrollToChatBottom();
 
-  // Execute agent stream directly — mode suggestions are handled by the agent via ask_followup_question / choice cards
+  // ── Auto mode switching ──
+  // Before executing, let the mode system auto-switch based on intent detection.
+  // Manual clicks on suggestion buttons always take priority (handled inside
+  // applyAutoModeForSend via _pendingSuggestedMode). Low-confidence / errors keep
+  // the current mode and never block the send.
+  if (typeof applyAutoModeForSend === 'function') {
+    try { await applyAutoModeForSend(displayText); } catch (_) { }
+  }
+
+  // Execute agent stream with the (possibly auto-switched) active mode.
   await _executeAgentStream(displayText, uploaded);
 }
 

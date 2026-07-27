@@ -7,7 +7,11 @@ import ssl
 from pathlib import Path
 
 # ── Known provider presets with base URLs ──
-# These are the FALLBACK defaults — the single source of truth is custom_providers.json
+# These are ONLY first-run seed defaults (used when custom_providers.json does not
+# exist yet). Once the file exists, it is the SINGLE SOURCE OF TRUTH and these
+# hardcoded values are never merged back in — so deleting a provider in the UI
+# stays deleted. Local/self-hosted backends (Ollama / LM Studio / "local") are
+# intentionally NOT seeded: the user manages those explicitly via the provider UI.
 _PROVIDER_PRESETS = {
     'openai':      {'base_url': 'https://api.openai.com/v1',           'label': 'OpenAI'},
     'deepseek':    {'base_url': 'https://api.deepseek.com/v1',         'label': 'DeepSeek'},
@@ -18,11 +22,8 @@ _PROVIDER_PRESETS = {
     'together':    {'base_url': 'https://api.together.xyz/v1',        'label': 'Together AI'},
     'groq':        {'base_url': 'https://api.groq.com/openai/v1',     'label': 'Groq'},
     'nvidia':      {'base_url': 'https://integrate.api.nvidia.com/v1', 'label': 'NVIDIA NIM'},
-    'ollama':      {'base_url': 'http://localhost:11434/v1',           'label': 'Ollama (Local)'},
-    'lmstudio':    {'base_url': 'http://localhost:1234/v1',            'label': 'LM Studio (Local)'},
     'xai':         {'base_url': 'https://api.x.ai/v1',                'label': 'xAI'},
     'zhipu':       {'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'label': 'ZhipuAI'},
-    'local':       {'base_url': 'http://localhost:11434/v1',           'label': 'Local Models'},
 }
 
 # ── File path for custom providers ──
@@ -37,25 +38,28 @@ def _get_custom_providers_path() -> Path:
 
 def _load_custom_providers() -> dict:
     """Load custom providers from JSON file — the SINGLE SOURCE OF TRUTH.
-    
+
     Returns dict with keys: 'presets', 'providers'
     - presets: provider_name → {base_url, label, models?}
     - providers: provider_name → {api_key, base_url, models, label}
     """
     path = _get_custom_providers_path()
+    # Seed from hardcoded presets ONLY on first run (no file yet).
     result = {'presets': dict(_PROVIDER_PRESETS), 'providers': {}}
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding='utf-8'))
             if isinstance(data, dict):
-                # Merge file presets over hardcoded fallback
+                # Once the file exists it is authoritative. Do NOT merge the
+                # hardcoded presets back in — a provider deleted via the UI must
+                # stay deleted. (Merging was the root cause of ollama/local
+                # reappearing after the user removed them.)
                 file_presets = data.get('presets', {})
                 if isinstance(file_presets, dict):
-                    for pname, pcfg in file_presets.items():
-                        if isinstance(pcfg, dict):
-                            merged = dict(_PROVIDER_PRESETS.get(pname, {}))
-                            merged.update(pcfg)
-                            result['presets'][pname] = merged
+                    result['presets'] = {
+                        pname: pcfg for pname, pcfg in file_presets.items()
+                        if isinstance(pcfg, dict)
+                    }
                 file_providers = data.get('providers', {})
                 if isinstance(file_providers, dict):
                     result['providers'] = file_providers
@@ -252,8 +256,6 @@ class ModelManager:
             return providers[provider].get('base_url')
         if provider in presets:
             return presets[provider].get('base_url')
-        if provider == 'local':
-            return os.getenv('OLLAMA_BASE_URL') or 'http://localhost:11434/v1'
         return None
 
     def _get_api_key(self, provider: str) -> str:
@@ -349,12 +351,11 @@ class ModelManager:
                 display_name = custom_data.get('presets', {}).get(provider, {}).get('label', provider.capitalize())
                 env_key = f"{provider.upper()}_API_KEY"
                 has_key = bool(
-                    provider == 'local' or
                     os.environ.get(env_key) or
                     auth_keys.get(provider) or
                     custom_data.get('providers', {}).get(provider, {}).get('api_key')
                 )
-                # Only include providers that HAVE an API key or are local
+                # Only include providers that HAVE an API key
                 if has_key:
                     groups.append({
                         'provider': display_name,
