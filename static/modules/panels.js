@@ -4856,15 +4856,18 @@ function showAddProviderForm() {
   const saveBtn = $('settingsProviderSaveBtn');
   if (saveBtn) { saveBtn.textContent = '💾 제공자 저장'; saveBtn.onclick = saveProvider; }
   _editingProviderName = null;
+  _selectedProviderModels = null;
 }
 
 function hideAddProviderForm() {
   const form = $('settingsAddProviderForm');
   if (form) form.style.display = 'none';
   _editingProviderName = null;
+  _selectedProviderModels = null;
 }
 
 let _editingProviderName = null;
+let _selectedProviderModels = null; // 자동감지 후 선택된 모델 목록
 
 async function editProvider(name) {
   try {
@@ -4906,9 +4909,17 @@ async function saveProvider() {
     const saveBtn = $('settingsProviderSaveBtn');
     if (saveBtn) { saveBtn.textContent = '⏳ 저장 중...'; saveBtn.disabled = true; }
 
+    const bodyPayload = { name: name, api_key: key, base_url: url };
+    // 체크박스에서 선택된 모델만 수집
+    var checkedModels = _collectCheckedProviderModels();
+    if (checkedModels && checkedModels.length > 0) {
+      bodyPayload.models = checkedModels;
+    } else if (_selectedProviderModels && _selectedProviderModels.length > 0) {
+      bodyPayload.models = _selectedProviderModels;
+    }
     const result = await api('/api/providers/add', {
       method: 'POST',
-      body: { name: name, api_key: key, base_url: url }
+      body: bodyPayload
     });
 
     if (result.success) {
@@ -4954,7 +4965,7 @@ function onProviderPresetChange() {
 
   const sel = $('settingsProviderPreset');
   const presetText = sel.options[sel.selectedIndex].textContent;
-  const match = presetText.match(/\((.+)\)$/);
+  const match = presetText.match(/\(([^()]+)\)$/);
   const baseUrl = match ? match[1] : '';
 
   const urlEl = $('settingsProviderUrl');
@@ -4986,13 +4997,31 @@ async function fetchProviderModels() {
     });
 
     if (data.success && data.models && data.models.length > 0) {
-      var modelHtml = '<div style="color:var(--success);font-weight:600;margin-bottom:4px;">✅ ' + data.models.length + '개 모델 발견:</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
-        data.models.map(function (m) { return '<span style="background:var(--bg2);padding:2px 6px;border-radius:3px;font-size:10px;">' + esc(m.id || m) + '</span>'; }).join('') +
+      _selectedProviderModels = data.models.map(function (m) { return { id: m.id || m, label: m.label || m.id || m }; });
+      var modelHtml = '<div style="color:var(--success);font-weight:600;margin-bottom:4px;">✅ ' + data.models.length + '개 모델 발견 — 저장할 모델을 선택하세요:</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;max-height:180px;overflow-y:auto;">' +
+        data.models.map(function (m, i) {
+          var mid = m.id || m;
+          var isTts = /tts|speech|audio|whisper|embed|rerank|moderation/i.test(mid);
+          return '<label style="display:inline-flex;align-items:center;gap:3px;background:var(--bg2);padding:2px 6px;border-radius:3px;font-size:10px;cursor:pointer;' + (isTts ? 'opacity:0.5;' : '') + '">' +
+            '<input type="checkbox" class="provider-model-cb" data-idx="' + i + '"' + (isTts ? '' : ' checked') + ' style="width:12px;height:12px;margin:0;">' +
+            '<span>' + esc(mid) + '</span></label>';
+        }).join('') +
         '</div>' +
-        '<div style="margin-top:8px;font-size:10px;color:var(--muted);">"제공자 저장" 버튼을 누르면 이 모델들이 저장됩니다.</div>';
+        '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;">' +
+        '<button onclick="_providerModelSelectAll(true)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 선택</button>' +
+        '<button onclick="_providerModelSelectAll(false)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 해제</button>' +
+        '<span id="providerModelCount" style="font-size:10px;color:var(--muted);"></span>' +
+        '</div>' +
+        '<div style="margin-top:6px;font-size:10px;color:var(--muted);">선택 후 "제공자 저장" 버튼을 누르면 선택한 모델만 저장됩니다.</div>';
       if (resultEl) resultEl.innerHTML = modelHtml;
+      _updateProviderModelCount();
+      // 체크박스 변경 이벤트
+      resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) {
+        cb.addEventListener('change', function () { _updateProviderModelCount(); });
+      });
     } else {
+      _selectedProviderModels = null;
       if (resultEl) resultEl.innerHTML = '<div style="color:var(--warning);">⚠️ 제공자로부터 모델이 반환되지 않았습니다. 저장 후 수동으로 모델을 지정할 수 있습니다.</div>';
     }
   } catch (e) {
@@ -5000,6 +5029,40 @@ async function fetchProviderModels() {
   } finally {
     if (fetchBtn) { fetchBtn.textContent = '🔍 Auto-Detect Models'; fetchBtn.disabled = false; }
   }
+}
+
+function _collectCheckedProviderModels() {
+  var resultEl = $('settingsProviderFetchResult');
+  if (!resultEl || !_selectedProviderModels) return null;
+  var cbs = resultEl.querySelectorAll('.provider-model-cb');
+  if (!cbs.length) return null;
+  var selected = [];
+  cbs.forEach(function (cb) {
+    if (cb.checked) {
+      var idx = parseInt(cb.getAttribute('data-idx'), 10);
+      if (idx >= 0 && idx < _selectedProviderModels.length) {
+        selected.push(_selectedProviderModels[idx]);
+      }
+    }
+  });
+  return selected;
+}
+
+function _providerModelSelectAll(checked) {
+  var resultEl = $('settingsProviderFetchResult');
+  if (!resultEl) return;
+  resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) { cb.checked = checked; });
+  _updateProviderModelCount();
+}
+
+function _updateProviderModelCount() {
+  var countEl = $('providerModelCount');
+  var resultEl = $('settingsProviderFetchResult');
+  if (!countEl || !resultEl) return;
+  var cbs = resultEl.querySelectorAll('.provider-model-cb');
+  var checked = 0;
+  cbs.forEach(function (cb) { if (cb.checked) checked++; });
+  countEl.textContent = checked + '/' + cbs.length + '개 선택됨';
 }
 
 async function refreshAllModelSelects() {
