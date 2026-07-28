@@ -610,11 +610,18 @@ app.whenReady().then(async () => {
     mainWindow.setMenu(null);
 
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
+    let _balloonShownOnce = false;
     mainWindow.on('close', (event) => {
       if (!isQuitting && tray) {
         event.preventDefault();
         mainWindow.hide();
-        try { tray.displayBalloon({ title: 'DAON Agent System', content: '백그라운드에서 실행 중입니다. 트레이 아이콘에서 열 수 있습니다.' }); } catch (_) { }
+        if (!_balloonShownOnce) {
+          _balloonShownOnce = true;
+          try {
+            tray.displayBalloon({ title: 'DAON Agent System', content: '백그라운드에서 실행 중입니다. 트레이 아이콘에서 열 수 있습니다.' });
+            setTimeout(() => { try { tray.removeBalloon(); } catch (_) { } }, 2000);
+          } catch (_) { }
+        }
         console.log('[AlwaysOn] Window hidden to tray (server keeps running).');
       }
     });

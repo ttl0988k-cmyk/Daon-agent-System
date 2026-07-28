@@ -345,6 +345,7 @@ class ModelManager:
         ALLOWED_PRESETS = list(provider_models.keys())
 
         groups = []
+        _added_provider_keys = set()  # 중복 방지
 
         # 1) Preset providers (built-in, from custom_providers.json presets)
         for provider in ALLOWED_PRESETS:
@@ -365,9 +366,12 @@ class ModelManager:
                         'models': list(provider_models[provider]),
                         'has_api_key': True,
                     })
+                    _added_provider_keys.add(provider)
 
-        # 2) Custom providers (from JSON providers section)
+        # 2) Custom providers (from JSON providers section) — skip already-added
         for pname, cfg in custom_providers.items():
+            if pname in _added_provider_keys:
+                continue
             if cfg.get('api_key') and cfg.get('models'):
                 display_name = cfg.get('label', pname.title())
                 groups.append({
@@ -377,6 +381,7 @@ class ModelManager:
                     'base_url': cfg.get('base_url', ''),
                     'models': list(cfg.get('models', []))
                 })
+                _added_provider_keys.add(pname)
 
         return groups
 
