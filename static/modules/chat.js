@@ -496,9 +496,11 @@ async function _executeAgentStream(displayText, uploaded) {
     clearTimeout(_idleTimer);
     // 도구 실행 중에는 무응답 감시를 일시 중단 — 도구 결과가 올 때까지 대기.
     if (_activeTools > 0) return;
+    // 30초: 도구 완료 → LLM 재호출 → 첫 토큰(TTFT) 대기 시간을 커버.
+    // 이전 2초는 LLM API 첫 토큰이 3~15초 걸리는 경우 스트림을 조기 종료시켰음.
     _idleTimer = setTimeout(function () {
       if (!_streamFinished) finishStream('idle_timeout');
-    }, 2000);
+    }, 30000);
   }
 
   function finishStream(reason) {
