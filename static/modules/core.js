@@ -74,6 +74,22 @@ function renderMd(text) {
     return ph;
   });
 
+  // Videos: bare URLs ending in video extensions → inline <video> player
+  text = text.replace(/(https?:\/\/[^\s<>"']+?\.(?:mp4|webm|mov|ogg)(?:\?[^\s<>"']*)?)/gi, function (match, url) {
+    var ph = '\x00MDVID' + (phIndex++) + '\x00';
+    var safeUrl = _mdEscapeContent(url);
+    placeholders.push({ ph: ph, html: '<video controls preload="metadata" style="max-width:100%;border-radius:8px;margin:6px 0;" src="' + safeUrl + '"></video>' });
+    return ph;
+  });
+
+  // Markdown video links: [text](url.mp4) → inline <video> player
+  text = text.replace(/\[([^\]]*)\]\(([^)\s]+?\.(?:mp4|webm|mov|ogg)(?:\?[^)\s]*)?)\)/gi, function (match, txt, url) {
+    var ph = '\x00MDVID' + (phIndex++) + '\x00';
+    var safeUrl = _mdEscapeContent(url);
+    placeholders.push({ ph: ph, html: '<video controls preload="metadata" style="max-width:100%;border-radius:8px;margin:6px 0;" src="' + safeUrl + '"></video>' });
+    return ph;
+  });
+
   // Links: [text](url)
   text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, txt, url) {
     var ph = '\x00MDLNK' + (phIndex++) + '\x00';
