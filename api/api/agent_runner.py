@@ -113,6 +113,10 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
                     if not os.getenv('MINIMAX_API_KEY') and 'minimax' in pool:
                         tok = pool['minimax'][0].get('access_token') if pool['minimax'] else None
                         if tok: os.environ['MINIMAX_API_KEY'] = tok
+                    # DashScope (Qwen) key
+                    if not os.getenv('DASHSCOPE_API_KEY') and 'dashscope' in pool:
+                        tok = pool['dashscope'][0].get('access_token') if pool['dashscope'] else None
+                        if tok: os.environ['DASHSCOPE_API_KEY'] = tok
                     # DeepSeek key
                     if not os.getenv('DEEPSEEK_API_KEY') and 'deepseek' in pool:
                         tok = pool['deepseek'][0].get('access_token') if pool['deepseek'] else None

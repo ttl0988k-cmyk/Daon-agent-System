@@ -580,6 +580,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           _token = (_cp['nvidia'][0].get('access_token') if isinstance(_cp['nvidia'], list) and _cp['nvidia'] else None)
                           if _token:
                               os.environ['NVIDIA_API_KEY'] = _token
+                      # minimax → MINIMAX_API_KEY
+                      if not os.getenv('MINIMAX_API_KEY') and 'minimax' in _cp:
+                          _token = (_cp['minimax'][0].get('access_token') if isinstance(_cp['minimax'], list) and _cp['minimax'] else None)
+                          if _token:
+                              os.environ['MINIMAX_API_KEY'] = _token
+                      # dashscope → DASHSCOPE_API_KEY
+                      if not os.getenv('DASHSCOPE_API_KEY') and 'dashscope' in _cp:
+                          _token = (_cp['dashscope'][0].get('access_token') if isinstance(_cp['dashscope'], list) and _cp['dashscope'] else None)
+                          if _token:
+                              os.environ['DASHSCOPE_API_KEY'] = _token
               except Exception as _inject_e:
                   print(f"[webui] WARNING: auth.json key injection failed: {_inject_e}", flush=True)
 
