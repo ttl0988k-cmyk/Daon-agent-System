@@ -37,3 +37,4 @@ extracted_asar/
 test_app_unpacked/
 clean_build_unpacked/
 dist_new/
+dist_old_*/
