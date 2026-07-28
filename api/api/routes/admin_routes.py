@@ -674,14 +674,15 @@ def handle_post_memory_write(handler, body) -> bool:
 
 
 def handle_post_memory_fact_delete(handler, body) -> bool:
-    """POST /api/memory/fact/delete — DAON 기억 시스템 fact 삭제."""
+    """POST /api/memory/fact/delete — DAON 기억 시스템 fact 삭제.
+    Phase 2-C: 영향 범위(역링크) 정보 포함."""
     try:
         from api.memory_store import delete_fact
         fact_id = body.get('id')
         if fact_id is None:
             return bad(handler, 'id is required')
-        ok = delete_fact(fact_id)
-        return j(handler, {'ok': ok})
+        result = delete_fact(fact_id)
+        return j(handler, result)
     except Exception as e:
         return bad(handler, str(e))
 
@@ -696,6 +697,40 @@ def handle_post_memory_profile_set(handler, body) -> bool:
             return bad(handler, 'key is required')
         ok = set_profile(key, value)
         return j(handler, {'ok': ok, 'key': key})
+    except Exception as e:
+        return bad(handler, str(e))
+
+
+def handle_get_memory_reviews(handler, parsed) -> bool:
+    """GET /api/memory/reviews — Phase 5: 재검토 큐 목록.
+    ?status=pending|approved|rejected|all"""
+    try:
+        from api.memory_store import list_reviews
+        from urllib.parse import parse_qs
+        qs = parse_qs(parsed.query or '')
+        status = qs.get('status', ['pending'])[0]
+        if status == 'all':
+            status = None
+        limit = int(qs.get('limit', ['50'])[0])
+        reviews = list_reviews(status=status, limit=limit)
+        return j(handler, {'ok': True, 'reviews': reviews, 'count': len(reviews)})
+    except Exception as e:
+        return bad(handler, str(e))
+
+
+def handle_post_memory_review_resolve(handler, body) -> bool:
+    """POST /api/memory/review/resolve — Phase 5: 재검토 항목 승인/거부.
+    body: {id: int, action: 'approve'|'reject'}"""
+    try:
+        from api.memory_store import resolve_review
+        review_id = body.get('id')
+        action = body.get('action', '')
+        if review_id is None:
+            return bad(handler, 'id is required')
+        if action not in ('approve', 'reject'):
+            return bad(handler, "action must be 'approve' or 'reject'")
+        result = resolve_review(review_id, action)
+        return j(handler, result)
     except Exception as e:
         return bad(handler, str(e))
 

@@ -42,6 +42,8 @@ from api.routes.admin_routes import (
     handle_post_memory_write,
     handle_post_memory_fact_delete,
     handle_post_memory_profile_set,
+    handle_get_memory_reviews,
+    handle_post_memory_review_resolve,
     handle_post_cron_create,
     handle_post_cron_update,
     handle_post_cron_delete,
@@ -364,6 +366,8 @@ def handle_get(handler, parsed) -> bool:
         return handle_get_memory_summaries(handler, parsed)
     if parsed.path == '/api/memory/store/stats':
         return handle_get_memory_store_stats(handler, parsed)
+    if parsed.path == '/api/memory/reviews':
+        return handle_get_memory_reviews(handler, parsed)
 
     # ── System Status API (GET) — Always-on ⑦ 관측성 ──
     if parsed.path == '/api/system/status':
@@ -626,6 +630,8 @@ def handle_post(handler, parsed) -> bool:
         return handle_post_memory_fact_delete(handler, body)
     if parsed.path == '/api/memory/profile/set':
         return handle_post_memory_profile_set(handler, body)
+    if parsed.path == '/api/memory/review/resolve':
+        return handle_post_memory_review_resolve(handler, body)
 
     # ── Agent Messaging API (POST) — 에이전트 간 메시지 발송 ──
     if parsed.path == '/api/agent/message':

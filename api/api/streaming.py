@@ -912,7 +912,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # 'Wake-up' 강조 헤더와 함께 이전 맥락을 시스템 프롬프트에 주입한다.
           try:
               from api.memory_store import build_memory_prompt
-              _memory_prompt = build_memory_prompt()
+              _memory_prompt = build_memory_prompt(
+                  query_text=msg_text or '',
+                  session_id=session_id or '',
+              )
               if _memory_prompt:
                   workspace_system_msg += "\n\n" + _memory_prompt
           except Exception as _mem_e:

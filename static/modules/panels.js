@@ -4109,16 +4109,18 @@ async function loadMemoryStore(panel) {
   store.innerHTML = '<div style="padding:8px;color:var(--muted);font-size:11px;">기억 불러오는 중...</div>';
   const fmt = ts => ts ? new Date(ts * 1000).toLocaleString() : '';
   try {
-    const [factsRes, profRes, sumRes, statsRes] = await Promise.all([
+    const [factsRes, profRes, sumRes, statsRes, reviewsRes] = await Promise.all([
       api('/api/memory/facts?limit=50'),
       api('/api/memory/profile'),
       api('/api/memory/summaries?limit=20'),
       api('/api/memory/store/stats'),
+      api('/api/memory/reviews?status=pending&limit=20'),
     ]);
     const facts = (factsRes && factsRes.facts) || [];
     const profile = (profRes && profRes.profile) || {};
     const summaries = (sumRes && sumRes.summaries) || [];
     const stats = statsRes || {};
+    const reviews = (reviewsRes && reviewsRes.reviews) || [];
 
     const profileKeys = Object.keys(profile);
     const profileHtml = profileKeys.length
@@ -4148,7 +4150,32 @@ async function loadMemoryStore(panel) {
            </div>`).join('')
       : '<div class="memory-empty">아직 세션 요약이 없습니다.</div>';
 
+    const kindLabel = { contradiction: '⚡ 모순', merge_candidate: '🔗 병합 후보', low_confidence: '📉 낮은 신뢰도' };
+    const reviewsHtml = reviews.length
+      ? reviews.map(r => {
+        const factsDetail = (r.facts || []).map(f =>
+          `<div style="font-size:10px;color:var(--muted);padding:1px 0;">#${f.id}: ${esc((f.content || '').slice(0, 80))}</div>`
+        ).join('');
+        return `<div style="padding:6px 0;border-bottom:1px solid var(--border);">
+            <div style="font-size:11px;font-weight:600;color:var(--text);">${kindLabel[r.kind] || r.kind}
+              <span class="memory-mtime">${r.created_at || ''}</span></div>
+            <div style="font-size:10px;color:var(--muted);margin:2px 0;">${esc(r.suggestion || '')}</div>
+            ${factsDetail}
+            <div style="display:flex;gap:6px;margin-top:4px;">
+              <button class="memreview-approve" data-id="${r.id}"
+                style="border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:4px;">✓ 승인</button>
+              <button class="memreview-reject" data-id="${r.id}"
+                style="border:1px solid var(--border);background:var(--bg3);color:var(--muted);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:4px;">✕ 거부</button>
+            </div>
+          </div>`;
+      }).join('')
+      : '';
+
     store.innerHTML = `
+      ${reviews.length ? `<div class="memory-section" style="border-left:3px solid var(--accent);padding-left:8px;">
+        <div class="memory-section-title">&#128270; 재검토 대기 <span class="memory-mtime" style="color:var(--accent);font-weight:700;">${reviews.length}건</span></div>
+        <div class="memory-content">${reviewsHtml}</div>
+      </div>` : ''}
       <div class="memory-section">
         <div class="memory-section-title">&#129302; 자동 프로필 <span class="memory-mtime">${stats.profile_keys || 0}개 항목</span></div>
         <div class="memory-content">${profileHtml}</div>
@@ -4167,6 +4194,24 @@ async function loadMemoryStore(panel) {
         const id = btn.getAttribute('data-id');
         try {
           await api('/api/memory/fact/delete', { method: 'POST', body: JSON.stringify({ id: Number(id) }) });
+          loadMemoryStore(panel);
+        } catch (e) { /* ignore */ }
+      });
+    });
+    store.querySelectorAll('.memreview-approve').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        try {
+          await api('/api/memory/review/resolve', { method: 'POST', body: JSON.stringify({ id: Number(id), action: 'approve' }) });
+          loadMemoryStore(panel);
+        } catch (e) { /* ignore */ }
+      });
+    });
+    store.querySelectorAll('.memreview-reject').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        try {
+          await api('/api/memory/review/resolve', { method: 'POST', body: JSON.stringify({ id: Number(id), action: 'reject' }) });
           loadMemoryStore(panel);
         } catch (e) { /* ignore */ }
       });

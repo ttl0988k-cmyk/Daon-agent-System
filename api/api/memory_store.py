@@ -31,6 +31,35 @@ _MEMORY_DB_PATH = Path(STATE_DIR) / 'memory.db'
 _db_lock = threading.Lock()
 _MAX_FACTS = 500
 
+# ── Phase 1-A: 프로필 key 정규화 ──
+# LLM 추출 시 반드시 아래 key 중 하나를 사용하도록 제한한다.
+CANONICAL_PROFILE_KEYS = {
+    'name': '이름',
+    'occupation': '직업',
+    'preferred_language': '선호 언어',
+    'workspace': '작업 디렉토리',
+    'tools': '사용 도구',
+    'agents': '관련 에이전트',
+    'goals': '목표',
+    'style': '대화 스타일',
+    'notes': '메모',
+}
+
+# 기존 분산 key → 정규 key 매핑 (마이그레이션용)
+PROFILE_KEY_ALIASES = {
+    '이름': 'name', 'name': 'name', '이름(호칭)': 'name',
+    '직업': 'occupation', 'occupation': 'occupation', '하는 일': 'occupation',
+    '선호언어': 'preferred_language', '선호 언어': 'preferred_language',
+    '사용언어': 'preferred_language', '언어': 'preferred_language',
+    'preferred_language': 'preferred_language', 'language': 'preferred_language',
+    '작업 디렉토리': 'workspace', 'workspace': 'workspace', '작업디렉토리': 'workspace',
+    '사용 도구': 'tools', 'tools': 'tools', '도구': 'tools',
+    '관련 에이전트': 'agents', 'agents': 'agents', '에이전트': 'agents',
+    '목표': 'goals', 'goals': 'goals', '목표사항': 'goals',
+    '대화 스타일': 'style', 'style': 'style', '스타일': 'style',
+    '메모': 'notes', 'notes': 'notes', '기타': 'notes',
+}
+
 # ── Job Queue (Always-on ②): 단일 상주 워커가 순차 처리 ──
 # fire-and-forget daemon 스레드 대신 SQLite 큐 + 워커 1개로 쓰기 경쟁을 제거한다.
 _QUEUE_POLL_INTERVAL = 1.0      # 워커 폴링 주기(초)
@@ -126,6 +155,67 @@ def _ensure_schema() -> None:
                     conn.execute(_ddl)
                 except Exception:
                     pass
+            # Phase 2-A: facts 계보/신뢰도/사용 추적 컬럼
+            for _ddl in (
+                "ALTER TABLE facts ADD COLUMN derived_from TEXT",
+                "ALTER TABLE facts ADD COLUMN confidence REAL DEFAULT 1.0",
+                "ALTER TABLE facts ADD COLUMN superseded_by INTEGER DEFAULT NULL",
+                "ALTER TABLE facts ADD COLUMN use_count INTEGER DEFAULT 0",
+                "ALTER TABLE facts ADD COLUMN last_used_at TEXT",
+            ):
+                try:
+                    conn.execute(_ddl)
+                except Exception:
+                    pass
+            # Phase 1-C: summaries 세션당 1건 — 중복 정리 후 UNIQUE 인덱스
+            try:
+                conn.execute(
+                    "DELETE FROM summaries WHERE id NOT IN ("
+                    "  SELECT MAX(id) FROM summaries GROUP BY session_id"
+                    ")"
+                )
+            except Exception:
+                pass
+            try:
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_session "
+                    "ON summaries(session_id)"
+                )
+            except Exception:
+                pass
+            # Phase 2-A: fact_usage (주입 기록)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS fact_usage ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  fact_id INTEGER NOT NULL,"
+                "  session_id TEXT NOT NULL,"
+                "  injected_at TEXT DEFAULT (datetime('now')),"
+                "  FOREIGN KEY (fact_id) REFERENCES facts(id)"
+                ")"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fact_usage_fact ON fact_usage(fact_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fact_usage_session ON fact_usage(session_id)")
+            # Phase 4-C: 정제 이력
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS refine_log ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  action TEXT NOT NULL,"
+                "  fact_ids TEXT,"
+                "  detail TEXT,"
+                "  created_at TEXT DEFAULT (datetime('now'))"
+                ")"
+            )
+            # Phase 5-B: 재검토 큐
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS memory_review ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  kind TEXT NOT NULL,"
+                "  fact_ids TEXT,"
+                "  suggestion TEXT,"
+                "  status TEXT DEFAULT 'pending',"
+                "  created_at TEXT DEFAULT (datetime('now'))"
+                ")"
+            )
             conn.commit()
         except Exception:
             pass
@@ -139,24 +229,31 @@ def _ensure_schema() -> None:
 # ---------------------------------------------------------------------------
 # Facts
 # ---------------------------------------------------------------------------
-def list_facts(limit: int = 100, category: Optional[str] = None) -> list:
+_FACT_COLUMNS = (
+    'id, content, category, source_session, created_at, '
+    'derived_from, confidence, superseded_by, use_count, last_used_at'
+)
+
+
+def list_facts(limit: int = 100, category: Optional[str] = None,
+               include_superseded: bool = False) -> list:
+    """facts 목록. Phase 2-A: 계보/신뢰도 컬럼 포함.
+    include_superseded=False면 대체된 fact 제외."""
     try:
         _ensure_schema()
         with _db_lock:
             conn = _connect()
             try:
+                where = '' if include_superseded else ' WHERE superseded_by IS NULL'
+                params: list = []
                 if category:
-                    rows = conn.execute(
-                        'SELECT id, content, category, source_session, created_at '
-                        'FROM facts WHERE category=? ORDER BY id DESC LIMIT ?',
-                        (category, int(limit)),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        'SELECT id, content, category, source_session, created_at '
-                        'FROM facts ORDER BY id DESC LIMIT ?',
-                        (int(limit),),
-                    ).fetchall()
+                    where += (' AND' if where else ' WHERE') + ' category=?'
+                    params.append(category)
+                params.append(int(limit))
+                rows = conn.execute(
+                    f'SELECT {_FACT_COLUMNS} FROM facts{where} ORDER BY id DESC LIMIT ?',
+                    params,
+                ).fetchall()
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
@@ -164,27 +261,76 @@ def list_facts(limit: int = 100, category: Optional[str] = None) -> list:
         return []
 
 
-def add_fact(content: str, category: str = 'general', source_session: Optional[str] = None) -> Optional[int]:
+def add_fact(content: str, category: str = 'general', source_session: Optional[str] = None,
+             derived_from: Optional[str] = None, skip_dedup: bool = False) -> Optional[int]:
+    """fact 추가. Phase 1-B: LLM 의미 중복 검사 포함.
+
+    - 완전 일치: 스킵 (None 반환)
+    - 의미 중복: 기존 fact 갱신 후 기존 id 반환
+    - 모순: 기존 fact에 superseded_by 설정, 새 fact INSERT
+    - 신규: INSERT
+    """
     try:
         content = (content or '').strip()
         if not content:
             return None
         _ensure_schema()
+        dup_info = None
         with _db_lock:
             conn = _connect()
             try:
-                # 중복 스킵
+                # 완전 일치 스킵
                 dup = conn.execute(
                     'SELECT id FROM facts WHERE content=? LIMIT 1', (content,)
                 ).fetchone()
                 if dup:
                     return None
+                # Phase 1-B: LLM 의미 중복 검사
+                if not skip_dedup:
+                    existing = [dict(r) for r in conn.execute(
+                        'SELECT id, content FROM facts '
+                        'WHERE superseded_by IS NULL ORDER BY id DESC LIMIT 50'
+                    ).fetchall()]
+                    if existing:
+                        dup_info = _llm_check_duplicate(content, existing)
+                        if dup_info and dup_info.get('action') == 'duplicate':
+                            # 의미 중복: 기존 fact 내용 갱신
+                            conn.execute(
+                                "UPDATE facts SET content=?, last_used_at=datetime('now') WHERE id=?",
+                                (content, dup_info['fact_id']),
+                            )
+                            conn.commit()
+                            return dup_info['fact_id']
+                        if dup_info and dup_info.get('action') == 'contradiction':
+                            # 모순: 기존 fact 신뢰도 하향
+                            conn.execute(
+                                'UPDATE facts SET confidence=0.3 WHERE id=?',
+                                (dup_info['fact_id'],),
+                            )
+                            derived_from = f"fact:{dup_info['fact_id']}"
                 cur = conn.execute(
-                    'INSERT INTO facts (content, category, source_session) VALUES (?,?,?)',
-                    (content, category or 'general', source_session),
+                    'INSERT INTO facts (content, category, source_session, derived_from) '
+                    'VALUES (?,?,?,?)',
+                    (content, category or 'general', source_session, derived_from),
                 )
                 conn.commit()
                 new_id = cur.lastrowid
+                # 모순인 경우 기존 fact에 superseded_by 설정 + Phase 5: 재검토 큐 등록
+                if dup_info and dup_info.get('action') == 'contradiction':
+                    conn.execute(
+                        'UPDATE facts SET superseded_by=? WHERE id=?',
+                        (new_id, dup_info['fact_id']),
+                    )
+                    conn.commit()
+                    # 사람 승인 대기 큐에 등록 (즉시 처리는 하되 검토 가능)
+                    try:
+                        _create_review(
+                            'contradiction',
+                            [dup_info['fact_id'], new_id],
+                            f"기존 fact#{dup_info['fact_id']} → 신규 fact#{new_id} 대체 (대화 중 자동 감지)",
+                        )
+                    except Exception:
+                        pass
                 # 상한 정리: 오래된 fact부터 삭제
                 count = conn.execute('SELECT COUNT(*) AS c FROM facts').fetchone()['c']
                 if count > _MAX_FACTS:
@@ -202,19 +348,48 @@ def add_fact(content: str, category: str = 'general', source_session: Optional[s
         return None
 
 
-def delete_fact(fact_id) -> bool:
+def delete_fact(fact_id) -> dict:
+    """fact 삭제 + Phase 2-C: 영향 범위(역링크) 보고.
+
+    반환: {'ok': bool, 'impact': {'sessions': [...], 'derived_facts': [...], 'usage_count': int}}
+    기존 bool 호환: truthy/falsy로 동작.
+    """
     try:
         _ensure_schema()
+        impact = {'sessions': [], 'derived_facts': [], 'usage_count': 0}
         with _db_lock:
             conn = _connect()
             try:
-                conn.execute('DELETE FROM facts WHERE id=?', (int(fact_id),))
+                fid = int(fact_id)
+                # 주입 기록 조회
+                usage_rows = conn.execute(
+                    'SELECT DISTINCT session_id FROM fact_usage WHERE fact_id=?', (fid,)
+                ).fetchall()
+                impact['sessions'] = [r['session_id'] for r in usage_rows if r['session_id']]
+                impact['usage_count'] = len(impact['sessions'])
+                # 파생 fact 조회
+                derived_rows = conn.execute(
+                    "SELECT id, content FROM facts WHERE derived_from LIKE ?",
+                    (f'%,fact:{fid},%',),
+                ).fetchall()
+                derived_rows2 = conn.execute(
+                    "SELECT id, content FROM facts WHERE derived_from = ?",
+                    (f'fact:{fid}',),
+                ).fetchall()
+                seen = set()
+                for r in list(derived_rows) + list(derived_rows2):
+                    if r['id'] not in seen:
+                        impact['derived_facts'].append(dict(r))
+                        seen.add(r['id'])
+                # 삭제
+                conn.execute('DELETE FROM facts WHERE id=?', (fid,))
+                conn.execute('DELETE FROM fact_usage WHERE fact_id=?', (fid,))
                 conn.commit()
-                return True
+                return {'ok': True, 'impact': impact}
             finally:
                 conn.close()
     except Exception:
-        return False
+        return {'ok': False, 'impact': {}}
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +440,7 @@ def get_profile() -> dict:
 # Summaries
 # ---------------------------------------------------------------------------
 def add_summary(session_id: str, title: str, summary: str) -> Optional[int]:
+    """Phase 1-C: 세션당 1건 — INSERT OR REPLACE (session_id UNIQUE)."""
     try:
         summary = (summary or '').strip()
         if not summary:
@@ -274,7 +450,8 @@ def add_summary(session_id: str, title: str, summary: str) -> Optional[int]:
             conn = _connect()
             try:
                 cur = conn.execute(
-                    'INSERT INTO summaries (session_id, title, summary) VALUES (?,?,?)',
+                    'INSERT OR REPLACE INTO summaries (session_id, title, summary, created_at) '
+                    "VALUES (?,?,?,datetime('now'))",
                     (session_id, title or 'Untitled', summary),
                 )
                 conn.commit()
@@ -375,22 +552,131 @@ def get_system_status() -> dict:
     return status
 
 
-def get_context_block(max_facts: int = 20) -> str:
-    """채팅 시스템 프롬프트에 주입할 장기 기억 요약 텍스트. 실패 시 빈 문자열.
+def _normalize_profile_key(raw_key: str) -> Optional[str]:
+    """Phase 1-A: 임의 key → 정규 key 매핑. 매핑 불가 시 None."""
+    k = (raw_key or '').strip().lower()
+    if not k:
+        return None
+    # 내부 메타키는 그대로 유지
+    if k.startswith('_'):
+        return raw_key.strip()
+    # 별칭 매핑
+    canonical = PROFILE_KEY_ALIASES.get(k)
+    if canonical:
+        return canonical
+    # 정규 key 직접 매칭
+    if k in CANONICAL_PROFILE_KEYS:
+        return k
+    return None
 
-    내부 메타키('_' 접두사, 예: _last_chat_ts)는 주입에서 제외한다.
+
+def _fact_score(fact: dict, query_keywords: list, now_ts: float) -> float:
+    """Phase 3-B: fact의 주입 우선순위 점수 계산."""
+    score = 0.0
+    # 1) 관련성: 현재 대화 키워드와 fact 내용의 겹침
+    content = (fact.get('content') or '').lower()
+    keyword_hits = sum(1 for kw in query_keywords if kw in content)
+    score += keyword_hits * 10.0
+    # 2) 사용 빈도: 자주 주입된 fact = 검증된 fact
+    score += min((fact.get('use_count') or 0) * 0.5, 5.0)
+    # 3) 최신성: 최근 fact 가중치
+    try:
+        from datetime import datetime
+        created = datetime.fromisoformat(fact.get('created_at', ''))
+        age_days = max(0, (now_ts - created.timestamp()) / 86400.0)
+        score += max(0, 10.0 - age_days * 0.1)
+    except Exception:
+        score += 5.0  # 파싱 실패 시 중간값
+    # 4) 신뢰도: 모순 플래그가 있으면 감점
+    score *= (fact.get('confidence') or 1.0)
+    # 5) 대체됨: superseded_by가 있으면 주입 제외
+    if fact.get('superseded_by'):
+        return -1.0
+    return score
+
+
+def _record_fact_usage(fact_ids: list, session_id: str) -> None:
+    """Phase 2-B: 주입된 fact id를 fact_usage에 기록 + use_count 갱신."""
+    if not fact_ids:
+        return
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                for fid in fact_ids:
+                    conn.execute(
+                        'INSERT INTO fact_usage (fact_id, session_id) VALUES (?,?)',
+                        (fid, session_id or ''),
+                    )
+                conn.execute(
+                    "UPDATE facts SET use_count = use_count + 1, last_used_at = datetime('now') "
+                    f"WHERE id IN ({','.join('?' * len(fact_ids))})",
+                    fact_ids,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+
+def get_context_block(max_facts: int = 20, query_text: str = '',
+                      session_id: str = '') -> str:
+    """Phase 3: 관련성 랭킹 주입. 실패 시 빈 문자열.
+
+    query_text에서 키워드를 추출해 facts를 랭킹 정렬 후 상위 max_facts건 주입.
+    주입 시 fact_usage에 기록(Phase 2-B).
+    내부 메타키('_' 접두사)는 주입에서 제외.
     """
     try:
-        facts = list_facts(limit=max_facts)
+        # 키워드 추출 (간단한 공백/쉼표 분리)
+        query_keywords = []
+        if query_text:
+            import re as _re2
+            tokens = _re2.findall(r'[\w가-힣]+', query_text.lower())
+            query_keywords = [t for t in tokens if len(t) >= 2][:20]
+
+        # 전체 facts 로드 (500건 이하라 가능)
+        all_facts = list_facts(limit=500, include_superseded=False)
         profile = get_profile()
+
+        # 랭킹 정렬
+        now_ts = time.time()
+        if query_keywords:
+            scored = [(f, _fact_score(f, query_keywords, now_ts)) for f in all_facts]
+            scored.sort(key=lambda x: x[1], reverse=True)
+        else:
+            # 폴백: 최근 순서 (키워드 추출 실패 시)
+            scored = [(f, 0.0) for f in all_facts]
+
+        # Phase 3-D: 카테고리별 쿼터
+        selected = []
+        cat_counts = {}
+        cat_quota = {'general': max(10, max_facts - 5), 'preference': 3, 'project': 2}
+        for f, sc in scored:
+            if len(selected) >= max_facts:
+                break
+            cat = f.get('category', 'general')
+            quota = cat_quota.get(cat, max_facts)
+            if cat_counts.get(cat, 0) >= quota:
+                continue
+            selected.append(f)
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+        # 사용 기록 (Phase 2-B)
+        injected_ids = [f['id'] for f in selected]
+        if injected_ids and session_id:
+            _record_fact_usage(injected_ids, session_id)
+
+        # 텍스트 조립
         parts = []
         if profile:
             prof_items = [(k, v) for k, v in profile.items() if not str(k).startswith('_')]
             if prof_items:
                 prof_lines = ', '.join(f'{k}: {v}' for k, v in prof_items[:30])
                 parts.append(f'[사용자 프로필] {prof_lines}')
-        if facts:
-            fact_lines = '; '.join(f['content'] for f in facts[:max_facts])
+        if selected:
+            fact_lines = '; '.join(f['content'] for f in selected)
             parts.append(f'[장기 기억] {fact_lines}')
         return '\n'.join(parts)
     except Exception:
@@ -433,16 +719,19 @@ def record_chat_activity() -> dict:
     return {'is_wakeup': is_wakeup, 'elapsed_seconds': elapsed, 'elapsed_hours': round(elapsed / 3600.0, 1)}
 
 
-def build_memory_prompt(max_facts: int = 20) -> str:
+def build_memory_prompt(max_facts: int = 20, query_text: str = '',
+                        session_id: str = '') -> str:
     """시스템 프롬프트에 주입할 장기 기억 블록을 만든다.
 
+    Phase 3: query_text(현재 사용자 메시지)로 관련성 랭킹 주입.
     매 채팅마다 마지막 활동 시각을 갱신하고, 8시간 이상 경과 후 재개 시
     'Wake-up' 강조 헤더를 붙여 이전 맥락·선호·약속을 자연스럽게 잇게 한다.
     기억이 하나도 없으면 빈 문자열. 실패해도 절대 예외를 던지지 않는다.
     """
     try:
         wakeup = record_chat_activity()
-        block = get_context_block(max_facts=max_facts)
+        block = get_context_block(max_facts=max_facts, query_text=query_text,
+                                  session_id=session_id)
         if not block:
             return ''
         if wakeup.get('is_wakeup'):
@@ -646,8 +935,44 @@ def _transcript(messages, max_turns: int = 20) -> str:
         return ''
 
 
+def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dict]:
+    """Phase 1-B: LLM으로 새 fact와 기존 facts의 의미 중복/모순 판정.
+
+    반환: {'action': 'duplicate'|'contradiction'|'new', 'fact_id': int|None}
+    실패 시 None (→ 신규 INSERT로 폴백).
+    """
+    try:
+        if not existing_facts:
+            return None
+        from api.dynamic.direct_calls import _call_direct
+        existing_lines = '\n'.join(
+            f"[id={f['id']}] {f['content']}" for f in existing_facts[:50]
+        )
+        prompt = (
+            '아래 "기존 기억" 목록과 "새 기억"을 비교하라.\n'
+            '- 의미적으로 동일한 내용이 이미 있으면: {"action": "duplicate", "fact_id": <id>}\n'
+            '- 기존 기억과 모순되면(새 내용이 더 최신 사실): {"action": "contradiction", "fact_id": <id>}\n'
+            '- 둘 다 아니면: {"action": "new", "fact_id": null}\n'
+            '반드시 JSON 객체 하나로만 응답하라.\n\n'
+            f'기존 기억:\n{existing_lines}\n\n'
+            f'새 기억: {new_content}'
+        )
+        raw = _call_direct(prompt)
+        obj = _parse_json_object(raw)
+        action = obj.get('action', 'new')
+        fact_id = obj.get('fact_id')
+        if action in ('duplicate', 'contradiction') and fact_id is not None:
+            return {'action': action, 'fact_id': int(fact_id)}
+        return {'action': 'new', 'fact_id': None}
+    except Exception:
+        return None
+
+
 def extract_and_store_facts(messages, source_session: Optional[str] = None) -> int:
-    """대화에서 장기 기억 facts를 추출해 저장. 반환: 저장된 fact 수."""
+    """대화에서 장기 기억 facts를 추출해 저장. 반환: 저장된 fact 수.
+
+    Phase 2-D: 같은 세션에서 추출된 facts끼리 derived_from 자동 연결.
+    """
     saved = 0
     try:
         transcript = _transcript(messages)
@@ -663,35 +988,50 @@ def extract_and_store_facts(messages, source_session: Optional[str] = None) -> i
         )
         raw = _call_direct(prompt)
         items = _parse_json_array(raw)
+        session_fact_ids = []
         for item in items:
             text = str(item).strip()
-            if text and add_fact(text, 'general', source_session) is not None:
+            if not text:
+                continue
+            # Phase 2-D: 같은 세션 facts끼리 derived_from 연결
+            derived = None
+            if session_fact_ids:
+                derived = ','.join(f'fact:{fid}' for fid in session_fact_ids)
+            new_id = add_fact(text, 'general', source_session, derived_from=derived)
+            if new_id is not None:
                 saved += 1
+                session_fact_ids.append(new_id)
     except Exception:
         pass
     return saved
 
 
 def update_profile_from_messages(messages) -> int:
-    """대화에서 사용자 프로필 key/value를 추출해 저장. 반환: 갱신된 키 수."""
+    """Phase 1-A: 정규 key로 프로필 추출/저장. 반환: 갱신된 키 수."""
     updated = 0
     try:
         transcript = _transcript(messages)
         if not transcript:
             return 0
         from api.dynamic.direct_calls import _call_direct
+        keys_hint = ', '.join(f'{k}({v})' for k, v in CANONICAL_PROFILE_KEYS.items())
         prompt = (
-            '다음 대화에서 사용자의 프로필 정보(이름, 직업, 선호 언어, 사용 도구, '
-            '목표 등)를 key/value로 추출하라. 반드시 JSON 객체로만 응답하라. '
-            '예: {"이름": "홍길동", "선호언어": "한국어"}. '
+            '다음 대화에서 사용자의 프로필 정보를 추출하라.\n'
+            f'반드시 아래 key 중 하나만 사용하라: {keys_hint}\n'
+            '해당하는 key가 없으면 그 항목은 생략하라.\n'
+            '반드시 JSON 객체로만 응답하라. '
+            '예: {"name": "홍길동", "preferred_language": "한국어"}. '
             '추출할 것이 없으면 빈 객체 {}를 반환하라.\n\n'
             f'대화:\n{transcript}'
         )
         raw = _call_direct(prompt)
         obj = _parse_json_object(raw)
         for k, v in (obj or {}).items():
-            if set_profile(str(k), str(v)):
-                updated += 1
+            # 정규 key 매핑 (LLM이 한글 key를 반환해도 매핑)
+            canonical = _normalize_profile_key(str(k))
+            if canonical and not canonical.startswith('_'):
+                if set_profile(canonical, str(v)):
+                    updated += 1
     except Exception:
         pass
     return updated
@@ -881,7 +1221,9 @@ def _dispatch_job(kind: str, payload_raw: Optional[str]) -> None:
             payload = {}
     if kind == 'session':
         _process_session_sync(payload)
-    # 향후 kind 추가: 'maintenance', 'backup' 등 (Always-on ①⑤⑥)
+    elif kind == 'refine':
+        _run_daily_refine()
+    # 향후 kind 추가: 'backup' 등
 
 
 def _process_session_sync(payload: dict) -> None:
@@ -903,31 +1245,320 @@ def _process_session_sync(payload: dict) -> None:
         pass
 
 
-def _run_maintenance() -> None:
-    """⑤ 가벼운 정리: facts가 상한(_MAX_FACTS)을 넘으면 오래된 것부터 삭제."""
+def _log_refine(action: str, fact_ids: list, detail: str = '') -> None:
+    """Phase 4-C: 정제 이력 기록."""
     try:
         with _db_lock:
             conn = _connect()
             try:
                 conn.execute(
-                    "DELETE FROM facts WHERE id NOT IN ("
-                    "  SELECT id FROM facts ORDER BY id DESC LIMIT ?"
-                    ")",
-                    (_MAX_FACTS,),
+                    'INSERT INTO refine_log (action, fact_ids, detail) VALUES (?,?,?)',
+                    (action, json.dumps(fact_ids, ensure_ascii=False), (detail or '')[:2000]),
                 )
                 conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: 재검토 큐 (memory_review)
+# ---------------------------------------------------------------------------
+
+def _create_review(kind: str, fact_ids: list, suggestion: str = '') -> Optional[int]:
+    """Phase 5-B: 재검토 큐에 항목 등록. kind: contradiction/merge_candidate/low_confidence."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    'INSERT INTO memory_review (kind, fact_ids, suggestion) VALUES (?,?,?)',
+                    (kind or 'contradiction',
+                     json.dumps(fact_ids or [], ensure_ascii=False),
+                     (suggestion or '')[:2000]),
+                )
+                conn.commit()
+                return cur.lastrowid
+            finally:
+                conn.close()
+    except Exception:
+        return None
+
+
+def list_reviews(status: Optional[str] = 'pending', limit: int = 50) -> list:
+    """Phase 5-C: 재검토 큐 목록. status=None이면 전체. 각 항목에 fact 내용 해석 포함."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                if status:
+                    rows = conn.execute(
+                        'SELECT * FROM memory_review WHERE status=? '
+                        'ORDER BY id DESC LIMIT ?',
+                        (status, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        'SELECT * FROM memory_review ORDER BY id DESC LIMIT ?',
+                        (limit,),
+                    ).fetchall()
+                out = []
+                for r in rows:
+                    item = dict(r)
+                    # fact_ids 해석 → 실제 fact 내용 첨부
+                    try:
+                        ids = json.loads(item.get('fact_ids') or '[]')
+                    except Exception:
+                        ids = []
+                    facts_detail = []
+                    for fid in ids:
+                        try:
+                            fr = conn.execute(
+                                'SELECT id, content, category, confidence, superseded_by '
+                                'FROM facts WHERE id=?', (int(fid),)
+                            ).fetchone()
+                            if fr:
+                                facts_detail.append(dict(fr))
+                        except Exception:
+                            pass
+                    item['facts'] = facts_detail
+                    out.append(item)
+                return out
             finally:
                 try:
                     conn.close()
                 except Exception:
                     pass
     except Exception:
+        return []
+
+
+def resolve_review(review_id, action: str) -> dict:
+    """Phase 5-C: 재검토 항목 처리. action='approve' → 제안 적용, 'reject' → 원복/무시.
+
+    kind별 approve 동작:
+    - contradiction: fact_ids=[old,new] → old에 superseded_by=new, confidence=0.3
+    - merge_candidate: fact_ids=[rep, ...others] → others를 rep로 병합(superseded)
+    - low_confidence: fact_ids=[id] → 해당 fact 삭제
+    """
+    result = {'ok': False, 'action': action, 'review_id': review_id}
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    'SELECT * FROM memory_review WHERE id=?', (int(review_id),)
+                ).fetchone()
+                if not row:
+                    result['error'] = 'review not found'
+                    return result
+                if row['status'] != 'pending':
+                    result['error'] = f"already {row['status']}"
+                    return result
+                kind = row['kind']
+                try:
+                    ids = json.loads(row['fact_ids'] or '[]')
+                    ids = [int(i) for i in ids]
+                except Exception:
+                    ids = []
+
+                if action == 'approve':
+                    if kind == 'contradiction' and len(ids) >= 2:
+                        old_id, new_id = ids[0], ids[1]
+                        conn.execute(
+                            'UPDATE facts SET superseded_by=?, confidence=0.3 WHERE id=?',
+                            (new_id, old_id),
+                        )
+                        result['applied'] = {'superseded': old_id, 'by': new_id}
+                    elif kind == 'merge_candidate' and len(ids) >= 2:
+                        rep, others = ids[0], ids[1:]
+                        for oid in others:
+                            conn.execute(
+                                'UPDATE facts SET superseded_by=? WHERE id=?',
+                                (rep, oid),
+                            )
+                        result['applied'] = {'kept': rep, 'superseded': others}
+                    elif kind == 'low_confidence' and len(ids) >= 1:
+                        conn.execute(
+                            f"DELETE FROM facts WHERE id IN ({','.join('?' * len(ids))})",
+                            ids,
+                        )
+                        result['applied'] = {'deleted': ids}
+                    conn.execute(
+                        "UPDATE memory_review SET status='approved' WHERE id=?",
+                        (int(review_id),),
+                    )
+                    result['ok'] = True
+                elif action == 'reject':
+                    # 거부: 모순인 경우 confidence 복원
+                    if kind == 'contradiction' and len(ids) >= 1:
+                        conn.execute(
+                            'UPDATE facts SET confidence=1.0 WHERE id=? AND superseded_by IS NULL',
+                            (ids[0],),
+                        )
+                    conn.execute(
+                        "UPDATE memory_review SET status='rejected' WHERE id=?",
+                        (int(review_id),),
+                    )
+                    result['ok'] = True
+                else:
+                    result['error'] = f'unknown action: {action}'
+                conn.commit()
+                return result
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        result['error'] = str(e)
+        return result
+
+
+def _run_maintenance() -> None:
+    """⑤ 가벼운 정리: 상한 삭제 + Phase 4 감쇠(decay)."""
+    try:
+        with _db_lock:
+            conn = _connect()
+            try:
+                # 상한 정리
+                conn.execute(
+                    "DELETE FROM facts WHERE id NOT IN ("
+                    "  SELECT id FROM facts ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (_MAX_FACTS,),
+                )
+                # Phase 4: 감쇠 — 30일 이상 미사용 fact는 confidence *= 0.8
+                conn.execute(
+                    "UPDATE facts SET confidence = confidence * 0.8 "
+                    "WHERE superseded_by IS NULL "
+                    "AND (last_used_at IS NULL OR last_used_at < datetime('now', '-30 days')) "
+                    "AND confidence > 0.1"
+                )
+                # 90일 이상 미사용 + confidence < 0.3 → 자동 삭제
+                deleted_rows = conn.execute(
+                    "SELECT id FROM facts WHERE superseded_by IS NULL "
+                    "AND confidence < 0.3 "
+                    "AND (last_used_at IS NULL OR last_used_at < datetime('now', '-90 days'))"
+                ).fetchall()
+                deleted_ids = [r['id'] for r in deleted_rows]
+                if deleted_ids:
+                    conn.execute(
+                        f"DELETE FROM facts WHERE id IN ({','.join('?' * len(deleted_ids))})",
+                        deleted_ids,
+                    )
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        if deleted_ids:
+            _log_refine('decay', deleted_ids, 'auto-deleted: confidence<0.3 & unused>90d')
+    except Exception:
+        pass
+
+
+def _run_daily_refine() -> None:
+    """Phase 4-B: 일일 심화 정제 — LLM으로 facts 클러스터링 → 병합 → 모순 해결."""
+    try:
+        facts = list_facts(limit=500, include_superseded=False)
+        if len(facts) < 10:
+            return
+        from api.dynamic.direct_calls import _call_direct
+
+        # 1) 의미적 클러스터링
+        facts_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in facts)
+        cluster_prompt = (
+            '아래 기억 항목들을 의미적으로 그룹화하라. 같은 주제의 항목끼리 묶어라.\n'
+            '반드시 JSON 배열의 배열로 응답하라. 예: [[1,5,12],[3,7],[2]]\n'
+            '그룹에 속하지 않는 항목은 단독 배열로. 모든 id를 포함하라.\n\n'
+            f'항목:\n{facts_text}'
+        )
+        raw = _call_direct(cluster_prompt)
+        clusters = _parse_json_array(raw)
+
+        # 2) 각 클러스터: 2건 이상이면 대표 fact로 병합
+        merged_count = 0
+        for cluster in clusters:
+            if not isinstance(cluster, list) or len(cluster) < 2:
+                continue
+            ids = [int(i) for i in cluster if isinstance(i, (int, float))]
+            if len(ids) < 2:
+                continue
+            cluster_facts = [f for f in facts if f['id'] in ids]
+            if len(cluster_facts) < 2:
+                continue
+            contents = '\n'.join(f"[id={f['id']}] {f['content']}" for f in cluster_facts)
+            merge_prompt = (
+                '아래 같은 주제의 기억 항목들을 하나의 문장으로 통합하라.\n'
+                '핵심 정보만 남기고 중복은 제거하라. 통합 문장만 출력하라.\n\n'
+                f'{contents}'
+            )
+            merged_text = (_call_direct(merge_prompt) or '').strip()
+            if not merged_text:
+                continue
+            # 대표 fact = 가장 use_count 높은 것, 없으면 첫 번째
+            rep = max(cluster_facts, key=lambda f: (f.get('use_count') or 0))
+            others = [f for f in cluster_facts if f['id'] != rep['id']]
+            with _db_lock:
+                conn = _connect()
+                try:
+                    conn.execute(
+                        'UPDATE facts SET content=? WHERE id=?',
+                        (merged_text, rep['id']),
+                    )
+                    for o in others:
+                        conn.execute(
+                            'UPDATE facts SET superseded_by=? WHERE id=?',
+                            (rep['id'], o['id']),
+                        )
+                    conn.commit()
+                finally:
+                    conn.close()
+            merged_count += 1
+            _log_refine('merge', [rep['id']] + [o['id'] for o in others], merged_text)
+
+        # 3) 모순 감지
+        active_facts = list_facts(limit=500, include_superseded=False)
+        if len(active_facts) >= 2:
+            af_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in active_facts)
+            contra_prompt = (
+                '아래 기억 항목 중 서로 모순되는 쌍을 찾아라.\n'
+                '반드시 JSON 배열로 응답하라. 각 요소는 [오래된_id, 최신_id] 쌍.\n'
+                '모순이 없으면 빈 배열 []을 반환하라.\n\n'
+                f'{af_text}'
+            )
+            raw2 = _call_direct(contra_prompt)
+            contradictions = _parse_json_array(raw2)
+            for pair in contradictions:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    continue
+                old_id, new_id = int(pair[0]), int(pair[1])
+                # Phase 5: 자동 처리 대신 재검토 큐에 등록 (사람 승인 대기)
+                old_content = next((f['content'] for f in active_facts if f['id'] == old_id), '')
+                new_content = next((f['content'] for f in active_facts if f['id'] == new_id), '')
+                suggestion = f"기존: '{old_content[:100]}' / 신규: '{new_content[:100]}' → 기존 항목을 대체 제안"
+                _create_review('contradiction', [old_id, new_id], suggestion)
+                _log_refine('contradiction_detected', [old_id, new_id], 'queued for review')
+    except Exception:
         pass
 
 
 def _run_daily() -> None:
-    """⑤⑥ 일일 정비: WAL 체크포인트 → 백업 복사 → VACUUM."""
+    """⑤⑥ 일일 정비: 심화 정제 → WAL 체크포인트 → 백업 → VACUUM."""
     try:
+        # 0) Phase 4-B: 심화 정제 (LLM 호출)
+        try:
+            _run_daily_refine()
+        except Exception:
+            pass
         # 1) WAL을 본 DB에 반영(백업 정합성) + 용량 축소
         with _db_lock:
             conn = _connect()
