@@ -93,6 +93,7 @@ toolsets:
     - "delegation"
     - "file"
     - "image_gen"
+    - "video_gen"
     - "memory"
     - "session_search"
     - "skills"

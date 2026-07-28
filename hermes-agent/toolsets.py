@@ -35,8 +35,9 @@ _HERMES_CORE_TOOLS = [
     "terminal", "process",
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
-    # Vision + image generation
+    # Vision + image generation + video generation
     "vision_analyze", "image_generate",
+    "video_generate", "video_extract_frames",
     # Skills
     "skills_list", "skill_view", "skill_manage",
     # Browser automation
@@ -90,6 +91,12 @@ TOOLSETS = {
     "image_gen": {
         "description": "Creative generation tools (images)",
         "tools": ["image_generate"],
+        "includes": []
+    },
+    
+    "video_gen": {
+        "description": "Video generation tools (image-to-video with frame-locking for seamless chains)",
+        "tools": ["video_generate", "video_extract_frames"],
         "includes": []
     },
     

@@ -1,0 +1,35 @@
+name: scroll-world
+category: Creative
+version: '1.0'
+description: 스크롤로 카메라가 날아다니는 3D 월드 랜딩 페이지를 생성한다
+priority: normal
+capabilities:
+- scroll_world_generation
+- scene_storyboard
+- seamless_chain
+- scrub_engine_assembly
+knowledge:
+- prompts
+- examples
+- templates
+trigger:
+- scroll world
+- 스크롤 월드
+- 3d world landing
+- diorama landing
+- scroll cinematic
+- fly through
+- 스크롤 랜딩
+- 월드 랜딩
+tags:
+- creative
+- landing-page
+- scroll-animation
+- video-generation
+- image-generation
+when_to_use: 스크롤 기반 카메라 비행 랜딩 페이지, 아이소메트릭 디오라마 월드, 브랜드/산업 소개용 스크롤 시네마틱 페이지 제작 시
+when_not_to_use: 일반 정적 랜딩 페이지, 비디오 편집, 3D 모델링(Blender 등), 단순 이미지 생성
+inputs: 주제/산업, 브랜드킷(색상/이름/톤), 장면 목록, 아트 디렉션 선호
+outputs: 완성된 HTML 랜딩 페이지 (스크롤 스크럽 엔진 + 생성된 비디오/이미지 에셋)
+constraints: FAL_KEY 환경변수 필요, 장면당 이미지 1장 + 비디오 2개 생성 (비용 발생), ffmpeg PATH 필요
+success_criteria: 심리스 장면 전환(프레임 동일), 스크롤 반응성, 모바일 대응, 크로스 브라우저 호환
