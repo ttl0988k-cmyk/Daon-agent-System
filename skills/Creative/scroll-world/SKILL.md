@@ -24,18 +24,36 @@ Apple 제품 페이지의 스크롤 애니메이션과 동일한 기법 — 카�
 | `terminal` | ffmpeg 인코딩, 파일 관리 |
 | `write_file` | 최종 HTML/JS/CSS 조립 |
 
-외부 CLI 불필요. FAL_KEY 환경변수만 있으면 시스템 안에서完결.
+외부 CLI 불필요. 시스템 안에서 완결.
+
+### 비디오 프로바이더 (우선순위 자동 선택)
+
+| 우선순위 | 프로바이더 | 인증 | 과금 | frame-lock |
+|----------|-----------|------|------|------------|
+| 1 | **MiniMax** (Hailuo) | `MINIMAX_API_KEY` | 구독 포함 | ✅ first+last |
+| 2 | **DashScope** (Qwen/Wan 2.7) | `DASHSCOPE_API_KEY` | 구독 포함 | ✅ first+last |
+| 3 | **FAL.ai** (Kling, Luma, Seedance) | `FAL_KEY` | 크레딧 차감 | ✅ 모델별 |
+
+`video_generate`가 자동으로 사용 가능한 프로바이더를 선택합니다.
+`model_override` 파라미터로 강제 지정도 가능:
+- `"minimax:I2V-01-Director"` — MiniMax 디렉터 모드
+- `"dashscope:wanx2.7-i2v-turbo"` — Wan 2.7
+- `"fal-ai/kling-video/v2.5-turbo/pro/image-to-video"` — FAL Kling
 
 ---
 
 ## Step 0 — 사전 확인
 
-1. **FAL_KEY** 확인: `echo %FAL_KEY%` (Windows) 또는 `echo $FAL_KEY`
+1. **비디오 프로바이더** 확인 (하나라도 있으면 OK):
+   - `echo %MINIMAX_API_KEY%` — MiniMax 구독
+   - `echo %DASHSCOPE_API_KEY%` — Qwen/DashScope 구독
+   - `echo %FAL_KEY%` — FAL.ai 크레딧
 2. **ffmpeg** 확인: `ffmpeg -version`
 3. 사용자에게 비용 안내:
    - N개 장면 = N 이미지 생성 + N 다이브인 클립 + (N-1) 커넥터 클립
    - 총 비디오 생성: 2N-1개
-   - 예상 비용: 모델에 따라 클립당 $0.15~$0.70
+   - **MiniMax/DashScope 구독 시**: 비디오 생성 비용 $0 (구독 포함)
+   - FAL.ai 사용 시: 클립당 $0.15~$0.70
 
 ---
 
@@ -132,8 +150,11 @@ video_generate(
 ### ⚠️ 심 규칙
 - `image_url` = 이전 다이브인 클립의 **마지막 프레임** (Step 4에서 추출)
 - `end_image_url` = 다음 장면의 **스틸** (Step 2에서 생성)
-- **반드시 frame-lock 지원 모델 사용** (Kling 2.5, Luma, Seedance)
-- frame-lock 미지원 모델(Wan, MiniMax)은 커넥터에 사용 금지
+- **반드시 frame-lock 지원 모델 사용**:
+  - MiniMax I2V Director ✅ (first+last frame)
+  - DashScope Wan 2.7 ✅ (first+last frame)
+  - FAL: Kling 2.5, Luma, Seedance ✅
+  - FAL: Wan 2.1 ❌ (start frame만)
 
 ### 결과
 - connector_01.mp4, connector_02.mp4, ... connector_(N-1).mp4
@@ -258,15 +279,26 @@ if (localTime > clip.duration - crossfadeDuration) {
 
 | 문제 | 원인 | 해결 |
 |------|------|------|
-| 심에서 "팝" | frame-lock 미지원 모델 사용 | Kling/Luma/Seedance로 교체 |
+| 심에서 "팝" | frame-lock 미지원 모델 사용 | MiniMax Director / Wan 2.7 / Kling / Luma / Seedance로 교체 |
 | iOS 검은 화면 | muted video 미재생 시 프레임 미렌더 | poster 유지 + touch priming |
 | 모바일 버벅임 | 1080p 디코딩 과부하 | 720p + GOP 4 인코딩 |
 | NSFW 필터 차단 | 실내/수영장 등 트리거 단어 | "empty, architectural, no people" 추가 |
 | 스크롤 점프 | URL바 show/hide resize | width 변경만 감지하도록 게이트 |
+| MiniMax 401 | API 키 만료/잘못됨 | MiniMax 대시보드에서 키 재발급 |
+| DashScope 429 | 동시 요청 제한 | 폴링 간격 증가 또는 순차 실행 |
 
 ---
 
-## 비용 참고 (FAL.ai 기준)
+## 비용 참고
+
+### 구독 기반 (추천 — 비디오 비용 $0)
+
+| 프로바이더 | 모델 | frame-lock | 비용 |
+|-----------|------|------------|------|
+| MiniMax | I2V-01-Director | ✅ | 구독 포함 |
+| DashScope | Wan 2.7 I2V Turbo | ✅ | 구독 포함 |
+
+### FAL.ai 크레딧 (구독 없을 때)
 
 | 모델 | 용도 | 클립당 비용 |
 |------|------|------------|
@@ -275,4 +307,6 @@ if (localTime > clip.duration - crossfadeDuration) {
 | Luma Dream Machine | 커넥터 대안 | ~$0.25 |
 | Seedance 2.0 | 커넥터 대안 | ~$0.30 |
 
-5개 장면 기준: 5 스틸 + 9 비디오 ≈ **$3.5~$6.5**
+5개 장면 기준:
+- **구독 시**: 5 스틸 (이미지 비용만) ≈ **$0.03**
+- **FAL.ai 시**: 5 스틸 + 9 비디오 ≈ **$3.5~$6.5**
