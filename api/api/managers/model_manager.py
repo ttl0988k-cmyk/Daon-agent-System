@@ -24,7 +24,7 @@ _PROVIDER_PRESETS = {
     'nvidia':      {'base_url': 'https://integrate.api.nvidia.com/v1', 'label': 'NVIDIA NIM'},
     'xai':         {'base_url': 'https://api.x.ai/v1',                'label': 'xAI'},
     'zhipu':       {'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'label': 'ZhipuAI'},
-    'dashscope':   {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'label': 'DashScope (Qwen)'},
+    'dashscope':   {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'label': 'Alibaba Cloud (DashScope/Qwen)'},
 }
 
 # ── File path for custom providers ──
