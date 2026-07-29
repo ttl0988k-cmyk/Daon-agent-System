@@ -52,6 +52,11 @@ from api.routes.admin_routes import (
     handle_post_cron_resume,
     handle_post_auth_login,
     handle_post_auth_logout,
+    handle_get_patches,
+    handle_post_patch_register,
+    handle_post_patch_delete,
+    handle_post_patch_update,
+    handle_post_patch_seed,
 )
 from api.routes.session_routes import (
     handle_get_session,
@@ -369,6 +374,10 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == '/api/memory/reviews':
         return handle_get_memory_reviews(handler, parsed)
 
+    # ── Patch Registry API (GET) ──
+    if parsed.path == '/api/patches':
+        return handle_get_patches(handler, parsed)
+
     # ── System Status API (GET) — Always-on ⑦ 관측성 ──
     if parsed.path == '/api/system/status':
         return handle_get_system_status(handler, parsed)
@@ -632,6 +641,16 @@ def handle_post(handler, parsed) -> bool:
         return handle_post_memory_profile_set(handler, body)
     if parsed.path == '/api/memory/review/resolve':
         return handle_post_memory_review_resolve(handler, body)
+
+    # ── Patch Registry API (POST) ──
+    if parsed.path == '/api/patches/register':
+        return handle_post_patch_register(handler, body)
+    if parsed.path == '/api/patches/delete':
+        return handle_post_patch_delete(handler, body)
+    if parsed.path == '/api/patches/update':
+        return handle_post_patch_update(handler, body)
+    if parsed.path == '/api/patches/seed':
+        return handle_post_patch_seed(handler, body)
 
     # ── Agent Messaging API (POST) — 에이전트 간 메시지 발송 ──
     if parsed.path == '/api/agent/message':

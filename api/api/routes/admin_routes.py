@@ -876,3 +876,138 @@ def handle_post_auth_logout(handler, body) -> bool:
     except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
         pass  # Client disconnected before response could be sent
     return True
+
+
+# ── Patch Registry API ──
+
+def handle_get_patches(handler, parsed) -> bool:
+    """GET /api/patches — 등록된 패치 목록. ?file=PATH 로 필터 가능."""
+    try:
+        from api.patch_registry import query_patches, query_all_patches
+        qs = parse_qs(parsed.query)
+        file_path = qs.get('file', [''])[0]
+        if file_path:
+            patches = query_patches(file_path)
+        else:
+            patches = query_all_patches()
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': True, 'patches': patches, 'count': len(patches)}).encode())
+    except Exception as e:
+        handler.send_response(500)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+    return True
+
+
+def handle_post_patch_register(handler, body) -> bool:
+    """POST /api/patches/register — 새 패치 등록."""
+    try:
+        from api.patch_registry import register_patch
+        file_path = body.get('file_path', '')
+        description = body.get('description', '')
+        if not file_path or not description:
+            handler.send_response(400)
+            handler.send_header('Content-Type', 'application/json')
+            _security_headers(handler)
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'ok': False, 'error': 'file_path and description required'}).encode())
+            return True
+        pid = register_patch(
+            file_path, description,
+            commit_hash=body.get('commit_hash', ''),
+            reason=body.get('reason', ''),
+            reverts_if=body.get('reverts_if', ''),
+            related_files=body.get('related_files'),
+            line_hint=body.get('line_hint', ''),
+        )
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': True, 'patch_id': pid}).encode())
+    except Exception as e:
+        handler.send_response(500)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+    return True
+
+
+def handle_post_patch_delete(handler, body) -> bool:
+    """POST /api/patches/delete — 패치 삭제."""
+    try:
+        from api.patch_registry import delete_patch
+        patch_id = body.get('patch_id')
+        if not patch_id:
+            handler.send_response(400)
+            handler.send_header('Content-Type', 'application/json')
+            _security_headers(handler)
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'ok': False, 'error': 'patch_id required'}).encode())
+            return True
+        ok = delete_patch(patch_id)
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': ok}).encode())
+    except Exception as e:
+        handler.send_response(500)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+    return True
+
+
+def handle_post_patch_update(handler, body) -> bool:
+    """POST /api/patches/update — 패치 수정 (description, reason, active 등)."""
+    try:
+        from api.patch_registry import update_patch
+        patch_id = body.get('patch_id')
+        if not patch_id:
+            handler.send_response(400)
+            handler.send_header('Content-Type', 'application/json')
+            _security_headers(handler)
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'ok': False, 'error': 'patch_id required'}).encode())
+            return True
+        fields = {k: v for k, v in body.items() if k != 'patch_id'}
+        ok = update_patch(patch_id, **fields)
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': ok}).encode())
+    except Exception as e:
+        handler.send_response(500)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+    return True
+
+
+def handle_post_patch_seed(handler, body) -> bool:
+    """POST /api/patches/seed — 알려진 패치 시드 실행."""
+    try:
+        from api.patch_registry import seed_known_patches
+        count = seed_known_patches()
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': True, 'seeded': count}).encode())
+    except Exception as e:
+        handler.send_response(500)
+        handler.send_header('Content-Type', 'application/json')
+        _security_headers(handler)
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+    return True

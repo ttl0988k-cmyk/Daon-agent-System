@@ -548,6 +548,19 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               except Exception:
                   pass  # api.approval not available
 
+              # ── Patch Registry: 파일 편집 전 등록된 패치 경고 주입 ──
+              if event_type == 'tool.started' and tool_name in ('write_file', 'write_to_file', 'patch', 'apply_diff') and isinstance(args, dict):
+                  try:
+                      from api.patch_registry import get_warning_block
+                      _patch_target = args.get('path') or args.get('file_path') or ''
+                      if _patch_target:
+                          _patch_warning = get_warning_block(_patch_target)
+                          if _patch_warning:
+                              put('patch_warning', {'path': _patch_target, 'warning': _patch_warning, 'tool': tool_name})
+                              print(f"[PatchRegistry] ⚠️ warning injected for {_patch_target} (tool={tool_name})", flush=True)
+                  except Exception as _pr_e:
+                      print(f"[PatchRegistry] WARNING: hook failed: {_pr_e}", flush=True)
+
           if AIAgent is None:
               raise ImportError("AIAgent not available -- check that hermes-agent is on sys.path")
 
@@ -863,6 +876,97 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _tb.print_exc()
           # ========================================================
 
+          # === [Patch Registry] 에이전트 도구 주입: query_patches / register_patch ===
+          try:
+              from api.patch_registry import query_patches as _pr_query, register_patch as _pr_register, query_all_patches as _pr_query_all
+              from tools.registry import registry as _pr_registry
+
+              # 1) query_patches 도구
+              _pr_query_schema = {
+                  "type": "function",
+                  "function": {
+                      "name": "query_patches",
+                      "description": "Query registered load-bearing patches for a file. Returns warnings about code that must NOT be reverted. Use before editing any file to check for protected patches.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {
+                              "file_path": {"type": "string", "description": "Relative file path to query patches for (e.g. 'api/api/streaming.py')"},
+                          },
+                          "required": ["file_path"]
+                      }
+                  }
+              }
+              agent.tools.append(_pr_query_schema)
+              agent.valid_tool_names.add("query_patches")
+
+              def _pr_query_handler(args: dict, **kwargs) -> str:
+                  import json as _json
+                  fp = args.get('file_path', '')
+                  results = _pr_query(fp)
+                  if not results:
+                      return _json.dumps({"patches": [], "message": f"No registered patches for {fp}"}, ensure_ascii=False)
+                  return _json.dumps({"patches": results, "count": len(results)}, ensure_ascii=False)
+
+              _pr_registry.register(
+                  name="query_patches",
+                  toolset="patch-registry",
+                  schema={"name": "query_patches", "description": "Query registered patches for a file", "parameters": _pr_query_schema["function"]["parameters"]},
+                  handler=_pr_query_handler,
+                  check_fn=lambda: True,
+                  is_async=False,
+                  description="Query registered load-bearing patches for a file",
+              )
+
+              # 2) register_patch 도구
+              _pr_register_schema = {
+                  "type": "function",
+                  "function": {
+                      "name": "register_patch",
+                      "description": "Register a load-bearing patch that must NOT be reverted. Call this after making an important fix so future edits are warned.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {
+                              "file_path": {"type": "string", "description": "Relative file path the patch applies to"},
+                              "description": {"type": "string", "description": "What the patch does (e.g. 'str type guard for models list')"},
+                              "reason": {"type": "string", "description": "Why this patch exists and why reverting it would break things"},
+                              "commit_hash": {"type": "string", "description": "Git commit hash if available"},
+                          },
+                          "required": ["file_path", "description"]
+                      }
+                  }
+              }
+              agent.tools.append(_pr_register_schema)
+              agent.valid_tool_names.add("register_patch")
+
+              def _pr_register_handler(args: dict, **kwargs) -> str:
+                  import json as _json
+                  fp = args.get('file_path', '')
+                  desc = args.get('description', '')
+                  reason = args.get('reason', '')
+                  commit = args.get('commit_hash', '')
+                  if not fp or not desc:
+                      return _json.dumps({"error": "file_path and description are required"}, ensure_ascii=False)
+                  pid = _pr_register(fp, desc, commit_hash=commit, reason=reason)
+                  if pid:
+                      return _json.dumps({"ok": True, "patch_id": pid, "message": f"Patch registered for {fp}"}, ensure_ascii=False)
+                  return _json.dumps({"error": "Failed to register patch"}, ensure_ascii=False)
+
+              _pr_registry.register(
+                  name="register_patch",
+                  toolset="patch-registry",
+                  schema={"name": "register_patch", "description": "Register a load-bearing patch", "parameters": _pr_register_schema["function"]["parameters"]},
+                  handler=_pr_register_handler,
+                  check_fn=lambda: True,
+                  is_async=False,
+                  description="Register a load-bearing patch that must not be reverted",
+              )
+
+              _pr_registry.register_toolset_alias("patches", "patch-registry")
+              print(f"[PatchRegistry] ✅ Injected query_patches + register_patch tools into agent.", flush=True)
+          except Exception as _pr_inj_e:
+              print(f"[PatchRegistry] WARNING: tool injection failed: {_pr_inj_e}", flush=True)
+          # ========================================================
+
           # Prepend workspace context so the agent always knows which directory
           # to use for file operations, regardless of session age or AGENTS.md defaults.
           import platform as _platform
@@ -940,6 +1044,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   workspace_system_msg += "\n\n" + _memory_prompt
           except Exception as _mem_e:
               print(f"[webui] WARNING: memory prompt injection failed: {_mem_e}", flush=True)
+
+          # ── Patch Registry: 시스템 프롬프트에 패치 인식 블록 주입 ──
+          try:
+              from api.patch_registry import get_system_prompt_block
+              _patch_prompt = get_system_prompt_block()
+              if _patch_prompt:
+                  workspace_system_msg += "\n\n" + _patch_prompt
+          except Exception as _pr_prompt_e:
+              print(f"[webui] WARNING: patch registry prompt injection failed: {_pr_prompt_e}", flush=True)
 
           # ── 에이전트 간 메시징: 활성 프로필(페르소나)의 수신함을 주입 ──
           # 다른 에이전트(Dynamic Harness 노드 또는 채팅)가 이 프로필 앞으로 보낸
