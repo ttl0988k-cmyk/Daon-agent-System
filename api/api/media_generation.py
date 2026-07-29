@@ -40,6 +40,18 @@ def detect_model_type(model_id: str) -> str:
     if not model_id:
         return 'chat'
     lower = model_id.lower()
+    # Suffix-based detection (e.g., wan2.7-image, wan2.7-video, flux-image)
+    if lower.endswith(('-image', '_image', '-img', '_img')):
+        return 'image'
+    if lower.endswith(('-video', '_video', '-vid', '_vid')):
+        return 'video'
+    # Segment-based detection (e.g., agnes-image-2.0-flash, wan-video-v2)
+    import re
+    _segments = set(re.split(r'[-_.]', lower))
+    if _segments & {'image', 'img'}:
+        return 'image'
+    if _segments & {'video', 'vid'}:
+        return 'video'
     for pat in _IMAGE_PATTERNS:
         if pat in lower:
             return 'image'
