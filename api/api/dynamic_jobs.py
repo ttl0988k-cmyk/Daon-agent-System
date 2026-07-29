@@ -222,6 +222,11 @@ def start_harness_job(body: dict) -> str:
                         # Record answers
                         state["qa_history"][-1]["answers"] = answers
 
+                        # Immediately clear 'clarifying' status so frontend doesn't
+                        # re-render the same questions while LLM evaluation is running
+                        set_job_running(run_id)
+                        log_callback("CEO", "🤔 답변 평가 중...", "running")
+
                         # Evaluate sufficiency
                         evaluation = evaluate_answers(task, state["qa_history"], state["turn"], preferred_model)
 

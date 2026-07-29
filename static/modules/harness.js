@@ -354,7 +354,8 @@ function _showClarificationUI(runId, clarification) {
       cardEl.style.opacity = '0.6';
       cardEl.querySelectorAll('textarea').forEach(ta => ta.disabled = true);
       logToConsole('✅ 답변이 제출되었습니다. CEO가 평가 중...', 'info');
-      pollHarnessStatus(runId);
+      // Delay polling to let backend transition status from 'clarifying' → 'running'
+      setTimeout(() => pollHarnessStatus(runId), 1500);
     } catch (err) {
       logToConsole(`❌ 답변 제출 실패: ${err.message}`, 'error');
       submitBtn.disabled = false;
