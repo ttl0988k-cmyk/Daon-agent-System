@@ -161,10 +161,18 @@ class SkillRegistry:
         self._skills.clear()
         self._all_entries.clear()
 
-        # 1. Curated skills (project/skills/) — always trusted
+        # 1. Curated skills (api/skills/) — always trusted
         curated_dir = _resolve_skills_dir()
         if curated_dir.exists():
             self._scan_directory(curated_dir, source="curated")
+
+        # 1b. Project root skills/ — workspace-level curated skills (e.g. Creative/scroll-world)
+        try:
+            project_root_skills = Path(__file__).resolve().parent.parent.parent / "skills"
+            if project_root_skills.exists() and project_root_skills.resolve() != curated_dir.resolve():
+                self._scan_directory(project_root_skills, source="curated")
+        except Exception:
+            pass
 
         # 2. Auto-distilled skills (global + profile-specific) — lifecycle-managed
         for auto_dir in _get_all_auto_skills_dirs():

@@ -95,8 +95,21 @@ class MCPServerConnection:
                 import shutil
                 resolved_cmd = shutil.which(self.command) or self.command
 
+                # ── Python 스크립트 경로 보정 ──
+                # args에 상대 경로 .py 파일이 있으면 실제 존재하는 경로로 보정
+                _fixed_args = list(self.args)
+                for _ai, _arg in enumerate(_fixed_args):
+                    if _arg.endswith('.py') and '/' in _arg.replace('\\', '/'):
+                        _norm = _arg.replace('\\', '/')
+                        if not _os.path.isfile(_norm):
+                            # api/mcp/x.py → api/api/mcp/x.py 보정
+                            _alt = 'api/' + _norm if not _norm.startswith('api/api/') else _norm
+                            if _os.path.isfile(_alt):
+                                _fixed_args[_ai] = _alt
+                                _logger.info("MCP path fixup: %s → %s", _arg, _alt)
+
                 self.process = subprocess.Popen(
-                    [resolved_cmd] + self.args,
+                    [resolved_cmd] + _fixed_args,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
