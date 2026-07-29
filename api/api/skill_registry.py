@@ -323,6 +323,9 @@ class SkillRegistry:
                 parent_name = md_file.parent.parent.name
                 if parent_name and parent_name not in self._SKIP_DIRS:
                     category = parent_name
+            # Normalize category so 'creative' == 'Creative' (first letter uppercase)
+            if category and category != "general":
+                category = category[0].upper() + category[1:]
 
             entry = SkillEntry(
                 name=meta.get("name", name),
