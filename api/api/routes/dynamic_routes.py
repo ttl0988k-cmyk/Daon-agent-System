@@ -107,11 +107,20 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
         message = f"[{agent_id}] {content}" if agent_id else content
         logs.append({"message": message, "type": log_type})
 
+    # Build agent_cards from logs: group by agent_id, keep latest content
+    agent_cards = {}
+    for entry in raw_logs:
+        aid = entry.get("agent_id", "")
+        if not aid:
+            continue
+        agent_cards[aid] = {"status": entry.get("content", ""), "log_status": entry.get("status", "running")}
+
     resp = {
         "run_id": run_id,
         "status": frontend_status,
         "elapsed": round(__import__("time").time() - job.get("started_at", 0), 1),
         "logs": logs,
+        "agent_cards": agent_cards,
     }
 
     if frontend_status == "completed":

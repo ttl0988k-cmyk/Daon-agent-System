@@ -209,6 +209,7 @@ async function runDynamicHarness() {
         task: taskText,
         workspace: State.activeWorkspacePath || '',
         model: State.activeModelId || '',
+        planning_mode: true,
       },
     });
 
@@ -241,7 +242,12 @@ async function pollHarnessStatus(runId) {
         $('runHarnessBtn').disabled = false;
         $('cancelHarnessBtn').style.display = 'none';
         if (res.result) {
-          logToConsole(JSON.stringify(res.result, null, 2), 'info');
+          const consoleEl = $('harnessConsole');
+          const resultEl = document.createElement('div');
+          resultEl.className = 'harness-result-output';
+          resultEl.innerHTML = '<div class="harness-result-header">📄 최종 결과물</div>' + renderMd(res.result);
+          consoleEl.appendChild(resultEl);
+          scrollToHarnessBottom();
         }
         return;
       }
