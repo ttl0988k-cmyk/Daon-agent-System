@@ -79,7 +79,15 @@ class Session:
         p = SESSION_DIR / f'{sid}.json'
         if not p.exists():
             return None
-        return cls(**json.loads(p.read_text(encoding='utf-8')))
+        try:
+            raw = p.read_text(encoding='utf-8').strip()
+            if not raw:
+                _logger.warning("Session file %s is empty, skipping", p.name)
+                return None
+            return cls(**json.loads(raw))
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            _logger.warning("Session file %s is corrupted (%s), skipping", p.name, e)
+            return None
 
     def compact(self) -> dict:
         return {
