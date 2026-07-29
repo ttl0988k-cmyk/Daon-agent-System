@@ -102,11 +102,30 @@ class MCPServerConnection:
                     if _arg.endswith('.py') and '/' in _arg.replace('\\', '/'):
                         _norm = _arg.replace('\\', '/')
                         if not _os.path.isfile(_norm):
-                            # api/mcp/x.py → api/api/mcp/x.py 보정
+                            # 후보 경로 목록 생성
+                            _candidates = []
+                            # 1) api/mcp/x.py → api/api/mcp/x.py
                             _alt = 'api/' + _norm if not _norm.startswith('api/api/') else _norm
-                            if _os.path.isfile(_alt):
-                                _fixed_args[_ai] = _alt
-                                _logger.info("MCP path fixup: %s → %s", _arg, _alt)
+                            _candidates.append(_alt)
+                            # 2) sys._MEIPASS 기준 (PyInstaller frozen)
+                            _meipass = getattr(sys, '_MEIPASS', None)
+                            if _meipass:
+                                _candidates.append(_os.path.join(_meipass, _norm))
+                                _candidates.append(_os.path.join(_meipass, _alt))
+                            # 3) exe 디렉토리 기준
+                            if getattr(sys, 'frozen', False):
+                                _exe_dir = _os.path.dirname(sys.executable)
+                                _candidates.append(_os.path.join(_exe_dir, _norm))
+                                _candidates.append(_os.path.join(_exe_dir, _alt))
+                            # 4) 프로젝트 루트 (server.py 위치 기준)
+                            _proj_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+                            _candidates.append(_os.path.join(_proj_root, _norm))
+                            _candidates.append(_os.path.join(_proj_root, _alt))
+                            for _c in _candidates:
+                                if _os.path.isfile(_c):
+                                    _fixed_args[_ai] = _c
+                                    _logger.info("MCP path fixup: %s → %s", _arg, _c)
+                                    break
 
                 self.process = subprocess.Popen(
                     [resolved_cmd] + _fixed_args,
