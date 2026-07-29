@@ -235,6 +235,7 @@ from api.routes.dynamic_routes import (
     handle_post_dynamic_run,
     handle_get_dynamic_status,
     handle_post_dynamic_approve,
+    handle_post_dynamic_answer,
     handle_post_dynamic_cancel,
 )
 from api.routes.style_card_routes import (
@@ -907,6 +908,8 @@ def handle_post(handler, parsed) -> bool:
         return handle_post_dynamic_run(handler, body)
     if parsed.path.startswith('/api/dynamic/approve'):
         return handle_post_dynamic_approve(handler, body, parsed)
+    if parsed.path.startswith('/api/dynamic/answer'):
+        return handle_post_dynamic_answer(handler, body, parsed)
     if parsed.path.startswith('/api/dynamic/cancel'):
         return handle_post_dynamic_cancel(handler, body, parsed)
 

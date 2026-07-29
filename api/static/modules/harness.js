@@ -16,11 +16,16 @@ function initResizers() {
     const leftResizerCol = State.leftPanelVisible ? '6px' : '0px';
     const rightResizerCol = State.rightPanelVisible ? '6px' : '0px';
     const rightCol = State.rightPanelVisible ? `${rightWidth}px` : '0px';
-    // 초보자 모드: middle(탐색기/에디터)을 0으로 접고 채팅(right)을 전면(1fr)으로
-    const midCol = State.beginnerMode ? '0px' : '1fr';
+    // 초보자 모드: explorerVisible이면 탐색기만(260px), 아니면 0. 채팅은 항상 1fr
+    const beginnerExplorerOnly = State.beginnerMode && State.explorerVisible;
+    const midCol = State.beginnerMode ? (beginnerExplorerOnly ? '260px' : '0px') : '1fr';
     const rResCol = State.beginnerMode ? '0px' : rightResizerCol;
     const rCol = State.beginnerMode ? '1fr' : rightCol;
     container.style.gridTemplateColumns = `${leftCol} ${leftResizerCol} ${midCol} ${rResCol} ${rCol}`;
+
+    // 초보자 모드에서 탐색기만 열 때 에디터 영역 숨김
+    const editorArea = document.querySelector('.editor-area');
+    if (editorArea) editorArea.style.display = (State.beginnerMode && State.explorerVisible) ? 'none' : '';
 
     const leftPanelEl = document.querySelector('.left-panel');
     if (leftPanelEl) leftPanelEl.style.display = State.leftPanelVisible ? 'flex' : 'none';
@@ -257,6 +262,13 @@ async function pollHarnessStatus(runId) {
         return;
       }
 
+      if (res.status === 'clarifying') {
+        clearInterval(State.harnessPollInterval);
+        State.harnessPollInterval = null;
+        _showClarificationUI(runId, res.clarification);
+        return;
+      }
+
       if (res.logs && res.logs.length > State.harnessLogCursor) {
         for (let i = State.harnessLogCursor; i < res.logs.length; i++) {
           const entry = res.logs[i];
@@ -281,6 +293,77 @@ async function pollHarnessStatus(runId) {
       logToConsole(`⚠️ 상태 확인 오류: ${err.message}`, 'error');
     }
   }, 1000);
+}
+
+function _showClarificationUI(runId, clarification) {
+  const consoleEl = $('harnessConsole');
+  if (!consoleEl) return;
+
+  const questions = (clarification && clarification.questions) || [];
+  const turn = (clarification && clarification.turn) || 1;
+  if (questions.length === 0) {
+    pollHarnessStatus(runId);
+    return;
+  }
+
+  logToConsole(`\n🤔 CEO 에이전트가 의도를 확인합니다 (턴 ${turn})`, 'info');
+
+  const cardEl = document.createElement('div');
+  cardEl.className = 'clarification-card';
+  cardEl.style.cssText = 'margin:12px 0;padding:16px;border:1px solid var(--border-color,#444);border-radius:8px;background:var(--bg-secondary,#1e1e2e);';
+
+  let html = '<div style="font-weight:600;margin-bottom:12px;color:var(--accent-color,#7c3aed);">📋 추가 확인이 필요합니다</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:12px;">';
+  questions.forEach((q, i) => {
+    html += `<div class="clarification-q" style="display:flex;flex-direction:column;gap:4px;">`;
+    html += `<label style="font-size:13px;color:var(--text-primary,#e0e0e0);">${i + 1}. ${q}</label>`;
+    html += `<textarea class="clarification-answer" data-idx="${i}" rows="2" placeholder="답변을 입력하세요..." style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-primary,#121212);color:var(--text-primary,#e0e0e0);resize:vertical;font-size:13px;"></textarea>`;
+    html += `</div>`;
+  });
+  html += '</div>';
+  html += '<div style="margin-top:14px;display:flex;gap:8px;">';
+  html += '<button class="clarification-submit-btn" style="padding:8px 18px;border-radius:6px;border:none;background:var(--accent-color,#7c3aed);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">답변 제출</button>';
+  html += '<button class="clarification-skip-btn" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border-color,#555);background:transparent;color:var(--text-secondary,#aaa);cursor:pointer;font-size:13px;">건너뛰기</button>';
+  html += '</div>';
+
+  cardEl.innerHTML = html;
+  consoleEl.appendChild(cardEl);
+  scrollToHarnessBottom();
+
+  const submitBtn = cardEl.querySelector('.clarification-submit-btn');
+  const skipBtn = cardEl.querySelector('.clarification-skip-btn');
+
+  async function _submitAnswers(answers) {
+    submitBtn.disabled = true;
+    skipBtn.disabled = true;
+    try {
+      await api(`/api/dynamic/answer/${runId}`, {
+        method: 'POST',
+        body: { answers: answers },
+      });
+      cardEl.style.opacity = '0.6';
+      cardEl.querySelectorAll('textarea').forEach(ta => ta.disabled = true);
+      logToConsole('✅ 답변이 제출되었습니다. CEO가 평가 중...', 'info');
+      pollHarnessStatus(runId);
+    } catch (err) {
+      logToConsole(`❌ 답변 제출 실패: ${err.message}`, 'error');
+      submitBtn.disabled = false;
+      skipBtn.disabled = false;
+    }
+  }
+
+  submitBtn.addEventListener('click', () => {
+    const answers = [];
+    cardEl.querySelectorAll('.clarification-answer').forEach(ta => {
+      answers.push(ta.value.trim() || '(무응답)');
+    });
+    _submitAnswers(answers);
+  });
+
+  skipBtn.addEventListener('click', () => {
+    const answers = questions.map(() => '(건너뜀)');
+    _submitAnswers(answers);
+  });
 }
 
 function cancelHarness() {

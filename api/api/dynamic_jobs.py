@@ -64,11 +64,31 @@ def init_job(run_id: str) -> dict:
         'result': None,
         'error': '',
         'started_at': time.time(),
-        'logs': []
+        'logs': [],
+        'clarification': None,  # clarification questions when status='clarifying'
     }
     with _DYNAMIC_JOBS_LOCK:
         _DYNAMIC_JOBS[run_id] = job
     return job
+
+
+def set_job_clarifying(run_id: str, questions: list[str], turn: int):
+    """Mark a job as waiting for user clarification."""
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]['status'] = 'clarifying'
+            _DYNAMIC_JOBS[run_id]['clarification'] = {
+                'questions': questions,
+                'turn': turn,
+            }
+
+
+def set_job_running(run_id: str):
+    """Transition job back to running after clarification."""
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]['status'] = 'running'
+            _DYNAMIC_JOBS[run_id]['clarification'] = None
 
 
 def append_job_log(run_id: str, agent_id: str, content: str, status: str = "running"):
@@ -141,7 +161,10 @@ def start_harness_job(body: dict) -> str:
     session_id = body.get('session_id')
     allowed_providers = body.get('allowedProviders')
 
-    def _run_in_background(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers):
+    # Check if clarification (interview) is enabled
+    enable_clarification = body.get('clarification', True)
+
+    def _run_in_background(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification):
         from api.dynamic_hermes import HermesDynamicRunner
 
         def log_callback(agent_name, content, status="running"):
@@ -173,9 +196,61 @@ def start_harness_job(body: dict) -> str:
                 pass
 
         try:
+            # ── CEO Clarification Phase (interview) ──
+            enriched_task = task
+            if enable_clarification:
+                from api.dynamic.clarifier import (
+                    init_clarification, wait_for_answers, evaluate_answers,
+                    build_enriched_task, get_clarification_status,
+                    MAX_CLARIFICATION_TURNS, _clear_state
+                )
+                state = init_clarification(run_id, task, preferred_model)
+
+                if state["status"] == "waiting":
+                    # Enter clarifying loop
+                    while state["status"] == "waiting" and state["turn"] <= MAX_CLARIFICATION_TURNS:
+                        # Update job status so frontend shows questions
+                        set_job_clarifying(run_id, state["current_questions"], state["turn"])
+                        log_callback("CEO", f"💬 의도 확인 (턴 {state['turn']})", "clarifying")
+
+                        # Block until user answers (via POST /api/dynamic/answer)
+                        answers = wait_for_answers(run_id, timeout=300.0)
+                        if answers is None:
+                            log_callback("CEO", "⏱️ 응답 대기 시간 초과 — 기존 정보로 진행합니다", "warning")
+                            break
+
+                        # Record answers
+                        state["qa_history"][-1]["answers"] = answers
+
+                        # Evaluate sufficiency
+                        evaluation = evaluate_answers(task, state["qa_history"], state["turn"], preferred_model)
+
+                        if not evaluation.get("needs_clarification") or state["turn"] >= MAX_CLARIFICATION_TURNS:
+                            enriched = evaluation.get("enriched_task", "")
+                            if not enriched:
+                                enriched = build_enriched_task(task, state["qa_history"])
+                            enriched_task = enriched
+                            state["status"] = "done"
+                            log_callback("CEO", "✅ 의도 파악 완료 — 작업을 시작합니다", "success")
+                        else:
+                            state["turn"] += 1
+                            state["current_questions"] = evaluation.get("questions", [])[:3]
+                            state["qa_history"].append({"questions": state["current_questions"], "answers": []})
+                            state["status"] = "waiting"
+
+                    # Fallback if loop ended without 'done'
+                    if state["status"] != "done":
+                        enriched_task = build_enriched_task(task, state["qa_history"])
+
+                    _clear_state(run_id)
+
+                # Transition back to running
+                set_job_running(run_id)
+
+            # ── Main Harness Execution ──
             run_dir = Path(workspace)
             runner = HermesDynamicRunner()
-            res = runner.run(task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers)
+            res = runner.run(enriched_task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers)
             set_job_done(run_id, res.get('final_output', '') if isinstance(res, dict) else str(res))
         except Exception as e:
             traceback.print_exc()
@@ -190,7 +265,7 @@ def start_harness_job(body: dict) -> str:
 
     threading.Thread(
         target=_run_in_background,
-        args=(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers),
+        args=(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification),
         daemon=True
     ).start()
 

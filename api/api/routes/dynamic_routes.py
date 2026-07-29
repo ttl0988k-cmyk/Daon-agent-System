@@ -84,6 +84,7 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
         "done": "completed",
         "error": "failed",
         "awaiting_approval": "awaiting_approval",
+        "clarifying": "clarifying",
     }
     frontend_status = status_map.get(internal_status, internal_status)
 
@@ -120,6 +121,8 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
     elif frontend_status == "awaiting_approval":
         resp["approval_message"] = job.get("approval_message", "작업 승인이 필요합니다.")
         resp["available_actions"] = job.get("available_actions", ["approve", "reject"])
+    elif frontend_status == "clarifying":
+        resp["clarification"] = job.get("clarification", {})
 
     handler.send_json(resp)
     return True
@@ -162,6 +165,36 @@ def handle_post_dynamic_approve(handler, body: dict, parsed=None) -> bool:
             _DYNAMIC_JOBS[run_id].pop("available_actions", None)
 
     handler.send_json({"ok": True, "action": action})
+    return True
+
+
+def handle_post_dynamic_answer(handler, body: dict, parsed=None) -> bool:
+    """POST /api/dynamic/answer/{run_id} — Submit user answers to clarification questions.
+
+    Body: { "answers": ["답변1", "답변2", ...] }
+    run_id is extracted from the URL path (e.g. /api/dynamic/answer/abc123).
+    """
+    from api.dynamic.clarifier import submit_answers
+
+    # Extract run_id from URL path: /api/dynamic/answer/{run_id}
+    run_id = ""
+    if parsed is not None:
+        prefix = "/api/dynamic/answer/"
+        if parsed.path.startswith(prefix):
+            run_id = parsed.path[len(prefix):].strip().rstrip("/")
+    if not run_id:
+        run_id = body.get("run_id", "")
+    if not run_id:
+        handler.send_json({"ok": False, "error": "run_id is required"}, 400)
+        return True
+
+    answers = body.get("answers", [])
+    if not answers:
+        handler.send_json({"ok": False, "error": "answers array is required"}, 400)
+        return True
+
+    result = submit_answers(run_id, answers)
+    handler.send_json(result)
     return True
 
 
