@@ -284,6 +284,7 @@ def handle_get_skills(handler, parsed) -> bool:
     try:
         from api.skill_registry import get_skill_registry
         registry = get_skill_registry()
+        registry.reload()  # 서버 시작 후 추가된 스킬 반영
 
         seen_names = set(s.get('name', '') for s in skills)
 

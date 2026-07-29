@@ -298,14 +298,16 @@ class ModelManager:
         provider_models = self._get_all_provider_models()
         for p, models in provider_models.items():
             for m in models:
-                if m.get('id') == model_id:
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid == model_id:
                     return model_id, p, self._get_base_url(p)
 
         # 2) Check custom provider models
         data = _load_custom_providers()
         for pname, cfg in data.get('providers', {}).items():
             for m in cfg.get('models', []):
-                if m.get('id') == model_id:
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid == model_id:
                     return model_id, pname, cfg.get('base_url')
 
         # 3) Check if model_id has a provider/ prefix
