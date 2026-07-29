@@ -357,8 +357,16 @@ function _showClarificationUI(runId, clarification) {
         method: 'POST',
         body: { answers: answers },
       });
-      cardEl.style.opacity = '0.6';
-      cardEl.querySelectorAll('textarea').forEach(ta => ta.disabled = true);
+      // Collapse card into a compact submitted summary
+      let summaryHtml = '<div style="font-weight:600;color:var(--accent-color,#7c3aed);">✅ 답변 제출 완료 (턴 ' + turn + ')</div>';
+      summaryHtml += '<div style="margin-top:6px;font-size:12px;color:var(--text-secondary,#aaa);">';
+      questions.forEach((q, i) => {
+        summaryHtml += '<div style="margin-bottom:4px;"><b>' + (i + 1) + '.</b> ' + q + '<br><span style="color:var(--text-primary,#e0e0e0);">→ ' + (answers[i] || '(무응답)') + '</span></div>';
+      });
+      summaryHtml += '</div>';
+      cardEl.innerHTML = summaryHtml;
+      cardEl.style.opacity = '0.85';
+      cardEl.style.borderColor = 'var(--accent-color,#7c3aed)';
       logToConsole('✅ 답변이 제출되었습니다. CEO가 평가 중...', 'info');
       // Delay polling to let backend transition status from 'clarifying' → 'running'
       setTimeout(() => pollHarnessStatus(runId), 1500);
