@@ -41,6 +41,8 @@ def _reload_dotenv(home: Path):
                 v = v.strip().strip('"').strip("'")
                 if k and v:
                     os.environ[k] = v
+    except PermissionError:
+        pass  # PyInstaller _MEI* 임시 디렉토리는 읽기 전용 — 무시
     except Exception as e:
         print(f"Error loading profile .env: {e}")
 

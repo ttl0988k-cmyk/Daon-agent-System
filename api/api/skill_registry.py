@@ -30,13 +30,14 @@ _MANIFEST_FILE = "_skill_manifest.json"
 
 def _resolve_skills_dir() -> Path:
     """Resolve the skills directory relative to the project root.
-    단일 정본: 프로젝트 루트 skills/ (dev) 또는 dist/skills/ (PyInstaller).
+    단일 정본: 프로젝트 루트 skills/ (dev) 또는 _MEIPASS/skills/ (PyInstaller 번들).
     """
     if hasattr(sys, '_MEIPASS'):
-        base = Path(sys.executable).parent.resolve()
+        # PyInstaller: spec이 ('dist_new/skills', 'skills')로 번들 → _MEIPASS/skills/
+        return Path(sys._MEIPASS) / "skills"
     else:
         base = Path(__file__).resolve().parent.parent.parent  # api/api/ → api/ → project root
-    return base / "skills"
+        return base / "skills"
 
 
 def _resolve_auto_skills_dir() -> Path:
