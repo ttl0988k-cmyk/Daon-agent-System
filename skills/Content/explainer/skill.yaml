@@ -1,4 +1,5 @@
 name: explainer
+label: 코드 설명
 category: Content
 version: '1.0'
 description: 복잡한 코드를 단계별로 명확하게 설명하는 가이드라인을 제공한다

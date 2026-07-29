@@ -1,4 +1,5 @@
 name: redesign-audit
+label: 리디자인 감사
 category: Design
 version: '1.0'
 description: 기존 웹사이트와 앱을 프리미엄 품질로 업그레이드한다. 현재 디자인을 감사하고, 제네릭 AI 패턴을 식별하며, 기능을 깨지 않고

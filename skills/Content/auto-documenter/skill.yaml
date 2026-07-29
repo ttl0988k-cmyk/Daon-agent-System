@@ -1,4 +1,5 @@
 name: auto-documenter
+label: 자동 문서화
 category: Content
 version: '1.0'
 description: 코드베이스 분석과 고품질 문서 자동 생성을 보장한다

@@ -296,6 +296,7 @@ def handle_get_skills(handler, parsed) -> bool:
             seen_names.add(entry.name)
             skills.append({
                 "name": entry.name,
+                "label": entry.label,
                 "description": entry.purpose or entry.title,
                 "category": entry.category,
                 "lifecycle": entry.lifecycle,

@@ -1,4 +1,5 @@
 name: anthropic-cookbook
+label: Anthropic 쿡북
 category: Coding
 version: '1.0'
 description: A collection of notebooks/recipes showcasing some fun and effective ways of using Claude.

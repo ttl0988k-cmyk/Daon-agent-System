@@ -29,11 +29,13 @@ _MANIFEST_FILE = "_skill_manifest.json"
 
 
 def _resolve_skills_dir() -> Path:
-    """Resolve the skills directory relative to the project root."""
+    """Resolve the skills directory relative to the project root.
+    단일 정본: 프로젝트 루트 skills/ (dev) 또는 dist/skills/ (PyInstaller).
+    """
     if hasattr(sys, '_MEIPASS'):
         base = Path(sys.executable).parent.resolve()
     else:
-        base = Path(__file__).resolve().parent.parent
+        base = Path(__file__).resolve().parent.parent.parent  # api/api/ → api/ → project root
     return base / "skills"
 
 
@@ -84,7 +86,7 @@ def _resolve_engine_skills_dir() -> Path:
 class SkillEntry:
     """Represents a single indexed skill with YAML metadata."""
     __slots__ = (
-        "name", "path", "title", "source", "content", "lifecycle",
+        "name", "label", "path", "title", "source", "content", "lifecycle",
         "version", "category", "priority", "tags", "conflicts_with",
         "purpose", "when_to_use", "when_not_to_use",
         "inputs", "outputs", "examples", "constraints", "success_criteria",
@@ -95,6 +97,7 @@ class SkillEntry:
 
     def __init__(
         self, name: str, path: Path, title: str, source: str, content: str,
+        label: str = "",
         lifecycle: str = "approved", version: str = "1.0", category: str = "general",
         priority: str = "medium", tags: list = None, conflicts_with: list = None,
         purpose: str = "", when_to_use: str = "", when_not_to_use: str = "",
@@ -107,6 +110,7 @@ class SkillEntry:
         enabled: bool = True,
     ):
         self.name = name
+        self.label = label
         self.path = path
         self.title = title
         self.source = source
@@ -161,18 +165,10 @@ class SkillRegistry:
         self._skills.clear()
         self._all_entries.clear()
 
-        # 1. Curated skills (api/skills/) — always trusted
+        # 1. Curated skills (project root skills/) — single source of truth
         curated_dir = _resolve_skills_dir()
         if curated_dir.exists():
             self._scan_directory(curated_dir, source="curated")
-
-        # 1b. Project root skills/ — workspace-level curated skills (e.g. Creative/scroll-world)
-        try:
-            project_root_skills = Path(__file__).resolve().parent.parent.parent / "skills"
-            if project_root_skills.exists() and project_root_skills.resolve() != curated_dir.resolve():
-                self._scan_directory(project_root_skills, source="curated")
-        except Exception:
-            pass
 
         # 2. Auto-distilled skills (global + profile-specific) — lifecycle-managed
         for auto_dir in _get_all_auto_skills_dirs():
@@ -296,7 +292,7 @@ class SkillRegistry:
             yaml_meta = self._load_skill_yaml(md_file.parent)
             if yaml_meta:
                 # skill.yaml takes precedence for structured fields
-                for key in ("name", "category", "version", "priority", "description",
+                for key in ("name", "label", "category", "version", "priority", "description",
                             "capabilities", "trigger", "tags", "knowledge", "enabled",
                             "when_to_use", "when_not_to_use", "inputs", "outputs",
                             "constraints", "success_criteria",
@@ -329,6 +325,7 @@ class SkillRegistry:
 
             entry = SkillEntry(
                 name=meta.get("name", name),
+                label=meta.get("label", ""),
                 path=md_file,
                 title=title,
                 source=source,

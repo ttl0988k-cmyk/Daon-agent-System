@@ -2113,7 +2113,7 @@ function renderSkills(skills) {
 
 
 
-      el.innerHTML = `<span class="skill-name">${esc(skill.name)}</span><span class="skill-desc">${esc(skill.description || '')}</span>`;
+      el.innerHTML = `<span class="skill-name">${esc(skill.label || skill.name)}</span><span class="skill-desc">${esc(skill.description || '')}</span>`;
 
 
 

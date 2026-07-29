@@ -1,4 +1,5 @@
 name: html-anything
+label: HTML 변환기
 category: Coding
 version: '1.0'
 description: Converts raw text, data, or markdown into beautifully formatted, single-file

@@ -1,4 +1,5 @@
 name: tester
+label: 테스터
 category: Coding
 version: '1.0'
 description: 종합적인 단위 테스트 작성을 위한 가이드라인을 제공한다

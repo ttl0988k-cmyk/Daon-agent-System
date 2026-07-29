@@ -1,4 +1,5 @@
 name: scroll-world
+label: 스크롤 월드
 category: Creative
 version: '1.0'
 description: 스크롤로 카메라가 날아다니는 3D 월드 랜딩 페이지를 생성한다

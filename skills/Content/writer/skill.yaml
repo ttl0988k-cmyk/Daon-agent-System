@@ -1,4 +1,5 @@
 name: writer
+label: 글쓰기 개선
 category: Content
 version: '1.0'
 description: Orwell의 6가지 글쓰기 원칙을 적용한 텍스트 개선 가이드라인을 제공한다

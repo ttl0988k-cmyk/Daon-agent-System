@@ -1,4 +1,5 @@
 name: bill-dev
+label: 빌 개발 원칙
 category: Coding
 version: '1.0'
 description: 고품질 코드 작성을 위한 개발 원칙과 실행 규칙을 주입한다

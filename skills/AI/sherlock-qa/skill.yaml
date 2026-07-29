@@ -1,4 +1,5 @@
 name: sherlock-qa
+label: 셜록 QA
 category: AI
 version: '1.0'
 description: 체계적인 6축 품질 평가로 코드/결과물의 완성도를 검증한다

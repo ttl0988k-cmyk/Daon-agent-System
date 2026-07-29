@@ -1,4 +1,5 @@
 name: contract-validator
+label: 계약 검증기
 category: Business
 version: '1.0'
 description: Backend/Frontend 계약의 일관성을 사전 검증하여 에이전트 생성 전 오류를 차단한다

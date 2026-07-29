@@ -1,4 +1,5 @@
 name: documenter
+label: 문서 작성
 category: Content
 version: '1.0'
 description: 코드에 대한 명확하고 체계적인 문서 작성을 위한 가이드라인을 제공한다

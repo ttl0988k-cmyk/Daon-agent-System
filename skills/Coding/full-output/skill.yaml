@@ -1,4 +1,5 @@
 name: full-output
+label: 완전 출력
 category: Coding
 version: '1.0'
 description: LLM의 기본 출력 축약 동작을 오버라이드한다. 완전한 코드 생성을 강제하고, 플레이스홀더 패턴을 금지하며, 토큰 제한 분할을

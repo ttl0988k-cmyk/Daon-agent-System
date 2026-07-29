@@ -1,4 +1,5 @@
 name: self-reflection
+label: 자기 성찰
 category: AI
 version: '1.0'
 description: 모든 하위 에이전트가 최종 출력 전 자체 품질 점검을 수행하게 한다

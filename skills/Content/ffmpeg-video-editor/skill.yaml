@@ -1,4 +1,5 @@
 name: ffmpeg-video-editor
+label: FFmpeg 영상 편집
 category: Content
 version: '1.0'
 description: ffmpeg를 활용한 영상 편집·인코딩·합성 자동화. 자르기, 합치기, 자막, LUT 컬러그레이딩, 효과음/BGM 삽입, 오버레이,

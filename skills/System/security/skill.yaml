@@ -1,4 +1,5 @@
 name: security
+label: 보안 점검
 category: System
 version: '1.0'
 description: 코드 및 시스템의 보안 취약점을 식별하고 차단한다
