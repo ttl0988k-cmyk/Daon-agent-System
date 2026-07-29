@@ -637,6 +637,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           if resolved_provider in ('zai', 'ollama-cloud') and not resolved_api_key:
               resolved_api_key = os.getenv('OLLAMA_API_KEY')
 
+          # custom_providers.json에서 API 키 fallback (UI에서 등록한 프로바이더)
+          if not resolved_api_key and resolved_provider and resolved_provider != 'custom':
+              try:
+                  from api.managers.model_manager import model_manager as _mm
+                  _cp_key = _mm._get_api_key(resolved_provider)
+                  if _cp_key:
+                      resolved_api_key = _cp_key
+                      print(f"[webui] API key resolved from custom_providers.json for '{resolved_provider}'", flush=True)
+              except Exception as _cp_e:
+                  print(f"[webui] WARNING: custom_providers key lookup failed: {_cp_e}", flush=True)
 
           # Read per-profile config at call time (not module-level snapshot)
           from api.config import get_config as _get_config

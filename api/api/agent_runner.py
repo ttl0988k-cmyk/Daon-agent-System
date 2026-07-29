@@ -151,6 +151,15 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
             else:
                 resolved_api_key = os.getenv('OPENAI_API_KEY')
 
+            # custom_providers.json에서 API 키 fallback (UI에서 등록한 프로바이더)
+            if not resolved_api_key and resolved_provider and resolved_provider != 'custom':
+                try:
+                    _cp_key = model_manager._get_api_key(resolved_provider)
+                    if _cp_key:
+                        resolved_api_key = _cp_key
+                except Exception:
+                    pass
+
             agent = AIAgent(
                 model=resolved_model,
                 provider=resolved_provider,
