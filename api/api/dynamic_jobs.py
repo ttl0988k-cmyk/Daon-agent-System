@@ -195,6 +195,11 @@ def start_harness_job(body: dict) -> str:
             except ImportError:
                 pass
 
+        # ── Set TERMINAL_CWD so hermes tools (write_file/terminal/MCP) use workspace ──
+        import os as _os
+        _old_terminal_cwd = _os.environ.get('TERMINAL_CWD')
+        _os.environ['TERMINAL_CWD'] = str(workspace)
+
         try:
             # ── CEO Clarification Phase (interview) ──
             enriched_task = task
@@ -261,6 +266,12 @@ def start_harness_job(body: dict) -> str:
             traceback.print_exc()
             set_job_error(run_id, str(e))
         finally:
+            # Restore TERMINAL_CWD to its previous value
+            if _old_terminal_cwd is None:
+                _os.environ.pop('TERMINAL_CWD', None)
+            else:
+                _os.environ['TERMINAL_CWD'] = _old_terminal_cwd
+
             if session_id:
                 try:
                     from tools.approval import unregister_gateway_notify
