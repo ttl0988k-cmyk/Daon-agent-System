@@ -4952,15 +4952,22 @@ async function fetchProviderModels() {
     });
 
     if (data.success && data.models && data.models.length > 0) {
-      _selectedProviderModels = data.models.map(function (m) { return { id: m.id || m, label: m.label || m.id || m }; });
+      _selectedProviderModels = data.models.map(function (m) { return { id: m.id || m, label: m.label || m.id || m, type: m.type || 'chat' }; });
+      var _typeColors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
       var modelHtml = '<div style="color:var(--success);font-weight:600;margin-bottom:4px;">✅ ' + data.models.length + '개 모델 발견 — 저장할 모델을 선택하세요:</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;max-height:180px;overflow-y:auto;">' +
+        '<div style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow-y:auto;">' +
         data.models.map(function (m, i) {
           var mid = m.id || m;
+          var mtype = m.type || 'chat';
           var isTts = /tts|speech|audio|whisper|embed|rerank|moderation/i.test(mid);
-          return '<label style="display:inline-flex;align-items:center;gap:3px;background:var(--bg2);padding:2px 6px;border-radius:3px;font-size:10px;cursor:pointer;' + (isTts ? 'opacity:0.5;' : '') + '">' +
-            '<input type="checkbox" class="provider-model-cb" data-idx="' + i + '"' + (isTts ? '' : ' checked') + ' style="width:12px;height:12px;margin:0;">' +
-            '<span>' + esc(mid) + '</span></label>';
+          return '<div style="display:flex;align-items:center;gap:4px;background:var(--bg2);padding:3px 6px;border-radius:4px;font-size:10px;' + (isTts ? 'opacity:0.5;' : '') + '">' +
+            '<input type="checkbox" class="provider-model-cb" data-idx="' + i + '"' + (isTts ? '' : ' checked') + ' style="width:12px;height:12px;margin:0;flex-shrink:0;">' +
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(mid) + '">' + esc(mid) + '</span>' +
+            '<select class="provider-model-type" data-idx="' + i + '" style="font-size:9px;padding:0 2px;border-radius:3px;border:1px solid var(--border);background:var(--bg);color:' + (_typeColors[mtype] || 'var(--muted)') + ';cursor:pointer;flex-shrink:0;">' +
+            '<option value="chat"' + (mtype === 'chat' ? ' selected' : '') + '>💬 chat</option>' +
+            '<option value="image"' + (mtype === 'image' ? ' selected' : '') + '>🖼 image</option>' +
+            '<option value="video"' + (mtype === 'video' ? ' selected' : '') + '>🎬 video</option>' +
+            '</select></div>';
         }).join('') +
         '</div>' +
         '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;">' +
@@ -4968,12 +4975,23 @@ async function fetchProviderModels() {
         '<button onclick="_providerModelSelectAll(false)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 해제</button>' +
         '<span id="providerModelCount" style="font-size:10px;color:var(--muted);"></span>' +
         '</div>' +
-        '<div style="margin-top:6px;font-size:10px;color:var(--muted);">선택 후 "제공자 저장" 버튼을 누르면 선택한 모델만 저장됩니다.</div>';
+        '<div style="margin-top:6px;font-size:10px;color:var(--muted);">타입을 확인/변경 후 "제공자 저장" 버튼을 누르면 선택한 모델이 저장됩니다.</div>';
       if (resultEl) resultEl.innerHTML = modelHtml;
       _updateProviderModelCount();
       // 체크박스 변경 이벤트
       resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) {
         cb.addEventListener('change', function () { _updateProviderModelCount(); });
+      });
+      // 타입 셀렉트 변경 이벤트
+      resultEl.querySelectorAll('.provider-model-type').forEach(function (sel) {
+        sel.addEventListener('change', function () {
+          var idx = parseInt(sel.getAttribute('data-idx'), 10);
+          if (idx >= 0 && idx < _selectedProviderModels.length) {
+            _selectedProviderModels[idx].type = sel.value;
+          }
+          var colors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
+          sel.style.color = colors[sel.value] || 'var(--muted)';
+        });
       });
     } else {
       _selectedProviderModels = null;

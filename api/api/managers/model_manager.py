@@ -235,15 +235,58 @@ class ModelManager:
                     'id': model_id,
                     'label': model_id,
                     'owned_by': item.get('owned_by', ''),
+                    'type': self._infer_model_type(model_id),
                 })
 
         if not models and isinstance(body, dict):
             if 'models' in body:
                 for item in body.get('models', []):
                     if isinstance(item, dict) and 'id' in item:
-                        models.append({'id': item['id'], 'label': item.get('display_name', item['id'])})
+                        mid = item['id']
+                        models.append({'id': mid, 'label': item.get('display_name', mid), 'type': self._infer_model_type(mid)})
 
         return models
+
+    # ── Model Type (3-tier fallback) ────────────────────────────────────
+
+    @staticmethod
+    def _infer_model_type(model_id: str) -> str:
+        """Infer model type from name (tier 3: name-based guess)."""
+        try:
+            from api.media_generation import detect_model_type
+            return detect_model_type(model_id)
+        except ImportError:
+            return 'chat'
+
+    def get_model_type(self, model_id: str) -> str:
+        """3-tier fallback: registry type > provider metadata > name-based guess.
+
+        1) Check custom_providers.json model dict for explicit 'type' field.
+        2) (Provider metadata is already stored as 'type' at fetch time.)
+        3) Fall back to name-based detection.
+        """
+        model_id = (model_id or '').strip()
+        if not model_id:
+            return 'chat'
+
+        # Tier 1+2: Registry lookup (type stored at fetch/add time)
+        data = _load_custom_providers()
+        for pname, cfg in data.get('providers', {}).items():
+            for m in cfg.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid == model_id and isinstance(m, dict) and m.get('type'):
+                    return m['type']
+
+        # Also check preset provider models
+        provider_models = self._get_all_provider_models()
+        for p, models in provider_models.items():
+            for m in models:
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid == model_id and isinstance(m, dict) and m.get('type'):
+                    return m['type']
+
+        # Tier 3: Name-based guess
+        return self._infer_model_type(model_id)
 
     # ── Resolution ──────────────────────────────────────────────────────
 

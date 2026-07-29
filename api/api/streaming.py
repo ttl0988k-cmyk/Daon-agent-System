@@ -686,9 +686,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
           print(f"[webui-debug] resolved_model={resolved_model} resolved_provider={resolved_provider} resolved_base_url={resolved_base_url}", flush=True)
 
-          # ── Image/Video generation model detection ──
-          from api.media_generation import detect_model_type, run_media_generation
-          _media_type = detect_model_type(resolved_model)
+          # ── Image/Video generation model detection (3-tier: registry > metadata > name) ──
+          from api.media_generation import run_media_generation
+          from api.managers.model_manager import model_manager as _mm_type
+          _media_type = _mm_type.get_model_type(resolved_model)
           if _media_type in ('image', 'video'):
               print(f"[webui] Media generation model detected: {resolved_model} -> {_media_type}", flush=True)
               put('token', {'text': f"🎨 {'이미지' if _media_type == 'image' else '영상'} 생성 중... (모델: {resolved_model})\n\n"})
