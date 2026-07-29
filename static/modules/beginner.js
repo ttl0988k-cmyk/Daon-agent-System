@@ -157,6 +157,7 @@ function enterBeginnerMode(animate) {
     if (typeof State !== 'undefined') {
         State.beginnerMode = true;
         State.leftPanelVisible = true; // 초보자도 세션 확인 가능
+        State.explorerVisible = false; // 초보자 모드에서는 탐색기 기본 닫힘
     }
     const btn = document.getElementById('showBeginnerBtn');
     if (btn) { btn.innerHTML = '🛠️ IDE 열기'; btn.title = '전체 IDE 화면 열기 (전문가 모드)'; }

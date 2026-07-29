@@ -23,6 +23,16 @@ function initResizers() {
     const rCol = State.beginnerMode ? '1fr' : rightCol;
     container.style.gridTemplateColumns = `${leftCol} ${leftResizerCol} ${midCol} ${rResCol} ${rCol}`;
 
+    // 초보자 모드: middle-panel 자체를 토글 (탐색기 열 때만 보임)
+    const middlePanel = document.querySelector('.middle-panel');
+    if (middlePanel) {
+      if (State.beginnerMode) {
+        middlePanel.style.display = State.explorerVisible ? 'flex' : 'none';
+      } else {
+        middlePanel.style.display = '';
+      }
+    }
+
     // 초보자 모드에서 탐색기만 열 때 에디터 영역 숨김
     const editorArea = document.querySelector('.editor-area');
     if (editorArea) editorArea.style.display = (State.beginnerMode && State.explorerVisible) ? 'none' : '';
