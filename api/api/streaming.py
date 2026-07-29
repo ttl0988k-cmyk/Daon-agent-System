@@ -686,6 +686,40 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
           print(f"[webui-debug] resolved_model={resolved_model} resolved_provider={resolved_provider} resolved_base_url={resolved_base_url}", flush=True)
 
+          # ── Image/Video generation model detection ──
+          from api.media_generation import detect_model_type, run_media_generation
+          _media_type = detect_model_type(resolved_model)
+          if _media_type in ('image', 'video'):
+              print(f"[webui] Media generation model detected: {resolved_model} -> {_media_type}", flush=True)
+              put('token', {'text': f"🎨 {'이미지' if _media_type == 'image' else '영상'} 생성 중... (모델: {resolved_model})\n\n"})
+              try:
+                  _media_base_url = resolved_base_url or ''
+                  if not _media_base_url:
+                      try:
+                          from api.managers.model_manager import model_manager as _mm2
+                          _media_base_url = _mm2._get_base_url(resolved_provider) or ''
+                      except Exception:
+                          pass
+                  if not _media_base_url:
+                      raise RuntimeError(f"프로바이더 '{resolved_provider}'의 base_url을 찾을 수 없습니다.")
+                  if not resolved_api_key:
+                      raise RuntimeError("API 키가 없습니다. 설정에서 프로바이더 API 키를 등록하세요.")
+
+                  _media_result = run_media_generation(
+                      prompt=msg_text,
+                      model=resolved_model,
+                      base_url=_media_base_url,
+                      api_key=resolved_api_key,
+                      model_type=_media_type,
+                  )
+                  put('media_result', _media_result)
+                  put('done', {'text': ''})
+              except Exception as _media_err:
+                  print(f"[webui] Media generation failed: {_media_err}", flush=True)
+                  put('token', {'text': f"\n\n❌ 생성 실패: {_media_err}"})
+                  put('done', {'text': ''})
+              return
+
           # ?�?� SessionDB ?�스?�스 1???�성 (모델 ?�환 감�? + AIAgent 공유) ?�?�?�?�?�?�
           # SessionDB()??SQLite 커넥?�을 ?�기 ?�문??�??�청마다 ??�??�성?�면
           # 지?�이 발생?�다. ?�나�?만들??모델 ?�환 감�??� AIAgent??모두 ?�다.

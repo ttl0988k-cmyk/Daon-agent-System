@@ -560,6 +560,25 @@ async function _executeAgentStream(displayText, uploaded) {
       resetIdleTimer();
     });
 
+    // ── Image/Video generation result ─────────────────────────────────────
+    sse.addEventListener('media_result', (e) => {
+      const data = JSON.parse(e.data);
+      if (data.type === 'image' && data.images) {
+        data.images.forEach(img => {
+          const src = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;
+          if (src) {
+            incomingText += `\n\n![Generated Image](${src})\n`;
+          }
+        });
+        if (data.revised_prompt) incomingText += `\n*Prompt: ${data.revised_prompt}*\n`;
+      } else if (data.type === 'video' && data.video_url) {
+        incomingText += `\n\n<video controls src="${data.video_url}" style="max-width:100%;border-radius:8px;"></video>\n`;
+      }
+      asstBubble.innerHTML = renderMd(incomingText);
+      scrollToChatBottom();
+      resetIdleTimer();
+    });
+
     // ── Real-time terminal output streaming ──────────────────────────────
     let _terminalOutputCard = null;
     let _terminalOutputText = '';
