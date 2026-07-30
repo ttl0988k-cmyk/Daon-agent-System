@@ -156,9 +156,19 @@ function _speakViaEdgeTts(text) {
 
     // TTS runs on a dedicated server (port 9091) so that long-running
     // edge-tts synthesis never blocks the main agent server (9090).
-    const ttsBase = location.protocol + '//' + location.hostname + ':9091';
-    const url = ttsBase + '/tts?' + new URLSearchParams({ text: text }).toString();
+    // Fallback: the main server also exposes /api/speak/tts (same edge-tts
+    // backend) so voice still works when the dedicated TTS server is not running.
+    const dedicatedUrl = location.protocol + '//' + location.hostname + ':9091/tts?' + new URLSearchParams({ text: text }).toString();
+    const mainUrl = location.origin + '/api/speak/tts?' + new URLSearchParams({ text: text }).toString();
 
+    _fetchAndPlayTts(dedicatedUrl, text, function () {
+        // Dedicated TTS server unavailable → try the main server route.
+        console.warn('[Speak] Dedicated TTS server failed, trying main server /api/speak/tts');
+        _fetchAndPlayTts(mainUrl, text, null);
+    });
+}
+
+function _fetchAndPlayTts(url, text, onFail) {
     fetch(url, { signal: _speakAbortController.signal })
         .then(resp => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -175,10 +185,14 @@ function _speakViaEdgeTts(text) {
             });
         })
         .catch(err => {
-            // Fetch or decode failed — mark Edge TTS unavailable, fall back
-            console.warn('[Speak] Edge TTS fetch failed:', err.message);
-            _edgeTtsSupported = false;
-            _fallbackToSpeechSynthesis(text);
+            // Fetch or decode failed — try the fallback URL, else SpeechSynthesis
+            console.warn('[Speak] TTS fetch failed:', url, err.message);
+            if (onFail) {
+                onFail();
+            } else {
+                _edgeTtsSupported = false;
+                _fallbackToSpeechSynthesis(text);
+            }
         });
 }
 

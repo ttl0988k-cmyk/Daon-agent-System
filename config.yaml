@@ -103,16 +103,9 @@ toolsets:
     - "webhook"
 
 # --- Fallback models (when model_manager is unavailable) ---
-fallback_models:
-  - provider: "OpenRouter"
-    id: "nvidia/nemotron-3-ultra-550b-a55b:free"
-    label: "Nemotron 3 Ultra (Free)"
-  - provider: "OpenRouter"
-    id: "openai/gpt-oss-120b:free"
-    label: "GPT-OSS 120B"
-  - provider: "OpenRouter"
-    id: "tencent/hy3:free"
-    label: "Tencent Hy3 (free)"
+# OpenRouter 차단: 기존 fallback이 모두 OpenRouter 경유라 대시보드 사용량
+# 청구를 막기 위해 목록을 비움. (메인 MiniMax-M3 는 api.minimax.io 직결이라 무관)
+fallback_models: []
 
 # --- Provider display names (cosmetic only — real model lists in data/custom_providers.json) ---
 provider_display:
@@ -126,9 +119,6 @@ provider_display:
   deepseek: "DeepSeek"
   nous: "Nous"
   minimax: "MiniMax"
-  nvidia: "NVIDIA NIM"
   meta-llama: "Meta Llama"
   huggingface: "HuggingFace"
   alibaba: "Alibaba"
-  ollama: "Ollama"
-  lmstudio: "LM Studio"

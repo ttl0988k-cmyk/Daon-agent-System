@@ -722,40 +722,52 @@ async function _executeAgentStream(displayText, uploaded) {
     });
 
     // Monaco Editor UX를 위한 파일 편집 이벤트 리스너
+    // tool.started 시점: 파일이 아직 디스크에 쓰이지 않았으므로 디스크에서 읽지 않고
+    // args.content로 즉시 에디터 탭을 생성/전환한다.
     sse.addEventListener('file_edit', async (e) => {
       const data = JSON.parse(e.data);
-      const filePath = data.args?.path;
+      const filePath = data.args?.path || data.args?.file_path;
       console.log('[MonacoEditorUX] Received file_edit event:', data.name, filePath);
 
-      if (data.name === 'write_file' || data.name === 'patch') {
+      if ((data.name === 'write_file' || data.name === 'patch') && filePath) {
         try {
-          // 1. 파일을 에디터 탭에 먼저 열기 (없으면 열고, 있으면 전환)
-          const existingIdx = State.openTabs.findIndex(t => t.path === filePath);
-          if (existingIdx !== -1) {
-            switchTab(existingIdx);
-          } else if (typeof openFileInTab === 'function') {
-            await openFileInTab(filePath);
+          const content = data.args.content || data.args.new_content || '';
+          // 1. 디스크 읽기 없이 content로 즉시 탭 생성/전환
+          if (typeof createTabWithContent === 'function') {
+            createTabWithContent(filePath, content);
+          } else {
+            const existingIdx = State.openTabs.findIndex(t => t.path === filePath);
+            if (existingIdx !== -1) { switchTab(existingIdx); }
+            else if (typeof openFileInTab === 'function') { await openFileInTab(filePath); }
           }
 
-          // 2. Monaco Editor UX로 내용 적용 (탭이 열린 후)
-          if (window.MonacoEditorUX && window.MonacoEditorUX.applyAIResponse) {
-            // 탭이 열리는 동안 잠시 대기
-            await new Promise(r => setTimeout(r, 200));
-            MonacoEditorUX.applyAIResponse({
-              provider: 'hermes',
-              content: data.args.content || '',
-              action: 'edit',
-              path: filePath
-            });
-          }
-
-          // 3. 파일 트리 갱신
+          // 2. 파일 트리 갱신
           if (typeof refreshFileTree === 'function') {
             refreshFileTree().catch(() => { });
           }
         } catch (err) {
           console.error('[MonacoEditorUX] Error handling file_edit:', err);
         }
+      }
+    });
+
+    // tool.completed 시점: 디스크에 실제 쓰인 내용을 읽어 에디터에 확정 반영한다.
+    // (patch 도구는 부분 수정이므로 디스크의 최종 내용이 정답이다.)
+    sse.addEventListener('file_edit_done', async (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const filePath = data.path;
+        console.log('[MonacoEditorUX] Received file_edit_done event:', data.name, filePath);
+        if (!filePath) return;
+
+        if (typeof createTabWithContent === 'function') {
+          createTabWithContent(filePath, data.content || '');
+        }
+        if (typeof refreshFileTree === 'function') {
+          refreshFileTree().catch(() => { });
+        }
+      } catch (err) {
+        console.error('[MonacoEditorUX] Error handling file_edit_done:', err);
       }
     });
 

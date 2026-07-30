@@ -23,6 +23,10 @@ function initResizers() {
     const rCol = State.beginnerMode ? '1fr' : rightCol;
     container.style.gridTemplateColumns = `${leftCol} ${leftResizerCol} ${midCol} ${rResCol} ${rCol}`;
 
+    // 초보자 모드 표시: CSS에서 file-tree-wrap을 middle-panel 전체 너비로 확장해
+    // 탐색기 오른쪽 경계선이 채팅 패널 왼쪽 경계선과 일치하도록 함 (빈 여백 제거)
+    container.classList.toggle('beginner-mode', !!State.beginnerMode);
+
     // 초보자 모드: middle-panel 자체를 토글 (탐색기 열 때만 보임)
     const middlePanel = document.querySelector('.middle-panel');
     if (middlePanel) {

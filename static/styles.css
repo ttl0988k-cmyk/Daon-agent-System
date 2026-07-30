@@ -661,6 +661,14 @@
       flex-shrink: 0;
     }
 
+    /* 초보자 모드: 에디터 영역이 숨겨지므로 탐색기를 middle-panel 전체 너비로 확장.
+       이렇게 해야 탐색기 오른쪽 선(border-right)이 채팅 패널 왼쪽 경계와 붙어
+       두 선 사이의 빈 여백이 사라진다. 전문가 모드에서는 이 클래스가 없어 width:220px 유지. */
+    .main-grid.beginner-mode .file-tree-wrap {
+      width: auto;
+      flex: 1 1 auto;
+    }
+
     .explorer-inner {
       display: flex;
       flex: 1;
