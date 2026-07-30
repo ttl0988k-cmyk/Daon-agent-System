@@ -77,6 +77,24 @@ def _dashscope_native_base(base_url: str) -> str:
     return stripped + '/api/v1'
 
 
+def _dashscope_size(size: str) -> str:
+    """Normalize an image size to DashScope's `width*height` format.
+
+    DashScope (Wan2.7) rejects `1024x1024` with
+    `Invalid size format ... expected format: width*height`.  Accept the
+    common OpenAI-style `x` separator and convert it to `*`.
+    """
+    s = (size or '').strip()
+    if not s:
+        return '1024*1024'
+    # 'x' / 'X' separator → '*' (only when it looks like WxH)
+    import re
+    m = re.match(r'^\s*(\d+)\s*[xX×]\s*(\d+)\s*$', s)
+    if m:
+        return f"{m.group(1)}*{m.group(2)}"
+    return s
+
+
 def _extract_images_from_output(output: dict) -> list:
     """Extract [{url, b64_json}] from a DashScope `output` object.
 
@@ -146,6 +164,8 @@ def _generate_image_dashscope_native(
     native_base is derived from base_url via _dashscope_native_base().
     """
     native_base = _dashscope_native_base(base_url)
+    ds_size = _dashscope_size(size)
+    _log.info("[media] DashScope size normalized: %r → %r", size, ds_size)
 
     def _post(url: str, payload: dict, async_mode: bool):
         headers = {
@@ -168,7 +188,7 @@ def _generate_image_dashscope_native(
     sync_payload = {
         "model": model,
         "input": {"messages": [{"role": "user", "content": [{"text": prompt}]}]},
-        "parameters": {"size": size, "n": n},
+        "parameters": {"size": ds_size, "n": n},
     }
     _log.info("[media] DashScope sync POST %s | model=%s", sync_url, model)
     sync_err = None
@@ -185,6 +205,11 @@ def _generate_image_dashscope_native(
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         sync_err = f"HTTP {e.code}: {body[:200]}"
+        # 400 = 파라미터 오류 (size 형식 등) → 재시도/fallback 무의미, 즉시 실패
+        if e.code == 400:
+            _log.error("[media] DashScope sync HTTP 400 (parameter error): %s", body[:500])
+            raise RuntimeError(f"DashScope 파라미터 오류 (HTTP 400): {body[:300]}")
+        # 403/404 = 권한/엔드포인트 문제 → async endpoint로 fallback
         _log.warning("[media] DashScope sync failed (%s) → trying async endpoint", sync_err)
     except Exception as e:
         sync_err = str(e)
@@ -195,7 +220,7 @@ def _generate_image_dashscope_native(
     async_payload = {
         "model": model,
         "input": {"prompt": prompt},
-        "parameters": {"size": size, "n": n},
+        "parameters": {"size": ds_size, "n": n},
     }
     _log.info("[media] DashScope async POST %s | model=%s", async_url, model)
     try:
@@ -203,6 +228,9 @@ def _generate_image_dashscope_native(
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         _log.error("DashScope async HTTP %s at %s: %s", e.code, async_url, body[:500])
+        # 400 = 파라미터 오류 → 즉시 실패
+        if e.code == 400:
+            raise RuntimeError(f"DashScope 파라미터 오류 (HTTP 400): {body[:300]}")
         raise RuntimeError(
             f"DashScope 네이티브 API 실패 (동기: {sync_err} / 비동기 HTTP {e.code}): {body[:200]}"
         )

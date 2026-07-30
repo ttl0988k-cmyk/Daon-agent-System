@@ -729,13 +729,40 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       raise RuntimeError("API 키가 없습니다. 설정에서 프로바이더 API 키를 등록하세요.")
 
                   print(f"[webui] Media: calling run_media_generation (model={resolved_model}, type={_media_type})...", flush=True)
-                  _media_result = run_media_generation(
-                      prompt=msg_text,
-                      model=resolved_model,
-                      base_url=_media_base_url,
-                      api_key=resolved_api_key,
-                      model_type=_media_type,
-                  )
+                  # 미디어 생성은 60초+ 소요 가능. 그 동안 SSE에 이벤트가 없으면
+                  # 프론트엔드 idle timer(30초)가 스트림을 조기 종료한다
+                  # (sse.close() → 백엔드 WinError 10053 → media_result 미전달).
+                  # 별도 스레드로 실행하고 매 10초 빈 keep-alive token을 보내
+                  # 프론트엔드 resetIdleTimer()가 계속 갱신되도록 한다.
+                  import threading as _media_threading
+                  _media_box = {'result': None, 'error': None, 'done': False}
+
+                  def _run_media_worker():
+                      try:
+                          _media_box['result'] = run_media_generation(
+                              prompt=msg_text,
+                              model=resolved_model,
+                              base_url=_media_base_url,
+                              api_key=resolved_api_key,
+                              model_type=_media_type,
+                          )
+                      except Exception as _w_err:
+                          _media_box['error'] = _w_err
+                      finally:
+                          _media_box['done'] = True
+
+                  _media_worker = _media_threading.Thread(target=_run_media_worker, daemon=True)
+                  _media_worker.start()
+
+                  # 완료될 때까지 10초마다 keep-alive token 발송 (빈 텍스트 → 버블 무해)
+                  while not _media_box['done']:
+                      _media_worker.join(timeout=10.0)
+                      if not _media_box['done']:
+                          put('token', {'text': ''})  # keep-alive → 프론트엔드 idle timer 리셋
+
+                  if _media_box['error'] is not None:
+                      raise _media_box['error']
+                  _media_result = _media_box['result']
                   print(f"[webui] Media: run_media_generation returned OK", flush=True)
                   try:
                       _mi = _media_result.get('images', []) if isinstance(_media_result, dict) else []
