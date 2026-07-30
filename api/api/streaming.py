@@ -737,8 +737,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       model_type=_media_type,
                   )
                   print(f"[webui] Media: run_media_generation returned OK", flush=True)
+                  try:
+                      _mi = _media_result.get('images', []) if isinstance(_media_result, dict) else []
+                      print(f"[webui] Media: result type={_media_result.get('type') if isinstance(_media_result, dict) else '?'} "
+                            f"images={len(_mi)} "
+                            f"urls={[ (im.get('url') or '')[:100] for im in _mi ]} "
+                            f"b64={[ bool(im.get('b64_json')) for im in _mi ]}", flush=True)
+                  except Exception as _mr_log_err:
+                      print(f"[webui] Media: result log failed: {_mr_log_err}", flush=True)
+                  print(f"[webui] Media: SENDING media_result SSE event", flush=True)
                   put('media_result', _media_result)
                   put('done', {'text': ''})
+                  print(f"[webui] Media: media_result + done events SENT", flush=True)
               except Exception as _media_err:
                   print(f"[webui] Media generation failed: {_media_err}", flush=True)
                   put('token', {'text': f"\n\n❌ 생성 실패: {_media_err}"})

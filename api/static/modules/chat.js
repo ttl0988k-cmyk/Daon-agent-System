@@ -563,6 +563,10 @@ async function _executeAgentStream(displayText, uploaded) {
     // ── Image/Video generation result ─────────────────────────────────────
     sse.addEventListener('media_result', (e) => {
       const data = JSON.parse(e.data);
+      console.log('[Media] Received media_result event:', data.type,
+        'images=', (data.images || []).length,
+        'urls=', (data.images || []).map(im => (im.url || '').slice(0, 80)),
+        'b64=', (data.images || []).map(im => !!im.b64_json));
       if (data.type === 'image' && data.images) {
         data.images.forEach(img => {
           const src = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;

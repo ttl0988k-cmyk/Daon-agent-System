@@ -201,7 +201,16 @@ def generate_image(
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             _log.info("⑤ [media] response status=%s", getattr(resp, 'status', 200))
-            result = json.loads(resp.read().decode('utf-8'))
+            _raw_body = resp.read().decode('utf-8', errors='replace')
+            _ctype = ''
+            try:
+                _ctype = resp.headers.get('content-type', '')
+            except Exception:
+                pass
+            _log.info("⑥ [media] content-type=%s | body_len=%d | body[:800]=%s",
+                      _ctype, len(_raw_body), _raw_body[:800])
+            result = json.loads(_raw_body)
+            _log.info("⑥b [media] parsed json keys=%s", list(result.keys()) if isinstance(result, dict) else type(result))
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         _log.error("⑤ [media] HTTP error %s at %s: %s", e.code, url, body[:500])
@@ -226,6 +235,11 @@ def generate_image(
             "url": item.get("url", ""),
             "b64_json": item.get("b64_json", ""),
         })
+
+    _log.info("⑦ [media] extracted %d image(s) | urls=%s | b64=%s",
+              len(images),
+              [ (im.get('url') or '')[:120] for im in images ],
+              [ bool(im.get('b64_json')) for im in images ])
 
     return {
         "images": images,
