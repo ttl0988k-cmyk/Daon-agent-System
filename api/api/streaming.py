@@ -701,11 +701,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           _media_base_url = _mm2._get_base_url(resolved_provider) or ''
                       except Exception:
                           pass
+                  print(f"[webui] Media: base_url={_media_base_url or 'EMPTY'}", flush=True)
                   if not _media_base_url:
                       raise RuntimeError(f"프로바이더 '{resolved_provider}'의 base_url을 찾을 수 없습니다.")
+                  print(f"[webui] Media: api_key={'set' if resolved_api_key else 'MISSING'}", flush=True)
                   if not resolved_api_key:
                       raise RuntimeError("API 키가 없습니다. 설정에서 프로바이더 API 키를 등록하세요.")
 
+                  print(f"[webui] Media: calling run_media_generation (model={resolved_model}, type={_media_type})...", flush=True)
                   _media_result = run_media_generation(
                       prompt=msg_text,
                       model=resolved_model,
@@ -713,6 +716,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       api_key=resolved_api_key,
                       model_type=_media_type,
                   )
+                  print(f"[webui] Media: run_media_generation returned OK", flush=True)
                   put('media_result', _media_result)
                   put('done', {'text': ''})
               except Exception as _media_err:
