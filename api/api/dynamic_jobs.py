@@ -57,7 +57,7 @@ def get_job_logs_since(run_id: str, cursor: int) -> tuple[list[dict], int]:
         return new_logs, cursor + len(new_logs)
 
 
-def init_job(run_id: str) -> dict:
+def init_job(run_id: str, session_id: str = None) -> dict:
     """Create a new job entry and return it."""
     job = {
         'status': 'running',
@@ -66,6 +66,7 @@ def init_job(run_id: str) -> dict:
         'started_at': time.time(),
         'logs': [],
         'clarification': None,  # clarification questions when status='clarifying'
+        'session_id': session_id,  # session_id for approval resolution
     }
     with _DYNAMIC_JOBS_LOCK:
         _DYNAMIC_JOBS[run_id] = job
@@ -89,6 +90,15 @@ def set_job_running(run_id: str):
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'running'
             _DYNAMIC_JOBS[run_id]['clarification'] = None
+
+
+def set_job_awaiting_approval(run_id: str, message: str = ''):
+    """Mark a job as waiting for user approval (e.g. plan.md review)."""
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]['status'] = 'awaiting_approval'
+            _DYNAMIC_JOBS[run_id]['approval_message'] = message or '작업 승인이 필요합니다.'
+            _DYNAMIC_JOBS[run_id]['available_actions'] = ['approve', 'reject']
 
 
 def append_job_log(run_id: str, agent_id: str, content: str, status: str = "running"):
@@ -155,11 +165,12 @@ def start_harness_job(body: dict) -> str:
         workspace = str(RUN_DIR).replace('\\', '/')
 
     run_id = uuid.uuid4().hex[:16]
-    init_job(run_id)
 
     planning_mode = body.get('planning_mode', False)
     session_id = body.get('session_id')
     allowed_providers = body.get('allowedProviders')
+
+    init_job(run_id, session_id=session_id)
 
     # Check if clarification (interview) is enabled
     enable_clarification = body.get('clarification', True)

@@ -166,12 +166,28 @@ def handle_post_dynamic_approve(handler, body: dict, parsed=None) -> bool:
 
     # Resolve the approval by updating job status back to running
     from api.dynamic_jobs import _DYNAMIC_JOBS, _DYNAMIC_JOBS_LOCK
+    session_id = job.get("session_id")
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]["status"] = "running"
             _DYNAMIC_JOBS[run_id]["approval_action"] = action
             _DYNAMIC_JOBS[run_id].pop("approval_message", None)
             _DYNAMIC_JOBS[run_id].pop("available_actions", None)
+
+    # CRITICAL: resolve the api.approval pending entry so the orchestrator's
+    # `while has_pending(session_id)` loop unblocks. Without this the harness
+    # stays frozen after plan.md even when the user clicks approve.
+    if session_id:
+        try:
+            from api.approval import approve as _apr_approve, reject as _apr_reject, has_pending as _apr_has
+            if _apr_has(session_id):
+                if action == "reject":
+                    _apr_reject(session_id, reason="User rejected via harness approve endpoint")
+                else:
+                    _apr_approve(session_id, reviewer="user")
+        except Exception as _apr_err:
+            handler.send_json({"ok": False, "error": f"approval resolve failed: {_apr_err}"}, 500)
+            return True
 
     handler.send_json({"ok": True, "action": action})
     return True

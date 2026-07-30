@@ -278,17 +278,30 @@ class HermesDynamicRunner:
                 from api.approval import set_pending, has_pending, get_history
                 import uuid
                 preview_id = uuid.uuid4().hex[:16]
+                _plan_msg = f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다."
                 
                 # Set pending approval specifically targeting the plan.md
+                # NOTE: 'status': 'pending' is REQUIRED — the frontend approval poller
+                # (approval.js) and showInlineApproval() both gate on status === 'pending'.
                 set_pending(session_id, {
                     'preview_id': preview_id,
                     'path': plan_file_path,
                     'line_changes': [],
                     'is_plan': True,
                     'source_agent': 'Planner',
-                    'message': f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다.",
+                    'message': _plan_msg,
+                    'status': 'pending',
                     'created_at': time.strftime('%Y-%m-%dT%H:%M:%S')
                 })
+                
+                # Mark the dynamic job as awaiting_approval so the harness frontend
+                # poller (/api/dynamic/status) surfaces the approval banner too.
+                if run_id:
+                    try:
+                        from api.dynamic_jobs import set_job_awaiting_approval
+                        set_job_awaiting_approval(run_id, _plan_msg)
+                    except Exception as _jae:
+                        _log.warning("Failed to set job awaiting_approval: %s", _jae)
                 
                 from api.config import STREAMS
                 q = STREAMS.get(session_id)
@@ -298,7 +311,7 @@ class HermesDynamicRunner:
                         'path': plan_file_path,
                         'line_changes': [],
                         'is_plan': True,
-                        'message': f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다.",
+                        'message': _plan_msg,
                         'status': 'pending'
                     }))
                 
@@ -306,6 +319,14 @@ class HermesDynamicRunner:
                 while has_pending(session_id):
                     check_timeout()
                     time.sleep(1.0)
+                
+                # Restore job status to running now that approval is resolved
+                if run_id:
+                    try:
+                        from api.dynamic_jobs import set_job_running
+                        set_job_running(run_id)
+                    except Exception:
+                        pass
                 
                 # Check history to see if it was rejected
                 hist = get_history(session_id, limit=1)
