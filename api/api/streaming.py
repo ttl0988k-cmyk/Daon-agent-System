@@ -402,7 +402,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           _job_active = False
           _job_has_error = False
           _job_tools = []  # List of (tool_name, status) for progress display
-          
+          # Track pending file edits: tool.started stores path so tool.completed
+          # (which receives args=None) can re-read the file from disk.
+          _pending_file_edits = {}  # tool_name -> path
+
           def on_tool(event_type, tool_name, preview, args, **kwargs):
               # tool_executor.py calls with 4 positional args:
               #   agent.tool_progress_callback("tool.started", function_name, preview, function_args)
@@ -441,6 +444,19 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           break
                   # Emit progress update
                   put('job', {'type': 'progress', 'tool': tool_name, 'status': 'error' if is_error else 'completed', 'duration': duration, 'tools': _job_tools.copy()})
+                  # ── File edit finalization ──
+                  # tool.completed receives args=None, so re-read the written file
+                  # from disk and push the authoritative content to the editor.
+                  if not is_error and tool_name in ('write_file', 'patch'):
+                      _fe_path = _pending_file_edits.pop(tool_name, None)
+                      if _fe_path:
+                          try:
+                              _fe_target = Path(s.workspace) / _fe_path
+                              if _fe_target.exists() and _fe_target.is_file():
+                                  _fe_content = _fe_target.read_text(encoding='utf-8', errors='replace')
+                                  put('file_edit_done', {'name': tool_name, 'path': _fe_path, 'content': _fe_content})
+                          except Exception as _fe_err:
+                              _logger.warning("file_edit_done read failed for %s: %s", _fe_path, _fe_err)
               
               args_snap = {}
               if isinstance(args, dict):
@@ -456,6 +472,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               # Monaco Editor UX를 위한 파일 편집 이벤트 전송
               if event_type == 'tool.started' and tool_name in ('write_file', 'patch') and isinstance(args, dict):
                   print(f"[MonacoEditorUX-debug] ✅ file_edit event SENT for {tool_name} args_keys={list(args.keys())}", flush=True)
+                  # Remember the path so tool.completed can re-read from disk.
+                  _fe_p = args.get('path') or args.get('file_path') or ''
+                  if _fe_p:
+                      _pending_file_edits[tool_name] = _fe_p
                   put('file_edit', {'name': tool_name, 'args': args})
               # ── Diff Preview auto-generation ──
               # When write_file/patch is called, auto-generate a diff preview

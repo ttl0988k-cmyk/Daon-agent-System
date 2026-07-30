@@ -40,6 +40,53 @@ function initMonaco() {
   });
 }
 // ── Multi-Tab Editor ──
+
+/**
+ * 디스크 읽기 없이 주어진 content로 에디터 탭을 생성/전환한다.
+ * AI가 파일을 쓰는 도중(tool.started 시점)에는 디스크에 아직 파일이 없으므로
+ * 이 헬퍼로 즉시 에디터에 반영한다.
+ */
+function createTabWithContent(path, content) {
+  const existingIdx = State.openTabs.findIndex(t => t.path === path);
+  if (existingIdx !== -1) {
+    // 기존 탭이 있으면 모델 내용 갱신 후 전환
+    const tab = State.openTabs[existingIdx];
+    tab.content = content;
+    if (tab.model && window.monaco) {
+      tab.model.setValue(content);
+    }
+    switchTab(existingIdx);
+    return;
+  }
+
+  const name = path.split('/').pop();
+  const ext = name.split('.').pop().toLowerCase();
+  let lang = 'plaintext';
+  if (ext === 'js') lang = 'javascript';
+  else if (ext === 'py') lang = 'python';
+  else if (ext === 'html') lang = 'html';
+  else if (ext === 'css') lang = 'css';
+  else if (ext === 'json') lang = 'json';
+  else if (ext === 'md') lang = 'markdown';
+
+  let model = null;
+  if (window.monaco) {
+    model = monaco.editor.createModel(content || '', lang);
+  }
+
+  const newTab = {
+    path,
+    name,
+    mode: 'code',
+    model,
+    content: content || '',
+    dirty: false
+  };
+
+  State.openTabs.push(newTab);
+  switchTab(State.openTabs.length - 1);
+}
+
 async function openFileInTab(path) {
   const existingIdx = State.openTabs.findIndex(t => t.path === path);
   if (existingIdx !== -1) {

@@ -263,7 +263,33 @@ def _run_node_with_retries(
 
                 agent = agent_class(**_agent_kwargs)
                 agent.is_dynamic_runner = True
-                
+
+                # ── 실시간 에디터 반영: 파일 쓰기 도구 감지 콜백 ──
+                # tool.completed 시점에 디스크에 파일이 쓰였으므로 로그로 경로를 기록한다.
+                # 프론트엔드(harness.js)가 이 로그를 파싱해 파일 트리/에디터를 갱신한다.
+                def _make_file_edit_cb(_agent_name):
+                    def _file_edit_cb(event_type, tool_name, preview, args, **kwargs):
+                        try:
+                            if event_type != 'tool.completed':
+                                return
+                            if kwargs.get('is_error'):
+                                return
+                            if tool_name not in ('write_file', 'patch'):
+                                return
+                            # tool.completed는 args=None이므로 preview에서 경로를 추출한다.
+                            _p = ''
+                            if isinstance(args, dict):
+                                _p = args.get('path') or args.get('file_path') or ''
+                            if not _p and isinstance(preview, str):
+                                # preview 예: "write: path/to/file" 또는 경로 자체
+                                _p = preview.split(':', 1)[-1].strip() if ':' in preview else preview.strip()
+                            if _p and log_callback:
+                                log_callback(_agent_name, f"[FILE_EDIT]{_p}", "running")
+                        except Exception:
+                            pass
+                    return _file_edit_cb
+                agent.tool_progress_callback = _make_file_edit_cb(agent_name)
+
                 # === [NEW] Inject MCP tools into the Hermes Registry (Dynamic Hermes nodes) ===
                 # registry는 싱글톤이므로 최초 1회만 등록되지만, Dynamic Hermes가 먼저
                 # 실행되는 경우를 대비해 여기에도 동일한 주입 로직을 둔다.

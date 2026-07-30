@@ -286,11 +286,32 @@ async function pollHarnessStatus(runId) {
       }
 
       if (res.logs && res.logs.length > State.harnessLogCursor) {
+        let fileEdited = false;
         for (let i = State.harnessLogCursor; i < res.logs.length; i++) {
           const entry = res.logs[i];
-          logToConsole(entry.message, entry.type || 'info');
+          const msg = entry.message || '';
+          // ── 실시간 에디터 반영: [FILE_EDIT]path 마커 로그 감지 ──
+          // 백엔드(runner.py)가 write_file/patch 완료 시 이 마커를 기록한다.
+          const feIdx = msg.indexOf('[FILE_EDIT]');
+          if (feIdx !== -1) {
+            const filePath = msg.slice(feIdx + '[FILE_EDIT]'.length).trim();
+            if (filePath) {
+              fileEdited = true;
+              // 디스크에 이미 쓰였으므로 openFileInTab으로 실제 내용을 열어 반영
+              if (typeof openFileInTab === 'function') {
+                openFileInTab(filePath).catch(() => { });
+              }
+              logToConsole(`📝 파일 수정: ${filePath}`, 'info');
+            }
+            continue;
+          }
+          logToConsole(msg, entry.type || 'info');
         }
         State.harnessLogCursor = res.logs.length;
+        // 파일이 수정되었으면 파일 트리 갱신
+        if (fileEdited && typeof refreshFileTree === 'function') {
+          refreshFileTree().catch(() => { });
+        }
       }
 
       if (res.agent_cards) {
