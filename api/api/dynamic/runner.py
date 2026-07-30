@@ -220,6 +220,7 @@ def _run_node_with_retries(
     results: dict,
     agent_class,
     log_callback=None,
+    run_id: str = None,
 ) -> dict:
     """Execute a DAG node across a fallback model chain with per-attempt retry logic."""
     max_retries = limits["node"]["max_retries"]
@@ -233,6 +234,14 @@ def _run_node_with_retries(
         api_key = cfg["api_key"]
         base_url = cfg["base_url"]
         for attempt in range(max_retries):
+            # 취소된 잡은 재시도하지 않고 즉시 중단한다.
+            if run_id:
+                try:
+                    import api.dynamic_jobs as _dj_cancel
+                    if _dj_cancel.is_job_cancelled(run_id):
+                        raise RuntimeError("Harness execution cancelled by user")
+                except ImportError:
+                    pass
             attempts_count += 1
             if mission_tracker and "check_timeout" in mission_tracker:
                 try:
@@ -241,6 +250,7 @@ def _run_node_with_retries(
                     last_err = te
                     break
             try:
+                agent = None  # except 경로에서 안전하게 unregister하기 위한 초기화
                 # Extract runtime config from template (if present)
                 _rt = node.get("_runtime") or {}
                 _agent_kwargs = dict(
@@ -263,6 +273,13 @@ def _run_node_with_retries(
 
                 agent = agent_class(**_agent_kwargs)
                 agent.is_dynamic_runner = True
+                # 취소 시 in-flight LLM HTTP 요청을 즉시 중단(interrupt)할 수 있도록 등록.
+                if run_id:
+                    try:
+                        import api.dynamic_jobs as _dj_reg
+                        _dj_reg.register_running_agent(run_id, agent)
+                    except Exception:
+                        pass
 
                 # ── 실시간 에디터 반영: 파일 쓰기 도구 감지 콜백 ──
                 # tool.completed 시점에 디스크에 파일이 쓰였으므로 로그로 경로를 기록한다.
@@ -457,8 +474,20 @@ def _run_node_with_retries(
                     cache_write_tokens=res.get("cache_write_tokens", 0),
                     reasoning_tokens=res.get("reasoning_tokens", 0),
                 )
+                if run_id and agent is not None:
+                    try:
+                        import api.dynamic_jobs as _dj_unreg
+                        _dj_unreg.unregister_running_agent(run_id, agent)
+                    except Exception:
+                        pass
                 break
             except Exception as e:
+                if run_id and agent is not None:
+                    try:
+                        import api.dynamic_jobs as _dj_unreg2
+                        _dj_unreg2.unregister_running_agent(run_id, agent)
+                    except Exception:
+                        pass
                 last_err = e
                 _log.info(
                     "Node '%s' failed with '%s' (Attempt %d/%d): %s",
@@ -628,6 +657,7 @@ class ParallelRunner:
                 results,
                 AIAgent,
                 log_callback,
+                run_id,
             )
 
         max_workers = max(len(b) for b in batches) if batches else 1
@@ -646,7 +676,24 @@ class ParallelRunner:
                 for future in futures:
                     node_name = futures[future]
                     try:
-                        future.result(timeout=node_timeout)
+                        # future.result(timeout=node_timeout)는 한 번 블록되면 취소가
+                        # 반영되지 않는다. 1초 단위로 폴링하며 is_job_cancelled를 체크해
+                        # 취소 즉시 실행 루프를 빠져나갈 수 있게 한다.
+                        _deadline = time.time() + node_timeout
+                        while True:
+                            try:
+                                future.result(timeout=1.0)
+                                break  # 노드 정상 완료
+                            except TimeoutError:
+                                if run_id:
+                                    try:
+                                        import api.dynamic_jobs as _dj_poll
+                                        if _dj_poll.is_job_cancelled(run_id):
+                                            raise Exception("Harness execution cancelled by user")
+                                    except ImportError:
+                                        pass
+                                if time.time() >= _deadline:
+                                    raise  # 실제 wall-time 초과 → 아래 except TimeoutError로
                     except TimeoutError:
                         _handle_timeout_node(
                             node_name,

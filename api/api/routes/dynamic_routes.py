@@ -83,6 +83,7 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
         "running": "running",
         "done": "completed",
         "error": "failed",
+        "cancelled": "cancelled",
         "awaiting_approval": "awaiting_approval",
         "clarifying": "clarifying",
     }

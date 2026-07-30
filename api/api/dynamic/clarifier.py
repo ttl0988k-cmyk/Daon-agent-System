@@ -247,6 +247,23 @@ def submit_answers(run_id: str, answers: list[str]) -> dict:
     return {"ok": True}
 
 
+def abort_clarification(run_id: str) -> bool:
+    """사용자가 하네스를 취소했을 때 답변 대기를 즉시 해제한다.
+
+    wait_for_answers()에서 블록 중인 스레드를 깨우고, aborted 플래그를 세워
+    clarification 루프가 더 이상 질문을 이어가지 않도록 한다.
+    """
+    state = _get_state(run_id)
+    if state is None:
+        return False
+    state["aborted"] = True
+    try:
+        state["answer_event"].set()
+    except Exception:
+        pass
+    return True
+
+
 def wait_for_answers(run_id: str, timeout: float = 300.0) -> Optional[list[str]]:
     """Block until user answers or timeout. Returns answers or None."""
     state = _get_state(run_id)
@@ -255,6 +272,10 @@ def wait_for_answers(run_id: str, timeout: float = 300.0) -> Optional[list[str]]
 
     signaled = state["answer_event"].wait(timeout=timeout)
     if not signaled:
+        return None
+
+    # 취소로 인해 깨어난 경우 답변 없이 None 반환 → 루프 종료
+    if state.get("aborted"):
         return None
 
     answers = state["user_answers"]

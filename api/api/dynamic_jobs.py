@@ -25,13 +25,78 @@ _DYNAMIC_JOBS_LOCK = threading.Lock()
 
 _CANCELLED_JOBS = set()
 
+# 실행 중인 AIAgent 인스턴스 레지스트리 (run_id → set[AIAgent]).
+# 취소 시 in-flight LLM HTTP 요청을 즉시 중단(interrupt)하기 위해 사용한다.
+_RUNNING_AGENTS: dict = {}
+_RUNNING_AGENTS_LOCK = threading.Lock()
+
+# 취소 가능한(아직 종료되지 않은) 잡 상태. 'running'뿐 아니라 의도 확인 대기
+# ('clarifying'), 승인 대기 ('awaiting_approval')에서도 취소가 먹혀야 한다.
+_CANCELLABLE_STATUSES = ('running', 'clarifying', 'awaiting_approval')
+
+
+def register_running_agent(run_id: str, agent) -> None:
+    """실행 중인 노드의 AIAgent를 등록해 취소 시 interrupt()를 걸 수 있게 한다."""
+    if not run_id or agent is None:
+        return
+    with _RUNNING_AGENTS_LOCK:
+        _RUNNING_AGENTS.setdefault(run_id, set()).add(agent)
+
+
+def unregister_running_agent(run_id: str, agent) -> None:
+    """노드 종료 시 AIAgent 등록을 해제한다."""
+    if not run_id or agent is None:
+        return
+    with _RUNNING_AGENTS_LOCK:
+        agents = _RUNNING_AGENTS.get(run_id)
+        if agents:
+            agents.discard(agent)
+            if not agents:
+                _RUNNING_AGENTS.pop(run_id, None)
+
+
+def _interrupt_running_agents(run_id: str) -> int:
+    """등록된 모든 AIAgent에 interrupt()를 걸어 in-flight 요청을 즉시 중단한다."""
+    with _RUNNING_AGENTS_LOCK:
+        agents = list(_RUNNING_AGENTS.get(run_id, ()))
+    count = 0
+    for agent in agents:
+        try:
+            agent.interrupt("Cancelled by user via harness cancel")
+            count += 1
+        except Exception:
+            pass
+    return count
+
+
 def cancel_job(run_id: str) -> bool:
-    """Cancel a running job."""
+    """Cancel a running job.
+
+    'running'뿐 아니라 'clarifying'(의도 확인 대기), 'awaiting_approval'(승인 대기)
+    상태에서도 취소를 허용한다. 취소 즉시 상태를 'cancelled'로 전환하고, 실행 중인
+    AIAgent를 interrupt()하며, clarification 답변 대기를 해제한다.
+    """
     with _DYNAMIC_JOBS_LOCK:
-        if run_id in _DYNAMIC_JOBS and _DYNAMIC_JOBS[run_id]['status'] == 'running':
-            _CANCELLED_JOBS.add(run_id)
-            return True
-        return False
+        job = _DYNAMIC_JOBS.get(run_id)
+        if job is None:
+            return False
+        if job['status'] not in _CANCELLABLE_STATUSES:
+            return False
+        _CANCELLED_JOBS.add(run_id)
+        job['status'] = 'cancelled'
+
+    # 록 밖에서 수행 — agent.interrupt / clarifier event set은 다른 록을 잡을 수 있다.
+    # 1) 실행 중인 AIAgent 즉시 중단 (in-flight LLM HTTP 요청 정지)
+    _interrupt_running_agents(run_id)
+
+    # 2) clarification 답변 대기 중이면 즉시 해제
+    try:
+        from api.dynamic.clarifier import abort_clarification
+        abort_clarification(run_id)
+    except Exception:
+        pass
+
+    return True
 
 def is_job_cancelled(run_id: str) -> bool:
     """Check if a job has been cancelled."""

@@ -261,6 +261,15 @@ async function pollHarnessStatus(runId) {
         return;
       }
 
+      if (res.status === 'cancelled') {
+        clearInterval(State.harnessPollInterval);
+        State.harnessPollInterval = null;
+        logToConsole('\n🛑 Dynamic Harness 취소됨', 'warning');
+        $('runHarnessBtn').disabled = false;
+        $('cancelHarnessBtn').style.display = 'none';
+        return;
+      }
+
       if (res.status === 'awaiting_approval') {
         clearInterval(State.harnessPollInterval);
         State.harnessPollInterval = null;
