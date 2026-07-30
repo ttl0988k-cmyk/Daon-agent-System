@@ -560,6 +560,12 @@ async function _executeAgentStream(displayText, uploaded) {
       resetIdleTimer();
     });
 
+    // ── Heartbeat: 백엔드가 오래 걸리는 작업(이미지/영상 생성) 중 보내는 keep-alive ──
+    // 토큰 처리와 분리된 전용 이벤트. idle timer만 갱신하고 UI는 건드리지 않는다.
+    sse.addEventListener('heartbeat', () => {
+      resetIdleTimer();
+    });
+
     // ── Image/Video generation result ─────────────────────────────────────
     sse.addEventListener('media_result', (e) => {
       const data = JSON.parse(e.data);

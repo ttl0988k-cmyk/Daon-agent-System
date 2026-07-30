@@ -754,11 +754,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   _media_worker = _media_threading.Thread(target=_run_media_worker, daemon=True)
                   _media_worker.start()
 
-                  # 완료될 때까지 10초마다 keep-alive token 발송 (빈 텍스트 → 버블 무해)
+                  # 완료될 때까지 10초마다 전용 heartbeat 이벤트 발송.
+                  # token 재사용 대신 별도 이벤트를 써서 토큰 처리 로직과 분리한다.
+                  # 프론트엔드는 heartbeat 리스너에서 resetIdleTimer()를 호출해
+                  # idle timer(30초)가 스트림을 조기 종료하지 않도록 한다.
                   while not _media_box['done']:
                       _media_worker.join(timeout=10.0)
                       if not _media_box['done']:
-                          put('token', {'text': ''})  # keep-alive → 프론트엔드 idle timer 리셋
+                          put('heartbeat', {})  # keep-alive → 프론트엔드 idle timer 리셋
 
                   if _media_box['error'] is not None:
                       raise _media_box['error']

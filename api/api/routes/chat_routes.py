@@ -93,7 +93,10 @@ def handle_get_sse_stream(handler, parsed) -> bool:
     try:
         while True:
             try:
-                event, data = q.get(timeout=30)
+                # 15초: 프론트엔드 idle timer(30초)보다 짧게 유지해,
+                # 백엔드가 오래 걸리는 작업(이미지/영상 생성) 중에도
+                # heartbeat comment가 주기적으로 전송되어 연결이 유지된다.
+                event, data = q.get(timeout=15)
             except queue.Empty:
                 try:
                     handler.wfile.write(b': heartbeat\n\n')
