@@ -64,6 +64,61 @@ def detect_model_type(model_id: str) -> str:
 # ─── Image Generation ───
 
 
+def _dashscope_native_base(base_url: str) -> str:
+    """Derive the DashScope native API base (.../api/v1) from an OpenAI-compatible base_url.
+
+    .../compatible-mode/v1 → .../api/v1  (same domain, different path prefix)
+    """
+    stripped = base_url.rstrip('/')
+    if '/compatible-mode/v1' in stripped:
+        return stripped.replace('/compatible-mode/v1', '/api/v1')
+    if stripped.endswith('/v1'):
+        return stripped[:-3] + '/api/v1'
+    return stripped + '/api/v1'
+
+
+def _extract_images_from_output(output: dict) -> list:
+    """Extract [{url, b64_json}] from a DashScope `output` object.
+
+    Handles both shapes:
+      - output.results[]: {url, b64_image}
+      - output.choices[].message.content[]: {image: <url|data-uri>}
+    """
+    images: list = []
+    if not isinstance(output, dict):
+        return images
+
+    # Shape A: output.results[]
+    for r in output.get("results") or []:
+        if not isinstance(r, dict):
+            continue
+        url = r.get("url") or r.get("image") or ""
+        b64 = r.get("b64_image") or r.get("b64_json") or ""
+        if url or b64:
+            images.append({"url": url, "b64_json": b64})
+
+    # Shape B: output.choices[].message.content[]
+    for choice in output.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        content = message.get("content")
+        parts = content if isinstance(content, list) else ([{"text": content}] if isinstance(content, str) else [])
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            img = part.get("image") or part.get("url") or ""
+            if img:
+                if img.startswith("data:"):
+                    # data:image/png;base64,.... → strip prefix
+                    b64 = img.split(",", 1)[1] if "," in img else img
+                    images.append({"url": "", "b64_json": b64})
+                else:
+                    images.append({"url": img, "b64_json": ""})
+
+    return images
+
+
 def _generate_image_dashscope_native(
     prompt: str,
     model: str,
@@ -75,65 +130,95 @@ def _generate_image_dashscope_native(
     max_wait: float = 120.0,
 ) -> dict:
     """
-    DashScope native async text2image API (Alibaba WAN/wanx models).
+    DashScope native image generation for Wan2.7+ (Alibaba WAN/wanx models).
 
-    The OpenAI-compatible /images/generations endpoint returns 404 on some
-    Alibaba domains (e.g. token-plan.*).  The native endpoint is:
-      POST {native_base}/services/aigc/text2image/image-synthesis
-      GET  {native_base}/tasks/{task_id}
+    The OpenAI-compatible /images/generations endpoint returns 404 on Alibaba
+    domains (e.g. token-plan.*), and the legacy Wan2.5/2.6 async endpoint
+    (/services/aigc/text2image/image-synthesis) returns
+    `AccessDenied: current user api does not support asynchronous calls` for
+    Wan2.7 plans.  Per the latest Wan2.7 docs the correct endpoints are:
 
-    native_base is derived from base_url by replacing '/compatible-mode/v1'
-    with '/api/v1' (same domain, different path prefix).
+      Sync  (preferred): POST {native_base}/services/aigc/multimodal-generation/generation
+      Async (fallback) : POST {native_base}/services/aigc/image-generation/generation
+                         + header `X-DashScope-Async: enable`
+                         + GET {native_base}/tasks/{task_id} polling
+
+    native_base is derived from base_url via _dashscope_native_base().
     """
-    # Derive native base: .../compatible-mode/v1 → .../api/v1
-    stripped = base_url.rstrip('/')
-    if '/compatible-mode/v1' in stripped:
-        native_base = stripped.replace('/compatible-mode/v1', '/api/v1')
-    elif stripped.endswith('/v1'):
-        native_base = stripped[:-3] + '/api/v1'
-    else:
-        native_base = stripped + '/api/v1'
+    native_base = _dashscope_native_base(base_url)
 
-    create_url = native_base + '/services/aigc/text2image/image-synthesis'
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "X-DashScope-Async": "enable",
+    def _post(url: str, payload: dict, async_mode: bool):
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        if async_mode:
+            headers["X-DashScope-Async"] = "enable"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers=headers,
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+
+    # ── 1) Synchronous: multimodal-generation/generation (preferred for Wan2.7) ──
+    sync_url = native_base + '/services/aigc/multimodal-generation/generation'
+    sync_payload = {
+        "model": model,
+        "input": {"messages": [{"role": "user", "content": [{"text": prompt}]}]},
+        "parameters": {"size": size, "n": n},
     }
-    payload = {
+    _log.info("[media] DashScope sync POST %s | model=%s", sync_url, model)
+    sync_err = None
+    try:
+        result = _post(sync_url, sync_payload, async_mode=False)
+        _log.info("[media] DashScope sync response keys=%s", list(result.keys()) if isinstance(result, dict) else type(result))
+        images = _extract_images_from_output(result.get("output", {}))
+        if images:
+            _log.info("[media] DashScope sync OK: %d image(s)", len(images))
+            return {"images": images, "revised_prompt": ""}
+        # 200 but no images → treat as failure, fall through to async
+        sync_err = f"동기 응답에 이미지 없음 — {json.dumps(result)[:200]}"
+        _log.warning("[media] DashScope sync returned no images: %s", sync_err)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        sync_err = f"HTTP {e.code}: {body[:200]}"
+        _log.warning("[media] DashScope sync failed (%s) → trying async endpoint", sync_err)
+    except Exception as e:
+        sync_err = str(e)
+        _log.warning("[media] DashScope sync error (%s) → trying async endpoint", sync_err)
+
+    # ── 2) Asynchronous: image-generation/generation + polling (fallback) ──
+    async_url = native_base + '/services/aigc/image-generation/generation'
+    async_payload = {
         "model": model,
         "input": {"prompt": prompt},
         "parameters": {"size": size, "n": n},
     }
-
-    _log.info("[media] DashScope native POST %s | model=%s", create_url, model)
-
-    req = urllib.request.Request(
-        create_url,
-        data=json.dumps(payload).encode('utf-8'),
-        headers=headers,
-        method='POST',
-    )
-
+    _log.info("[media] DashScope async POST %s | model=%s", async_url, model)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
+        result = _post(async_url, async_payload, async_mode=True)
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
-        _log.error("DashScope native HTTP %s at %s: %s", e.code, create_url, body[:500])
-        raise RuntimeError(f"DashScope 네이티브 API 실패 (HTTP {e.code}): {body[:200]}")
+        _log.error("DashScope async HTTP %s at %s: %s", e.code, async_url, body[:500])
+        raise RuntimeError(
+            f"DashScope 네이티브 API 실패 (동기: {sync_err} / 비동기 HTTP {e.code}): {body[:200]}"
+        )
 
-    # Synchronous response (some models return results directly)
     output = result.get("output", {})
-    results_list = output.get("results")
-    if results_list:
-        images = [{"url": r.get("url", ""), "b64_json": r.get("b64_image", "")} for r in results_list]
+
+    # Some async plans return results directly
+    images = _extract_images_from_output(output)
+    if images and not output.get("task_id"):
         return {"images": images, "revised_prompt": ""}
 
-    # Async: poll task
     task_id = output.get("task_id")
     if not task_id:
-        raise RuntimeError(f"DashScope 네이티브 API: task_id 없음 — {json.dumps(result)[:200]}")
+        raise RuntimeError(
+            f"DashScope 네이티브 API: task_id 없음 (동기: {sync_err}) — {json.dumps(result)[:200]}"
+        )
 
     poll_url = f"{native_base}/tasks/{task_id}"
     poll_headers = {"Authorization": f"Bearer {api_key}"}
@@ -151,9 +236,10 @@ def _generate_image_dashscope_native(
 
         task_status = status_result.get("output", {}).get("task_status", "")
         if task_status == "SUCCEEDED":
-            results_list = status_result.get("output", {}).get("results", [])
-            images = [{"url": r.get("url", ""), "b64_json": r.get("b64_image", "")} for r in results_list]
-            return {"images": images, "revised_prompt": ""}
+            images = _extract_images_from_output(status_result.get("output", {}))
+            if images:
+                return {"images": images, "revised_prompt": ""}
+            raise RuntimeError(f"DashScope 이미지 생성 성공이나 결과 파싱 실패: {json.dumps(status_result)[:200]}")
         elif task_status in ("FAILED", "CANCELED", "UNKNOWN"):
             err_msg = status_result.get("output", {}).get("message", "알 수 없는 오류")
             raise RuntimeError(f"DashScope 이미지 생성 실패: {err_msg}")
@@ -170,11 +256,26 @@ def generate_image(
     n: int = 1,
 ) -> dict:
     """
-    Call OpenAI-compatible /images/generations endpoint.
+    Generate an image.
+
+    Routing:
+      - Wan/wanx (Alibaba DashScope) models skip the OpenAI-compatible
+        /images/generations endpoint entirely (it returns 404/403 on
+        token-plan.* domains) and go straight to the DashScope native API
+        (sync multimodal-generation → async image-generation fallback).
+      - All other models use the OpenAI-compatible /images/generations
+        endpoint, falling back to the DashScope native API on 404/403.
+
     Returns: {"images": [{"url": ..., "b64_json": ...}], "revised_prompt": ...}
     """
     _log.info("① [media] generate_image entered | model=%s", model)
     _log.info("② [media] base_url=%s | api_key=%s", base_url, "set" if api_key else "MISSING")
+
+    # Wan/wanx (DashScope) models: go straight to the native API.
+    _lower_model = (model or '').lower()
+    if ('wan' in _lower_model) or ('wanx' in _lower_model):
+        _log.info("③ [media] Wan/wanx model detected → using DashScope native API directly")
+        return _generate_image_dashscope_native(prompt, model, base_url, api_key, size, n)
 
     url = base_url.rstrip('/') + '/images/generations'
     _log.info("③ [media] url=%s", url)
@@ -214,16 +315,16 @@ def generate_image(
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         _log.error("⑤ [media] HTTP error %s at %s: %s", e.code, url, body[:500])
-        # 404 → OpenAI-compatible endpoint missing. Try DashScope native API
-        # (Alibaba WAN/wanx models expose an async native endpoint, not
-        # /images/generations, on some domains such as token-plan.*).
-        if e.code == 404:
-            _log.info("[media] Falling back to DashScope native text2image API")
+        # 404/403 → OpenAI-compatible endpoint missing/disallowed. Try the
+        # DashScope native API (Alibaba WAN/wanx models expose a native
+        # endpoint, not /images/generations, on domains such as token-plan.*).
+        if e.code in (404, 403):
+            _log.info("[media] Falling back to DashScope native API (HTTP %s)", e.code)
             try:
                 return _generate_image_dashscope_native(prompt, model, base_url, api_key, size, n)
             except Exception as native_err:
                 _log.error("DashScope native fallback failed: %s", native_err)
-                raise RuntimeError(f"이미지 생성 실패 (HTTP 404 + 네이티브 fallback 실패): {native_err}")
+                raise RuntimeError(f"이미지 생성 실패 (HTTP {e.code} + 네이티브 fallback 실패): {native_err}")
         raise RuntimeError(f"이미지 생성 실패 (HTTP {e.code}): {body[:200]}")
     except Exception as e:
         _log.error("⑤ [media] request error: %s", e)
