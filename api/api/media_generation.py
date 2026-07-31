@@ -26,12 +26,12 @@ _log = get_logger(__name__)
 _IMAGE_PATTERNS = [
     'dall-e', 'dalle', 'flux', 'stable-diffusion', 'sdxl', 'midjourney',
     'ideogram', 'playground', 'imagen', 'image-generation', 'wanx',
-    'cogview', 'kolors',
+    'cogview', 'kolors', 'image-01',
 ]
 
 _VIDEO_PATTERNS = [
     'sora', 'kling', 'runway', 'pika', 'luma', 'cogvideo', 'video-generation',
-    'minimax-video', 'hailuo', 'wan-video', 'mochi',
+    'minimax-video', 'hailuo', 'wan-video', 'mochi', 't2v-01', 'i2v-01',
 ]
 
 
@@ -275,6 +275,82 @@ def _generate_image_dashscope_native(
     raise RuntimeError(f"DashScope 이미지 생성 시간 초과 ({max_wait}초)")
 
 
+def _generate_image_minimax(
+    prompt: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    size: str = "1024x1024",
+) -> dict:
+    """
+    MiniMax image-01 native API adapter.
+    Endpoint: POST {base_url}/image/generation
+    Body: {"model": "image-01", "prompt": "...", "width": N, "height": N}
+    Response: {"data": {"image": "<base64>"}, "base_resp": {"status_code": 0}}
+    """
+    # Parse size string "WxH" into separate width/height integers
+    width, height = 1024, 1024
+    try:
+        parts = str(size).lower().split('x')
+        if len(parts) == 2:
+            width, height = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        pass
+
+    url = base_url.rstrip('/') + '/image/generation'
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode('utf-8'),
+        headers=headers,
+        method='POST',
+    )
+
+    _log.info("[media-minimax] POST %s | size=%dx%d", url, width, height)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode('utf-8', errors='replace'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        _log.error("[media-minimax] HTTP %s: %s", e.code, body[:500])
+        raise RuntimeError(f"MiniMax 이미지 생성 실패 (HTTP {e.code}): {body[:200]}")
+    except Exception as e:
+        _log.error("[media-minimax] request error: %s", e)
+        raise RuntimeError(f"MiniMax 이미지 생성 실패: {e}")
+
+    # Check base_resp status
+    base_resp = result.get('base_resp', {})
+    if base_resp.get('status_code', 0) != 0:
+        raise RuntimeError(f"MiniMax 이미지 생성 실패: {base_resp.get('status_msg', 'unknown error')}")
+
+    # Extract base64 image from data.image
+    image_b64 = ''
+    data = result.get('data', {})
+    if isinstance(data, dict):
+        image_b64 = data.get('image', '')
+    elif isinstance(data, list) and data:
+        image_b64 = data[0].get('image', '') if isinstance(data[0], dict) else ''
+
+    if not image_b64:
+        raise RuntimeError(f"MiniMax 이미지 생성 성공이나 이미지 데이터 없음: {json.dumps(result)[:300]}")
+
+    _log.info("[media-minimax] image extracted | b64_len=%d", len(image_b64))
+    return {
+        "images": [{"url": "", "b64_json": image_b64}],
+        "revised_prompt": "",
+    }
+
+
 def generate_image(
     prompt: str,
     model: str,
@@ -304,6 +380,11 @@ def generate_image(
     if ('wan' in _lower_model) or ('wanx' in _lower_model):
         _log.info("③ [media] Wan/wanx model detected → using DashScope native API directly")
         return _generate_image_dashscope_native(prompt, model, base_url, api_key, size, n)
+
+    # MiniMax image-01: dedicated adapter (different endpoint + response schema)
+    if 'image-01' in _lower_model or 'minimax' in (base_url or '').lower():
+        _log.info("③ [media] MiniMax image model detected → using MiniMax native API")
+        return _generate_image_minimax(prompt, model, base_url, api_key, size)
 
     url = base_url.rstrip('/') + '/images/generations'
     _log.info("③ [media] url=%s", url)
@@ -378,6 +459,108 @@ def generate_image(
 
 # ─── Video Generation ───
 
+
+def _generate_video_minimax(
+    prompt: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    poll_interval: float = 10.0,
+    max_wait: float = 600.0,
+) -> dict:
+    """
+    MiniMax video generation native API adapter.
+    1. POST {base_url}/video_generation → {"task_id": "..."}
+    2. GET {base_url}/query/video_generation?task_id=... → {"status": "Success", "file_id": "..."}
+    3. POST {base_url}/files/retrieve → {"file": {"download_url": "..."}}
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    # Step 1: Create task
+    create_url = base_url.rstrip('/') + '/video_generation'
+    payload = {"model": model, "prompt": prompt}
+    req = urllib.request.Request(
+        create_url,
+        data=json.dumps(payload).encode('utf-8'),
+        headers=headers,
+        method='POST',
+    )
+    _log.info("[media-minimax] POST %s", create_url)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode('utf-8', errors='replace'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        _log.error("[media-minimax] video create HTTP %s: %s", e.code, body[:500])
+        raise RuntimeError(f"MiniMax 영상 생성 실패 (HTTP {e.code}): {body[:200]}")
+    except Exception as e:
+        raise RuntimeError(f"MiniMax 영상 생성 실패: {e}")
+
+    base_resp = result.get('base_resp', {})
+    if base_resp.get('status_code', 0) != 0:
+        raise RuntimeError(f"MiniMax 영상 생성 실패: {base_resp.get('status_msg', 'unknown')}")
+
+    task_id = result.get('task_id')
+    if not task_id:
+        raise RuntimeError(f"MiniMax 영상 생성: task_id 없음: {json.dumps(result)[:300]}")
+
+    _log.info("[media-minimax] video task_id=%s, polling...", task_id)
+
+    # Step 2: Poll until done
+    poll_url = f"{base_url.rstrip('/')}/query/video_generation?task_id={task_id}"
+    start = time.time()
+    file_id = None
+
+    while time.time() - start < max_wait:
+        time.sleep(poll_interval)
+        try:
+            poll_req = urllib.request.Request(poll_url, headers=headers, method='GET')
+            with urllib.request.urlopen(poll_req, timeout=30) as resp:
+                status_result = json.loads(resp.read().decode('utf-8', errors='replace'))
+        except Exception as e:
+            _log.warning("[media-minimax] poll error: %s", e)
+            continue
+
+        status = status_result.get('status', '')
+        _log.info("[media-minimax] poll status=%s", status)
+
+        if status == 'Success':
+            file_id = status_result.get('file_id')
+            break
+        elif status in ('Fail', 'Failed', 'Error'):
+            err = status_result.get('base_resp', {}).get('status_msg', 'unknown')
+            raise RuntimeError(f"MiniMax 영상 생성 실패: {err}")
+        # Preparing / Queueing → continue polling
+
+    if not file_id:
+        raise RuntimeError(f"MiniMax 영상 생성 시간 초과 ({max_wait}초)")
+
+    # Step 3: Retrieve download URL
+    retrieve_url = base_url.rstrip('/') + '/files/retrieve'
+    retrieve_payload = {"file_id": file_id}
+    retrieve_req = urllib.request.Request(
+        retrieve_url,
+        data=json.dumps(retrieve_payload).encode('utf-8'),
+        headers=headers,
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(retrieve_req, timeout=30) as resp:
+            file_result = json.loads(resp.read().decode('utf-8', errors='replace'))
+    except Exception as e:
+        raise RuntimeError(f"MiniMax 영상 파일 조회 실패: {e}")
+
+    download_url = file_result.get('file', {}).get('download_url', '')
+    if not download_url:
+        raise RuntimeError(f"MiniMax 영상 다운로드 URL 없음: {json.dumps(file_result)[:300]}")
+
+    _log.info("[media-minimax] video_url=%s", download_url[:120])
+    return {"video_url": download_url, "status": "completed"}
+
+
 def generate_video(
     prompt: str,
     model: str,
@@ -393,6 +576,12 @@ def generate_video(
     2. Poll GET /video/generations/{task_id} until done
     Returns: {"video_url": ..., "status": "completed"}
     """
+    # MiniMax video models: dedicated adapter (different endpoint + polling schema)
+    _lower_model = (model or '').lower()
+    if 't2v-01' in _lower_model or 'i2v-01' in _lower_model or 'minimax' in (base_url or '').lower():
+        _log.info("[media] MiniMax video model detected → using MiniMax native API")
+        return _generate_video_minimax(prompt, model, base_url, api_key)
+
     url = base_url.rstrip('/') + '/video/generations'
     payload = {
         "model": model,
