@@ -1344,11 +1344,16 @@
     }
 
     .message-bubble .md-image {
-      max-width: 100%;
+      max-width: min(100%, 360px);
+      max-height: 480px;
+      width: auto;
       height: auto;
+      object-fit: contain;
       border-radius: 8px;
       margin: 8px 0;
       display: block;
+      cursor: zoom-in;
+      border: 1px solid var(--border2, rgba(255, 255, 255, 0.08));
     }
 
     .message-bubble .md-link {

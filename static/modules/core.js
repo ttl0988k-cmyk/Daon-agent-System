@@ -70,7 +70,7 @@ function renderMd(text) {
     var ph = '\x00MDIMG' + (phIndex++) + '\x00';
     var safeUrl = _mdEscapeContent(url);
     var safeAlt = _mdEscapeContent(alt);
-    placeholders.push({ ph: ph, html: '<img src="' + safeUrl + '" alt="' + safeAlt + '" class="md-image" loading="lazy" onerror="this.style.display=\'none\'">' });
+    placeholders.push({ ph: ph, html: '<img src="' + safeUrl + '" alt="' + safeAlt + '" class="md-image" loading="lazy" onclick="window.open(this.src, \'_blank\')" onerror="this.style.display=\'none\'">' });
     return ph;
   });
 
