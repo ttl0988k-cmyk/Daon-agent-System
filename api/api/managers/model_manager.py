@@ -21,7 +21,6 @@ _PROVIDER_PRESETS = {
     'openrouter':  {'base_url': 'https://openrouter.ai/api/v1',       'label': 'OpenRouter'},
     'together':    {'base_url': 'https://api.together.xyz/v1',        'label': 'Together AI'},
     'groq':        {'base_url': 'https://api.groq.com/openai/v1',     'label': 'Groq'},
-    'nvidia':      {'base_url': 'https://integrate.api.nvidia.com/v1', 'label': 'NVIDIA NIM'},
     'xai':         {'base_url': 'https://api.x.ai/v1',                'label': 'xAI'},
     'zhipu':       {'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'label': 'ZhipuAI'},
     'dashscope':   {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'label': 'Alibaba Cloud (DashScope/Qwen)'},
@@ -49,7 +48,10 @@ def _load_custom_providers() -> dict:
     result = {'presets': dict(_PROVIDER_PRESETS), 'providers': {}}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            # utf-8-sig: tolerate a UTF-8 BOM if an external tool (e.g. PowerShell)
+            # rewrote the file with one — a stray BOM makes json.loads() fail and
+            # silently drops the user's registered providers (providers={} fallback).
+            data = json.loads(path.read_text(encoding='utf-8-sig'))
             if isinstance(data, dict):
                 # Once the file exists it is authoritative. Do NOT merge the
                 # hardcoded presets back in — a provider deleted via the UI must

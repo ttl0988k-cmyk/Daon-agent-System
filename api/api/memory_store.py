@@ -269,45 +269,71 @@ def add_fact(content: str, category: str = 'general', source_session: Optional[s
     - 의미 중복: 기존 fact 갱신 후 기존 id 반환
     - 모순: 기존 fact에 superseded_by 설정, 새 fact INSERT
     - 신규: INSERT
+
+    데드락 방지: 느린 LLM 중복 검사(_llm_check_duplicate)와 재검토 큐 등록(_create_review)은
+    전역 _db_lock 밖에서 실행한다. 락은 순수 DB 읽기/쓰기 구간만 보호한다.
+    (이전: 락 안에서 LLM 호출 → 최대 1800초 점유 → 두 번째 대화의 build_memory_prompt가
+     record_chat_activity→set_profile에서 _db_lock 무한 대기 → 채팅 hang)
     """
     try:
         content = (content or '').strip()
         if not content:
             return None
         _ensure_schema()
-        dup_info = None
+
+        # ── 1단계: 락 안에서 DB 읽기만 (완전 일치 검사 + 기존 facts 스냅샷) ──
+        existing = []
         with _db_lock:
             conn = _connect()
             try:
-                # 완전 일치 스킵
                 dup = conn.execute(
                     'SELECT id FROM facts WHERE content=? LIMIT 1', (content,)
                 ).fetchone()
                 if dup:
                     return None
-                # Phase 1-B: LLM 의미 중복 검사
                 if not skip_dedup:
                     existing = [dict(r) for r in conn.execute(
                         'SELECT id, content FROM facts '
                         'WHERE superseded_by IS NULL ORDER BY id DESC LIMIT 50'
                     ).fetchall()]
-                    if existing:
-                        dup_info = _llm_check_duplicate(content, existing)
-                        if dup_info and dup_info.get('action') == 'duplicate':
-                            # 의미 중복: 기존 fact 내용 갱신
-                            conn.execute(
-                                "UPDATE facts SET content=?, last_used_at=datetime('now') WHERE id=?",
-                                (content, dup_info['fact_id']),
-                            )
-                            conn.commit()
-                            return dup_info['fact_id']
-                        if dup_info and dup_info.get('action') == 'contradiction':
-                            # 모순: 기존 fact 신뢰도 하향
-                            conn.execute(
-                                'UPDATE facts SET confidence=0.3 WHERE id=?',
-                                (dup_info['fact_id'],),
-                            )
-                            derived_from = f"fact:{dup_info['fact_id']}"
+            finally:
+                conn.close()
+
+        # ── 2단계: 락 밖에서 느린 LLM 중복 검사 (데드락 방지 핵심) ──
+        dup_info = None
+        if existing and not skip_dedup:
+            dup_info = _llm_check_duplicate(content, existing)
+
+        # ── 3단계: 락 안에서 DB 쓰기만 (재검사 + 갱신/INSERT + 상한 정리) ──
+        review_payload = None
+        new_id = None
+        with _db_lock:
+            conn = _connect()
+            try:
+                # 재검사: 2단계 사이 다른 스레드가 동일 fact를 넣었을 수 있음
+                dup = conn.execute(
+                    'SELECT id FROM facts WHERE content=? LIMIT 1', (content,)
+                ).fetchone()
+                if dup:
+                    return None
+
+                if dup_info and dup_info.get('action') == 'duplicate':
+                    # 의미 중복: 기존 fact 내용 갱신
+                    conn.execute(
+                        "UPDATE facts SET content=?, last_used_at=datetime('now') WHERE id=?",
+                        (content, dup_info['fact_id']),
+                    )
+                    conn.commit()
+                    return dup_info['fact_id']
+
+                if dup_info and dup_info.get('action') == 'contradiction':
+                    # 모순: 기존 fact 신뢰도 하향
+                    conn.execute(
+                        'UPDATE facts SET confidence=0.3 WHERE id=?',
+                        (dup_info['fact_id'],),
+                    )
+                    derived_from = f"fact:{dup_info['fact_id']}"
+
                 cur = conn.execute(
                     'INSERT INTO facts (content, category, source_session, derived_from) '
                     'VALUES (?,?,?,?)',
@@ -315,22 +341,16 @@ def add_fact(content: str, category: str = 'general', source_session: Optional[s
                 )
                 conn.commit()
                 new_id = cur.lastrowid
-                # 모순인 경우 기존 fact에 superseded_by 설정 + Phase 5: 재검토 큐 등록
+
+                # 모순인 경우 기존 fact에 superseded_by 설정 (재검토 큐 등록은 락 밖에서)
                 if dup_info and dup_info.get('action') == 'contradiction':
                     conn.execute(
                         'UPDATE facts SET superseded_by=? WHERE id=?',
                         (new_id, dup_info['fact_id']),
                     )
                     conn.commit()
-                    # 사람 승인 대기 큐에 등록 (즉시 처리는 하되 검토 가능)
-                    try:
-                        _create_review(
-                            'contradiction',
-                            [dup_info['fact_id'], new_id],
-                            f"기존 fact#{dup_info['fact_id']} → 신규 fact#{new_id} 대체 (대화 중 자동 감지)",
-                        )
-                    except Exception:
-                        pass
+                    review_payload = (dup_info['fact_id'], new_id)
+
                 # 상한 정리: 오래된 fact부터 삭제
                 count = conn.execute('SELECT COUNT(*) AS c FROM facts').fetchone()['c']
                 if count > _MAX_FACTS:
@@ -341,9 +361,21 @@ def add_fact(content: str, category: str = 'general', source_session: Optional[s
                         (overflow,),
                     )
                     conn.commit()
-                return new_id
             finally:
                 conn.close()
+
+        # ── 4단계: 락 밖에서 재검토 큐 등록 (_create_review는 자체 락 사용 → 재귀 교착 방지) ──
+        if review_payload:
+            try:
+                _create_review(
+                    'contradiction',
+                    [review_payload[0], review_payload[1]],
+                    f"기존 fact#{review_payload[0]} → 신규 fact#{review_payload[1]} 대체 (대화 중 자동 감지)",
+                )
+            except Exception:
+                pass
+
+        return new_id
     except Exception:
         return None
 

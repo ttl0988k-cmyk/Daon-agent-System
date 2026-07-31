@@ -147,18 +147,6 @@ _DEFAULT_PROFILES: list[ModelProfile] = [
         base_url="https://api.deepseek.com/v1",
     ),
 
-    # ── NVIDIA Family ──
-    
-    
-    ModelProfile(
-        model_id="z-ai/glm-5.2", provider="nvidia",
-        display_name="GLM 5.2",
-        cost_per_1m_input=0.0, cost_per_1m_output=0.0,
-        context_window=200000, avg_latency_rank=3,
-        strengths=["code", "reasoning", "creative"],
-        max_output_tokens=4096,
-        base_url="https://integrate.api.nvidia.com/v1",
-    ),
 ]
 
 
@@ -760,7 +748,7 @@ class DynamicModelSelector:
         scored = []
         allowed = get_allowed_providers()
         # Collect known providers (hardcoded + custom)
-        _known_providers = {"minimax", "deepseek", "nvidia", "zyloo"}
+        _known_providers = {"minimax", "deepseek", "zyloo"}
         try:
             import json
             from pathlib import Path as _Path
@@ -858,9 +846,6 @@ class DynamicModelSelector:
             elif provider == "deepseek":
                 from api.dynamic.auth import _get_deepseek_api_key
                 return _get_deepseek_api_key()
-            elif provider == "nvidia":
-                import os
-                return os.getenv("NVIDIA_API_KEY", "")
         except Exception as e:
             _logger.warning("Failed to resolve API key for %s: %s", provider, e)
         
