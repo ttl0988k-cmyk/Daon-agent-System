@@ -1138,6 +1138,29 @@
               </div>
             </div>
 
+            <!-- 🎨 미디어 생성 옵션 패널 (이미지/영상 모델 선택 시 표시) -->
+            <div class="media-options-panel" id="mediaOptionsPanel" style="display:none;">
+              <div class="media-options-header">
+                <span class="media-options-icon" id="mediaOptionsIcon">🎨</span>
+                <span class="media-options-label" id="mediaOptionsLabel">이미지 생성 옵션</span>
+              </div>
+              <div class="media-options-body">
+                <label class="media-option-field">
+                  <span>비율 (크기)</span>
+                  <select id="mediaSizeSelect">
+                    <option value="1024x1024">정사각형 1:1 (1024×1024)</option>
+                    <option value="1792x1024">가로 16:9 (1792×1024)</option>
+                    <option value="1024x1792">세로 9:16 (1024×1792)</option>
+                    <option value="512x512">작게 1:1 (512×512)</option>
+                  </select>
+                </label>
+                <label class="media-option-field" id="mediaCountField">
+                  <span>생성 개수</span>
+                  <input type="number" id="mediaCountInput" min="1" max="4" value="1">
+                </label>
+              </div>
+            </div>
+
             <textarea id="promptInput" rows="2" placeholder="다온에게 코드 작성, 파일 편집, 설명 등을 요청해보세요…"></textarea>
             <div class="chat-input-row" style="display:flex; justify-content:space-between; align-items:center;">
               <!-- 클립 파일 첨부 단추 및 숨겨진 file input -->

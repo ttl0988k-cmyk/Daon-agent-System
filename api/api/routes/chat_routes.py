@@ -152,9 +152,10 @@ def handle_post_chat_start(handler, body) -> bool:
         STREAMS[stream_id] = q
     planning_mode = body.get('planning_mode', False)
     open_tabs = body.get('open_tabs') or []
+    media_options = body.get('media_options') or {}
     thr = threading.Thread(
         target=_run_agent_streaming,
-        args=(s.session_id, msg, model, workspace, stream_id, attachments, planning_mode, open_tabs),
+        args=(s.session_id, msg, model, workspace, stream_id, attachments, planning_mode, open_tabs, media_options),
         daemon=True,
     )
     thr.start()

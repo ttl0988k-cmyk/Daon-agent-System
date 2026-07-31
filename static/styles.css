@@ -4754,3 +4754,56 @@
     #syncWatcherSection input[type="checkbox"] {
       accent-color: var(--accent);
     }
+
+    /* ── Media Generation Options Panel ── */
+    .media-options-panel {
+      margin-bottom: 8px;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+    }
+
+    .media-options-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text2);
+    }
+
+    .media-options-icon {
+      font-size: 14px;
+    }
+
+    .media-options-body {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .media-option-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    .media-option-field select,
+    .media-option-field input {
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 12px;
+      min-width: 120px;
+    }
+
+    .media-option-field input[type="number"] {
+      min-width: 70px;
+      width: 70px;
+    }

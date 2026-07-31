@@ -383,6 +383,7 @@ def generate_video(
     model: str,
     base_url: str,
     api_key: str,
+    size: str = None,
     poll_interval: float = 5.0,
     max_wait: float = 300.0,
 ) -> dict:
@@ -397,6 +398,8 @@ def generate_video(
         "model": model,
         "prompt": prompt,
     }
+    if size:
+        payload["size"] = size
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -474,23 +477,34 @@ def run_media_generation(
     base_url: str,
     api_key: str,
     model_type: str = None,
+    size: str = None,
+    n: int = None,
 ) -> dict:
     """
     Unified entry: detect type and call appropriate API.
+    size/n come from the frontend media-option panel (aspect ratio / count).
     Returns:
       image → {"type": "image", "images": [...], "revised_prompt": ...}
       video → {"type": "video", "video_url": ..., "status": ...}
     """
-    _log.info("[media] run_media_generation entered | model=%s type=%s base_url=%s", model, model_type, base_url)
+    _log.info("[media] run_media_generation entered | model=%s type=%s base_url=%s size=%s n=%s", model, model_type, base_url, size, n)
     if model_type is None:
         model_type = detect_model_type(model)
 
     if model_type == 'image':
-        result = generate_image(prompt, model, base_url, api_key)
+        img_kwargs = {}
+        if size:
+            img_kwargs['size'] = size
+        if n and n >= 1:
+            img_kwargs['n'] = int(n)
+        result = generate_image(prompt, model, base_url, api_key, **img_kwargs)
         result["type"] = "image"
         return result
     elif model_type == 'video':
-        result = generate_video(prompt, model, base_url, api_key)
+        vid_kwargs = {}
+        if size:
+            vid_kwargs['size'] = size
+        result = generate_video(prompt, model, base_url, api_key, **vid_kwargs)
         result["type"] = "video"
         return result
     else:

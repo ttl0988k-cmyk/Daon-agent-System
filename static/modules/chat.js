@@ -79,6 +79,7 @@ function populateModelSelect() {
       const opt = document.createElement('option');
       opt.value = m.id;
       opt.textContent = m.label;
+      if (m.type) opt.setAttribute('data-type', m.type);
       optgroup.appendChild(opt);
     });
 
@@ -541,7 +542,8 @@ async function _executeAgentStream(displayText, uploaded) {
         workspace: State.activeWorkspacePath,
         attachments: uploaded.length > 0 ? uploaded : undefined,
         planning_mode: planningMode,
-        open_tabs: openTabs
+        open_tabs: openTabs,
+        media_options: buildMediaOptions()
       }
     });
 
@@ -1083,6 +1085,7 @@ async function saveSettings() {
 async function handleModelChange(newModelId) {
   State.activeModelId = newModelId;
   if ($('modelSelect')) $('modelSelect').value = newModelId;
+  updateMediaOptionsPanel(newModelId);
 
   if (State.activeSessionId) {
     try {
@@ -1100,6 +1103,53 @@ async function handleModelChange(newModelId) {
       console.error("Failed to update session model:", e);
     }
   }
+}
+
+// ── 미디어 생성 옵션 패널 ──────────────────────────────────────────
+function getSelectedModelType(modelId) {
+  const sel = $('modelSelect');
+  if (sel) {
+    const opt = Array.from(sel.options).find(o => o.value === modelId);
+    if (opt && opt.getAttribute('data-type')) return opt.getAttribute('data-type');
+  }
+  for (const g of (State.models || [])) {
+    for (const m of (g.models || [])) {
+      if (m.id === modelId && m.type) return m.type;
+    }
+  }
+  return 'chat';
+}
+
+function updateMediaOptionsPanel(modelId) {
+  const panel = $('mediaOptionsPanel');
+  if (!panel) return;
+  const type = getSelectedModelType(modelId);
+  if (type === 'image' || type === 'video') {
+    panel.style.display = '';
+    const isVideo = type === 'video';
+    if ($('mediaOptionsIcon')) $('mediaOptionsIcon').textContent = isVideo ? '🎬' : '🎨';
+    if ($('mediaOptionsLabel')) $('mediaOptionsLabel').textContent = isVideo ? '영상 생성 옵션' : '이미지 생성 옵션';
+    const countField = $('mediaCountField');
+    if (countField) countField.style.display = isVideo ? 'none' : '';
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+function buildMediaOptions() {
+  const type = getSelectedModelType(State.activeModelId);
+  if (type !== 'image' && type !== 'video') return undefined;
+  const opts = {};
+  const sizeSel = $('mediaSizeSelect');
+  if (sizeSel && sizeSel.value) opts.size = sizeSel.value;
+  if (type === 'image') {
+    const countInput = $('mediaCountInput');
+    if (countInput) {
+      const n = parseInt(countInput.value, 10);
+      if (n >= 1) opts.n = n;
+    }
+  }
+  return opts;
 }
 
 async function switchAgentProfile(name) {

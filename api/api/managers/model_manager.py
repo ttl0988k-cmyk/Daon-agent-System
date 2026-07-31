@@ -430,6 +430,21 @@ class ModelManager:
                 })
                 _added_provider_keys.add(pname)
 
+        # Inject model type so the frontend can show the media-option panel
+        # (aspect ratio / count) when an image or video model is selected.
+        for g in groups:
+            new_models = []
+            for m in g.get('models', []):
+                if isinstance(m, dict):
+                    mc = dict(m)
+                    if not mc.get('type'):
+                        mc['type'] = self.get_model_type(mc.get('id', ''))
+                    new_models.append(mc)
+                else:
+                    mid = str(m)
+                    new_models.append({'id': mid, 'label': mid, 'type': self.get_model_type(mid)})
+            g['models'] = new_models
+
         return groups
 
     def get_presets(self) -> dict:

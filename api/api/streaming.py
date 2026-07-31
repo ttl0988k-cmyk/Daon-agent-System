@@ -301,7 +301,7 @@ def cancel_session_streams(session_id: str) -> bool:
     return cancelled_any
 
 
-def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None):
+def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None):
     """Run agent in background thread, writing SSE events to STREAMS[stream_id]."""
     q = STREAMS.get(stream_id)
     if q is None:
@@ -739,12 +739,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
                   def _run_media_worker():
                       try:
+                          _mo = media_options or {}
                           _media_box['result'] = run_media_generation(
                               prompt=msg_text,
                               model=resolved_model,
                               base_url=_media_base_url,
                               api_key=resolved_api_key,
                               model_type=_media_type,
+                              size=_mo.get('size') or None,
+                              n=_mo.get('n') or None,
                           )
                       except Exception as _w_err:
                           _media_box['error'] = _w_err
