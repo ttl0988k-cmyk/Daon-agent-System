@@ -275,20 +275,14 @@ def _generate_image_dashscope_native(
     raise RuntimeError(f"DashScope 이미지 생성 시간 초과 ({max_wait}초)")
 
 
-def _generate_image_minimax(
-    prompt: str,
-    model: str,
-    base_url: str,
-    api_key: str,
-    size: str = "1024x1024",
-) -> dict:
+def _minimax_aspect_ratio(size: str) -> str:
+    """Map a frontend size string ("WxH") to a MiniMax aspect_ratio string.
+
+    MiniMax image-01 accepts aspect ratios ("1:1", "16:9", "9:16", ...) rather
+    than pixel dimensions. The frontend mediaSizeSelect offers:
+      1024x1024 / 512x512 → "1:1", 1792x1024 → "16:9", 1024x1792 → "9:16".
+    Falls back to the closest of 1:1 / 16:9 / 9:16 by orientation.
     """
-    MiniMax image-01 native API adapter.
-    Endpoint: POST {base_url}/image/generation
-    Body: {"model": "image-01", "prompt": "...", "width": N, "height": N}
-    Response: {"data": {"image": "<base64>"}, "base_resp": {"status_code": 0}}
-    """
-    # Parse size string "WxH" into separate width/height integers
     width, height = 1024, 1024
     try:
         parts = str(size).lower().split('x')
@@ -297,12 +291,40 @@ def _generate_image_minimax(
     except (ValueError, IndexError):
         pass
 
-    url = base_url.rstrip('/') + '/image/generation'
+    if width <= 0 or height <= 0:
+        return "1:1"
+    if width == height:
+        return "1:1"
+    return "16:9" if width > height else "9:16"
+
+
+def _generate_image_minimax(
+    prompt: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    size: str = "1024x1024",
+    n: int = 1,
+) -> dict:
+    """
+    MiniMax image-01 native API adapter.
+    Endpoint: POST {base_url}/image_generation  (underscore — NOT /image/generation)
+    Body: {"model": "image-01", "prompt": "...", "aspect_ratio": "16:9",
+           "response_format": "url", "n": 3, "prompt_optimizer": true}
+    Response: {"base_resp": {"status_code": 0},
+               "data": {"image_urls": ["https://..."]}}
+    """
+    aspect_ratio = _minimax_aspect_ratio(size)
+    count = max(1, int(n or 1))
+
+    url = base_url.rstrip('/') + '/image_generation'
     payload = {
         "model": model,
         "prompt": prompt,
-        "width": width,
-        "height": height,
+        "aspect_ratio": aspect_ratio,
+        "response_format": "url",
+        "n": count,
+        "prompt_optimizer": True,
     }
     headers = {
         "Content-Type": "application/json",
@@ -316,9 +338,9 @@ def _generate_image_minimax(
         method='POST',
     )
 
-    _log.info("[media-minimax] POST %s | size=%dx%d", url, width, height)
+    _log.info("[media-minimax] POST %s | aspect_ratio=%s n=%d", url, aspect_ratio, count)
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             result = json.loads(resp.read().decode('utf-8', errors='replace'))
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
@@ -333,20 +355,24 @@ def _generate_image_minimax(
     if base_resp.get('status_code', 0) != 0:
         raise RuntimeError(f"MiniMax 이미지 생성 실패: {base_resp.get('status_msg', 'unknown error')}")
 
-    # Extract base64 image from data.image
-    image_b64 = ''
+    # Extract image URLs from data.image_urls (response_format="url")
+    images = []
     data = result.get('data', {})
     if isinstance(data, dict):
-        image_b64 = data.get('image', '')
-    elif isinstance(data, list) and data:
-        image_b64 = data[0].get('image', '') if isinstance(data[0], dict) else ''
+        for u in data.get('image_urls', []) or []:
+            if u:
+                images.append({"url": u, "b64_json": ""})
+        # Fallback: some responses embed base64 under data.image
+        if not images and data.get('image'):
+            images.append({"url": "", "b64_json": data.get('image', '')})
 
-    if not image_b64:
+    if not images:
         raise RuntimeError(f"MiniMax 이미지 생성 성공이나 이미지 데이터 없음: {json.dumps(result)[:300]}")
 
-    _log.info("[media-minimax] image extracted | b64_len=%d", len(image_b64))
+    _log.info("[media-minimax] %d image(s) extracted | urls=%s",
+              len(images), [(im.get('url') or '')[:120] for im in images])
     return {
-        "images": [{"url": "", "b64_json": image_b64}],
+        "images": images,
         "revised_prompt": "",
     }
 
@@ -384,7 +410,7 @@ def generate_image(
     # MiniMax image-01: dedicated adapter (different endpoint + response schema)
     if 'image-01' in _lower_model or 'minimax' in (base_url or '').lower():
         _log.info("③ [media] MiniMax image model detected → using MiniMax native API")
-        return _generate_image_minimax(prompt, model, base_url, api_key, size)
+        return _generate_image_minimax(prompt, model, base_url, api_key, size, n)
 
     url = base_url.rstrip('/') + '/images/generations'
     _log.info("③ [media] url=%s", url)
