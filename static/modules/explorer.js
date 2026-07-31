@@ -322,7 +322,8 @@ let trayImageUrls = [];
 
 function formatUserMessageContent(content, sessionId) {
   let escaped = esc(content);
-  const regex = /\[Attached files:\s*([^\]]+)\]/;
+  // 한/영 첨부 파일 마커 모두 매칭: "[첨부 파일: a.png, b.jpg]" 또는 "[Attached files: ...]"
+  const regex = /\[(?:첨부 파일|Attached files):\s*([^\]]+)\]/;
   const match = escaped.match(regex);
   if (match) {
     const fileList = match[1].split(',').map(f => f.trim());
@@ -333,7 +334,7 @@ function formatUserMessageContent(content, sessionId) {
       if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
         hasImages = true;
         const imageUrl = `/api/file/raw?session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(filename)}`;
-        imagesHtml += `<img src="${imageUrl}" class="chat-message-image" style="width:150px !important; height:150px !important; object-fit:cover !important; border-radius:6px; border:1px solid var(--border2); cursor:pointer;" onclick="window.open(this.src)">`;
+        imagesHtml += `<img src="${imageUrl}" class="chat-message-image" style="width:150px !important; height:150px !important; object-fit:cover !important; border-radius:6px; border:1px solid var(--border2); cursor:zoom-in;" onclick="openImageLightbox(this.src)">`;
       }
     });
     imagesHtml += '</div>';

@@ -70,7 +70,7 @@ function renderMd(text) {
     var ph = '\x00MDIMG' + (phIndex++) + '\x00';
     var safeUrl = _mdEscapeContent(url);
     var safeAlt = _mdEscapeContent(alt);
-    placeholders.push({ ph: ph, html: '<img src="' + safeUrl + '" alt="' + safeAlt + '" class="md-image" loading="lazy" onclick="window.open(this.src, \'_blank\')" onerror="this.style.display=\'none\'">' });
+    placeholders.push({ ph: ph, html: '<img src="' + safeUrl + '" alt="' + safeAlt + '" class="md-image" loading="lazy" onclick="openImageLightbox(this.src)" onerror="this.style.display=\'none\'">' });
     return ph;
   });
 
@@ -124,6 +124,33 @@ function renderMd(text) {
   });
 
   return html;
+}
+
+// ── Image Lightbox (data: URL 포함 모든 src 대응, 다운로드 대신 인페이지 확대) ──
+function openImageLightbox(src) {
+  var overlay = document.getElementById('imageLightboxOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'imageLightboxOverlay';
+    overlay.className = 'image-lightbox-overlay';
+    overlay.onclick = function (e) {
+      if (e.target === overlay || e.target.id === 'imageLightboxClose') {
+        overlay.style.display = 'none';
+      }
+    };
+    var img = document.createElement('img');
+    img.id = 'imageLightboxImg';
+    img.className = 'image-lightbox-img';
+    var closeBtn = document.createElement('div');
+    closeBtn.id = 'imageLightboxClose';
+    closeBtn.className = 'image-lightbox-close';
+    closeBtn.innerHTML = '&times;';
+    overlay.appendChild(img);
+    overlay.appendChild(closeBtn);
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('imageLightboxImg').src = src;
+  overlay.style.display = 'flex';
 }
 
 function _mdEscapeContent(str) {

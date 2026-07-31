@@ -4812,3 +4812,41 @@
       min-width: 70px;
       width: 70px;
     }
+
+    /* ── Image Lightbox (data: URL 포함 인페이지 확대 오버레이) ── */
+    .image-lightbox-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10001;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.88);
+      cursor: zoom-out;
+    }
+
+    .image-lightbox-img {
+      max-width: 92vw;
+      max-height: 92vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .image-lightbox-close {
+      position: absolute;
+      top: 18px;
+      right: 26px;
+      font-size: 42px;
+      line-height: 1;
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+      opacity: 0.85;
+    }
+
+    .image-lightbox-close:hover {
+      opacity: 1;
+    }
