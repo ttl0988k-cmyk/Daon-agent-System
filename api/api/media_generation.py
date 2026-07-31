@@ -724,3 +724,300 @@ def run_media_generation(
         return result
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
+
+
+# ─── Workspace File Saving (Gap 2) ───
+
+def _resolve_workspace_dir() -> str:
+    """도구 실행 시 기준이 되는 워크스페이스 디렉토리.
+
+    터미널 도구와 동일하게 TERMINAL_CWD 환경변수를 우선 사용하고,
+    없으면 현재 작업 디렉토리를 쓴다. save_path 상대경로는 이 디렉토리 기준.
+    """
+    return os.getenv("TERMINAL_CWD") or os.getcwd()
+
+
+def _ext_from_data_url(header: str) -> str:
+    h = (header or "").lower()
+    if "jpeg" in h or "jpg" in h:
+        return ".jpg"
+    if "webp" in h:
+        return ".webp"
+    if "gif" in h:
+        return ".gif"
+    return ".png"
+
+
+def save_generated_media(source: str, save_path: str, index: int = 0) -> str:
+    """생성된 미디어(data: base64 또는 http(s) URL)를 워크스페이스에 파일로 저장한다.
+
+    Args:
+        source: 'data:image/...;base64,...' 또는 'http(s)://...' URL.
+        save_path: 저장 대상. 디렉토리(끝이 / 또는 \\, 빈 문자열, 기존 디렉토리)이면
+                   그 안에 'generated_<ts>_<index>.<ext>'로 자동 이름 저장.
+                   파일명(확장자 포함)이면 그 경로에 저장하되 다중 결과 시 '_<index>' 삽입.
+        index: 다중 생성 시 0부터의 순번.
+
+    Returns:
+        워크스페이스 기준 상대경로 (슬래시 정규화). 저장 실패 시 예외 발생.
+    """
+    import base64
+    import time as _time
+
+    workspace = _resolve_workspace_dir()
+
+    # 1) 소스에서 바이트 + 확장자 추출
+    if source.startswith("data:"):
+        header, _, b64 = source.partition(",")
+        raw = base64.b64decode(b64)
+        ext = _ext_from_data_url(header)
+    elif source.startswith("http://") or source.startswith("https://"):
+        req = urllib.request.Request(source, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+        ext = os.path.splitext(source.split("?")[0])[1] or ".png"
+    else:
+        raise ValueError(f"Unsupported media source: {source[:48]}")
+
+    # 2) 저장 경로 결정
+    sp = (save_path or "").strip()
+    is_dir = (
+        sp == ""
+        or sp.endswith(("/", "\\"))
+        or os.path.isdir(os.path.join(workspace, sp))
+    )
+    if is_dir:
+        ts = int(_time.time())
+        fname = f"generated_{ts}_{index}{ext}"
+        target_dir = os.path.join(workspace, sp) if sp else workspace
+        full_path = os.path.join(target_dir, fname)
+    else:
+        if index > 0:
+            stem, e = os.path.splitext(sp)
+            sp = f"{stem}_{index}{e or ext}"
+        full_path = os.path.join(workspace, sp)
+
+    parent = os.path.dirname(full_path) or workspace
+    os.makedirs(parent, exist_ok=True)
+    with open(full_path, "wb") as f:
+        f.write(raw)
+
+    # 3) 워크스페이스 기준 상대경로 반환
+    try:
+        return os.path.relpath(full_path, workspace).replace("\\", "/")
+    except ValueError:
+        return full_path.replace("\\", "/")
+
+
+# ─── Shared Registry Registration (chat streaming + dynamic harness) ───
+
+def _collect_media_models():
+    """등록된 이미지/비디오 모델 id 목록을 반환한다."""
+    from api.managers.model_manager import model_manager as _mm
+    image_models, video_models = [], []
+    try:
+        for g in _mm.get_available_models():
+            for m in g.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                mtype = m.get('type') if isinstance(m, dict) else None
+                if not mtype:
+                    mtype = _mm.get_model_type(mid)
+                if mtype == 'image' and mid not in image_models:
+                    image_models.append(mid)
+                elif mtype == 'video' and mid not in video_models:
+                    video_models.append(mid)
+    except Exception as e:
+        _log.warning("[media] collect models failed: %s", e)
+    return image_models, video_models
+
+
+def _make_media_resolver(image_models, video_models):
+    """generate_image/generate_video 공용 실행 클로저를 만든다.
+
+    save_path 인자가 있으면 생성 결과를 워크스페이스에 파일로 저장하고
+    응답에 saved_paths(워크스페이스 상대경로)를 포함한다.
+    """
+    import json as _json
+    from api.managers.model_manager import model_manager as _mm
+
+    def resolve_and_run(args: dict, media_type: str) -> str:
+        prompt = (args.get('prompt') or '').strip()
+        if not prompt:
+            return _json.dumps({"error": "prompt is required"}, ensure_ascii=False)
+        candidates = image_models if media_type == 'image' else video_models
+        model_id = (args.get('model') or '').strip()
+        if not model_id:
+            if not candidates:
+                return _json.dumps({"error": f"No {media_type} model registered. Add one in Settings."}, ensure_ascii=False)
+            model_id = candidates[0]
+        try:
+            resolved_model, provider, base_url = _mm.resolve_model_provider(model_id)
+        except Exception as _re:
+            return _json.dumps({"error": f"model resolve failed: {_re}"}, ensure_ascii=False)
+        if not base_url:
+            try:
+                base_url = _mm._get_base_url(provider) or ''
+            except Exception:
+                base_url = ''
+        try:
+            api_key = _mm._get_api_key(provider) or ''
+        except Exception:
+            api_key = ''
+        if not base_url:
+            return _json.dumps({"error": f"No base_url for provider '{provider}'"}, ensure_ascii=False)
+        if not api_key:
+            return _json.dumps({"error": f"No API key for provider '{provider}'"}, ensure_ascii=False)
+        try:
+            result = run_media_generation(
+                prompt=prompt,
+                model=resolved_model,
+                base_url=base_url,
+                api_key=api_key,
+                model_type=media_type,
+                size=args.get('size') or None,
+                n=args.get('n') or None,
+            )
+        except Exception as _ge:
+            return _json.dumps({"error": f"{media_type} generation failed: {_ge}"}, ensure_ascii=False)
+
+        save_path = (args.get('save_path') or '').strip()
+
+        if media_type == 'image':
+            imgs = result.get('images', []) if isinstance(result, dict) else []
+            urls = []
+            for im in imgs:
+                if im.get('b64_json'):
+                    urls.append(f"data:image/png;base64,{im['b64_json']}")
+                elif im.get('url'):
+                    urls.append(im['url'])
+            resp = {
+                "ok": True,
+                "model": resolved_model,
+                "image_urls": urls,
+                "instruction": "Embed each image in your reply using markdown: ![generated image](URL). Use the exact URLs provided.",
+            }
+            if save_path and urls:
+                saved = []
+                for idx, u in enumerate(urls):
+                    try:
+                        saved.append(save_generated_media(u, save_path, idx))
+                    except Exception as _se:
+                        _log.warning("[media] image save failed (idx=%d): %s", idx, _se)
+                if saved:
+                    resp["saved_paths"] = saved
+                    resp["instruction"] = (
+                        "Images were also saved to the workspace. Reference them in HTML/CSS using "
+                        "the relative paths in 'saved_paths' (e.g. <img src=\"assets/hero.png\">). "
+                        "You may also embed the data/HTTP URLs via markdown."
+                    )
+            return _json.dumps(resp, ensure_ascii=False)
+        else:
+            vurl = result.get('video_url', '') if isinstance(result, dict) else ''
+            resp = {
+                "ok": True,
+                "model": resolved_model,
+                "video_url": vurl,
+                "instruction": "Share the video using markdown: [video](URL) or an HTML <video controls src=URL> tag.",
+            }
+            if save_path and vurl:
+                try:
+                    resp["saved_paths"] = [save_generated_media(vurl, save_path, 0)]
+                except Exception as _se:
+                    _log.warning("[media] video save failed: %s", _se)
+            return _json.dumps(resp, ensure_ascii=False)
+
+    return resolve_and_run
+
+
+def build_media_tool_schemas(image_models, video_models):
+    """OpenAI function-call 스키마 2개(generate_image, generate_video)를 만들어 반환."""
+    img_props = {
+        "prompt": {"type": "string", "description": "Detailed description of the image to generate."},
+        "size": {"type": "string", "description": "Aspect size: 1024x1024 (1:1), 1792x1024 (16:9), or 1024x1792 (9:16).", "enum": ["1024x1024", "1792x1024", "1024x1792", "512x512"]},
+        "n": {"type": "integer", "description": "Number of images (1-4).", "minimum": 1, "maximum": 4},
+        "save_path": {"type": "string", "description": "Optional. Save the generated image(s) into the workspace so they can be referenced from files (e.g. an index.html). Give a directory like 'assets/' or 'images/hero/' to auto-name files, or a filename like 'assets/hero.png'. When set, the response includes 'saved_paths' (workspace-relative) suitable for <img src> in HTML/CSS."},
+    }
+    if image_models:
+        img_props["model"] = {"type": "string", "description": "Image model to use.", "enum": image_models}
+    else:
+        img_props["model"] = {"type": "string", "description": "Image model to use."}
+    img_schema = {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image from a text prompt using a registered image model. Call this when the task needs a picture, illustration, hero/background image, or any visual asset. Returns image URLs to embed in your reply; if 'save_path' is given, also saves files to the workspace and returns their relative paths in 'saved_paths'.",
+            "parameters": {"type": "object", "properties": img_props, "required": ["prompt"]},
+        },
+    }
+
+    vid_props = {
+        "prompt": {"type": "string", "description": "Detailed description of the video to generate."},
+        "size": {"type": "string", "description": "Aspect size: 1024x1024 (1:1), 1792x1024 (16:9), or 1024x1792 (9:16).", "enum": ["1024x1024", "1792x1024", "1024x1792"]},
+        "save_path": {"type": "string", "description": "Optional. Save the generated video into the workspace (a directory or filename). When set, the response includes 'saved_paths'."},
+    }
+    if video_models:
+        vid_props["model"] = {"type": "string", "description": "Video model to use.", "enum": video_models}
+    else:
+        vid_props["model"] = {"type": "string", "description": "Video model to use."}
+    vid_schema = {
+        "type": "function",
+        "function": {
+            "name": "generate_video",
+            "description": "Generate a short video from a text prompt using a registered video model. Call this when the task needs a video or animation. Returns a video URL; if 'save_path' is given, also saves the file to the workspace.",
+            "parameters": {"type": "object", "properties": vid_props, "required": ["prompt"]},
+        },
+    }
+    return img_schema, vid_schema
+
+
+def register_media_generation_tools(registry) -> tuple:
+    """registry에 generate_image/generate_video 도구를 멱등 등록하고,
+    채팅 에이전트 주입용 OpenAI 스키마 2개를 반환한다.
+
+    채팅(streaming.py)과 다이나믹 하네스(runner.py) 양쪽에서 호출해
+    'media-generation' toolset이 항상 registry에 존재하도록 보장한다.
+    동일 toolset 재등록은 registry가 허용하므로 여러 번 호출해도 안전하다.
+
+    Returns:
+        (img_schema, vid_schema) — OpenAI function-call 스키마 튜플.
+    """
+    image_models, video_models = _collect_media_models()
+    resolver = _make_media_resolver(image_models, video_models)
+    img_schema, vid_schema = build_media_tool_schemas(image_models, video_models)
+
+    registry.register(
+        name="generate_image",
+        toolset="media-generation",
+        schema={
+            "name": "generate_image",
+            "description": img_schema["function"]["description"],
+            "parameters": img_schema["function"]["parameters"],
+        },
+        handler=lambda args, **kw: resolver(args, 'image'),
+        check_fn=lambda: True,
+        is_async=False,
+        description="Generate an image using a registered image model",
+    )
+    registry.register(
+        name="generate_video",
+        toolset="media-generation",
+        schema={
+            "name": "generate_video",
+            "description": vid_schema["function"]["description"],
+            "parameters": vid_schema["function"]["parameters"],
+        },
+        handler=lambda args, **kw: resolver(args, 'video'),
+        check_fn=lambda: True,
+        is_async=False,
+        description="Generate a video using a registered video model",
+    )
+    try:
+        registry.register_toolset_alias("media", "media-generation")
+    except Exception:
+        pass
+
+    _log.info(
+        "[media] Registered generate_image (%d models) + generate_video (%d models) into registry.",
+        len(image_models), len(video_models),
+    )
+    return img_schema, vid_schema

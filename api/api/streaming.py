@@ -1075,160 +1075,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # dropdown. The agent picks the model via the `model` parameter
           # (enum populated dynamically from registered image/video models).
           try:
-              from api.media_generation import run_media_generation as _mg_run
-              from api.managers.model_manager import model_manager as _mg_mm
+              from api.media_generation import register_media_generation_tools as _mg_register
               from tools.registry import registry as _mg_registry
 
-              # Collect available image / video models for the enum + defaults
-              _mg_image_models = []
-              _mg_video_models = []
-              try:
-                  for _g in _mg_mm.get_available_models():
-                      for _m in _g.get('models', []):
-                          _mid = _m.get('id') if isinstance(_m, dict) else str(_m)
-                          _mtype = _m.get('type') if isinstance(_m, dict) else None
-                          if not _mtype:
-                              _mtype = _mg_mm.get_model_type(_mid)
-                          if _mtype == 'image' and _mid not in _mg_image_models:
-                              _mg_image_models.append(_mid)
-                          elif _mtype == 'video' and _mid not in _mg_video_models:
-                              _mg_video_models.append(_mid)
-              except Exception as _mg_list_err:
-                  print(f"[MediaTools] model list failed: {_mg_list_err}", flush=True)
-
-              def _mg_resolve_and_run(args: dict, media_type: str) -> str:
-                  import json as _json
-                  prompt = (args.get('prompt') or '').strip()
-                  if not prompt:
-                      return _json.dumps({"error": "prompt is required"}, ensure_ascii=False)
-                  candidates = _mg_image_models if media_type == 'image' else _mg_video_models
-                  model_id = (args.get('model') or '').strip()
-                  if not model_id:
-                      if not candidates:
-                          return _json.dumps({"error": f"No {media_type} model registered. Add one in Settings."}, ensure_ascii=False)
-                      model_id = candidates[0]
-                  try:
-                      resolved_model, provider, base_url = _mg_mm.resolve_model_provider(model_id)
-                  except Exception as _re:
-                      return _json.dumps({"error": f"model resolve failed: {_re}"}, ensure_ascii=False)
-                  if not base_url:
-                      try:
-                          base_url = _mg_mm._get_base_url(provider) or ''
-                      except Exception:
-                          base_url = ''
-                  try:
-                      api_key = _mg_mm._get_api_key(provider) or ''
-                  except Exception:
-                      api_key = ''
-                  if not base_url:
-                      return _json.dumps({"error": f"No base_url for provider '{provider}'"}, ensure_ascii=False)
-                  if not api_key:
-                      return _json.dumps({"error": f"No API key for provider '{provider}'"}, ensure_ascii=False)
-                  try:
-                      result = _mg_run(
-                          prompt=prompt,
-                          model=resolved_model,
-                          base_url=base_url,
-                          api_key=api_key,
-                          model_type=media_type,
-                          size=args.get('size') or None,
-                          n=args.get('n') or None,
-                      )
-                  except Exception as _ge:
-                      return _json.dumps({"error": f"{media_type} generation failed: {_ge}"}, ensure_ascii=False)
-
-                  if media_type == 'image':
-                      imgs = result.get('images', []) if isinstance(result, dict) else []
-                      urls = []
-                      for im in imgs:
-                          if im.get('b64_json'):
-                              urls.append(f"data:image/png;base64,{im['b64_json']}")
-                          elif im.get('url'):
-                              urls.append(im['url'])
-                      return _json.dumps({
-                          "ok": True,
-                          "model": resolved_model,
-                          "image_urls": urls,
-                          "instruction": "Embed each image in your reply using markdown: ![generated image](URL). Use the exact URLs provided.",
-                      }, ensure_ascii=False)
-                  else:
-                      vurl = result.get('video_url', '') if isinstance(result, dict) else ''
-                      return _json.dumps({
-                          "ok": True,
-                          "model": resolved_model,
-                          "video_url": vurl,
-                          "instruction": "Share the video using markdown: [video](URL) or an HTML <video controls src=URL> tag.",
-                      }, ensure_ascii=False)
-
-              # generate_image tool
-              _img_props = {
-                  "prompt": {"type": "string", "description": "Detailed description of the image to generate."},
-                  "size": {"type": "string", "description": "Aspect size: 1024x1024 (1:1), 1792x1024 (16:9), or 1024x1792 (9:16).", "enum": ["1024x1024", "1792x1024", "1024x1792", "512x512"]},
-                  "n": {"type": "integer", "description": "Number of images (1-4).", "minimum": 1, "maximum": 4},
-              }
-              if _mg_image_models:
-                  _img_props["model"] = {"type": "string", "description": "Image model to use.", "enum": _mg_image_models}
-              else:
-                  _img_props["model"] = {"type": "string", "description": "Image model to use."}
-              _img_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "generate_image",
-                      "description": "Generate an image from a text prompt using a registered image model. Call this when the user asks to draw/create/generate a picture, illustration, or image. Returns image URLs to embed in your reply.",
-                      "parameters": {"type": "object", "properties": _img_props, "required": ["prompt"]},
-                  },
-              }
-              agent.tools.append(_img_schema)
+              # 공용 등록 함수가 registry에 media-generation toolset을 멱등 등록하고,
+              # 채팅 에이전트 주입용 OpenAI 스키마를 반환한다. save_path 파일 저장 포함.
+              _mg_img_schema, _mg_vid_schema = _mg_register(_mg_registry)
+              agent.tools.append(_mg_img_schema)
               agent.valid_tool_names.add("generate_image")
-
-              def _img_handler(args: dict, **kwargs) -> str:
-                  return _mg_resolve_and_run(args, 'image')
-
-              _mg_registry.register(
-                  name="generate_image",
-                  toolset="media-generation",
-                  schema={"name": "generate_image", "description": "Generate an image from text", "parameters": _img_schema["function"]["parameters"]},
-                  handler=_img_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Generate an image using a registered image model",
-              )
-
-              # generate_video tool
-              _vid_props = {
-                  "prompt": {"type": "string", "description": "Detailed description of the video to generate."},
-                  "size": {"type": "string", "description": "Aspect size: 1024x1024 (1:1), 1792x1024 (16:9), or 1024x1792 (9:16).", "enum": ["1024x1024", "1792x1024", "1024x1792"]},
-              }
-              if _mg_video_models:
-                  _vid_props["model"] = {"type": "string", "description": "Video model to use.", "enum": _mg_video_models}
-              else:
-                  _vid_props["model"] = {"type": "string", "description": "Video model to use."}
-              _vid_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "generate_video",
-                      "description": "Generate a short video from a text prompt using a registered video model. Call this when the user asks to create/generate a video or animation. Returns a video URL.",
-                      "parameters": {"type": "object", "properties": _vid_props, "required": ["prompt"]},
-                  },
-              }
-              agent.tools.append(_vid_schema)
+              agent.tools.append(_mg_vid_schema)
               agent.valid_tool_names.add("generate_video")
-
-              def _vid_handler(args: dict, **kwargs) -> str:
-                  return _mg_resolve_and_run(args, 'video')
-
-              _mg_registry.register(
-                  name="generate_video",
-                  toolset="media-generation",
-                  schema={"name": "generate_video", "description": "Generate a video from text", "parameters": _vid_schema["function"]["parameters"]},
-                  handler=_vid_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Generate a video using a registered video model",
-              )
-
-              _mg_registry.register_toolset_alias("media", "media-generation")
-              print(f"[MediaTools] Injected generate_image ({len(_mg_image_models)} models) + generate_video ({len(_mg_video_models)} models) tools.", flush=True)
+              print("[MediaTools] Injected generate_image + generate_video tools (shared registry).", flush=True)
           except Exception as _mg_inj_e:
               print(f"[MediaTools] WARNING: tool injection failed: {_mg_inj_e}", flush=True)
           # ========================================================

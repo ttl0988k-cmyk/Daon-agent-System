@@ -118,6 +118,10 @@ class AgentCompiler:
 
                 # Tools from template (already resolved)
                 enabled_toolsets = list(resolved.get("tools", ["file", "terminal"]))
+                # 미디어 생성은 고정 파이프라인이 아닌 일반 능력: 모든 노드가 필요 시
+                # generate_image/generate_video 도구를 호출할 수 있도록 toolset을 부여한다.
+                if "media-generation" not in enabled_toolsets:
+                    enabled_toolsets.append("media-generation")
                 # Inject MCP tools
                 enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
 
@@ -151,6 +155,8 @@ class AgentCompiler:
             name = n.get("name", "agent").strip().lower().replace(" ", "_")
             node_type = n.get("type", "llm").strip().lower()
             enabled_toolsets: list[str] = ["file", "terminal"]
+            # 미디어 생성은 모든 노드의 일반 능력으로 부여 (특정 노드 타입에 한정하지 않음).
+            enabled_toolsets.append("media-generation")
             enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
 
             if "web_search" in node_type:

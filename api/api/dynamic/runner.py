@@ -307,6 +307,21 @@ def _run_node_with_retries(
                     return _file_edit_cb
                 agent.tool_progress_callback = _make_file_edit_cb(agent_name)
 
+                # === 미디어 생성 도구 registry 등록 (Dynamic Hermes nodes) ===
+                # compiler가 모든 노드에 'media-generation' toolset을 부여하므로,
+                # 채팅이 먼저 실행되지 않아도 registry에 generate_image/generate_video가
+                # 존재하도록 여기서 멱등 등록한다. (save_path 파일 저장 포함)
+                try:
+                    from tools.registry import registry as _mg_registry
+                    from api.media_generation import register_media_generation_tools as _mg_register
+                    _mg_register(_mg_registry)
+                except Exception as _mg_reg_err:
+                    try:
+                        if log_callback:
+                            log_callback(agent_name, f"[MEDIA] registry 등록 실패: {_mg_reg_err}", "running")
+                    except Exception:
+                        pass
+
                 # === [NEW] Inject MCP tools into the Hermes Registry (Dynamic Hermes nodes) ===
                 # registry는 싱글톤이므로 최초 1회만 등록되지만, Dynamic Hermes가 먼저
                 # 실행되는 경우를 대비해 여기에도 동일한 주입 로직을 둔다.

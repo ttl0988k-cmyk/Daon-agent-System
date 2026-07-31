@@ -1,7 +1,7 @@
 # 다이나믹 하네스 — 이미지 모델 도구 통합 설계
 
-> 작성일: 2026-08-01 | 상태: 설계(내일 구현 예정)
-> 관련 커밋: ec12f43 (미디어 도구 주입), 9c5665d (이미지 버그 수정)
+> 작성일: 2026-08-01 | 상태: **구현 완료 (2026-08-01)**
+> 관련 커밋: ec12f43 (미디어 도구 주입), 9c5665d (이미지 버그 수정), 본 구현(갭 1·2)
 
 ## 1. 목표 (핵심 방향)
 
@@ -46,21 +46,28 @@ CEO Agent          최종 승인
 | 이미지 노드 타입 분기 | `image_tool`/`image_gen` → toolset 추가 | `compiler.py:158-159` |
 | QA 점수 피드백 루프 | `_extract_review_score` + pass_threshold | `runner.py:450-454` |
 
-## 4. 구현해야 할 갭 (2개)
+## 4. 구현한 갭 (2개) — 완료
 
-### 갭 1 — 하네스 노드에 media-generation toolset 연결
-- **현재**: `compiler.py:158`은 노드 타입 `image_gen`일 때 hermes FAL.ai 기반 `image_gen` toolset만 추가.
-  우리가 만든 등록 프로바이더 기반 `media-generation` toolset은 채팅 에이전트(`streaming.py:1181`)에만 주입됨.
-- **수정**: `compiler.py`에서 이미지 노드 타입일 때 `media-generation` toolset도 `enabled_toolsets`에 추가.
-  또는 미디어 모델이 등록되어 있으면 모든 하네스 노드에 기본 주입.
+### 갭 1 — 하네스 노드에 media-generation toolset 연결 ✅
+- **문제**: `compiler.py:158`은 노드 타입 `image_gen`일 때 hermes FAL.ai 기반 `image_gen` toolset만 추가.
+  등록 프로바이더 기반 `media-generation` toolset은 채팅 에이전트(`streaming.py`)에만 주입됨.
+- **구현**:
+  - `compiler.py` — template 경로·legacy 경로 **양쪽**에서 모든 노드 `enabled_toolsets`에
+    `media-generation`을 일반 능력으로 추가 (특정 노드 타입에 한정하지 않음).
+  - `media_generation.py` — `register_media_generation_tools(registry)` 공용 함수 신설.
+    registry에 `generate_image`/`generate_video`를 멱등 등록 + `media` alias + 채팅용 OpenAI 스키마 반환.
+  - `streaming.py` — 기존 인라인 주입 블록을 공용 함수 호출로 교체 (중복 제거).
+  - `runner.py` — 하네스 노드 실행 시 공용 함수 호출로 registry 등록 보장
+    (채팅이 먼저 실행되지 않아도 toolset 존재).
 
-### 갭 2 — generate_image에 파일 저장(save_path) 기능
-- **현재**: `generate_image`(`streaming.py:1140`)는 URL(`data:` base64 또는 http)만 반환.
+### 갭 2 — generate_image에 파일 저장(save_path) 기능 ✅
+- **문제**: `generate_image`는 URL(`data:` base64 또는 http)만 반환.
   HTML 적용 시 워크스페이스 상대경로(`assets/hero.png`) 참조가 필요하나 저장 기능 없음.
-- **수정**: `generate_image` 스키마에 `save_path`(선택) 파라미터 추가.
-  - http URL → 다운로드 후 워크스페이스에 저장
-  - base64 → 디코딩 후 워크스페이스에 저장
-  - 반환값에 `saved_path`(상대경로) 추가 → Frontend Agent가 `<img src="assets/hero.png">`로 바로 임베드
+- **구현** (`media_generation.py`):
+  - `save_generated_media(source, save_path, index)` — data: base64 디코딩 / http URL 다운로드 후
+    워크스페이스(`TERMINAL_CWD` 또는 cwd)에 저장, 워크스페이스 기준 **상대경로** 반환.
+  - 스키마에 `save_path`(선택) 파라미터 추가. 디렉토리(`assets/`)면 자동 이름, 파일명이면 그 경로에 저장.
+  - 응답에 `saved_paths`(상대경로 배열) 추가 → Frontend Agent가 `<img src="assets/hero.png">`로 임베드.
 
 ## 5. 구현 후 동작 예시 (CEO가 동적으로 구성)
 
