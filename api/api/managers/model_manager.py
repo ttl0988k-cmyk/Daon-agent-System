@@ -15,7 +15,7 @@ from pathlib import Path
 _PROVIDER_PRESETS = {
     'openai':      {'base_url': 'https://api.openai.com/v1',           'label': 'OpenAI'},
     'deepseek':    {'base_url': 'https://api.deepseek.com/v1',         'label': 'DeepSeek'},
-    'minimax':     {'base_url': 'https://api.minimax.io/anthropic',    'label': 'MiniMax'},
+    'minimax':     {'base_url': 'https://api.minimax.io/v1',           'label': 'MiniMax'},
     'anthropic':   {'base_url': 'https://api.anthropic.com/v1',        'label': 'Anthropic'},
     'google':      {'base_url': 'https://generativelanguage.googleapis.com/v1beta', 'label': 'Google'},
     'openrouter':  {'base_url': 'https://openrouter.ai/api/v1',       'label': 'OpenRouter'},
