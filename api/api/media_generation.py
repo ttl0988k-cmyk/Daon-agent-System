@@ -61,6 +61,77 @@ def detect_model_type(model_id: str) -> str:
     return 'chat'
 
 
+# ─── Prompt Enhancement (LLM-based) ───
+
+_ENHANCE_SYSTEM_IMAGE = (
+    "You are an expert prompt engineer for AI image generation models (DALL-E, Flux, Stable Diffusion, Midjourney, etc.).\n"
+    "Given a user's brief or vague description, produce a SINGLE optimized English prompt that will generate the best possible image.\n\n"
+    "Rules:\n"
+    "1. Output ONLY the enhanced prompt text — no explanations, no quotes, no markdown.\n"
+    "2. Include: subject, style, composition, lighting, color palette, mood, quality modifiers.\n"
+    "3. Keep it under 150 words.\n"
+    "4. If the user's intent is ambiguous, make a reasonable creative choice.\n"
+    "5. Preserve the user's core intent — do NOT change what they want, only enhance HOW it's described.\n"
+    "6. Add quality boosters: 'highly detailed', 'professional', '8k', etc. when appropriate.\n"
+    "7. For logos/icons: add 'vector style, clean, minimal, scalable'.\n"
+    "8. For photos: add 'photorealistic, natural lighting, depth of field'.\n"
+    "9. For illustrations: add 'digital art, vibrant, detailed illustration'.\n"
+)
+
+_ENHANCE_SYSTEM_VIDEO = (
+    "You are an expert prompt engineer for AI video generation models (Sora, Kling, Runway, Pika, etc.).\n"
+    "Given a user's brief or vague description, produce a SINGLE optimized English prompt that will generate the best possible video.\n\n"
+    "Rules:\n"
+    "1. Output ONLY the enhanced prompt text — no explanations, no quotes, no markdown.\n"
+    "2. Include: subject, action/motion, camera movement, style, lighting, mood, duration feel.\n"
+    "3. Keep it under 100 words.\n"
+    "4. Describe MOTION explicitly: 'slowly panning', 'zooming in', 'gentle wind blowing'.\n"
+    "5. Preserve the user's core intent — do NOT change what they want, only enhance HOW it's described.\n"
+    "6. Add cinematic quality: 'cinematic', 'smooth motion', 'high quality', '4k'.\n"
+)
+
+
+def _enhance_media_prompt(prompt: str, media_type: str = "image") -> str:
+    """Use an LLM to enhance a vague user prompt into an optimized generation prompt.
+    
+    Falls back to the original prompt if enhancement fails (never blocks generation).
+    """
+    if not prompt or not prompt.strip():
+        return prompt
+
+    # Skip enhancement if prompt is already detailed (heuristic: > 80 words)
+    word_count = len(prompt.split())
+    if word_count > 80:
+        _log.info("[media-enhance] Prompt already detailed (%d words), skipping enhancement", word_count)
+        return prompt
+
+    system_instruction = _ENHANCE_SYSTEM_IMAGE if media_type == "image" else _ENHANCE_SYSTEM_VIDEO
+
+    try:
+        from api.dynamic.direct_calls import _call_direct
+        enhanced = _call_direct(
+            prompt=f"User request: {prompt}",
+            system_instruction=system_instruction,
+            preferred_model=None,
+        )
+        enhanced = enhanced.strip().strip('"').strip("'").strip()
+        # Remove markdown code blocks if present
+        if enhanced.startswith("```"):
+            lines = enhanced.split("\n")
+            enhanced = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+        
+        if enhanced and len(enhanced) > 10:
+            _log.info("[media-enhance] Enhanced prompt (%s): '%s' → '%s'",
+                      media_type, prompt[:60], enhanced[:80])
+            return enhanced
+        else:
+            _log.warning("[media-enhance] Enhancement returned too short, using original")
+            return prompt
+    except Exception as e:
+        _log.warning("[media-enhance] Enhancement failed (%s), using original prompt: %s", media_type, e)
+        return prompt
+
+
 # ─── Image Generation ───
 
 
@@ -401,6 +472,9 @@ def generate_image(
     _log.info("① [media] generate_image entered | model=%s", model)
     _log.info("② [media] base_url=%s | api_key=%s", base_url, "set" if api_key else "MISSING")
 
+    # Auto-enhance prompt for optimal image quality (any model, any agent)
+    prompt = _enhance_media_prompt(prompt, media_type="image")
+
     # Wan/wanx (DashScope) models: go straight to the native API.
     _lower_model = (model or '').lower()
     if ('wan' in _lower_model) or ('wanx' in _lower_model):
@@ -602,6 +676,9 @@ def generate_video(
     2. Poll GET /video/generations/{task_id} until done
     Returns: {"video_url": ..., "status": "completed"}
     """
+    # Auto-enhance prompt for optimal video quality (any model, any agent)
+    prompt = _enhance_media_prompt(prompt, media_type="video")
+
     # MiniMax video models: dedicated adapter (different endpoint + polling schema)
     _lower_model = (model or '').lower()
     if 't2v-01' in _lower_model or 'i2v-01' in _lower_model or 'minimax' in (base_url or '').lower():

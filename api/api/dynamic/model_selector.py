@@ -16,6 +16,7 @@ Architecture:
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections import defaultdict
@@ -549,34 +550,127 @@ class DynamicModelSelector:
         self._load_custom_profiles()
     
     def _load_custom_profiles(self):
-        """Load ModelProfiles from custom_providers.json dynamically."""
+        """Load ModelProfiles from custom_providers.json dynamically.
+        
+        Loads models from BOTH sections:
+        1) 'providers' — user-added custom providers (require api_key)
+        2) 'presets' — built-in providers with model lists (require api_key via env/auth/providers)
+        """
         try:
             import json
             from pathlib import Path
             custom_path = Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
             if not custom_path.exists():
                 return
-            data = json.loads(custom_path.read_text(encoding='utf-8'))
+            data = json.loads(custom_path.read_text(encoding='utf-8-sig'))
+
+            # Helper: infer strengths from model_id name
+            def _infer_strengths(mid: str) -> list[str]:
+                mid_lower = mid.lower()
+                strengths = []
+                if any(k in mid_lower for k in ('code', 'coder', 'dev')):
+                    strengths.append('code')
+                if any(k in mid_lower for k in ('reason', 'think', 'r1', 'o1', 'o3')):
+                    strengths.append('reasoning')
+                if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'mini', 'free')):
+                    strengths.append('fast')
+                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus')):
+                    strengths.extend(['code', 'reasoning'])
+                if any(k in mid_lower for k in ('creative', 'art', 'image', 'vision', 'vl')):
+                    strengths.append('creative')
+                if not strengths:
+                    strengths = ['code', 'reasoning']
+                return list(dict.fromkeys(strengths))  # dedupe preserving order
+
+            # Helper: infer latency rank from model name (1=fastest, 5=slowest)
+            def _infer_latency_rank(mid: str) -> int:
+                mid_lower = mid.lower()
+                if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'mini', 'free', 'turbo')):
+                    return 1
+                if any(k in mid_lower for k in ('reason', 'think', 'r1', 'o1', 'o3')):
+                    return 5
+                if any(k in mid_lower for k in ('pro', 'ultra', 'max')):
+                    return 3
+                return 2
+
+            # Helper: check if a provider has an API key available
+            def _has_api_key(pname: str, pcfg: dict) -> bool:
+                # 1) Explicit api_key in the config
+                if pcfg.get('api_key'):
+                    return True
+                # 2) Environment variable
+                if os.environ.get(f'{pname.upper()}_API_KEY'):
+                    return True
+                # 3) Check providers section for same name
+                providers_section = data.get('providers', {})
+                if pname in providers_section and providers_section[pname].get('api_key'):
+                    return True
+                # 4) Check ~/.hermes/auth.json credential pool
+                try:
+                    auth_path = Path.home() / '.hermes' / 'auth.json'
+                    if auth_path.exists():
+                        auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
+                        pool = auth_data.get('credential_pool', {})
+                        if pname in pool and pool[pname] and pool[pname][0].get('access_token'):
+                            return True
+                except Exception:
+                    pass
+                return False
+
+            # 1) Load from 'providers' section (user-added custom providers)
             providers = data.get('providers', {})
             for pname, cfg in providers.items():
                 if not cfg.get('api_key'):
                     continue
                 base_url = cfg.get('base_url', '')
                 for m in cfg.get('models', []):
-                    model_id = m['id']
+                    model_id = m['id'] if isinstance(m, dict) else str(m)
                     if model_id not in self._profiles:
                         self._profiles[model_id] = ModelProfile(
                             model_id=model_id,
                             provider=pname,
-                            display_name=m.get('label', model_id),
-                            cost_per_1m_input=0.50,   # conservative default
+                            display_name=m.get('label', model_id) if isinstance(m, dict) else model_id,
+                            cost_per_1m_input=0.50,
                             cost_per_1m_output=2.00,
                             context_window=128000,
-                            avg_latency_rank=3,
-                            strengths=["code", "reasoning"],
+                            avg_latency_rank=_infer_latency_rank(model_id),
+                            strengths=_infer_strengths(model_id),
                             max_output_tokens=8192,
                             base_url=base_url,
                         )
+
+            # 2) Load from 'presets' section (built-in providers with model lists)
+            presets = data.get('presets', {})
+            for pname, pcfg in presets.items():
+                if not isinstance(pcfg, dict):
+                    continue
+                models_list = pcfg.get('models', [])
+                if not models_list:
+                    continue
+                if not _has_api_key(pname, pcfg):
+                    continue
+                base_url = pcfg.get('base_url', '')
+                for m in models_list:
+                    model_id = m['id'] if isinstance(m, dict) else str(m)
+                    if model_id not in self._profiles:
+                        self._profiles[model_id] = ModelProfile(
+                            model_id=model_id,
+                            provider=pname,
+                            display_name=m.get('label', model_id) if isinstance(m, dict) else model_id,
+                            cost_per_1m_input=0.30,
+                            cost_per_1m_output=1.20,
+                            context_window=128000,
+                            avg_latency_rank=_infer_latency_rank(model_id),
+                            strengths=_infer_strengths(model_id),
+                            max_output_tokens=8192,
+                            base_url=base_url,
+                        )
+
+            _logger.info(
+                "Loaded %d model profiles (hardcoded: %d, dynamic: %d)",
+                len(self._profiles), len(_DEFAULT_PROFILES),
+                len(self._profiles) - len(_DEFAULT_PROFILES),
+            )
         except Exception as e:
             _logger.warning("Failed to load custom provider profiles: %s", e)
     
@@ -747,16 +841,21 @@ class DynamicModelSelector:
         # Score all eligible models
         scored = []
         allowed = get_allowed_providers()
-        # Collect known providers (hardcoded + custom)
+        # Collect known providers (hardcoded + custom + presets)
         _known_providers = {"minimax", "deepseek", "zyloo"}
         try:
-            import json
+            import json as _json
             from pathlib import Path as _Path
             _cp = _Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
             if _cp.exists():
-                _data = json.loads(_cp.read_text(encoding='utf-8'))
+                _data = _json.loads(_cp.read_text(encoding='utf-8-sig'))
+                # Include custom providers
                 for _pn in _data.get('providers', {}):
                     _known_providers.add(_pn)
+                # Include preset providers that have models defined
+                for _pn, _pcfg in _data.get('presets', {}).items():
+                    if isinstance(_pcfg, dict) and _pcfg.get('models'):
+                        _known_providers.add(_pn)
         except Exception:
             pass
 
@@ -839,18 +938,55 @@ class DynamicModelSelector:
         return chain, context_info
     
     def _resolve_api_key(self, provider: str) -> str:
+        """Resolve API key for a provider using multiple sources:
+        1) Dedicated auth helpers (minimax/deepseek)
+        2) custom_providers.json providers section (explicit api_key)
+        3) Environment variable ({PROVIDER}_API_KEY)
+        4) ~/.hermes/auth.json credential pool
+        """
+        # 1) Dedicated helpers for known providers
         try:
             if provider == "minimax":
                 from api.dynamic.auth import _get_minimax_api_key
-                return _get_minimax_api_key()
+                key = _get_minimax_api_key()
+                if key:
+                    return key
             elif provider == "deepseek":
                 from api.dynamic.auth import _get_deepseek_api_key
-                return _get_deepseek_api_key()
+                key = _get_deepseek_api_key()
+                if key:
+                    return key
         except Exception as e:
-            _logger.warning("Failed to resolve API key for %s: %s", provider, e)
-        
-        import os
-        return os.getenv(f"{provider.upper()}_API_KEY", "")
+            _logger.warning("Failed to resolve API key for %s via auth helper: %s", provider, e)
+
+        # 2) custom_providers.json providers section
+        try:
+            cp_path = Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
+            if cp_path.exists():
+                cp_data = json.loads(cp_path.read_text(encoding='utf-8-sig'))
+                p_cfg = cp_data.get('providers', {}).get(provider, {})
+                if p_cfg.get('api_key'):
+                    return p_cfg['api_key']
+        except Exception:
+            pass
+
+        # 3) Environment variable
+        env_key = os.getenv(f"{provider.upper()}_API_KEY", "")
+        if env_key:
+            return env_key
+
+        # 4) ~/.hermes/auth.json credential pool
+        try:
+            auth_path = Path.home() / '.hermes' / 'auth.json'
+            if auth_path.exists():
+                auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
+                pool = auth_data.get('credential_pool', {})
+                if provider in pool and pool[provider] and pool[provider][0].get('access_token'):
+                    return pool[provider][0]['access_token']
+        except Exception:
+            pass
+
+        return ""
     
     # ── Role → Required Strength Mapping ──
     

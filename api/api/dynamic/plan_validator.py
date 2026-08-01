@@ -84,6 +84,14 @@ def validate_plan_schema(plan: dict) -> list[str]:
         errors.append("Missing 'nodes' key in plan.")
     else:
         errors.extend(_validate_plan_nodes(plan["nodes"]))
+        # MULTI-AGENT ENFORCEMENT: CEO must delegate — at least 2 agents required.
+        if isinstance(plan["nodes"], list) and len(plan["nodes"]) < 2:
+            errors.append(
+                "Plan must contain at least 2 nodes (agents). "
+                "The CEO must delegate work to a multi-agent team — "
+                "a single-node plan is not allowed. "
+                "Add at least one implementation agent and one reviewer/QA agent."
+            )
     if "edges" not in plan:
         errors.append("Missing 'edges' key in plan.")
     else:
