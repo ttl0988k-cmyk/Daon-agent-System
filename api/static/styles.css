@@ -1643,6 +1643,125 @@
       white-space: pre-wrap;
     }
 
+    /* ── Dynamic Harness Agent Node Cards ──
+       에이전트(노드)가 생성되면 카드가 생기고, 카드 박스 안에서 로그가 누적된다.
+       실행중=초록(펄스), 완료=액센트, 에러=빨강. */
+    .harness-agent-card {
+      margin: 6px 0;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel2);
+      overflow: hidden;
+    }
+
+    .harness-agent-card.status-running {
+      border-left-color: var(--success);
+    }
+
+    .harness-agent-card.status-done {
+      border-left-color: var(--accent);
+    }
+
+    .harness-agent-card.status-error {
+      border-left-color: var(--danger);
+    }
+
+    .harness-agent-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      cursor: pointer;
+      user-select: none;
+      background: rgba(0, 0, 0, .12);
+    }
+
+    .harness-agent-card-header .agent-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: .3px;
+    }
+
+    .harness-agent-card-header .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text2);
+      flex-shrink: 0;
+    }
+
+    .harness-agent-card.status-running .status-dot {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+      animation: harness-dot-pulse 1.2s ease-in-out infinite;
+    }
+
+    .harness-agent-card.status-done .status-dot {
+      background: var(--accent);
+    }
+
+    .harness-agent-card.status-error .status-dot {
+      background: var(--danger);
+      box-shadow: 0 0 6px var(--danger);
+    }
+
+    @keyframes harness-dot-pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
+    }
+
+    .harness-agent-card-header .toggle-icon {
+      font-size: 9px;
+      color: var(--text2);
+      transition: transform .15s ease;
+    }
+
+    .harness-agent-card.collapsed .toggle-icon {
+      transform: rotate(-90deg);
+    }
+
+    .harness-agent-card-body {
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text2);
+      background: rgba(0, 0, 0, .15);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .harness-agent-card-body .card-log-line {
+      margin: 0;
+      padding: 1px 0;
+    }
+
+    .harness-agent-card-body .card-log-line.log-error {
+      color: var(--danger);
+    }
+
+    .harness-agent-card-body .card-log-line.log-success {
+      color: var(--success);
+    }
+
+    .harness-agent-card-body .card-log-line.log-warning {
+      color: #f0a020;
+    }
+
     .harness-input-area {
       padding: 8px 10px;
       border-top: 1px solid var(--border);

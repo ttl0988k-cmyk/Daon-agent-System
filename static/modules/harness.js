@@ -176,9 +176,68 @@ function getAgentLabel(agentId) {
   return match ? match[1].toUpperCase() : agentId;
 }
 
+// ── 에이전트 노드 카드: 에이전트가 생성되면 카드가 생기고, 카드 박스 안에서 로그가 누적된다 ──
+function getOrCreateAgentCard(agentId) {
+  let cardEl = State.harnessAgentCards[agentId];
+  if (cardEl && cardEl.isConnected) return cardEl;
+  const consoleEl = $('harnessConsole');
+  if (!consoleEl) return null;
+  cardEl = document.createElement('div');
+  cardEl.className = 'harness-agent-card status-running';
+  cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}"><span class="status-dot"></span>${getAgentLabel(agentId)}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body"></div>`;
+  consoleEl.appendChild(cardEl);
+  State.harnessAgentCards[agentId] = cardEl;
+  scrollToHarnessBottom();
+  return cardEl;
+}
+
+function updateCardStatus(agentId, status) {
+  const cardEl = State.harnessAgentCards[agentId];
+  if (!cardEl) return;
+  cardEl.classList.remove('status-running', 'status-done', 'status-error');
+  const cls = (status === 'done' || status === 'completed') ? 'status-done'
+    : status === 'error' ? 'status-error' : 'status-running';
+  cardEl.classList.add(cls);
+}
+
+function appendCardLog(agentId, line, type) {
+  const cardEl = getOrCreateAgentCard(agentId);
+  if (!cardEl) return;
+  const bodyEl = cardEl.querySelector('.harness-agent-card-body');
+  if (!bodyEl || (line === undefined || line === null || line === '')) return;
+  const lineEl = document.createElement('div');
+  lineEl.className = 'card-log-line' + (type === 'error' ? ' log-error'
+    : type === 'success' ? ' log-success'
+      : type === 'warning' ? ' log-warning' : '');
+  lineEl.textContent = line;
+  bodyEl.appendChild(lineEl);
+  while (bodyEl.children.length > 200) {
+    bodyEl.removeChild(bodyEl.firstChild);
+  }
+  bodyEl.scrollTop = bodyEl.scrollHeight;
+  scrollToHarnessBottom();
+}
+
+// 로그 메시지를 "[agentId] content"로 파싱해 해당 에이전트 카드에 누적한다.
+// 태그 없는 메시지는 기존 전역 콘솔로 보낸다.
+function routeLogToCard(msg, type) {
+  const m = msg.match(/^\[([^\]]+)\]\s?([\s\S]*)$/);
+  if (m) {
+    const agentId = m[1].trim();
+    const content = m[2];
+    appendCardLog(agentId, content, type);
+    if (type === 'success') updateCardStatus(agentId, 'done');
+    else if (type === 'error') updateCardStatus(agentId, 'error');
+    else updateCardStatus(agentId, 'running');
+    return;
+  }
+  logToConsole(msg, type);
+}
+
 function toggleAgentCard(headerEl) {
-  const body = headerEl.nextElementSibling;
-  body.style.display = body.style.display === 'none' ? 'block' : 'none';
+  const card = headerEl.closest('.harness-agent-card');
+  if (card) card.classList.toggle('collapsed');
 }
 
 function scrollToHarnessBottom() {
@@ -259,7 +318,7 @@ async function pollHarnessStatus(runId) {
             }
             continue;
           }
-          logToConsole(msg, entry.type || 'info');
+          routeLogToCard(msg, entry.type || 'info');
         }
         State.harnessLogCursor = res.logs.length;
         if (fileEdited && typeof refreshFileTree === 'function') {
@@ -268,38 +327,13 @@ async function pollHarnessStatus(runId) {
       }
 
       // ── Always render/update agent cards (regardless of status) ──
+      // 카드 본문은 로그 라우팅(routeLogToCard)이 누적하므로, 여기서는 카드 존재 보장 +
+      // 백엔드 최신 상태(log_status)로 카드 색상(실행중/완료/에러)만 동기화한다.
       if (res.agent_cards && Object.keys(res.agent_cards).length > 0) {
-        const consoleEl = $('harnessConsole');
-        if (consoleEl) {
-          Object.entries(res.agent_cards).forEach(([agentId, card]) => {
-            const existingCard = State.harnessAgentCards[agentId];
-            if (!existingCard) {
-              // Create new agent card
-              const cardEl = document.createElement('div');
-              cardEl.className = 'harness-agent-card';
-              cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-              const statusIcon = card.log_status === 'done' || card.log_status === 'completed' ? '✅' :
-                card.log_status === 'error' ? '❌' : '🔄';
-              cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}">${statusIcon} ${getAgentLabel(agentId)}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body">${renderMd(card.status || '작업 중...')}</div>`;
-              consoleEl.appendChild(cardEl);
-              State.harnessAgentCards[agentId] = cardEl;
-              scrollToHarnessBottom();
-            } else {
-              // Update existing card body with latest status
-              const bodyEl = existingCard.querySelector('.harness-agent-card-body');
-              if (bodyEl && card.status) {
-                bodyEl.innerHTML = renderMd(card.status);
-              }
-              // Update status icon in header
-              const labelEl = existingCard.querySelector('.agent-label');
-              if (labelEl) {
-                const statusIcon = card.log_status === 'done' || card.log_status === 'completed' ? '✅' :
-                  card.log_status === 'error' ? '❌' : '🔄';
-                labelEl.innerHTML = `${statusIcon} ${getAgentLabel(agentId)}`;
-              }
-            }
-          });
-        }
+        Object.entries(res.agent_cards).forEach(([agentId, card]) => {
+          getOrCreateAgentCard(agentId);
+          updateCardStatus(agentId, card.log_status || 'running');
+        });
       }
 
       // ── Handle terminal states AFTER rendering logs/cards ──
@@ -461,6 +495,12 @@ function cancelHarness() {
 
 function cleanupHarnessState() {
   State.harnessLogCursor = 0;
+  // 이전 실행의 에이전트 카드 DOM을 제거한다.
+  if (State.harnessAgentCards) {
+    Object.values(State.harnessAgentCards).forEach((el) => {
+      try { if (el && el.remove) el.remove(); } catch (e) { }
+    });
+  }
   State.harnessAgentCards = {};
   if (State.harnessPollInterval) {
     clearInterval(State.harnessPollInterval);

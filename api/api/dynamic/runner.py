@@ -674,6 +674,15 @@ class ParallelRunner:
                 required_strength=_node_strength,
                 required_context=_node_ctx,
             )
+            # ── 노드 카드 즉시 생성: 에이전트 실행 시작을 알려 프론트엔드 카드가 바로 뜨게 한다 ──
+            # 스트리밍 로그(StreamLogBuffer)는 "agent_name (model)" 키로 발행하므로,
+            # 시작 로그도 동일 키로 맞춰야 카드가 하나로 유지된다.
+            if log_callback and model_configs:
+                try:
+                    _start_key = f"{agent_name} ({model_configs[0].get('model', '')})"
+                    log_callback(_start_key, "작업 시작...", "running")
+                except Exception:
+                    pass
             return _run_node_with_retries(
                 agent_name,
                 node,
