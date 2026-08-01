@@ -1218,21 +1218,9 @@
             <textarea id="harnessInput" rows="2" placeholder="실행할 미션을 입력하세요..."></textarea>
             <div id="harnessSkillTags" style="display:none; flex-wrap:wrap; gap:4px; margin:4px 0;"></div>
             <div class="harness-btns">
-              <button id="harnessSkillBtn" title="스킬 지정 (미지정 시 CEO 자율 선택)"
-                style="font-size:11px; padding:4px 8px; background:var(--bg2); border:1px solid var(--border); border-radius:4px; color:var(--text); cursor:pointer;">🎯
-                스킬</button>
               <button id="runHarnessBtn">▶ 실행</button>
               <button id="cancelHarnessBtn">■ 취소</button>
             </div>
-          </div>
-          <div id="harnessSkillPicker"
-            style="display:none; position:absolute; bottom:100%; left:0; right:0; max-height:200px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px; z-index:100; box-shadow:0 -4px 12px rgba(0,0,0,.3);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <span style="font-size:11px; font-weight:600; color:var(--text);">스킬 선택 (복수 가능)</span>
-              <button onclick="document.getElementById('harnessSkillPicker').style.display='none'"
-                style="background:none; border:none; color:var(--text2); cursor:pointer; font-size:14px;">✕</button>
-            </div>
-            <div id="harnessSkillList" style="display:flex; flex-direction:column; gap:3px;"></div>
           </div>
         </div>
       </div>

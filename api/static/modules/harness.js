@@ -728,52 +728,6 @@ function initHarnessManual() {
 
 function initHarnessSkillPicker() {
   State.harnessSelectedSkills = [];
-  const btn = $('harnessSkillBtn');
-  if (!btn) return;
-  btn.addEventListener('click', toggleHarnessSkillPicker);
-}
-
-async function toggleHarnessSkillPicker() {
-  const picker = $('harnessSkillPicker');
-  if (!picker) return;
-  if (picker.style.display === 'none' || !picker.style.display) {
-    picker.style.display = 'block';
-    await loadHarnessSkillList();
-  } else {
-    picker.style.display = 'none';
-  }
-}
-
-async function loadHarnessSkillList() {
-  const listEl = $('harnessSkillList');
-  if (!listEl) return;
-  listEl.innerHTML = '<div style="font-size:11px;color:var(--text2);">불러오는 중...</div>';
-  try {
-    const res = await api('/api/skills');
-    const skills = res.skills || res || [];
-    if (!skills.length) {
-      listEl.innerHTML = '<div style="font-size:11px;color:var(--text2);">등록된 스킬이 없습니다.</div>';
-      return;
-    }
-    listEl.innerHTML = '';
-    skills.forEach(function (sk) {
-      var name = sk.name || sk.id || '';
-      var label = sk.label || name;
-      var cat = sk.category || '';
-      var checked = (State.harnessSelectedSkills || []).indexOf(name) !== -1;
-      var row = document.createElement('label');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;padding:2px 4px;border-radius:4px;';
-      row.innerHTML = '<input type="checkbox" data-skill="' + name + '"' + (checked ? ' checked' : '') + ' style="accent-color:var(--accent);">'
-        + '<span style="font-weight:500;">' + label + '</span>'
-        + (cat ? '<span style="color:var(--text2);font-size:10px;">[' + cat + ']</span>' : '');
-      row.querySelector('input').addEventListener('change', function () {
-        onHarnessSkillToggle(name, this.checked);
-      });
-      listEl.appendChild(row);
-    });
-  } catch (e) {
-    listEl.innerHTML = '<div style="font-size:11px;color:var(--danger);">스킬 목록 로드 실패</div>';
-  }
 }
 
 function onHarnessSkillToggle(name, checked) {
@@ -808,9 +762,4 @@ function removeHarnessSkill(name) {
   // 사이드바 스킬 목록 체크박스 동기화
   var sidebarCb = document.querySelector('.skill-harness-cb[data-skill="' + name + '"]');
   if (sidebarCb) sidebarCb.checked = false;
-  var picker = $('harnessSkillPicker');
-  if (picker && picker.style.display !== 'none') {
-    var cb = picker.querySelector('input[data-skill="' + name + '"]');
-    if (cb) cb.checked = false;
-  }
 }
