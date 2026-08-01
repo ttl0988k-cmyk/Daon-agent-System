@@ -1767,6 +1767,37 @@
       color: #f0a020;
     }
 
+    /* ── 하네스 최종 결과 보고 박스 ──
+       완료 시 항상 표시되며, 결과가 비어 있어도 안내 박스로 렌더링된다. */
+    .harness-result-output {
+      margin: 10px 0;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-left: 3px solid var(--success);
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
+    .harness-result-output .harness-result-header {
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    .harness-result-output .harness-result-empty {
+      color: var(--text-dim, var(--text2));
+    }
+
+    .harness-result-output .harness-result-empty code {
+      background: var(--bg3);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+
     .harness-input-area {
       padding: 8px 10px;
       border-top: 1px solid var(--border);

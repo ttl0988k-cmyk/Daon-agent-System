@@ -338,7 +338,16 @@ def start_harness_job(body: dict) -> str:
             run_dir = Path(workspace)
             runner = HermesDynamicRunner()
             res = runner.run(enriched_task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers, forced_skills=forced_skills)
-            set_job_done(run_id, res.get('final_output', '') if isinstance(res, dict) else str(res))
+            final_output = res.get('final_output', '') if isinstance(res, dict) else str(res)
+            # ── 결과 보고 보장: final_output이 비어 있으면 디스크의 final_output.md로 폴백 ──
+            if not final_output:
+                try:
+                    fallback_path = run_dir / "final_output.md"
+                    if fallback_path.exists():
+                        final_output = fallback_path.read_text(encoding="utf-8", errors="replace").strip()
+                except Exception:
+                    traceback.print_exc()
+            set_job_done(run_id, final_output)
         except Exception as e:
             traceback.print_exc()
             set_job_error(run_id, str(e))

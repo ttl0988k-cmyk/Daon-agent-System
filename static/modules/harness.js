@@ -343,14 +343,18 @@ async function pollHarnessStatus(runId) {
         logToConsole('\n✅ Dynamic Harness 완료됨', 'success');
         $('runHarnessBtn').disabled = false;
         $('cancelHarnessBtn').style.display = 'none';
+        // ── 결과 보고 보장: 결과가 비어 있어도 완료 보고 박스를 항상 표시 ──
+        const consoleEl = $('harnessConsole');
+        const resultEl = document.createElement('div');
+        resultEl.className = 'harness-result-output';
         if (res.result) {
-          const consoleEl = $('harnessConsole');
-          const resultEl = document.createElement('div');
-          resultEl.className = 'harness-result-output';
           resultEl.innerHTML = '<div class="harness-result-header">📄 최종 결과물</div>' + renderMd(res.result);
-          consoleEl.appendChild(resultEl);
-          scrollToHarnessBottom();
+        } else {
+          resultEl.innerHTML = '<div class="harness-result-header">✅ 작업 완료</div>' +
+            '<div class="harness-result-empty">결과 요약이 비어 있습니다. 생성된 결과물은 워크스페이스의 <code>final_output.md</code> 파일과 위 에이전트 카드들의 로그에서 확인할 수 있습니다.</div>';
         }
+        consoleEl.appendChild(resultEl);
+        scrollToHarnessBottom();
         return;
       }
 
@@ -379,11 +383,18 @@ async function pollHarnessStatus(runId) {
           message: res.approval_message || '작업 승인이 필요합니다.',
           actions: res.available_actions || [],
           onAction: async (action) => {
-            await api(`/api/dynamic/approve/${runId}`, {
-              method: 'POST',
-              body: { action: action },
-            });
-            pollHarnessStatus(runId);
+            try {
+              await api(`/api/dynamic/approve/${runId}`, {
+                method: 'POST',
+                body: { action: action },
+              });
+            } catch (e) {
+              logToConsole(`⚠️ 승인 요청 실패: ${e.message}`, 'error');
+            } finally {
+              // ── 안전장치: 승인 API 성패와 무관하게 폴링을 반드시 재개 ──
+              // (여전히 awaiting_approval이면 배너가 다시 표시되고, 진행됐으면 완료 보고로 이어짐)
+              pollHarnessStatus(runId);
+            }
           },
         });
         return;
