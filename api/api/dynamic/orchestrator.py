@@ -151,7 +151,7 @@ class HermesDynamicRunner:
             _log.warning("CodeReviewer skipped due to error: %s", review_err)
         return final_output
 
-    def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None) -> dict:
+    def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None) -> dict:
         from api.dynamic.model_selector import set_allowed_providers
         set_allowed_providers(allowed_providers)
         
@@ -209,7 +209,9 @@ class HermesDynamicRunner:
                 log_callback("CEO", f"Planning task: '{task}'...", "running")
             check_timeout()
             plan = self.planner.plan(task, mission_tracker=mission_tracker, preferred_model=preferred_model,
-                                     log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode)
+                                     log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode,
+                                     forced_skills=forced_skills)
+
             if log_callback:
                 log_callback("CEO", f"Generated plan: {plan.get('plan_summary')}", "running")
             # Determine if we have planner nodes in the plan

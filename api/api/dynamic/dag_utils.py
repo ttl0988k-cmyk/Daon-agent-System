@@ -124,6 +124,30 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
                 chain_configs.append({"model": m, "provider": "minimax", "base_url": "https://api.minimax.io/anthropic", "api_key": mm_key})
                 seen_models.add(m)
 
+    # 4. Google/Gemini fallback chain
+    try:
+        from api.dynamic.auth import _resolve_key_from_pool
+        g_key = _resolve_key_from_pool("google")
+        if g_key:
+            for m in ["gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview"]:
+                if m not in seen_models:
+                    chain_configs.append({"model": m, "provider": "google", "base_url": "https://generativelanguage.googleapis.com/v1beta", "api_key": g_key})
+                    seen_models.add(m)
+    except Exception:
+        pass
+
+    # 5. OpenRouter fallback chain
+    try:
+        from api.dynamic.auth import _resolve_key_from_pool
+        or_key = _resolve_key_from_pool("openrouter")
+        if or_key:
+            for m in ["tencent/hy3:free", "openai/gpt-oss-120b:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]:
+                if m not in seen_models:
+                    chain_configs.append({"model": m, "provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "api_key": or_key})
+                    seen_models.add(m)
+    except Exception:
+        pass
+
     return chain_configs
 
 

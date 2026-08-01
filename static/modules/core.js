@@ -310,5 +310,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   try { setupEventListeners(); } catch (e) { console.error('[daon-init] setupEventListeners failed:', e); }
   try { initHarnessManual(); } catch (e) { console.error('[daon-init] initHarnessManual failed:', e); }
+  try { initHarnessSkillPicker(); } catch (e) { console.error('[daon-init] initHarnessSkillPicker failed:', e); }
   try { initSpeak(); } catch (e) { console.error('[daon-init] initSpeak failed:', e); }
 });

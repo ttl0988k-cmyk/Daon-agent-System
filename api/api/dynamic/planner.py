@@ -30,7 +30,8 @@ class HermesPlanner:
     """Master Orchestrator that analyzes a task and generates a valid DAG plan."""
 
     def plan(self, task: str, mission_tracker: dict = None, preferred_model: str = None,
-             log_callback=None, run_dir=None, planning_mode: bool = False) -> dict:
+             log_callback=None, run_dir=None, planning_mode: bool = False,
+             forced_skills: list = None) -> dict:
         """Analyze the task and break it down into a Node-Edge DAG of specialized subtasks,
         with retry and schema validation."""
         limits = _load_harness_limits()
@@ -124,6 +125,23 @@ class HermesPlanner:
             _log.warning("Failed to load template catalog: %s", e)
             template_catalog_text = "(Template catalog unavailable)"
 
+        # --- User-Forced Skills (CEO directive) ---
+        if forced_skills:
+            forced_skills_block = (
+                "\n[USER-SPECIFIED SKILLS — MANDATORY DIRECTIVE]\n"
+                "The user has EXPLICITLY requested the following skill(s) for this task:\n"
+                + "\n".join(f"- {s}" for s in forced_skills) + "\n\n"
+                "You MUST incorporate these skills into your plan:\n"
+                "1. Include them in the plan-level 'skills' array so they are injected into relevant agents.\n"
+                "2. Select agent templates whose domain/capability aligns with these skills.\n"
+                "3. In each relevant agent's subtask, reference the skill methodology explicitly.\n"
+                "4. You decide WHICH agents need the skill — not every agent requires it.\n"
+                "This is a user directive, not a suggestion. Treat it as a hard constraint.\n"
+                "[End User-Specified Skills]\n\n"
+            )
+        else:
+            forced_skills_block = ""
+
         system_instruction = (
             "You are the Master Orchestrator (CEO) of a multi-agent system.\n"
             "Your job: SELECT agent templates from the catalog below, assign subtasks, and define execution order.\n"
@@ -182,7 +200,8 @@ class HermesPlanner:
             + skill_history_block + "\n"
             + f"{skill_catalog}\n\n"
             + skill_graph_block + "\n"
-            "[SHARED SCHEMA CONTRACT — MANDATORY FOR ALL AGENTS]\n"
+            + forced_skills_block
+            + "[SHARED SCHEMA CONTRACT — MANDATORY FOR ALL AGENTS]\n"
             "- ALL agents MUST follow the shared Schema contract defined in shared/schema.py and shared/schema.js.\n"
             "- Do NOT invent API routes, response fields, or message formats.\n"
             "- Contract Validator: Run BEFORE any Backend/Frontend code is written. MUST return VERIFIED PASS.\n"

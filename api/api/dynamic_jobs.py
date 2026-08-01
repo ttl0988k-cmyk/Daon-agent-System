@@ -234,13 +234,14 @@ def start_harness_job(body: dict) -> str:
     planning_mode = body.get('planning_mode', False)
     session_id = body.get('session_id')
     allowed_providers = body.get('allowedProviders')
+    forced_skills = body.get('skills') or []  # 사용자가 명시적으로 지정한 스킬 목록
 
     init_job(run_id, session_id=session_id)
 
     # Check if clarification (interview) is enabled
     enable_clarification = body.get('clarification', True)
 
-    def _run_in_background(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification):
+    def _run_in_background(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification, forced_skills):
         from api.dynamic_hermes import HermesDynamicRunner
 
         def log_callback(agent_name, content, status="running"):
@@ -336,7 +337,7 @@ def start_harness_job(body: dict) -> str:
             # ── Main Harness Execution ──
             run_dir = Path(workspace)
             runner = HermesDynamicRunner()
-            res = runner.run(enriched_task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers)
+            res = runner.run(enriched_task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers, forced_skills=forced_skills)
             set_job_done(run_id, res.get('final_output', '') if isinstance(res, dict) else str(res))
         except Exception as e:
             traceback.print_exc()
@@ -357,7 +358,7 @@ def start_harness_job(body: dict) -> str:
 
     threading.Thread(
         target=_run_in_background,
-        args=(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification),
+        args=(run_id, task, preferred_model, workspace, planning_mode, session_id, allowed_providers, enable_clarification, forced_skills),
         daemon=True
     ).start()
 

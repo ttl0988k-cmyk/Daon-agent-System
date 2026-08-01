@@ -605,9 +605,10 @@ class DynamicModelSelector:
                 providers_section = data.get('providers', {})
                 if pname in providers_section and providers_section[pname].get('api_key'):
                     return True
-                # 4) Check ~/.hermes/auth.json credential pool
+                # 4) Check auth.json credential pool (profile-aware path)
                 try:
-                    auth_path = Path.home() / '.hermes' / 'auth.json'
+                    from api.profiles import get_active_hermes_home
+                    auth_path = get_active_hermes_home() / 'auth.json'
                     if auth_path.exists():
                         auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
                         pool = auth_data.get('credential_pool', {})
@@ -641,6 +642,8 @@ class DynamicModelSelector:
 
             # 2) Load from 'presets' section (built-in providers with model lists)
             presets = data.get('presets', {})
+            _loaded_presets = []
+            _skipped_presets = []
             for pname, pcfg in presets.items():
                 if not isinstance(pcfg, dict):
                     continue
@@ -648,8 +651,10 @@ class DynamicModelSelector:
                 if not models_list:
                     continue
                 if not _has_api_key(pname, pcfg):
+                    _skipped_presets.append(pname)
                     continue
                 base_url = pcfg.get('base_url', '')
+                _count = 0
                 for m in models_list:
                     model_id = m['id'] if isinstance(m, dict) else str(m)
                     if model_id not in self._profiles:
@@ -665,11 +670,16 @@ class DynamicModelSelector:
                             max_output_tokens=8192,
                             base_url=base_url,
                         )
+                        _count += 1
+                if _count:
+                    _loaded_presets.append(f"{pname}({_count})")
 
             _logger.info(
-                "Loaded %d model profiles (hardcoded: %d, dynamic: %d)",
+                "Loaded %d model profiles (hardcoded: %d, dynamic: %d) | presets loaded: %s | skipped (no key): %s",
                 len(self._profiles), len(_DEFAULT_PROFILES),
                 len(self._profiles) - len(_DEFAULT_PROFILES),
+                ', '.join(_loaded_presets) or 'none',
+                ', '.join(_skipped_presets) or 'none',
             )
         except Exception as e:
             _logger.warning("Failed to load custom provider profiles: %s", e)
@@ -938,53 +948,18 @@ class DynamicModelSelector:
         return chain, context_info
     
     def _resolve_api_key(self, provider: str) -> str:
-        """Resolve API key for a provider using multiple sources:
-        1) Dedicated auth helpers (minimax/deepseek)
-        2) custom_providers.json providers section (explicit api_key)
-        3) Environment variable ({PROVIDER}_API_KEY)
-        4) ~/.hermes/auth.json credential pool
+        """Resolve API key for ANY provider using the unified auth resolution:
+        custom_providers.json → environment variable → auth.json credential pool.
+        Uses api.dynamic.auth._resolve_key_from_pool() which is profile-aware
+        (respects get_active_hermes_home() for multi-profile setups).
         """
-        # 1) Dedicated helpers for known providers
         try:
-            if provider == "minimax":
-                from api.dynamic.auth import _get_minimax_api_key
-                key = _get_minimax_api_key()
-                if key:
-                    return key
-            elif provider == "deepseek":
-                from api.dynamic.auth import _get_deepseek_api_key
-                key = _get_deepseek_api_key()
-                if key:
-                    return key
+            from api.dynamic.auth import _resolve_key_from_pool
+            key = _resolve_key_from_pool(provider)
+            if key:
+                return key
         except Exception as e:
-            _logger.warning("Failed to resolve API key for %s via auth helper: %s", provider, e)
-
-        # 2) custom_providers.json providers section
-        try:
-            cp_path = Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
-            if cp_path.exists():
-                cp_data = json.loads(cp_path.read_text(encoding='utf-8-sig'))
-                p_cfg = cp_data.get('providers', {}).get(provider, {})
-                if p_cfg.get('api_key'):
-                    return p_cfg['api_key']
-        except Exception:
-            pass
-
-        # 3) Environment variable
-        env_key = os.getenv(f"{provider.upper()}_API_KEY", "")
-        if env_key:
-            return env_key
-
-        # 4) ~/.hermes/auth.json credential pool
-        try:
-            auth_path = Path.home() / '.hermes' / 'auth.json'
-            if auth_path.exists():
-                auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
-                pool = auth_data.get('credential_pool', {})
-                if provider in pool and pool[provider] and pool[provider][0].get('access_token'):
-                    return pool[provider][0]['access_token']
-        except Exception:
-            pass
+            _logger.warning("Failed to resolve API key for %s via auth pool: %s", provider, e)
 
         return ""
     

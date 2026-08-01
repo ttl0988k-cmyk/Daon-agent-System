@@ -2113,11 +2113,16 @@ function renderSkills(skills) {
 
 
 
-      el.innerHTML = `<span class="skill-name">${esc(skill.label || skill.name)}</span><span class="skill-desc">${esc(skill.description || '')}</span>`;
+      const _skChecked = (State.harnessSelectedSkills || []).indexOf(skill.name) !== -1;
+      el.innerHTML = `<input type="checkbox" class="skill-harness-cb" data-skill="${esc(skill.name)}" ${_skChecked ? 'checked' : ''} style="accent-color:var(--accent);cursor:pointer;flex-shrink:0;" title="하네스 실행 시 이 스킬 사용"><span class="skill-name">${esc(skill.label || skill.name)}</span><span class="skill-desc">${esc(skill.description || '')}</span>`;
 
 
 
-      el.onclick = () => openSkill(skill.name, el);
+      el.querySelector('.skill-harness-cb').addEventListener('change', function (e) {
+        e.stopPropagation();
+        if (typeof onHarnessSkillToggle === 'function') onHarnessSkillToggle(skill.name, this.checked);
+      });
+      el.onclick = (e) => { if (e.target.classList.contains('skill-harness-cb')) return; openSkill(skill.name, el); };
 
 
 

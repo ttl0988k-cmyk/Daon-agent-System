@@ -245,14 +245,15 @@ def read_file_content(workspace: Path, rel: str) -> dict:
     if not target.is_file():
         raise FileNotFoundError(f"Not a file: {rel}")
     size = target.stat().st_size
-    if size > MAX_FILE_BYTES:
-        raise ValueError(f"File too large ({size} bytes, max {MAX_FILE_BYTES})")
     ext = target.suffix.lower()
     binary_exts = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.bmp', '.webp',
                    '.mp3', '.mp4', '.wav', '.ogg', '.pdf', '.zip', '.gz', '.tar',
                    '.exe', '.dll', '.bin'}
+    # 바이너리 파일은 내용을 읽지 않으므로 크기 제한 없이 메타데이터만 반환
     if ext in binary_exts:
         return {'path': rel, 'content': '', 'size': size, 'lines': 0, 'binary': True}
+    if size > MAX_FILE_BYTES:
+        raise ValueError(f"File too large ({size} bytes, max {MAX_FILE_BYTES})")
     content = target.read_text(encoding='utf-8', errors='replace')
     return {'path': rel, 'content': content, 'size': size, 'lines': content.count('\n') + 1, 'binary': False}
 

@@ -214,6 +214,7 @@ async function runDynamicHarness() {
         workspace: State.activeWorkspacePath || '',
         model: State.activeModelId || '',
         planning_mode: true,
+        skills: State.harnessSelectedSkills || [],
       },
     });
 
@@ -239,6 +240,72 @@ async function pollHarnessStatus(runId) {
     try {
       const res = await api(`/api/dynamic/status/${runId}`, { method: 'GET' });
 
+      // ── Always render logs first (regardless of status) ──
+      if (res.logs && res.logs.length > State.harnessLogCursor) {
+        let fileEdited = false;
+        for (let i = State.harnessLogCursor; i < res.logs.length; i++) {
+          const entry = res.logs[i];
+          const msg = entry.message || '';
+          // ── 실시간 에디터 반영: [FILE_EDIT]path 마커 로그 감지 ──
+          // 백엔드(runner.py)가 write_file/patch 완료 시 이 마커를 기록한다.
+          const feIdx = msg.indexOf('[FILE_EDIT]');
+          if (feIdx !== -1) {
+            const filePath = msg.slice(feIdx + '[FILE_EDIT]'.length).trim();
+            if (filePath) {
+              fileEdited = true;
+              // 디스크에 이미 쓰였으므로 openFileInTab으로 실제 내용을 열어 반영
+              if (typeof openFileInTab === 'function') {
+                openFileInTab(filePath).catch(() => { });
+              }
+              logToConsole(`📝 파일 수정: ${filePath}`, 'info');
+            }
+            continue;
+          }
+          logToConsole(msg, entry.type || 'info');
+        }
+        State.harnessLogCursor = res.logs.length;
+        // 파일이 수정되었으면 파일 트리 갱신
+        if (fileEdited && typeof refreshFileTree === 'function') {
+          refreshFileTree().catch(() => { });
+        }
+      }
+
+      // ── Always render/update agent cards (regardless of status) ──
+      if (res.agent_cards && Object.keys(res.agent_cards).length > 0) {
+        const consoleEl = $('harnessConsole');
+        if (consoleEl) {
+          Object.entries(res.agent_cards).forEach(([agentId, card]) => {
+            const existingCard = State.harnessAgentCards[agentId];
+            if (!existingCard) {
+              // Create new agent card
+              const cardEl = document.createElement('div');
+              cardEl.className = 'harness-agent-card';
+              cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+              const statusIcon = card.log_status === 'done' || card.log_status === 'completed' ? '✅' :
+                card.log_status === 'error' ? '❌' : '🔄';
+              cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}">${statusIcon} ${getAgentLabel(agentId)}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body">${renderMd(card.status || '작업 중...')}</div>`;
+              consoleEl.appendChild(cardEl);
+              State.harnessAgentCards[agentId] = cardEl;
+              scrollToHarnessBottom();
+            } else {
+              // Update existing card body with latest status
+              const bodyEl = existingCard.querySelector('.harness-agent-card-body');
+              if (bodyEl && card.status) {
+                bodyEl.innerHTML = renderMd(card.status);
+              }
+              // Update status icon in header
+              const labelEl = existingCard.querySelector('.agent-label');
+              if (labelEl) {
+                const statusIcon = card.log_status === 'done' || card.log_status === 'completed' ? '✅' :
+                  card.log_status === 'error' ? '❌' : '🔄';
+                labelEl.innerHTML = `${statusIcon} ${getAgentLabel(agentId)}`;
+              }
+            }
+          });
+        }
+      }
+
+      // ── Handle terminal states AFTER rendering logs/cards ──
       if (res.status === 'completed') {
         clearInterval(State.harnessPollInterval);
         State.harnessPollInterval = null;
@@ -298,47 +365,6 @@ async function pollHarnessStatus(runId) {
         return;
       }
 
-      if (res.logs && res.logs.length > State.harnessLogCursor) {
-        let fileEdited = false;
-        for (let i = State.harnessLogCursor; i < res.logs.length; i++) {
-          const entry = res.logs[i];
-          const msg = entry.message || '';
-          // ── 실시간 에디터 반영: [FILE_EDIT]path 마커 로그 감지 ──
-          // 백엔드(runner.py)가 write_file/patch 완료 시 이 마커를 기록한다.
-          const feIdx = msg.indexOf('[FILE_EDIT]');
-          if (feIdx !== -1) {
-            const filePath = msg.slice(feIdx + '[FILE_EDIT]'.length).trim();
-            if (filePath) {
-              fileEdited = true;
-              // 디스크에 이미 쓰였으므로 openFileInTab으로 실제 내용을 열어 반영
-              if (typeof openFileInTab === 'function') {
-                openFileInTab(filePath).catch(() => { });
-              }
-              logToConsole(`📝 파일 수정: ${filePath}`, 'info');
-            }
-            continue;
-          }
-          logToConsole(msg, entry.type || 'info');
-        }
-        State.harnessLogCursor = res.logs.length;
-        // 파일이 수정되었으면 파일 트리 갱신
-        if (fileEdited && typeof refreshFileTree === 'function') {
-          refreshFileTree().catch(() => { });
-        }
-      }
-
-      if (res.agent_cards) {
-        const consoleEl = $('harnessConsole');
-        Object.entries(res.agent_cards).forEach(([agentId, card]) => {
-          if (!State.harnessAgentCards[agentId]) {
-            State.harnessAgentCards[agentId] = true;
-            const cardEl = document.createElement('div');
-            cardEl.className = 'harness-agent-card';
-            cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}">${getAgentLabel(agentId)}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body">${renderMd(card.status || '작업 중...')}</div>`;
-            consoleEl.appendChild(cardEl);
-          }
-        });
-      }
     } catch (err) {
       logToConsole(`⚠️ 상태 확인 오류: ${err.message}`, 'error');
     }
@@ -696,4 +722,95 @@ function initHarnessManual() {
 
   const gotItBtn = $('harnessManualConfirmBtn');
   if (gotItBtn) gotItBtn.addEventListener('click', closeManual);
+}
+
+// ── Harness Skill Picker ──────────────────────────────────────────────────
+
+function initHarnessSkillPicker() {
+  State.harnessSelectedSkills = [];
+  const btn = $('harnessSkillBtn');
+  if (!btn) return;
+  btn.addEventListener('click', toggleHarnessSkillPicker);
+}
+
+async function toggleHarnessSkillPicker() {
+  const picker = $('harnessSkillPicker');
+  if (!picker) return;
+  if (picker.style.display === 'none' || !picker.style.display) {
+    picker.style.display = 'block';
+    await loadHarnessSkillList();
+  } else {
+    picker.style.display = 'none';
+  }
+}
+
+async function loadHarnessSkillList() {
+  const listEl = $('harnessSkillList');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="font-size:11px;color:var(--text2);">불러오는 중...</div>';
+  try {
+    const res = await api('/api/skills');
+    const skills = res.skills || res || [];
+    if (!skills.length) {
+      listEl.innerHTML = '<div style="font-size:11px;color:var(--text2);">등록된 스킬이 없습니다.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    skills.forEach(function (sk) {
+      var name = sk.name || sk.id || '';
+      var label = sk.label || name;
+      var cat = sk.category || '';
+      var checked = (State.harnessSelectedSkills || []).indexOf(name) !== -1;
+      var row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;padding:2px 4px;border-radius:4px;';
+      row.innerHTML = '<input type="checkbox" data-skill="' + name + '"' + (checked ? ' checked' : '') + ' style="accent-color:var(--accent);">'
+        + '<span style="font-weight:500;">' + label + '</span>'
+        + (cat ? '<span style="color:var(--text2);font-size:10px;">[' + cat + ']</span>' : '');
+      row.querySelector('input').addEventListener('change', function () {
+        onHarnessSkillToggle(name, this.checked);
+      });
+      listEl.appendChild(row);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div style="font-size:11px;color:var(--danger);">스킬 목록 로드 실패</div>';
+  }
+}
+
+function onHarnessSkillToggle(name, checked) {
+  if (!State.harnessSelectedSkills) State.harnessSelectedSkills = [];
+  if (checked) {
+    if (State.harnessSelectedSkills.indexOf(name) === -1) State.harnessSelectedSkills.push(name);
+  } else {
+    State.harnessSelectedSkills = State.harnessSelectedSkills.filter(function (s) { return s !== name; });
+  }
+  renderHarnessSkillTags();
+}
+
+function renderHarnessSkillTags() {
+  var tagsEl = $('harnessSkillTags');
+  if (!tagsEl) return;
+  var skills = State.harnessSelectedSkills || [];
+  if (!skills.length) {
+    tagsEl.style.display = 'none';
+    tagsEl.innerHTML = '';
+    return;
+  }
+  tagsEl.style.display = 'flex';
+  tagsEl.innerHTML = skills.map(function (s) {
+    return '<span style="display:inline-flex;align-items:center;gap:3px;background:var(--accent);color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;">'
+      + s + ' <span onclick="removeHarnessSkill(\'' + s + '\')" style="cursor:pointer;font-weight:bold;">✕</span></span>';
+  }).join('');
+}
+
+function removeHarnessSkill(name) {
+  State.harnessSelectedSkills = (State.harnessSelectedSkills || []).filter(function (s) { return s !== name; });
+  renderHarnessSkillTags();
+  // 사이드바 스킬 목록 체크박스 동기화
+  var sidebarCb = document.querySelector('.skill-harness-cb[data-skill="' + name + '"]');
+  if (sidebarCb) sidebarCb.checked = false;
+  var picker = $('harnessSkillPicker');
+  if (picker && picker.style.display !== 'none') {
+    var cb = picker.querySelector('input[data-skill="' + name + '"]');
+    if (cb) cb.checked = false;
+  }
 }

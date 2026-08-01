@@ -394,7 +394,21 @@ function refreshHtmlPreviewFrame(tab) {
     // contentDocument/doc.write() 방식은 Electron WebContentsView에서
     // about:blank iframe 접근 제한으로 실패할 수 있음 (배포 모드 이슈).
     // srcdoc는 DOM 접근 없이 작동하므로 브라우저/Electron 모두에서 신뢰성 있음.
-    frame.srcdoc = tab.content;
+    //
+    // <base href> 주입: srcdoc iframe은 about:srcdoc 오리진을 가지므로
+    // /static/... 같은 절대 경로 외부 리소스가 해석되지 않음.
+    // 서버 오리진을 base로 설정하여 index.html 등 외부 리소스 의존 파일도
+    // 내장 미리보기에서 정상 렌더링됨.
+    var html = tab.content;
+    var baseTag = '<base href="' + window.location.origin + '/">';
+    if (/<head[^>]*>/i.test(html)) {
+      html = html.replace(/<head([^>]*)>/i, '<head$1>' + baseTag);
+    } else if (/<html[^>]*>/i.test(html)) {
+      html = html.replace(/<html([^>]*)>/i, '<html$1><head>' + baseTag + '</head>');
+    } else {
+      html = baseTag + html;
+    }
+    frame.srcdoc = html;
   }
 }
 

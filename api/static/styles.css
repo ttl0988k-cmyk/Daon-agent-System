@@ -1528,7 +1528,7 @@
       flex: 1;
       display: none;
       flex-direction: column;
-      overflow: hidden;
+      position: relative;
     }
 
     #harnessConsole {
@@ -2401,6 +2401,9 @@
       border-radius: 6px;
       padding: 8px 10px;
       margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .skill-header {
