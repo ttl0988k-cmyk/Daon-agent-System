@@ -304,9 +304,15 @@ class HermesPlanner:
                 "3. Wire them so the PRD feeds the plan: set plan_planner.input = prd_planner.output, and add edge ['prd_planner', 'plan_planner'].\n"
                 "4. The 'plan_planner' node MUST physically write a detailed `plan.md` file in the workspace using the `write_file` tool, BASED ON the PRD it receives as input. Do NOT just output text without saving the file.\n"
                 "5. Implementation agents (Developer, QA, etc.) come AFTER, depending on plan_planner.\n"
+                "[QA / REVIEW NODE — MANDATORY]\n"
+                "You MUST always end the implementation phase with at least one verification agent. Do NOT ship code without review.\n"
+                "- Add a code review node using template_id 'code-review' (name it e.g. 'code_reviewer') that depends on the Developer node(s).\n"
+                "- When the task produces runnable/testable code, ALSO add a testing node using template_id 'unit-tester' (name it e.g. 'qa_tester') that depends on the Developer node(s).\n"
+                "- Wire the edges so implementation -> code_reviewer (and -> qa_tester when applicable). The reviewer/tester must run AFTER the code is written.\n"
+                "A plan with implementation agents but NO review/QA node is INVALID and will be rejected.\n"
                 "Skip the PRD node ONLY for trivial tasks matching prd-writer's AVOID conditions (simple_bug_fix, single_file_change, refactoring, ui_styling, content_writing).\n"
                 "The orchestrator will automatically execute the pre-approval planning agents (prd_planner -> plan_planner) first, display `plan.md` to the user, pause for their approval, and then execute the remaining implementation agents.\n"
-                "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> Developer -> QA) now in your response."
+                "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> Developer -> code_reviewer / qa_tester) now in your response."
             )
 
 

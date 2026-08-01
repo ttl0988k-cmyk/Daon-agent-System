@@ -123,13 +123,121 @@ class HermesDynamicRunner:
         merged_agents = compiled_agents + recompiled_agents
         return merged_results, merged_plan, merged_agents
 
-    def _run_code_reviewer(self, final_output: str, check_timeout, preferred_model: str = None) -> str:
-        """Run CodeReviewer on the merged output if code blocks are present."""
+    # 실파일 검증 CodeReviewer가 읽을 텍스트 소스 확장자 (바이너리 제외)
+    _REVIEW_SOURCE_EXTS = {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".htm", ".css", ".scss",
+        ".json", ".yaml", ".yml", ".toml", ".md", ".txt", ".sh", ".bat", ".cmd",
+        ".sql", ".vue", ".svelte", ".xml", ".ini", ".cfg", ".env", ".gitignore",
+    }
+
+    def _collect_written_files(self, run_dir, start_time: float, max_files: int = 25,
+                               max_bytes: int = 16000) -> list:
+        """run_dir 안에서 이번 실행(start_time 이후)에 쓰인 텍스트 파일을 수집한다.
+
+        에이전트가 디스크에 실제로 쓴 산출물을 CodeReviewer가 검증할 수 있도록,
+        (상대경로, 내용) 튜플 리스트를 반환한다. 바이너리/메타 파일과 용량 초과
+        파일은 잘라내거나 건너뛴다.
+        """
+        results: list = []
+        if not run_dir:
+            return results
+        try:
+            base = Path(run_dir)
+            if not base.exists():
+                return results
+            candidates = []
+            for p in base.rglob("*"):
+                try:
+                    if not p.is_file():
+                        continue
+                    # orchestrator가 쓰는 메타 파일은 리뷰 대상이 아니다.
+                    if p.name in ("final_output.md", "metadata.json", "metrics.json",
+                                  "code_review_report.md"):
+                        continue
+                    if p.suffix.lower() not in self._REVIEW_SOURCE_EXTS:
+                        continue
+                    # 이번 실행 이전에 존재하던 파일은 제외
+                    if p.stat().st_mtime < start_time:
+                        continue
+                    candidates.append(p)
+                except Exception:
+                    continue
+            # 최근 수정 파일 우선
+            candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            for p in candidates[:max_files]:
+                try:
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                    truncated = ""
+                    if len(text) > max_bytes:
+                        text = text[:max_bytes]
+                        truncated = "\n... [truncated]"
+                    rel = p.relative_to(base).as_posix()
+                    results.append((rel, text + truncated))
+                except Exception:
+                    continue
+        except Exception as e:
+            _log.warning("Failed to collect written files for review: %s", e)
+        return results
+
+    def _run_code_reviewer(self, final_output: str, check_timeout, preferred_model: str = None,
+                           run_dir=None, log_callback=None, start_time: float = 0.0) -> str:
+        """Run CodeReviewer.
+
+        두 단계로 검증한다:
+        1) 디스크 실파일 검증 — 이번 실행에 run_dir에 쓰인 실제 파일을 읽어
+           문법 오류/누락/명백한 버그를 검토하고 보고서를 code_review_report.md로 저장.
+        2) 병합 문서 리뷰 — final_output의 코드블록 품질을 다듬는다 (기존 동작).
+        """
+        # ── 1) 디스크에 실제로 쓰인 파일 검증 ──
+        written = self._collect_written_files(run_dir, start_time) if run_dir else []
+        if written:
+            check_timeout()
+            if log_callback:
+                log_callback("CodeReviewer", f"디스크에 쓰인 {len(written)}개 파일을 검증하는 중...", "running")
+            _log.info("CodeReviewer verifying %d file(s) written to disk...", len(written))
+            file_dump = "\n\n".join(
+                f"===== FILE: {rel} =====\n{content}" for rel, content in written
+            )
+            _system_files = (
+                "You are a Senior Code Reviewer performing a REAL verification pass on files "
+                "that were actually written to disk by an automated agent.\n"
+                "Carefully inspect the real file contents below and report:\n"
+                "- Syntax errors, broken imports, unclosed tags/brackets, invalid JSON/YAML.\n"
+                "- Missing pieces: referenced but undefined functions/files, dead links, "
+                "incomplete implementations, TODO stubs left in production paths.\n"
+                "- Obvious runtime bugs and logic errors.\n"
+                "- Cross-file consistency problems (e.g. an HTML file referencing a JS/CSS file "
+                "that was never created).\n"
+                "Output a concise Markdown review report in Korean:\n"
+                "1) 한 줄 종합 판정 (PASS / NEEDS_FIX)\n"
+                "2) 파일별 발견된 문제 (심각도: critical/major/minor, 위치 포함)\n"
+                "3) 구체적인 수정 제안\n"
+                "Do NOT rewrite entire files — report findings only."
+            )
+            try:
+                report = _call_direct(
+                    f"아래는 이번 작업으로 디스크에 실제로 쓰인 파일들입니다. 검증 보고서를 작성하세요.\n\n{file_dump}",
+                    _system_files,
+                    preferred_model=preferred_model
+                )
+                if report and report.strip():
+                    try:
+                        if run_dir:
+                            (Path(run_dir) / "code_review_report.md").write_text(report, encoding="utf-8")
+                    except Exception:
+                        pass
+                    if log_callback:
+                        log_callback("CodeReviewer", "실파일 검증 완료. 보고서: code_review_report.md", "running")
+                    _log.info("CodeReviewer wrote disk-file verification report.")
+            except Exception as review_err:
+                _log.warning("Disk-file CodeReviewer skipped due to error: %s", review_err)
+
+        # ── 2) 병합 문서의 코드블록 품질 리뷰 (기존 동작) ──
         if "```" not in final_output:
-            _log.info("No code blocks detected. CodeReviewer skipped.")
+            _log.info("No code blocks detected in merged output. Document review skipped.")
             return final_output
         check_timeout()
-        _log.info("Code detected in output. Running CodeReviewer...")
+        _log.info("Code detected in output. Running document CodeReviewer...")
         _system = (
             "You are a Senior Code Reviewer. Review the document below and fix code quality issues:\n"
             "- Spaghetti Code: refactor deeply nested blocks (>3 levels) into helpers.\n"
@@ -482,8 +590,10 @@ class HermesDynamicRunner:
             if log_callback:
                 log_callback("Merger", "Merged results. Generation complete.", "running")
 
-            # 6. CodeReviewer pass
-            final_output = self._run_code_reviewer(final_output, check_timeout, preferred_model=preferred_model)
+            # 6. CodeReviewer pass (디스크 실파일 검증 + 병합 문서 리뷰)
+            final_output = self._run_code_reviewer(
+                final_output, check_timeout, preferred_model=preferred_model,
+                run_dir=run_dir, log_callback=log_callback, start_time=mission_start)
 
             # --- Record model execution results for DynamicModelSelector ---
             try:
