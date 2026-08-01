@@ -282,20 +282,35 @@ def _run_node_with_retries(
                         pass
 
                 # ── 실시간 에디터 반영: 파일 쓰기 도구 감지 콜백 ──
-                # tool.completed 시점에 디스크에 파일이 쓰였으므로 로그로 경로를 기록한다.
+                # hermes tool_executor는 tool.completed를 (args=None, preview=None)으로 호출한다.
+                # 따라서 경로는 args가 제공되는 tool.started 시점에 캡처해 보관했다가,
+                # 디스크에 파일이 실제로 쓰인 tool.completed 시점에 [FILE_EDIT] 로그로 발행한다.
                 # 프론트엔드(harness.js)가 이 로그를 파싱해 파일 트리/에디터를 갱신한다.
                 def _make_file_edit_cb(_agent_name):
+                    # 에이전트별로 독립된 pending 맵 (단일 에이전트는 도구를 순차 실행하므로
+                    # started→completed 순서가 보장됨). 도구명으로 경로를 보관한다.
+                    _pending_paths = {}
+
                     def _file_edit_cb(event_type, tool_name, preview, args, **kwargs):
                         try:
+                            if tool_name not in ('write_file', 'patch'):
+                                return
+                            if event_type == 'tool.started':
+                                # args가 제공되는 유일한 시점 — 경로를 캡처해 보관한다.
+                                _sp = ''
+                                if isinstance(args, dict):
+                                    _sp = args.get('path') or args.get('file_path') or ''
+                                if _sp:
+                                    _pending_paths[tool_name] = _sp
+                                return
                             if event_type != 'tool.completed':
                                 return
                             if kwargs.get('is_error'):
+                                _pending_paths.pop(tool_name, None)
                                 return
-                            if tool_name not in ('write_file', 'patch'):
-                                return
-                            # tool.completed는 args=None이므로 preview에서 경로를 추출한다.
-                            _p = ''
-                            if isinstance(args, dict):
+                            # started에서 캡처한 경로를 사용한다.
+                            _p = _pending_paths.pop(tool_name, '')
+                            if not _p and isinstance(args, dict):
                                 _p = args.get('path') or args.get('file_path') or ''
                             if not _p and isinstance(preview, str):
                                 # preview 예: "write: path/to/file" 또는 경로 자체

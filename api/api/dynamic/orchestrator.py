@@ -214,15 +214,46 @@ class HermesDynamicRunner:
 
             if log_callback:
                 log_callback("CEO", f"Generated plan: {plan.get('plan_summary')}", "running")
-            # Determine if we have planner nodes in the plan
+            # Determine if we have planner nodes in the plan.
+            # 승인 게이트는 이 planner_nodes가 비어있으면 통째로 건너뛰어지므로,
+            # CEO가 노드 이름을 다르게 지어도 planning-phase 노드를 안정적으로 식별해야 한다.
+            # 감지 우선순위: (1) planning 전용 template_id  (2) name/role의 planner/plan 키워드
+            # (3) subtask의 plan.md/prd 언급  (4) 매칭 노드로 흘러들어가는 upstream 엣지 폐로.
             planner_nodes = []
             if planning_mode:
-                planner_nodes = [
-                    n for n in plan.get("nodes", [])
-                    if "planner" in n.get("name", "").lower()
-                    or "planner" in n.get("role", "").lower()
-                    or "plan" in n.get("name", "").lower()
-                ]
+                _PLANNING_TEMPLATES = {"prd-writer", "task-decomposer"}
+                all_nodes = plan.get("nodes", [])
+                matched_names = set()
+                for n in all_nodes:
+                    _tid = (n.get("template_id") or "").lower()
+                    _name = (n.get("name") or "").lower()
+                    _role = (n.get("role") or "").lower()
+                    _subtask = (n.get("subtask") or "").lower()
+                    if (
+                        _tid in _PLANNING_TEMPLATES
+                        or "planner" in _name or "planner" in _role
+                        or "plan" in _name
+                        or "prd" in _name
+                        or "plan.md" in _subtask
+                        or "제품 기획" in _subtask or "prd" in _subtask
+                    ):
+                        matched_names.add(n.get("name"))
+                # upstream 폐로: 매칭된 노드(예: plan_planner)에 입력을 주는 선행 노드
+                # (예: prd_planner)도 planning phase에 포함시킨다. 구현 노드는 planning
+                # 노드의 downstream이므로 절대 포함되지 않는다.
+                _edges = plan.get("edges", [])
+                _changed = True
+                while _changed:
+                    _changed = False
+                    for _e in _edges:
+                        try:
+                            _src, _dst = _e[0], _e[1]
+                        except (IndexError, TypeError):
+                            continue
+                        if _dst in matched_names and _src not in matched_names:
+                            matched_names.add(_src)
+                            _changed = True
+                planner_nodes = [n for n in all_nodes if n.get("name") in matched_names]
 
             if planning_mode and planner_nodes and session_id:
                 # --- PHASE 1: Execute only the Planner agent ---

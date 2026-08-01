@@ -305,7 +305,12 @@ class ModelManager:
         return None
 
     def _get_api_key(self, provider: str) -> str:
-        """Get API key for a provider (checks custom providers → env → auth.json)."""
+        """Get API key for a provider (checks custom providers → env → auth.json).
+
+        auth.json은 활성 프로필 인식 경로(get_active_hermes_home)에서 읽는다.
+        비-default 프로필의 자격증명은 ~/.hermes/profiles/<name>/auth.json에 저장되므로
+        하드코딩된 ~/.hermes/auth.json만 보면 프로필 키를 놓쳐 프로바이더가 누락된다.
+        """
         data = _load_custom_providers()
         providers = data.get('providers', {})
 
@@ -318,15 +323,26 @@ class ModelManager:
         if env_key:
             return env_key
 
+        # 프로필 인식 auth.json 탐색 (활성 프로필 → 기본 ~/.hermes 순)
+        candidate_homes = []
         try:
-            auth_path = Path.home() / '.hermes' / 'auth.json'
-            if auth_path.exists():
-                auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
-                pool = auth_data.get('credential_pool', {})
-                if provider in pool and pool[provider]:
-                    return pool[provider][0].get('access_token', '')
+            from api.profiles import get_active_hermes_home
+            candidate_homes.append(get_active_hermes_home())
         except Exception:
             pass
+        candidate_homes.append(Path.home() / '.hermes')
+        for home in candidate_homes:
+            try:
+                auth_path = home / 'auth.json'
+                if auth_path.exists():
+                    auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
+                    pool = auth_data.get('credential_pool', {})
+                    if provider in pool and pool[provider]:
+                        token = pool[provider][0].get('access_token', '')
+                        if token:
+                            return token
+            except Exception:
+                continue
 
         return ''
 
@@ -371,17 +387,29 @@ class ModelManager:
 
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Return structured model list dynamically from custom_providers.json."""
+        # 프로필 인식 auth.json 탐색: 활성 프로필의 자격증명 풀을 먼저 읽고,
+        # 기본 ~/.hermes/auth.json도 병합한다. 하드코딩 경로만 보면 비-default
+        # 프로필의 키를 놓쳐 해당 프로바이더가 AVAILABLE MODELS에서 누락된다.
         auth_keys = {}
+        candidate_homes = []
         try:
-            auth_path = Path.home() / '.hermes' / 'auth.json'
-            if auth_path.exists():
-                auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
-                pool = auth_data.get('credential_pool', {})
-                for provider_name, credentials in pool.items():
-                    if credentials and credentials[0].get('access_token'):
-                        auth_keys[provider_name] = credentials[0].get('access_token')
-        except Exception as e:
-            print(f"[ModelManager] Warning: failed to load auth.json: {e}")
+            from api.profiles import get_active_hermes_home
+            candidate_homes.append(get_active_hermes_home())
+        except Exception:
+            pass
+        candidate_homes.append(Path.home() / '.hermes')
+        for home in candidate_homes:
+            try:
+                auth_path = home / 'auth.json'
+                if auth_path.exists():
+                    auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
+                    pool = auth_data.get('credential_pool', {})
+                    for provider_name, credentials in pool.items():
+                        if credentials and credentials[0].get('access_token'):
+                            # 활성 프로필의 키를 우선시 (먼저 추가된 것 유지)
+                            auth_keys.setdefault(provider_name, credentials[0].get('access_token'))
+            except Exception as e:
+                print(f"[ModelManager] Warning: failed to load auth.json ({home}): {e}")
 
         # Load all provider models dynamically
         provider_models = self._get_all_provider_models()
