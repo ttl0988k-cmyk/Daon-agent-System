@@ -550,19 +550,18 @@ class DynamicModelSelector:
         self._load_custom_profiles()
     
     def _load_custom_profiles(self):
-        """Load ModelProfiles from custom_providers.json dynamically.
-        
-        Loads models from BOTH sections:
-        1) 'providers' — user-added custom providers (require api_key)
-        2) 'presets' — built-in providers with model lists (require api_key via env/auth/providers)
+        """Load ModelProfiles from the SAME source the chat/debate UI uses.
+
+        model_manager.get_available_models() is profile-aware (active profile
+        auth.json merged with default ~/.hermes) and only returns providers
+        that actually have an API key. Building profiles from this list keeps
+        the harness model selector 100% in sync with the chat and debate model
+        dropdowns — no separate/divergent key detection that silently drops
+        user-registered providers.
         """
         try:
-            import json
-            from pathlib import Path
-            custom_path = Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
-            if not custom_path.exists():
-                return
-            data = json.loads(custom_path.read_text(encoding='utf-8-sig'))
+            from api.managers.model_manager import model_manager
+            groups = model_manager.get_available_models()
 
             # Helper: infer strengths from model_id name
             def _infer_strengths(mid: str) -> list[str]:
@@ -593,93 +592,44 @@ class DynamicModelSelector:
                     return 3
                 return 2
 
-            # Helper: check if a provider has an API key available
-            def _has_api_key(pname: str, pcfg: dict) -> bool:
-                # 1) Explicit api_key in the config
-                if pcfg.get('api_key'):
-                    return True
-                # 2) Environment variable
-                if os.environ.get(f'{pname.upper()}_API_KEY'):
-                    return True
-                # 3) Check providers section for same name
-                providers_section = data.get('providers', {})
-                if pname in providers_section and providers_section[pname].get('api_key'):
-                    return True
-                # 4) Check auth.json credential pool (profile-aware path)
-                try:
-                    from api.profiles import get_active_hermes_home
-                    auth_path = get_active_hermes_home() / 'auth.json'
-                    if auth_path.exists():
-                        auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
-                        pool = auth_data.get('credential_pool', {})
-                        if pname in pool and pool[pname] and pool[pname][0].get('access_token'):
-                            return True
-                except Exception:
-                    pass
-                return False
-
-            # 1) Load from 'providers' section (user-added custom providers)
-            providers = data.get('providers', {})
-            for pname, cfg in providers.items():
-                if not cfg.get('api_key'):
+            _loaded = []
+            for g in groups:
+                provider_key = g.get('provider_key') or g.get('provider')
+                if not provider_key:
                     continue
-                base_url = cfg.get('base_url', '')
-                for m in cfg.get('models', []):
-                    model_id = m['id'] if isinstance(m, dict) else str(m)
-                    if model_id not in self._profiles:
-                        self._profiles[model_id] = ModelProfile(
-                            model_id=model_id,
-                            provider=pname,
-                            display_name=m.get('label', model_id) if isinstance(m, dict) else model_id,
-                            cost_per_1m_input=0.50,
-                            cost_per_1m_output=2.00,
-                            context_window=128000,
-                            avg_latency_rank=_infer_latency_rank(model_id),
-                            strengths=_infer_strengths(model_id),
-                            max_output_tokens=8192,
-                            base_url=base_url,
-                        )
-
-            # 2) Load from 'presets' section (built-in providers with model lists)
-            presets = data.get('presets', {})
-            _loaded_presets = []
-            _skipped_presets = []
-            for pname, pcfg in presets.items():
-                if not isinstance(pcfg, dict):
-                    continue
-                models_list = pcfg.get('models', [])
-                if not models_list:
-                    continue
-                if not _has_api_key(pname, pcfg):
-                    _skipped_presets.append(pname)
-                    continue
-                base_url = pcfg.get('base_url', '')
+                # Custom providers carry base_url; presets resolve via model_manager.
+                base_url = g.get('base_url') or ''
+                if not base_url:
+                    try:
+                        base_url = model_manager._get_base_url(provider_key) or ''
+                    except Exception:
+                        base_url = ''
                 _count = 0
-                for m in models_list:
+                for m in g.get('models', []):
                     model_id = m['id'] if isinstance(m, dict) else str(m)
-                    if model_id not in self._profiles:
-                        self._profiles[model_id] = ModelProfile(
-                            model_id=model_id,
-                            provider=pname,
-                            display_name=m.get('label', model_id) if isinstance(m, dict) else model_id,
-                            cost_per_1m_input=0.30,
-                            cost_per_1m_output=1.20,
-                            context_window=128000,
-                            avg_latency_rank=_infer_latency_rank(model_id),
-                            strengths=_infer_strengths(model_id),
-                            max_output_tokens=8192,
-                            base_url=base_url,
-                        )
-                        _count += 1
+                    if not model_id or model_id in self._profiles:
+                        continue
+                    self._profiles[model_id] = ModelProfile(
+                        model_id=model_id,
+                        provider=provider_key,
+                        display_name=m.get('label', model_id) if isinstance(m, dict) else model_id,
+                        cost_per_1m_input=0.30,
+                        cost_per_1m_output=1.20,
+                        context_window=128000,
+                        avg_latency_rank=_infer_latency_rank(model_id),
+                        strengths=_infer_strengths(model_id),
+                        max_output_tokens=8192,
+                        base_url=base_url,
+                    )
+                    _count += 1
                 if _count:
-                    _loaded_presets.append(f"{pname}({_count})")
+                    _loaded.append(f"{provider_key}({_count})")
 
             _logger.info(
-                "Loaded %d model profiles (hardcoded: %d, dynamic: %d) | presets loaded: %s | skipped (no key): %s",
+                "Loaded %d model profiles (hardcoded: %d, dynamic: %d) | unified-source providers: %s",
                 len(self._profiles), len(_DEFAULT_PROFILES),
                 len(self._profiles) - len(_DEFAULT_PROFILES),
-                ', '.join(_loaded_presets) or 'none',
-                ', '.join(_skipped_presets) or 'none',
+                ', '.join(_loaded) or 'none',
             )
         except Exception as e:
             _logger.warning("Failed to load custom provider profiles: %s", e)
@@ -910,10 +860,12 @@ class DynamicModelSelector:
                 "_cost": profile.cost_per_1m_input
             })
         
-        # Safety net: ensure deepseek + minimax
-        providers_in_chain = {c["provider"] for c in chain}
-        
-        if "deepseek" not in providers_in_chain:
+        # Safety net: ONLY when the scored chain is empty (no eligible model
+        # matched). Previously this force-appended deepseek + minimax on every
+        # call, which overrode the user's registered providers. Now the chain
+        # reflects the actual scored/selected models; the fallback only kicks
+        # in to guarantee a non-empty chain.
+        if not chain:
             ds_profile = self._profiles.get("deepseek-chat")
             if ds_profile:
                 chain.append({
@@ -925,8 +877,7 @@ class DynamicModelSelector:
                     "_breakdown": {},
                     "_cost": ds_profile.cost_per_1m_input
                 })
-        
-        if "minimax" not in providers_in_chain:
+
             mm_profile = self._profiles.get("MiniMax-M3")
             if mm_profile:
                 chain.append({
