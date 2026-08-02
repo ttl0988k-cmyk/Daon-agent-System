@@ -519,6 +519,28 @@ function cleanupHarnessState() {
   }
 }
 
+// ── 하네스 콘솔 비우기: 로그/카드/결과 박스를 모두 제거하고 웰컴 화면으로 초기화 ──
+// 실행 중(폴링 활성)일 때는 오작동 방지를 위해 비우기를 막는다.
+function clearHarnessConsole() {
+  if (State.harnessPollInterval) {
+    showToast('실행 중에는 콘솔을 비울 수 없습니다. 먼저 취소하세요.');
+    return;
+  }
+  const consoleEl = $('harnessConsole');
+  if (consoleEl) consoleEl.innerHTML = '';
+  State.harnessAgentCards = {};
+  State.harnessLogCursor = 0;
+  State.harnessRunId = null;
+  if (consoleEl) {
+    consoleEl.innerHTML =
+      '<div class="harness-welcome">' +
+      '<div class="harness-welcome-icon">⚡</div>' +
+      '<h4>다이나믹 하네스 오케스트레이터</h4>' +
+      '<p>멀티 에이전트 작업을 실행합니다</p>' +
+      '</div>';
+  }
+}
+
 function logToConsole(message, type = 'info') {
   const cliBody = $('consoleBody');
   if (!cliBody) return;
