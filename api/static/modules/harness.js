@@ -176,6 +176,12 @@ function getAgentLabel(agentId) {
   return match ? match[1].toUpperCase() : agentId;
 }
 
+// agentId가 "AgentName (model)" 형식일 때 괄호 안의 모델명을 추출한다.
+function getAgentModel(agentId) {
+  const match = agentId.match(/\(([^)]+)\)/);
+  return match ? match[1].trim() : '';
+}
+
 // ── 에이전트 노드 카드: 에이전트가 생성되면 카드가 생기고, 카드 박스 안에서 로그가 누적된다 ──
 function getOrCreateAgentCard(agentId) {
   let cardEl = State.harnessAgentCards[agentId];
@@ -185,7 +191,8 @@ function getOrCreateAgentCard(agentId) {
   cardEl = document.createElement('div');
   cardEl.className = 'harness-agent-card status-running';
   cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}"><span class="status-dot"></span>${getAgentLabel(agentId)}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body"></div>`;
+  const modelTag = getAgentModel(agentId) ? `<span class="agent-model-tag">${getAgentModel(agentId)}</span>` : '';
+  cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}"><span class="status-dot"></span>${getAgentLabel(agentId)}${modelTag}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body"></div>`;
   consoleEl.appendChild(cardEl);
   State.harnessAgentCards[agentId] = cardEl;
   scrollToHarnessBottom();

@@ -1534,11 +1534,15 @@
       display: none;
       flex-direction: column;
       position: relative;
+      min-height: 0;
+      /* flex 아이템이 콘텐츠를 넘어 확장되지 않도록 */
     }
 
     #harnessConsole {
       flex: 1;
       overflow-y: auto;
+      min-height: 0;
+      /* flexbox 스크롤 보장: auto면 콘텐츠만큼 커져 스크롤 불가 */
       padding: 12px;
       font-size: 12px;
       font-family: 'Fira Code', monospace;
@@ -1736,6 +1740,23 @@
 
     .harness-agent-card.collapsed .toggle-icon {
       transform: rotate(-90deg);
+    }
+
+    .harness-agent-card.collapsed .harness-agent-card-body {
+      display: none;
+    }
+
+    .agent-model-tag {
+      margin-left: 6px;
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text2);
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      letter-spacing: 0;
+      text-transform: none;
     }
 
     .harness-agent-card-body {
