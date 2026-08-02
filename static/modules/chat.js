@@ -687,6 +687,38 @@ async function _executeAgentStream(displayText, uploaded) {
         if (_activeTools > 0) _activeTools--;
       }
 
+      // ── 채팅 → 다이나믹 하네스 연동 ──
+      // 채팅 에이전트가 execute_dynamic_harness 도구를 호출하면 자동으로
+      // 하네스 탭으로 전환한다. 실행 로그는 agent_log SSE 이벤트로 들어와
+      // 하네스 콘솔의 에이전트 노드 카드에 라우팅된다(채팅 버블에는 렌더링 안 함).
+      // 도구 완료 시 채팅 탭으로 복귀해 최종 보고서를 보여준다.
+      if (toolName === 'execute_dynamic_harness') {
+        if (isStarted) {
+          try {
+            if (typeof cleanupHarnessState === 'function') cleanupHarnessState();
+            const _hc = (typeof $ === 'function') ? $('harnessConsole') : null;
+            if (_hc) _hc.innerHTML = '';
+            if (typeof switchMode === 'function') switchMode('harness');
+            const _task = (data.args && data.args.task) || '';
+            if (typeof logToConsole === 'function') {
+              logToConsole('🚀 채팅 에이전트가 다이나믹 하네스를 실행합니다', 'info');
+              if (_task) logToConsole(`📋 작업: ${_task}`, 'info');
+            }
+          } catch (_dhErr) {
+            console.error('[Chat→Harness] switch failed:', _dhErr);
+          }
+        } else {
+          try {
+            if (typeof logToConsole === 'function') {
+              logToConsole('✅ 다이나믹 하네스 실행 완료 — 채팅에서 최종 보고를 확인하세요', 'success');
+            }
+            if (typeof switchMode === 'function') switchMode('chat');
+          } catch (_dhErr2) {
+            console.error('[Chat→Harness] return failed:', _dhErr2);
+          }
+        }
+      }
+
       // ── ask_followup_question: render choice cards inline ──
       if (toolName === 'ask_followup_question' && isStarted && data.args) {
         const question = data.args.question || '';
@@ -721,6 +753,30 @@ async function _executeAgentStream(displayText, uploaded) {
       asstBubble.appendChild(card);
       scrollToChatBottom();
       resetIdleTimer();
+    });
+
+    // ── 채팅 → 다이나믹 하네스 실시간 로그 라우팅 ──
+    // execute_dynamic_harness 도구가 실행 중일 때 백엔드가 emit하는 agent_log
+    // 이벤트({agent_id, content, status})를 하네스 콘솔의 에이전트 노드 카드로
+    // 라우팅한다. 채팅 버블에는 렌더링하지 않는다(하네스 탭에서 확인).
+    sse.addEventListener('agent_log', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const agentId = data.agent_id || 'harness';
+        const content = data.content || '';
+        const status = data.status || 'running';
+        const logType = status === 'error' ? 'error'
+          : (status === 'done' || status === 'completed' || status === 'success') ? 'success'
+            : 'info';
+        if (typeof appendCardLog === 'function') {
+          appendCardLog(agentId, content, logType);
+        }
+        if (typeof updateCardStatus === 'function') {
+          updateCardStatus(agentId, status);
+        }
+      } catch (err) {
+        console.error('[Chat→Harness] agent_log routing failed:', err);
+      }
     });
 
     // Monaco Editor UX를 위한 파일 편집 이벤트 리스너
