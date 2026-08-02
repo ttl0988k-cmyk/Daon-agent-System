@@ -38,3 +38,8 @@ test_app_unpacked/
 clean_build_unpacked/
 dist_new/
 dist_old_*/
+
+# Release artifacts — ignore large binaries, keep scripts/README tracked
+release/*.exe
+release/*.zip
+release/_stage/
