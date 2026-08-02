@@ -170,17 +170,18 @@ class AgentCompiler:
                 if s not in node_skills:
                     node_skills.append(s)
 
-            # Build system_prompt: original + persona/manual + injected skill content
+            # Build system_prompt: original + env/messaging + injected skill content
+            # NOTE: get_integrated_persona() 호출 제거 — 정적 에이전트(Bill/Tony/Prada/Sherlock)
+            # 페르소나는 다이나믹 하네스에 주입하지 않는다. 100개 템플릿 카탈로그 체계에서는
+            # template_id 경로가 system_prompt를 완전히 제공하므로 레거시 경로에서도
+            # 정적 프로필 SOUL.md 덮어쓰기(충돌)를 방지한다.
             base_prompt = n.get("system_prompt", "")
-            persona_content = get_integrated_persona(name, n.get("role", ""))
             skill_content = skill_registry.load_skills(node_skills)
 
             env_note = AgentCompiler._get_env_note()
             messaging_note = AgentCompiler._get_messaging_note()
 
             full_prompt = base_prompt + env_note + messaging_note
-            if persona_content:
-                full_prompt += f"\n\n{persona_content}"
             if skill_content:
                 full_prompt += f"\n\n{skill_content}"
 
