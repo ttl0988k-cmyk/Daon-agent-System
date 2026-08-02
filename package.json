@@ -30,7 +30,9 @@
       ]
     },
     "nsis": {
-      "include": "installer.nsh"
+      "include": "installer.nsh",
+      "useZip": true,
+      "differentialPackage": false
     },
     "extraResources": [
       {
