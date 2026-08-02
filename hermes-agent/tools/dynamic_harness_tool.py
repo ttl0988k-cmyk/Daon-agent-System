@@ -31,12 +31,20 @@ DYNAMIC_HARNESS_SCHEMA = {
                 "type": "string",
                 "description": "Preferred model name for orchestration (e.g., 'MiniMax-M3', 'deepseek-chat'). Defaults to 'MiniMax-M3'.",
             },
+            "skills": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of skill names the user explicitly wants the harness to use. "
+                    "Injected as a MANDATORY directive into the planner prompt (same as the HTTP API 'skills' field)."
+                ),
+            },
         },
         "required": ["task"],
     },
 }
 
-def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None) -> str:
+def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, forced_skills: Optional[list] = None) -> str:
     """
     Run the Hermes Dynamic Harness on the requested task.
     """
@@ -133,7 +141,8 @@ def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None) ->
                 print(f"[DynamicHarnessTool] Warning: Failed to sync with virtual office: {bridge_err}", flush=True)
         
         # Execute the dynamic compiler run with log callback
-        res = runner.run(task=task, preferred_model=preferred_model, log_callback=log_callback)
+        # forced_skills: 사용자가 명시적으로 지정한 스킬 목록 (HTTP API 경로의 'skills' 필드와 동일)
+        res = runner.run(task=task, preferred_model=preferred_model, log_callback=log_callback, forced_skills=forced_skills)
         
         # Process and format results
         final_output = res.get("final_output", "")
@@ -201,7 +210,8 @@ registry.register(
     schema=DYNAMIC_HARNESS_SCHEMA,
     handler=lambda args, **kw: execute_dynamic_harness(
         task=args.get("task", ""),
-        preferred_model=args.get("preferred_model")
+        preferred_model=args.get("preferred_model"),
+        forced_skills=args.get("skills") or None
     ),
     check_fn=check_dynamic_harness_requirements,
     emoji="🎯",
