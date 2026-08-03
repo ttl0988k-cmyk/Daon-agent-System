@@ -1,4 +1,4 @@
-print("[BUILD ID]: server-v4-2026-07-25-19:07", flush=True)
+print("[BUILD ID]: server-v5-2026-08-03-22:50", flush=True)
 import json
 import os
 import sys

@@ -1,4 +1,4 @@
-console.log("[BUILD ID]: main-v4-2026-07-25-20:16");
+console.log("[BUILD ID]: main-v5-2026-08-03-22:50");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
