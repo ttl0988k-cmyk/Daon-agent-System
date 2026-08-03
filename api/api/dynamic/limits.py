@@ -24,7 +24,7 @@ def _load_harness_limits() -> dict:
         "scoring": {"pass_threshold": 80, "max_score": 100},
     }
     try:
-        config_path = Path(__file__).resolve().parent.parent.parent / "config" / "harness_limits.yaml"
+        config_path = Path(__file__).resolve().parent.parent.parent.parent / "config" / "harness_limits.yaml"
         if config_path.exists():
             data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
             if data:

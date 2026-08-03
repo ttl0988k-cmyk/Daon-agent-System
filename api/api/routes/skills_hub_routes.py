@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _get_skills_hub():
     """Lazy-import the skills_hub module from hermes-agent/tools."""
-    hub_path = Path(__file__).parent.parent.parent / "hermes-agent" / "tools"
+    hub_path = Path(__file__).parent.parent.parent.parent / "hermes-agent" / "tools"
     if str(hub_path) not in sys.path:
         sys.path.insert(0, str(hub_path))
     from skills_hub import SkillHub
@@ -297,7 +297,7 @@ def handle_post_skills_from_github(handler, body: dict) -> bool:
     custom_category = body.get("category", "").strip() or None
 
     try:
-        from github_skill_converter import convert_github_url
+        from api.github_skill_converter import convert_github_url
         result = convert_github_url(url, custom_name=custom_name, custom_category=custom_category)
         status_code = 200 if result.get("ok") else 422
         handler.send_json(result, status_code)

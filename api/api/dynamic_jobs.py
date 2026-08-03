@@ -18,7 +18,7 @@ import sys
 if hasattr(sys, '_MEIPASS'):
     RUN_DIR = Path(sys.executable).parent.resolve()
 else:
-    RUN_DIR = Path(__file__).parent.parent.resolve()
+    RUN_DIR = Path(__file__).parent.parent.parent.resolve()
 
 _DYNAMIC_JOBS = {}
 _DYNAMIC_JOBS_LOCK = threading.Lock()

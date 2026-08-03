@@ -806,7 +806,7 @@ class DynamicModelSelector:
         try:
             import json as _json
             from pathlib import Path as _Path
-            _cp = _Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
+            _cp = _Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
             if _cp.exists():
                 _data = _json.loads(_cp.read_text(encoding='utf-8-sig'))
                 # Include custom providers

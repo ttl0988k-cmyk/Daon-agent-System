@@ -50,8 +50,8 @@ GRADES = [
 
 def _resolve_data_dir() -> Path:
     """Resolve the data/ directory next to this project root."""
-    # score_engine.py lives in api/ — go up one level
-    return Path(__file__).resolve().parent.parent / "data"
+    # score_engine.py lives in api/api/ — go up two levels to project root
+    return Path(__file__).resolve().parent.parent.parent / "data"
 
 
 def _load_json(path: Path) -> dict | list:

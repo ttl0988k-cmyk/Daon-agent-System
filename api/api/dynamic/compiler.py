@@ -62,7 +62,7 @@ def get_integrated_persona(agent_name: str, agent_role: str) -> str:
     # --- 2순위: 공용 역할 매뉴얼 매핑 검사 ---
     for kw, filename in manual_mapping.items():
         if kw in search_text:
-            manual_file = Path(__file__).resolve().parent.parent.parent / "skills" / "roles" / filename
+            manual_file = Path(__file__).resolve().parent.parent.parent.parent / "skills" / "roles" / filename
             if manual_file.exists():
                 _log.info("Injected dynamic role manual '%s' for agent '%s'", filename, agent_name)
                 return f"### [Role Manual: {filename.replace('.md', '').upper()}]\n{manual_file.read_text(encoding='utf-8')}"

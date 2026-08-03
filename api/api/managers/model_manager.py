@@ -33,7 +33,7 @@ def _get_custom_providers_path() -> Path:
         from api.config import STATE_DIR
         return STATE_DIR / 'custom_providers.json'
     except ImportError:
-        return Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
+        return Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
 
 
 def _load_custom_providers() -> dict:

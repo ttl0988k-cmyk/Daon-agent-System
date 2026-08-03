@@ -80,7 +80,7 @@ def _resolve_engine_skills_dir() -> Path:
     if hasattr(sys, '_MEIPASS'):
         base = Path(sys.executable).parent.resolve()
     else:
-        base = Path(__file__).resolve().parent.parent
+        base = Path(__file__).resolve().parent.parent.parent
     return base / "hermes-agent" / "skills"
 
 

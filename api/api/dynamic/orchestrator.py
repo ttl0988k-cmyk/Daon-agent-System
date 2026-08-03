@@ -290,7 +290,7 @@ class HermesDynamicRunner:
                 if hasattr(sys, '_MEIPASS'):
                     ws_path = Path(sys.executable).parent.parent.resolve() / "_workspace"
                 else:
-                    ws_path = Path(__file__).resolve().parent.parent.parent / "_workspace"
+                    ws_path = Path(__file__).resolve().parent.parent.parent.parent / "_workspace"
                 ws_path.mkdir(parents=True, exist_ok=True)
                 run_dir = ws_path / "dynamic_runs" / run_id
             except Exception as e:

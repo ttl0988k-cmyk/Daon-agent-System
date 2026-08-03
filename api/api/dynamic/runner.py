@@ -612,7 +612,7 @@ class ParallelRunner:
         run_id: str = None,
     ) -> list[dict]:
         """Execute DAG nodes in parallel batches via topological sort. Resolves data flows and failures."""
-        agent_path = str(Path(__file__).resolve().parent.parent.parent / "hermes-agent")
+        agent_path = str(Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent")
         if agent_path not in sys.path:
             sys.path.append(agent_path)
         from run_agent import AIAgent

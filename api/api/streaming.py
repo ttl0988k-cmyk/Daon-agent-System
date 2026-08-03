@@ -965,13 +965,6 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               
               if injected_count > 0:
                   print(f"[webui-debug] Registered {injected_count} MCP tools into Hermes registry + agent.tools.", flush=True)
-                  # Debug log
-                  try:
-                      import json
-                      with open("mcp_injection_debug.json", "w", encoding="utf-8") as f:
-                          json.dump([t['function']['name'] for t in agent.tools], f, indent=2)
-                  except Exception:
-                      pass
           except Exception as e:
               import traceback as _tb
               print(f"[webui-debug] Failed to inject MCP tools: {e}", flush=True)

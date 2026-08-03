@@ -23,7 +23,7 @@ try:
     from api.config import STATE_DIR
 except Exception:
     import os
-    STATE_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent / 'data'
+    STATE_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent / 'data'
 
 _PATCHES_DB_PATH = Path(STATE_DIR) / 'patches.db'
 _db_lock = threading.Lock()

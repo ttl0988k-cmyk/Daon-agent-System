@@ -1553,7 +1553,7 @@ def _call_llm_direct(prompt: str, system_instruction: str = "",
     Resolves the model and provider from the system configuration
     (config.yaml → data/settings.json → env vars), NOT hardcoded to OpenAI.
     """
-    agent_path = str(Path(__file__).resolve().parent.parent / "hermes-agent")
+    agent_path = str(Path(__file__).resolve().parent.parent.parent / "hermes-agent")
     if agent_path not in sys.path:
         sys.path.insert(0, agent_path)
 

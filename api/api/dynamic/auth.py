@@ -17,7 +17,7 @@ _log = get_logger(__name__)
 def _resolve_key_from_custom_providers(provider: str) -> str:
     """Extract an API key from custom_providers.json if the provider is registered there."""
     try:
-        cp_path = Path(__file__).parent.parent.parent / 'data' / 'custom_providers.json'
+        cp_path = Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
         if cp_path.exists():
             data = json.loads(cp_path.read_text(encoding='utf-8'))
             providers = data.get('providers', {})

@@ -24,7 +24,8 @@ if hasattr(sys, '_MEIPASS'):
     else:
         RESOURCE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(__file__).parent.parent.resolve()
+    # [refactor] 단일 정본: 프로젝트 루트. api/api/config.py → api/api → api → root
+    BASE_DIR = Path(__file__).parent.parent.parent.resolve()
     RESOURCE_DIR = BASE_DIR
 
 # State/data directory: use LOCALAPPDATA for installed (PyInstaller) builds to

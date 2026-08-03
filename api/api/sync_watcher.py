@@ -257,7 +257,7 @@ def on_file_change(workspace: Path):
     # Read settings to know which file types to generate
     try:
         import json
-        settings_path = Path(__file__).parent.parent / "data" / "settings.json"
+        settings_path = Path(__file__).parent.parent.parent / "data" / "settings.json"
         settings = {}
         if settings_path.exists():
             settings = json.loads(settings_path.read_text(encoding="utf-8"))

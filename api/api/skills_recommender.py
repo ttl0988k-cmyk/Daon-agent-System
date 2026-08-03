@@ -386,7 +386,7 @@ def recommend_skills(workspace_path: str, max_per_query: int = 5) -> dict:
 
     # Lazy-import skills hub
     try:
-        hub_path = Path(__file__).parent.parent / "hermes-agent" / "tools"
+        hub_path = Path(__file__).parent.parent.parent / "hermes-agent" / "tools"
         import sys
         if str(hub_path) not in sys.path:
             sys.path.insert(0, str(hub_path))

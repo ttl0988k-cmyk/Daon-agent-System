@@ -69,7 +69,7 @@ def init_profile_state() -> None:
         if exe_dir != bundle_env_dir:
             _reload_dotenv(exe_dir)
     else:
-        proj_env_dir = Path(__file__).parent.parent.resolve()
+        proj_env_dir = Path(__file__).parent.parent.parent.resolve()
         _reload_dotenv(proj_env_dir)
 
 def list_profiles_api() -> list:
@@ -134,7 +134,7 @@ def switch_profile(name: str) -> dict:
         if exe_dir != bundle_env_dir:
             _reload_dotenv(exe_dir)
     else:
-        proj_env_dir = Path(__file__).parent.parent.resolve()
+        proj_env_dir = Path(__file__).parent.parent.parent.resolve()
         _reload_dotenv(proj_env_dir)
     
     # Patch module level caches in hermes-agent if available
