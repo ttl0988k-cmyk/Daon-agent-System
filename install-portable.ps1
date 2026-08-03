@@ -16,7 +16,9 @@ if (-not (Test-Path (Join-Path $src 'DAON Agent System.exe'))) {
 
 Write-Host "[1/3] Copying to $dst ..."
 # robocopy exit codes 0..7 are success; >= 8 means a real copy failure.
-& robocopy $src $dst /E /R:3 /W:2 /NP /NFL /NDL | Out-Null
+# /MIR (not /E): mirrors the build exactly and DELETES stale files left by
+# previous installs (e.g. removed shim modules), so no dead code survives.
+& robocopy $src $dst /MIR /R:3 /W:2 /NP /NFL /NDL | Out-Null
 $rc = $LASTEXITCODE
 if ($rc -ge 8) {
     Write-Error "copy failed (robocopy exit $rc)"

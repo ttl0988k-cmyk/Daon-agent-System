@@ -405,6 +405,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # Track pending file edits: tool.started stores path so tool.completed
           # (which receives args=None) can re-read the file from disk.
           _pending_file_edits = {}  # tool_name -> path
+          # ── Phase 6 인과 그래프 캡처 ──
+          # tool.started에서 경로 보관 → tool.completed 확정 시점 기록 (실패 쓰기는 미기록).
+          _p6_pending_artifacts = {}    # tool_name -> path
+          _p6_turn_injected_facts = []  # 이번 턴 주입 fact id (직접 영향 후보)
 
           def on_tool(event_type, tool_name, preview, args, **kwargs):
               # tool_executor.py calls with 4 positional args:
@@ -432,6 +436,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   # Emit job_start event (first tool started)
                   if _job_tools.count((tool_name, 'running')) == 1 or len(_job_tools) == 1:
                       put('job', {'type': 'start', 'tool': tool_name, 'preview': preview, 'tools': _job_tools.copy()})
+                  # ── Phase 6-A: 생성될 파일 경로 보관 (completed 확정 시 기록) ──
+                  try:
+                      if tool_name in ('write_file', 'patch', 'apply_diff') and isinstance(args, dict):
+                          _p6_p = args.get('path') or args.get('file_path') or ''
+                          if _p6_p:
+                              _p6_pending_artifacts[tool_name] = _p6_p
+                  except Exception:
+                      pass
               elif event_type == 'tool.completed':
                   is_error = kwargs.get('is_error', False)
                   duration = kwargs.get('duration', 0)
@@ -444,6 +456,20 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           break
                   # Emit progress update
                   put('job', {'type': 'progress', 'tool': tool_name, 'status': 'error' if is_error else 'completed', 'duration': duration, 'tools': _job_tools.copy()})
+                  # ── Phase 6-A: 쓰기 성공 확정 시 산출물 기록 (실패 쓰기는 미기록) ──
+                  try:
+                      if not is_error:
+                          _p6_p = _p6_pending_artifacts.pop(tool_name, None)
+                          if _p6_p:
+                              from api import memory_store as _p6_ms
+                              _p6_ms.record_session_artifact(
+                                  session_id, 'file', _p6_p,
+                                  tool_name=tool_name,
+                                  workspace=(getattr(s, 'workspace', '') or ''),
+                                  direct_fact_ids=_p6_turn_injected_facts,
+                              )
+                  except Exception:
+                      pass
                   # ── File edit finalization ──
                   # tool.completed receives args=None, so re-read the written file
                   # from disk and push the authoritative content to the editor.
@@ -1062,6 +1088,77 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               print(f"[PatchRegistry] WARNING: tool injection failed: {_pr_inj_e}", flush=True)
           # ========================================================
 
+          # === [Memory Forget] 에이전트 도구 주입: memory_forget ===
+          # 사용자가 "그 사실 잊어줘"라고 하면 장기 기억의 fact를 삭제한다.
+          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
+          try:
+              from api import memory_store as _mf_store
+              from tools.registry import registry as _mf_registry
+
+              _mf_schema = {
+                  "type": "function",
+                  "function": {
+                      "name": "memory_forget",
+                      "description": "Delete a fact from the user's long-term memory. Use when the user asks to forget/remove a remembered fact. Provide fact_id if known; otherwise provide query to search matching facts first.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {
+                              "fact_id": {"type": "integer", "description": "Numeric id of the fact to delete"},
+                              "query": {"type": "string", "description": "Text to search matching facts when fact_id is unknown"},
+                          },
+                      }
+                  }
+              }
+              agent.tools.append(_mf_schema)
+              agent.valid_tool_names.add("memory_forget")
+
+              def _mf_handler(args: dict, **kwargs) -> str:
+                  import json as _json
+                  fact_id = args.get('fact_id')
+                  query = (args.get('query') or '').strip()
+                  # 1) id 직접 삭제
+                  if fact_id is not None:
+                      try:
+                          result = _mf_store.delete_fact(fact_id)
+                      except Exception as _e:
+                          return _json.dumps({"ok": False, "error": str(_e)}, ensure_ascii=False)
+                      if result and result.get('ok'):
+                          return _json.dumps({"ok": True, "deleted_fact_id": fact_id,
+                                              "impact": result.get('impact', {})}, ensure_ascii=False)
+                      return _json.dumps({"ok": False,
+                                          "error": f"Fact {fact_id} not found or delete failed"}, ensure_ascii=False)
+                  # 2) id 없음: 검색 후보 반환 (실수 방지 위해 자동 삭제 안 함)
+                  if query:
+                      try:
+                          facts = _mf_store.list_facts(limit=100)
+                      except Exception:
+                          facts = []
+                      q = query.lower()
+                      matches = [f for f in facts if q in str(f.get('content', '')).lower()]
+                      if not matches:
+                          return _json.dumps({"ok": False,
+                                              "error": f"No facts matching '{query}'"}, ensure_ascii=False)
+                      candidates = [{"id": f.get('id'), "content": f.get('content')} for f in matches[:10]]
+                      return _json.dumps({"ok": False, "need_fact_id": True, "candidates": candidates,
+                                          "message": "Multiple matches found. Confirm with the user which fact to delete, then call memory_forget again with the exact fact_id."}, ensure_ascii=False)
+                  return _json.dumps({"ok": False, "error": "Provide fact_id or query"}, ensure_ascii=False)
+
+              _mf_registry.register(
+                  name="memory_forget",
+                  toolset="memory-store",
+                  schema={"name": "memory_forget", "description": "Delete a fact from long-term memory",
+                          "parameters": _mf_schema["function"]["parameters"]},
+                  handler=_mf_handler,
+                  check_fn=lambda: True,
+                  is_async=False,
+                  description="Forget (delete) a fact from the user's long-term memory",
+              )
+              _mf_registry.register_toolset_alias("forget", "memory-store")
+              print("[MemoryForget] ✅ Injected memory_forget tool into agent.", flush=True)
+          except Exception as _mf_inj_e:
+              print(f"[MemoryForget] WARNING: tool injection failed: {_mf_inj_e}", flush=True)
+          # ========================================================
+
           # ── Media generation tools (generate_image / generate_video) ──
           # Lets the LLM agent generate images/videos on demand by calling a
           # tool — the user does NOT need to switch to an image model in the
@@ -1160,6 +1257,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   workspace_system_msg += "\n\n" + _memory_prompt
           except Exception as _mem_e:
               print(f"[webui] WARNING: memory prompt injection failed: {_mem_e}", flush=True)
+
+          # ── Phase 6: 이번 턴에 주입된 fact id 보관 (인과 그래프 직접 영향 후보) ──
+          try:
+              from api.memory_store import get_last_injected_fact_ids as _p6_get_injected
+              _p6_turn_injected_facts = _p6_get_injected(session_id or '')
+          except Exception:
+              _p6_turn_injected_facts = []
 
           # ── Patch Registry: 시스템 프롬프트에 패치 인식 블록 주입 ──
           try:

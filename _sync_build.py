@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """빌드용: dist_new 미러를 소스에서 재구성/동기화.
 
-- 불안정한 워킹 트리(파일 실종)에 대비해 동기화 직전 git restore를 먼저 실행.
+- 불안정한 워킹 트리(파일 실종)에 대비해 동기화 직전 '삭제된' 추적 파일만 복원.
+  ⚠ 수정된 파일은 절대 건드리지 않는다 — 미커밋 패치가 유실되면 안 되기 때문.
+  (과거 무조건 git restore api/api가 미커밋 패치를 전부 되돌린 사고가 있었음)
 - WinError 183(대상 이미 존재)을 피하기 위해 dirs_exist_ok=True 사용 (rmtree 우회).
 """
 import shutil
@@ -18,10 +20,18 @@ def _p(rel):
     return os.path.join(ROOT, rel.replace('/', os.sep))
 
 
-# 0) 워킹 트리에서 실종된 추적 파일을 먼저 복원
-print('[STEP 0] git restore api/api ...')
+# 0) 워킹 트리에서 '삭제된' 추적 파일만 복원 (수정된 파일은 보존 — 미커밋 작업 보호)
+print('[STEP 0] restore DELETED tracked files only (modifications preserved) ...')
 try:
-    subprocess.run(['git', 'restore', 'api/api'], check=False, cwd=ROOT)
+    _r = subprocess.run(['git', 'ls-files', '--deleted', 'api/api'],
+                        capture_output=True, text=True, check=False, cwd=ROOT)
+    _deleted = [ln.strip() for ln in (_r.stdout or '').splitlines() if ln.strip()]
+    if _deleted:
+        for _f in _deleted:
+            subprocess.run(['git', 'restore', '--', _f], check=False, cwd=ROOT)
+            print('   restored deleted file:', _f)
+    else:
+        print('   no deleted files — nothing to restore.')
 except Exception as e:
     print('   git restore warn:', e)
 

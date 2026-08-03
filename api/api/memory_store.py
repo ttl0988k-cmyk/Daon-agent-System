@@ -31,6 +31,19 @@ _MEMORY_DB_PATH = Path(STATE_DIR) / 'memory.db'
 _db_lock = threading.Lock()
 _MAX_FACTS = 500
 
+# ── 외부 백업 (패치 1): 앱 제거(설치 폴더 삭제)에도 살아남는 위치 ──
+# 같은 폴더의 memory.backup.db는 설치 폴더와 함께 사라지므로,
+# 사용자 문서 폴더에 사본을 하나 더 둔다. 실패해도 조용히 건너뛴다.
+try:
+    _EXTERNAL_BACKUP_DIR = Path.home() / 'Documents' / 'DAON-backup'
+except Exception:
+    _EXTERNAL_BACKUP_DIR = None
+
+# ── 스키마 버전 (패치 2): PRAGMA user_version 기반 마이그레이션 토대 ──
+# 향후 새 테이블/컬럼 추가 시 _SCHEMA_VERSION을 올리고 _ensure_schema에서 분기한다.
+# v2 (Phase 6): session_artifacts + fact_artifacts 추가 (인과 그래프)
+_SCHEMA_VERSION = 2
+
 # ── Phase 1-A: 프로필 key 정규화 ──
 # LLM 추출 시 반드시 아래 key 중 하나를 사용하도록 제한한다.
 CANONICAL_PROFILE_KEYS = {
@@ -216,7 +229,44 @@ def _ensure_schema() -> None:
                 "  created_at TEXT DEFAULT (datetime('now'))"
                 ")"
             )
+            # Phase 6-A: 세션 산출물 (도구 호출로 만들어진 것)
+            # UNIQUE(session_id, type, path_normalized): 같은 파일 재편집 시 1행 유지.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS session_artifacts ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  session_id TEXT NOT NULL,"
+                "  artifact_type TEXT NOT NULL,"
+                "  path TEXT NOT NULL,"
+                "  path_normalized TEXT NOT NULL DEFAULT '',"
+                "  tool_name TEXT,"
+                "  created_at TEXT DEFAULT (datetime('now')),"
+                "  UNIQUE(session_id, artifact_type, path_normalized)"
+                ")"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_session ON session_artifacts(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_path ON session_artifacts(path_normalized)")
+            # Phase 6-B: fact → 산출물 명시적 엣지 (인과 그래프 본체)
+            # confidence: 0.9=직접 영향(파일 생성 턴에 주입), 0.4=간접(같은 세션 이전 턴)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS fact_artifacts ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  fact_id INTEGER NOT NULL,"
+                "  artifact_id INTEGER NOT NULL,"
+                "  confidence REAL DEFAULT 0.4,"
+                "  linked_at TEXT DEFAULT (datetime('now')),"
+                "  UNIQUE(fact_id, artifact_id),"
+                "  FOREIGN KEY (fact_id) REFERENCES facts(id),"
+                "  FOREIGN KEY (artifact_id) REFERENCES session_artifacts(id)"
+                ")"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fact_artifacts_fact ON fact_artifacts(fact_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fact_artifacts_artifact ON fact_artifacts(artifact_id)")
             conn.commit()
+            # 패치 2: 스키마 버전 기록 (PRAGMA user_version, 멱등).
+            try:
+                conn.execute(f'PRAGMA user_version={_SCHEMA_VERSION}')
+            except Exception:
+                pass
         except Exception:
             pass
         finally:
@@ -381,14 +431,16 @@ def add_fact(content: str, category: str = 'general', source_session: Optional[s
 
 
 def delete_fact(fact_id) -> dict:
-    """fact 삭제 + Phase 2-C: 영향 범위(역링크) 보고.
+    """fact 삭제 + Phase 2-C: 영향 범위(역링크) 보고 + Phase 6-C: 산출물 영향.
 
-    반환: {'ok': bool, 'impact': {'sessions': [...], 'derived_facts': [...], 'usage_count': int}}
+    반환: {'ok': bool, 'impact': {'sessions': [...], 'derived_facts': [...], 'usage_count': int,
+            'artifacts': [...], 'direct_artifacts': [...], 'indirect_artifacts': [...]}}
     기존 bool 호환: truthy/falsy로 동작.
     """
     try:
         _ensure_schema()
-        impact = {'sessions': [], 'derived_facts': [], 'usage_count': 0}
+        impact = {'sessions': [], 'derived_facts': [], 'usage_count': 0,
+                  'artifacts': [], 'direct_artifacts': [], 'indirect_artifacts': []}
         with _db_lock:
             conn = _connect()
             try:
@@ -413,9 +465,31 @@ def delete_fact(fact_id) -> dict:
                     if r['id'] not in seen:
                         impact['derived_facts'].append(dict(r))
                         seen.add(r['id'])
-                # 삭제
+                # Phase 6-C: 영향 산출물 조회 (confidence로 직접/간접 분리)
+                try:
+                    artifact_rows = conn.execute(
+                        "SELECT sa.path, sa.path_normalized, sa.artifact_type, sa.tool_name, "
+                        "sa.created_at, fa.confidence "
+                        "FROM fact_artifacts fa "
+                        "JOIN session_artifacts sa ON sa.id = fa.artifact_id "
+                        "WHERE fa.fact_id=?", (fid,),
+                    ).fetchall()
+                    for r in artifact_rows:
+                        d = dict(r)
+                        impact['artifacts'].append(d)
+                        if (d.get('confidence') or 0.0) >= 0.7:
+                            impact['direct_artifacts'].append(d)
+                        else:
+                            impact['indirect_artifacts'].append(d)
+                except Exception:
+                    pass
+                # 삭제 (Phase 6: fact_artifacts 엣지 정리, session_artifacts는 세션 역사로 보존)
                 conn.execute('DELETE FROM facts WHERE id=?', (fid,))
                 conn.execute('DELETE FROM fact_usage WHERE fact_id=?', (fid,))
+                try:
+                    conn.execute('DELETE FROM fact_artifacts WHERE fact_id=?', (fid,))
+                except Exception:
+                    pass
                 conn.commit()
                 return {'ok': True, 'impact': impact}
             finally:
@@ -579,6 +653,33 @@ def get_system_status() -> dict:
             st = backup.stat()
             status['db']['backup_size_bytes'] = st.st_size
             status['db']['backup_mtime'] = st.st_mtime
+        # 패치 1: 외부 백업 상태 노출
+        if _EXTERNAL_BACKUP_DIR is not None:
+            ext_backup = _EXTERNAL_BACKUP_DIR / 'memory.db'
+            status['db']['external_backup_exists'] = ext_backup.exists()
+            if ext_backup.exists():
+                ext_st = ext_backup.stat()
+                status['db']['external_backup_path'] = str(ext_backup)
+                status['db']['external_backup_size_bytes'] = ext_st.st_size
+                status['db']['external_backup_mtime'] = ext_st.st_mtime
+        # 패치 2: 스키마 버전 노출
+        status['db']['schema_version'] = _SCHEMA_VERSION
+    except Exception:
+        pass
+    # Phase 6: 인과 그래프 통계 (별도 try — 테이블 미존재 시에도 무영향)
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                a_cnt = conn.execute('SELECT COUNT(*) AS c FROM session_artifacts').fetchone()['c']
+                e_cnt = conn.execute('SELECT COUNT(*) AS c FROM fact_artifacts').fetchone()['c']
+                status['graph'] = {'artifacts_count': a_cnt, 'fact_edges_count': e_cnt}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     except Exception:
         pass
     return status
@@ -652,6 +753,109 @@ def _record_fact_usage(fact_ids: list, session_id: str) -> None:
         pass
 
 
+# ── Phase 6: 인과 그래프 — 주입 fact 추적 + 산출물 기록 ──
+# 엣지 신뢰도: 산출물 생성 턴에 주입된 fact = 직접(0.9),
+# 같은 세션 이전 턴에만 주입된 fact = 간접(0.4).
+_EDGE_CONF_DIRECT = 0.9
+_EDGE_CONF_INDIRECT = 0.4
+
+# 세션별 최근 턴에 주입된 fact id (인메모리, 최근 100세션만 유지)
+_LAST_INJECTED_FACTS: dict = {}
+_LAST_INJECTED_LOCK = threading.Lock()
+
+
+def get_last_injected_fact_ids(session_id: str) -> list:
+    """Phase 6: 해당 세션의 최근 턴에 주입된 fact id 목록 사본 반환.
+    실패 시 빈 리스트. 절대 예외를 던지지 않는다."""
+    try:
+        with _LAST_INJECTED_LOCK:
+            return list(_LAST_INJECTED_FACTS.get(session_id or '', []))
+    except Exception:
+        return []
+
+
+def _normalize_artifact_path(path: str, workspace: str) -> str:
+    """Phase 6-A: 산출물 경로 정규화 (워크스페이스 기준).
+    상대/절대 혼재 → workspace 기준 resolve() → 워크스페이스 상대 POSIX 문자열.
+    워크스페이스 밖 파일은 절대 경로 문자열로 폴백. 실패 시 원본 반환."""
+    try:
+        p = Path(path)
+        ws = Path(workspace) if workspace else None
+        if not p.is_absolute() and ws is not None:
+            p = ws / p
+        p = p.resolve()
+        if ws is not None:
+            try:
+                return p.relative_to(ws.resolve()).as_posix()
+            except ValueError:
+                pass
+        return p.as_posix()
+    except Exception:
+        return path or ''
+
+
+def record_session_artifact(session_id: str, artifact_type: str, path: str,
+                            tool_name: str = '', workspace: str = '',
+                            direct_fact_ids: list = None) -> Optional[int]:
+    """Phase 6-A/B: 세션 산출물 기록 + 주입 fact들과 자동 엣지 생성.
+
+    - 산출물 행: UNIQUE(session_id, type, path_normalized)로 재편집 시 중복 방지.
+    - 엣지: 이 세션에 주입됐던 fact(fact_usage) ↔ 이 산출물.
+      direct_fact_ids(이번 턴 주입)면 confidence 0.9, 나머지 0.4.
+      기존 엣지는 confidence를 MAX로만 승격(강등 없음).
+    반환: artifact id (실패/무시 시 None). 절대 예외를 던지지 않는다(순수 부가).
+    """
+    try:
+        session_id = (session_id or '').strip()
+        path = (path or '').strip()
+        if not session_id or not path:
+            return None
+        path_norm = _normalize_artifact_path(path, workspace)
+        artifact_type = (artifact_type or 'file').strip() or 'file'
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO session_artifacts "
+                    "(session_id, artifact_type, path, path_normalized, tool_name) "
+                    "VALUES (?,?,?,?,?)",
+                    (session_id, artifact_type, path, path_norm, tool_name or ''),
+                )
+                artifact_id = cur.lastrowid
+                if not artifact_id:
+                    # 재편집 등 INSERT가 무시된 경우: 기존 id 조회
+                    row = conn.execute(
+                        "SELECT id FROM session_artifacts "
+                        "WHERE session_id=? AND artifact_type=? AND path_normalized=?",
+                        (session_id, artifact_type, path_norm),
+                    ).fetchone()
+                    artifact_id = row['id'] if row else None
+                if artifact_id:
+                    # 6-B: 이 세션에 주입됐던 fact들과 엣지 생성
+                    injected = conn.execute(
+                        "SELECT DISTINCT fact_id FROM fact_usage WHERE session_id=?",
+                        (session_id,),
+                    ).fetchall()
+                    direct_set = set(int(x) for x in (direct_fact_ids or []) if x is not None)
+                    for r in injected:
+                        fid = r['fact_id']
+                        conf = _EDGE_CONF_DIRECT if fid in direct_set else _EDGE_CONF_INDIRECT
+                        conn.execute(
+                            "INSERT INTO fact_artifacts (fact_id, artifact_id, confidence) "
+                            "VALUES (?,?,?) "
+                            "ON CONFLICT(fact_id, artifact_id) DO UPDATE SET "
+                            "confidence = MAX(confidence, excluded.confidence)",
+                            (fid, artifact_id, conf),
+                        )
+                conn.commit()
+                return artifact_id
+            finally:
+                conn.close()
+    except Exception:
+        return None
+
+
 def get_context_block(max_facts: int = 20, query_text: str = '',
                       session_id: str = '') -> str:
     """Phase 3: 관련성 랭킹 주입. 실패 시 빈 문자열.
@@ -699,6 +903,16 @@ def get_context_block(max_facts: int = 20, query_text: str = '',
         injected_ids = [f['id'] for f in selected]
         if injected_ids and session_id:
             _record_fact_usage(injected_ids, session_id)
+        # Phase 6: 이번 턴 주입 fact id 보관 (인과 그래프 직접 영향 후보)
+        if session_id:
+            try:
+                with _LAST_INJECTED_LOCK:
+                    _LAST_INJECTED_FACTS[session_id] = list(injected_ids)
+                    if len(_LAST_INJECTED_FACTS) > 100:
+                        for _old_sid in list(_LAST_INJECTED_FACTS.keys())[:-100]:
+                            _LAST_INJECTED_FACTS.pop(_old_sid, None)
+            except Exception:
+                pass
 
         # 텍스트 조립
         parts = []
@@ -1607,6 +1821,14 @@ def _run_daily() -> None:
             if _MEMORY_DB_PATH.exists():
                 backup_path = _MEMORY_DB_PATH.with_name('memory.backup.db')
                 shutil.copy2(str(_MEMORY_DB_PATH), str(backup_path))
+        except Exception:
+            pass
+        # 2-1) 패치 1: 외부 백업 — Documents/DAON-backup에 사본 복사.
+        #      앱 제거(설치 폴더 삭제)에도 기억이 살아남도록 한다. best-effort.
+        try:
+            if _EXTERNAL_BACKUP_DIR is not None and _MEMORY_DB_PATH.exists():
+                _EXTERNAL_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(_MEMORY_DB_PATH), str(_EXTERNAL_BACKUP_DIR / 'memory.db'))
         except Exception:
             pass
         # 3) ⑤ VACUUM으로 단편화 정리(단일 워커라 잠금 경쟁 없음)
