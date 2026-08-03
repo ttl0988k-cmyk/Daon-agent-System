@@ -32,6 +32,7 @@ _IMAGE_PATTERNS = [
 _VIDEO_PATTERNS = [
     'sora', 'kling', 'runway', 'pika', 'luma', 'cogvideo', 'video-generation',
     'minimax-video', 'hailuo', 'wan-video', 'mochi', 't2v-01', 'i2v-01',
+    'happyhorse',
 ]
 
 
@@ -45,12 +46,13 @@ def detect_model_type(model_id: str) -> str:
         return 'image'
     if lower.endswith(('-video', '_video', '-vid', '_vid')):
         return 'video'
-    # Segment-based detection (e.g., agnes-image-2.0-flash, wan-video-v2)
+    # Segment-based detection (e.g., agnes-image-2.0-flash, wan-video-v2,
+    # happyhorse-1.1-t2v — t2v/i2v/r2v are text/image/reference-to-video)
     import re
     _segments = set(re.split(r'[-_.]', lower))
     if _segments & {'image', 'img'}:
         return 'image'
-    if _segments & {'video', 'vid'}:
+    if _segments & {'video', 'vid', 't2v', 'i2v', 'r2v'}:
         return 'video'
     for pat in _IMAGE_PATTERNS:
         if pat in lower:
@@ -661,6 +663,102 @@ def _generate_video_minimax(
     return {"video_url": download_url, "status": "completed"}
 
 
+def _generate_video_dashscope_native(
+    prompt: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    size: str = None,
+    poll_interval: float = 5.0,
+    max_wait: float = 300.0,
+) -> dict:
+    """
+    DashScope native video generation for HappyHorse / Wan video models
+    (Alibaba token-plan.* 및 dashscope.* 도메인).
+
+    The OpenAI-compatible /video/generations endpoint returns 404 on Alibaba
+    domains — video models are only served on the native async API:
+
+      POST {native_base}/services/aigc/video-generation/video-synthesis
+           + header `X-DashScope-Async: enable`
+      → {"output": {"task_id": ..., "task_status": "PENDING"}}
+      GET  {native_base}/tasks/{task_id}   (polling)
+      → {"output": {"task_status": "SUCCEEDED", "video_url": ...}}
+
+    native_base is derived from base_url via _dashscope_native_base().
+    """
+    native_base = _dashscope_native_base(base_url)
+
+    url = native_base + '/services/aigc/video-generation/video-synthesis'
+    payload = {
+        "model": model,
+        "input": {"prompt": prompt},
+    }
+    if size:
+        payload["parameters"] = {"size": _dashscope_size(size)}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        "X-DashScope-Async": "enable",
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode('utf-8'),
+        headers=headers,
+        method='POST',
+    )
+    _log.info("[media] DashScope video POST %s | model=%s", url, model)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        _log.error("[media] DashScope video HTTP %s: %s", e.code, body[:500])
+        raise RuntimeError(f"DashScope 영상 생성 실패 (HTTP {e.code}): {body[:200]}")
+    except Exception as e:
+        _log.error("[media] DashScope video request error: %s", e)
+        raise RuntimeError(f"DashScope 영상 생성 실패: {e}")
+
+    task_id = result.get("output", {}).get("task_id")
+    if not task_id:
+        raise RuntimeError(f"DashScope 영상 생성: task_id 없음 — {json.dumps(result)[:200]}")
+
+    poll_url = f"{native_base}/tasks/{task_id}"
+    poll_headers = {"Authorization": f"Bearer {api_key}"}
+    start = time.time()
+
+    while time.time() - start < max_wait:
+        time.sleep(poll_interval)
+        try:
+            poll_req = urllib.request.Request(poll_url, headers=poll_headers, method='GET')
+            with urllib.request.urlopen(poll_req, timeout=30) as resp:
+                status_result = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            _log.warning("DashScope video poll error: %s", e)
+            continue
+
+        output = status_result.get("output", {})
+        task_status = output.get("task_status", "")
+        if task_status == "SUCCEEDED":
+            video_url = output.get("video_url") or output.get("url") or ""
+            if not video_url:
+                # results[] shape fallback
+                for r in output.get("results") or []:
+                    if isinstance(r, dict) and r.get("url"):
+                        video_url = r["url"]
+                        break
+            if video_url:
+                _log.info("[media] DashScope video OK: %s", video_url[:120])
+                return {"video_url": video_url, "status": "completed"}
+            raise RuntimeError(f"DashScope 영상 생성 성공이나 URL 없음: {json.dumps(status_result)[:200]}")
+        elif task_status in ("FAILED", "CANCELED", "UNKNOWN"):
+            err_msg = output.get("message") or output.get("code") or "알 수 없는 오류"
+            raise RuntimeError(f"DashScope 영상 생성 실패: {err_msg}")
+
+    raise RuntimeError(f"DashScope 영상 생성 시간 초과 ({max_wait}초)")
+
+
 def generate_video(
     prompt: str,
     model: str,
@@ -684,6 +782,17 @@ def generate_video(
     if 't2v-01' in _lower_model or 'i2v-01' in _lower_model or 'minimax' in (base_url or '').lower():
         _log.info("[media] MiniMax video model detected → using MiniMax native API")
         return _generate_video_minimax(prompt, model, base_url, api_key)
+
+    # DashScope (Alibaba) video models — HappyHorse/Wan: the OpenAI-compatible
+    # /video/generations endpoint returns 404 on aliyuncs.com domains; use the
+    # native async video-synthesis API instead.
+    _lower_base = (base_url or '').lower()
+    if 'aliyuncs.com' in _lower_base or _lower_model.startswith(('happyhorse', 'wan')):
+        _log.info("[media] DashScope video model detected → using native API")
+        return _generate_video_dashscope_native(
+            prompt, model, base_url, api_key,
+            size=size, poll_interval=poll_interval, max_wait=max_wait,
+        )
 
     url = base_url.rstrip('/') + '/video/generations'
     payload = {

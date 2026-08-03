@@ -93,6 +93,20 @@ def _save_custom_providers(providers: dict) -> None:
         raise RuntimeError(f"Cannot save provider data: {e}")
 
 
+# ── Known hidden models ─────────────────────────────────────────────────
+# Some providers omit models from their OpenAI-compatible /models endpoint
+# (e.g. Alibaba Token Plan omits video models like HappyHorse). Map of
+# base_url substring → extra models to merge into auto-detect results so
+# re-fetching never loses them.
+_KNOWN_HIDDEN_MODELS: Dict[str, List[Dict[str, str]]] = {
+    'aliyuncs.com': [
+        {'id': 'happyhorse-1.1-t2v', 'label': 'HappyHorse 1.1 T2V (영상 생성)', 'type': 'video'},
+        {'id': 'happyhorse-1.1-i2v', 'label': 'HappyHorse 1.1 I2V (영상 생성)', 'type': 'video'},
+        {'id': 'happyhorse-1.1-r2v', 'label': 'HappyHorse 1.1 R2V (영상 생성)', 'type': 'video'},
+    ],
+}
+
+
 class ModelManager:
     """Manages available models and provider resolution — fully dynamic via custom_providers.json."""
 
@@ -246,6 +260,16 @@ class ModelManager:
                     if isinstance(item, dict) and 'id' in item:
                         mid = item['id']
                         models.append({'id': mid, 'label': item.get('display_name', mid), 'type': self._infer_model_type(mid)})
+
+        # Supplement with known hidden models that the /models endpoint omits
+        _lower_url = (base_url or '').lower()
+        for pattern, hidden in _KNOWN_HIDDEN_MODELS.items():
+            if pattern in _lower_url:
+                existing_ids = {m.get('id') for m in models}
+                for hm in hidden:
+                    if hm['id'] not in existing_ids:
+                        models.append(dict(hm))
+                break
 
         return models
 
