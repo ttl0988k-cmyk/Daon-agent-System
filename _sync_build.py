@@ -31,7 +31,7 @@ try:
             subprocess.run(['git', 'restore', '--', _f], check=False, cwd=ROOT)
             print('   restored deleted file:', _f)
     else:
-        print('   no deleted files — nothing to restore.')
+        print('   no deleted files - nothing to restore.')
 except Exception as e:
     print('   git restore warn:', e)
 
