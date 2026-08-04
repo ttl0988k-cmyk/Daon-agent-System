@@ -317,6 +317,13 @@ function _isInternalNudgeMessage(content) {
 }
 
 // ── Chat Engine (SSE integration) ──
+//  태그 제거 — 백엔드는 trajectory 보존을 위해 메시지에 think 블록을
+// 원문 그대로 저장하므로, 렌더링 시점에서도 제거해야 챗창에 노출되지 않는다.
+function stripThinkBlocks(text) {
+  if (!text || typeof text !== 'string') return text || '';
+  return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
+}
+
 function renderMessages(messages, toolCalls) {
   const box = $('chatMessages');
   box.innerHTML = '';
@@ -336,7 +343,7 @@ function renderMessages(messages, toolCalls) {
       bubble.style.maxWidth = '95%';
     }
 
-    let html = isUser ? formatUserMessageContent(msg.content, State.activeSessionId) : renderMd(msg.content);
+    let html = isUser ? formatUserMessageContent(msg.content, State.activeSessionId) : renderMd(stripThinkBlocks(msg.content));
     if (msg.sender) {
       const senderHtml = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">${msg.sender}</div>`;
       html = senderHtml + html;
@@ -493,6 +500,12 @@ async function _executeAgentStream(displayText, uploaded) {
   // 조기 종료하지 않도록 억제한다 (MCP 도구는 2초 이상 소요 가능).
   let _activeTools = 0;
 
+  // 연속 idle 연장 횟수. 백엔드 스트림이 아직 활성(추론 단계/긴 도구 실행)이면
+  // 타이머를 재가동해 계속 대기한다. 무한 대기를 막기 위해 상한을 둔다
+  // (30초 × 40회 = 최대 20분).
+  let _idleExtensions = 0;
+  let _idleRecoveryInFlight = false;
+
   function resetIdleTimer() {
     clearTimeout(_idleTimer);
     // 도구 실행 중에는 무응답 감시를 일시 중단 — 도구 결과가 올 때까지 대기.
@@ -500,8 +513,66 @@ async function _executeAgentStream(displayText, uploaded) {
     // 30초: 도구 완료 → LLM 재호출 → 첫 토큰(TTFT) 대기 시간을 커버.
     // 이전 2초는 LLM API 첫 토큰이 3~15초 걸리는 경우 스트림을 조기 종료시켰음.
     _idleTimer = setTimeout(function () {
-      if (!_streamFinished) finishStream('idle_timeout');
+      if (_streamFinished) return;
+      _handleIdleTimeout();
     }, 30000);
+  }
+
+  // ── idle 타임아웃 처리: 강제 종료 전 백엔드 상태 확인 ──
+  // 추론(reasoning) 단계에서는 텍스트 토큰이 오지 않아 30초 무응답이 정상일
+  // 수 있다. 백엔드 스트림이 아직 활성이면 타이머를 재가동해 계속 기다리고,
+  // 이미 종료됐다면(done 이벤트 누락) 세션을 fetch해 결과를 복구 렌더링한다.
+  // 이것이 "도구 사용 후 결과 보고가 안 보이는" 문제의 주 복구 경로다.
+  async function _handleIdleTimeout() {
+    if (_streamFinished || _idleRecoveryInFlight) return;
+    _idleRecoveryInFlight = true;
+    try {
+      // 1) 백엔드 스트림 활성 여부 확인
+      let active = false;
+      try {
+        const st = await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`);
+        active = !!(st && st.active);
+      } catch (_) { active = false; }
+
+      if (active && _idleExtensions < 40) {
+        // 백엔드가 아직 실행 중(추론/긴 작업) — 계속 대기
+        _idleExtensions++;
+        console.log('[SSE-DIAG] ⏳ idle timeout but backend active — extending wait (%d/40)', _idleExtensions);
+        setChatStatus('thinking', '응답 생성 중... (대기)');
+        _idleRecoveryInFlight = false;
+        resetIdleTimer();
+        return;
+      }
+
+      // 2) 백엔드 종료(또는 연장 상한 도달) — 세션에서 결과 복구
+      console.log('[SSE-DIAG] 🔍 idle timeout — recovering session result');
+      let recovered = false;
+      try {
+        const sessRes = await api('/api/sessions');
+        const sessions = sessRes.sessions || [];
+        const found = sessions.find(function (s) { return s.session_id === State.activeSessionId; });
+        if (found && found.messages && found.messages.length > 0) {
+          const lastMsg = found.messages[found.messages.length - 1];
+          if (lastMsg.role === 'assistant') {
+            renderMessages(found.messages, found.tool_calls);
+            const localSess = State.sessions.find(function (x) { return x.session_id === State.activeSessionId; });
+            if (localSess) localSess.title = found.title;
+            renderSessionsList();
+            refreshFileTree();
+            recovered = true;
+          }
+        }
+      } catch (recErr) {
+        console.error('[SSE] idle-timeout recovery failed:', recErr);
+      }
+      if (!recovered && asstBubble && asstBubble.parentNode) {
+        asstBubble.insertAdjacentHTML('beforeend',
+          '<div class="text-muted" style="margin-top:8px;">[응답 대기 시간 초과 — 세션을 다시 열면 결과를 확인할 수 있습니다]</div>');
+      }
+      finishStream('idle_timeout');
+    } finally {
+      _idleRecoveryInFlight = false;
+    }
   }
 
   function finishStream(reason) {
@@ -554,11 +625,50 @@ async function _executeAgentStream(displayText, uploaded) {
     const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
     State.currentEventSource = sse;
 
+    // ── 추론(reasoning) 스트림: 별도 접이식 박스 표시 ──
+    // 추론 단계에서는 token 이벤트가 오지 않아 idle timer가 스트림을 조기
+    // 종료하던 문제가 있었다. reasoning 이벤트가 타이머를 계속 갱신한다.
+    let _reasoningCard = null;
+    let _reasoningText = '';
+
+    sse.addEventListener('reasoning', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        _reasoningText += data.text || '';
+        if (!_reasoningCard) {
+          _reasoningCard = document.createElement('details');
+          _reasoningCard.className = 'tool-card reasoning-card';
+          _reasoningCard.innerHTML = `
+            <summary style="cursor:pointer; padding:6px 10px; opacity:0.75;">💭 생각 중...</summary>
+            <div class="tool-card-body" style="display:block;">
+              <pre style="white-space:pre-wrap; max-height:240px; overflow:auto; opacity:0.7; font-size:12px;"></pre>
+            </div>
+          `;
+          // asstBubble 안에 넣으면 token 스트리밍 시 innerHTML 초기화로 사라지므로
+          // 버블 앞의 독립 요소로 삽입한다.
+          box.insertBefore(_reasoningCard, asstBubble);
+        }
+        const pre = _reasoningCard.querySelector('pre');
+        if (pre) pre.textContent = _reasoningText;
+        scrollToChatBottom();
+      } catch (err) {
+        console.warn('[reasoning] handler error:', err);
+      }
+      _idleExtensions = 0;
+      resetIdleTimer();
+    });
+
     sse.addEventListener('token', (e) => {
       const data = JSON.parse(e.data);
       incomingText += data.text;
       asstBubble.innerHTML = renderMd(incomingText);
+      // 추론이 끝났으면 카드 제목 갱신
+      if (_reasoningCard) {
+        const sum = _reasoningCard.querySelector('summary');
+        if (sum) sum.textContent = '💭 생각 완료 (클릭하여 보기)';
+      }
       scrollToChatBottom();
+      _idleExtensions = 0;
       resetIdleTimer();
     });
 

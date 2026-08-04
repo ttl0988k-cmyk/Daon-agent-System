@@ -387,16 +387,77 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               re.DOTALL,
           )
 
+          # ── Streaming  stripping ──
+          # 일부 모델(Qwen3/GLM/MiniMax thinking 모드)은 content 델타에 리터럴
+          #  태그를 출력한다. 응답 확정 전에는 _strip_think_blocks가
+          # 적용되지 않으므로 스트리밍 중에 여기서 제거해야 챗창에 노출되지
+          # 않는다. 버퍼 전체를 매번 재스캔하므로 토큰이 태그 중간에서
+          # 분할돼도 안전하다.
+          _THINK_OPEN_RE = re.compile(r"<think(?:ing)?>", re.IGNORECASE)
+          _THINK_CLOSE_RE = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
+          _THINK_TAG_FULLS = ('<think>', '<thinking>', '</think>', '</thinking>')
+
+          def _partial_think_tag_tail(seg):
+              """seg 끝에 think 태그로 자라날 수 있는 '<...' 파편이 있으면
+              그 시작 오프셋을 반환, 없으면 -1. 다음 토큰까지 보류용."""
+              lt = seg.rfind('<')
+              if lt < 0:
+                  return -1
+              tail = seg[lt:].lower()
+              if '>' in tail:
+                  return -1  # 이미 닫힌(완전한) 태그 — 정규식이 처리
+              for full in _THINK_TAG_FULLS:
+                  if full.startswith(tail):
+                      return lt
+              return -1
+
+          def _strip_think_streaming(text):
+              """think 블록 밖의 표시 가능 텍스트만 반환.
+              닫히지 않은 think 블록의 나머지/끝의 불완전 태그는 보류."""
+              out = []
+              i = 0
+              n = len(text)
+              in_think = False
+              while i < n:
+                  if in_think:
+                      m = _THINK_CLOSE_RE.search(text, i)
+                      if not m:
+                          return ''.join(out)
+                      i = m.end()
+                      in_think = False
+                  else:
+                      m = _THINK_OPEN_RE.search(text, i)
+                      if not m:
+                          hold = _partial_think_tag_tail(text[i:])
+                          if hold >= 0:
+                              out.append(text[i:i + hold])
+                          else:
+                              out.append(text[i:])
+                          return ''.join(out)
+                      out.append(text[i:m.start()])
+                      i = m.end()
+                      in_think = True
+              return ''.join(out)
+
           def on_token(text):
               nonlocal _token_buf, _token_sent
               if text is None:
                   return  # end-of-stream sentinel
               _token_buf += text
               cleaned = _ANSI_RE.sub("", _token_buf)
-              if len(cleaned) > _token_sent:
-                  delta = cleaned[_token_sent:]
-                  _token_sent = len(cleaned)
+              visible = _strip_think_streaming(cleaned)
+              if len(visible) > _token_sent:
+                  delta = visible[_token_sent:]
+                  _token_sent = len(visible)
                   put('token', {'text': delta})
+
+          def on_reasoning(text):
+              # 추론(reasoning) 델타 — 별도 'reasoning' SSE 이벤트로 전송해
+              # 챗 본문에 섞이지 않게 한다. 프론트엔드는 접이식 "생각 중"
+              # 상자에 표시하고 idle timer도 갱신한다.
+              if not text:
+                  return
+              put('reasoning', {'text': text})
 
           # Track job state for progress block UX
           _job_active = False
@@ -862,6 +923,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               session_db=_session_db_instance,
               stream_delta_callback=on_token,
               tool_progress_callback=on_tool,
+              reasoning_callback=on_reasoning,
               ephemeral_system_prompt=_ephemeral_prompt,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)
