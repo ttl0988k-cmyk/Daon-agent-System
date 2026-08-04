@@ -4870,9 +4870,12 @@ async function saveProvider() {
     if (saveBtn) { saveBtn.textContent = '⏳ 저장 중...'; saveBtn.disabled = true; }
 
     const bodyPayload = { name: name, api_key: key, base_url: url };
-    // 체크박스에서 선택된 모델만 수집
+    // 체크박스에서 선택된 모델만 수집.
+    // Bugfix: 체크박스가 그려져 있다면(자동 감지/수동 추가 완료 상태) 체크 결과를 그대로 존중한다.
+    // 이전에는 체크 0개일 때 _selectedProviderModels(전체 목록)로 폴백되어
+    // "전체 해제" 후에도 300개 모델이 전부 저장되는 문제가 있었다.
     var checkedModels = _collectCheckedProviderModels();
-    if (checkedModels && checkedModels.length > 0) {
+    if (checkedModels !== null) {
       bodyPayload.models = checkedModels;
     } else if (_selectedProviderModels && _selectedProviderModels.length > 0) {
       bodyPayload.models = _selectedProviderModels;
@@ -4958,54 +4961,15 @@ async function fetchProviderModels() {
 
     if (data.success && data.models && data.models.length > 0) {
       _selectedProviderModels = data.models.map(function (m) { return { id: m.id || m, label: m.label || m.id || m, type: m.type || 'chat' }; });
-      var _typeColors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
-      var modelHtml = '<div style="color:var(--success);font-weight:600;margin-bottom:4px;">✅ ' + data.models.length + '개 모델 발견 — 저장할 모델을 선택하세요:</div>' +
-        '<div style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow-y:auto;">' +
-        data.models.map(function (m, i) {
-          var mid = m.id || m;
-          var mtype = m.type || 'chat';
-          var isTts = /tts|speech|audio|whisper|embed|rerank|moderation/i.test(mid);
-          return '<div style="display:flex;align-items:center;gap:4px;background:var(--bg2);padding:3px 6px;border-radius:4px;font-size:10px;' + (isTts ? 'opacity:0.5;' : '') + '">' +
-            '<input type="checkbox" class="provider-model-cb" data-idx="' + i + '"' + (isTts ? '' : ' checked') + ' style="width:12px;height:12px;margin:0;flex-shrink:0;">' +
-            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(mid) + '">' + esc(mid) + '</span>' +
-            '<select class="provider-model-type" data-idx="' + i + '" style="font-size:9px;padding:0 2px;border-radius:3px;border:1px solid var(--border);background:var(--bg);color:' + (_typeColors[mtype] || 'var(--muted)') + ';cursor:pointer;flex-shrink:0;">' +
-            '<option value="chat"' + (mtype === 'chat' ? ' selected' : '') + '>💬 chat</option>' +
-            '<option value="image"' + (mtype === 'image' ? ' selected' : '') + '>🖼 image</option>' +
-            '<option value="video"' + (mtype === 'video' ? ' selected' : '') + '>🎬 video</option>' +
-            '</select></div>';
-        }).join('') +
-        '</div>' +
-        '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;">' +
-        '<button onclick="_providerModelSelectAll(true)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 선택</button>' +
-        '<button onclick="_providerModelSelectAll(false)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 해제</button>' +
-        '<span id="providerModelCount" style="font-size:10px;color:var(--muted);"></span>' +
-        '</div>' +
-        '<div style="margin-top:6px;font-size:10px;color:var(--muted);">타입을 확인/변경 후 "제공자 저장" 버튼을 누르면 선택한 모델이 저장됩니다.</div>';
-      if (resultEl) resultEl.innerHTML = modelHtml;
-      _updateProviderModelCount();
-      // 체크박스 변경 이벤트
-      resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) {
-        cb.addEventListener('change', function () { _updateProviderModelCount(); });
-      });
-      // 타입 셀렉트 변경 이벤트
-      resultEl.querySelectorAll('.provider-model-type').forEach(function (sel) {
-        sel.addEventListener('change', function () {
-          var idx = parseInt(sel.getAttribute('data-idx'), 10);
-          if (idx >= 0 && idx < _selectedProviderModels.length) {
-            _selectedProviderModels[idx].type = sel.value;
-          }
-          var colors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
-          sel.style.color = colors[sel.value] || 'var(--muted)';
-        });
-      });
+      _renderProviderModelList('✅ ' + data.models.length + '개 모델 발견 — 저장할 모델을 선택하세요:', 'var(--success)');
     } else {
       _selectedProviderModels = null;
       if (resultEl) resultEl.innerHTML = '<div style="color:var(--warning);">⚠️ 제공자로부터 모델이 반환되지 않았습니다. 저장 후 수동으로 모델을 지정할 수 있습니다.</div>';
     }
   } catch (e) {
-    if (resultEl) resultEl.innerHTML = '<div style="color:var(--danger);">❌ Auto-detection failed: ' + esc(e.message) + '. You can still save the provider and add models manually.</div>';
+    if (resultEl) resultEl.innerHTML = '<div style="color:var(--danger);">❌ 모델 자동 감지 실패: ' + esc(e.message) + ' — 위 "모델 직접 입력"으로 수동 추가할 수 있습니다.</div>';
   } finally {
-    if (fetchBtn) { fetchBtn.textContent = '🔍 Auto-Detect Models'; fetchBtn.disabled = false; }
+    if (fetchBtn) { fetchBtn.textContent = '🔍 모델 자동 감지'; fetchBtn.disabled = false; }
   }
 }
 
@@ -5041,6 +5005,102 @@ function _updateProviderModelCount() {
   var checked = 0;
   cbs.forEach(function (cb) { if (cb.checked) checked++; });
   countEl.textContent = checked + '/' + cbs.length + '개 선택됨';
+}
+
+// ── 모델 목록 렌더링 (자동 감지 + 수동 추가 공용) ──────────────────────────
+// 전체 선택/해제 버튼은 스크롤 영역 "위"에 고정 배치해서 항상 보이게 한다.
+// checkedIds: null이면 기본값(tts/audio 계열 제외 전부 체크), 객체면 해당 id만 체크.
+function _renderProviderModelList(headerText, headerColor, checkedIds) {
+  var resultEl = $('settingsProviderFetchResult');
+  if (!resultEl || !_selectedProviderModels) return;
+  var _typeColors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
+  var html = '<div style="font-weight:600;margin-bottom:4px;color:' + (headerColor || 'var(--success)') + ';">' + headerText + '</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">' +
+    '<button onclick="_providerModelSelectAll(true)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 선택</button>' +
+    '<button onclick="_providerModelSelectAll(false)" style="font-size:10px;padding:1px 6px;cursor:pointer;">전체 해제</button>' +
+    '<span id="providerModelCount" style="font-size:10px;color:var(--muted);"></span>' +
+    '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow-y:auto;">' +
+    _selectedProviderModels.map(function (m, i) {
+      var mid = m.id || '';
+      var mtype = m.type || 'chat';
+      var isTts = /tts|speech|audio|whisper|embed|rerank|moderation/i.test(mid);
+      var isChecked = checkedIds ? !!checkedIds[mid] : !isTts;
+      return '<div style="display:flex;align-items:center;gap:4px;background:var(--bg2);padding:3px 6px;border-radius:4px;font-size:10px;' + (isTts ? 'opacity:0.5;' : '') + '">' +
+        '<input type="checkbox" class="provider-model-cb" data-idx="' + i + '"' + (isChecked ? ' checked' : '') + ' style="width:12px;height:12px;margin:0;flex-shrink:0;">' +
+        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(mid) + '">' + esc(mid) + '</span>' +
+        '<select class="provider-model-type" data-idx="' + i + '" style="font-size:9px;padding:0 2px;border-radius:3px;border:1px solid var(--border);background:var(--bg);color:' + (_typeColors[mtype] || 'var(--muted)') + ';cursor:pointer;flex-shrink:0;">' +
+        '<option value="chat"' + (mtype === 'chat' ? ' selected' : '') + '>💬 chat</option>' +
+        '<option value="image"' + (mtype === 'image' ? ' selected' : '') + '>🖼 image</option>' +
+        '<option value="video"' + (mtype === 'video' ? ' selected' : '') + '>🎬 video</option>' +
+        '</select></div>';
+    }).join('') +
+    '</div>' +
+    '<div style="margin-top:6px;font-size:10px;color:var(--muted);">타입을 확인/변경 후 "제공자 저장" 버튼을 누르면 선택한 모델만 저장됩니다. (전체 해제 후 저장하면 모델 없이 저장됩니다)</div>';
+  resultEl.style.display = '';
+  resultEl.innerHTML = html;
+  _updateProviderModelCount();
+  // 체크박스 변경 이벤트
+  resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) {
+    cb.addEventListener('change', function () { _updateProviderModelCount(); });
+  });
+  // 타입 셀렉트 변경 이벤트
+  resultEl.querySelectorAll('.provider-model-type').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var idx = parseInt(sel.getAttribute('data-idx'), 10);
+      if (idx >= 0 && idx < _selectedProviderModels.length) {
+        _selectedProviderModels[idx].type = sel.value;
+      }
+      var colors = { chat: 'var(--muted)', image: '#e879f9', video: '#38bdf8' };
+      sel.style.color = colors[sel.value] || 'var(--muted)';
+    });
+  });
+}
+
+// 현재 체크된 모델 id 집합을 반환 (목록이 안 그려져 있으면 null)
+function _getCheckedProviderModelIds() {
+  var resultEl = $('settingsProviderFetchResult');
+  if (!resultEl || !_selectedProviderModels) return null;
+  var cbs = resultEl.querySelectorAll('.provider-model-cb');
+  if (!cbs.length) return null;
+  var ids = {};
+  cbs.forEach(function (cb) {
+    if (cb.checked) {
+      var idx = parseInt(cb.getAttribute('data-idx'), 10);
+      if (idx >= 0 && idx < _selectedProviderModels.length) ids[_selectedProviderModels[idx].id] = true;
+    }
+  });
+  return ids;
+}
+
+// ── 모델 직접 입력: 자동 감지 없이 모델 ID를 수동 추가 ──────────────────────
+function _addManualProviderModels() {
+  var inputEl = $('settingsProviderManualModel');
+  var typeEl = $('settingsProviderManualType');
+  if (!inputEl) return;
+  var raw = (inputEl.value || '').trim();
+  if (!raw) { showToast('추가할 모델 ID를 입력하세요'); return; }
+  var mtype = typeEl ? typeEl.value : 'chat';
+  var ids = raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+  if (!ids.length) return;
+
+  // 재렌더링 시 기존 체크 상태가 날아가지 않도록 미리 보존
+  var prevChecked = _getCheckedProviderModelIds();
+
+  if (!_selectedProviderModels) _selectedProviderModels = [];
+  var existing = {};
+  _selectedProviderModels.forEach(function (m) { existing[m.id] = true; });
+  var added = 0;
+  ids.forEach(function (id) {
+    if (existing[id]) return;
+    existing[id] = true;
+    _selectedProviderModels.push({ id: id, label: id, type: mtype });
+    if (prevChecked) prevChecked[id] = true; // 새 모델은 기본 체크
+    added++;
+  });
+  inputEl.value = '';
+  _renderProviderModelList('📝 모델 ' + _selectedProviderModels.length + '개 (직접 입력 ' + added + '개 추가됨) — 저장할 모델을 선택하세요:', 'var(--accent)', prevChecked);
+  if (added === 0) showToast('이미 추가된 모델입니다');
 }
 
 async function refreshAllModelSelects() {
