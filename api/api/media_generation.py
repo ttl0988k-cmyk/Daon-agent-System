@@ -669,6 +669,7 @@ def _generate_video_dashscope_native(
     base_url: str,
     api_key: str,
     size: str = None,
+    image_url: str = None,
     poll_interval: float = 5.0,
     max_wait: float = 300.0,
 ) -> dict:
@@ -690,9 +691,17 @@ def _generate_video_dashscope_native(
     native_base = _dashscope_native_base(base_url)
 
     url = native_base + '/services/aigc/video-generation/video-synthesis'
+    _input = {"prompt": prompt}
+    if image_url:
+        # I2V (happyhorse-1.1-i2v / Wan i2v): input.media is a list of
+        # MediaItem objects — {"type": "first_frame", "url": ...}.
+        # Verified against the live API: missing/invalid shapes fail async
+        # validation with `Field required: input.media` /
+        # `Input should be 'first_frame': input.media.0.type`.
+        _input["media"] = [{"type": "first_frame", "url": image_url}]
     payload = {
         "model": model,
-        "input": {"prompt": prompt},
+        "input": _input,
     }
     if size:
         payload["parameters"] = {"size": _dashscope_size(size)}
@@ -765,6 +774,7 @@ def generate_video(
     base_url: str,
     api_key: str,
     size: str = None,
+    image_url: str = None,
     poll_interval: float = 5.0,
     max_wait: float = 300.0,
 ) -> dict:
@@ -791,7 +801,8 @@ def generate_video(
         _log.info("[media] DashScope video model detected → using native API")
         return _generate_video_dashscope_native(
             prompt, model, base_url, api_key,
-            size=size, poll_interval=poll_interval, max_wait=max_wait,
+            size=size, image_url=image_url,
+            poll_interval=poll_interval, max_wait=max_wait,
         )
 
     url = base_url.rstrip('/') + '/video/generations'
@@ -801,6 +812,8 @@ def generate_video(
     }
     if size:
         payload["size"] = size
+    if image_url:
+        payload["image_url"] = image_url
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -880,6 +893,7 @@ def run_media_generation(
     model_type: str = None,
     size: str = None,
     n: int = None,
+    image_url: str = None,
 ) -> dict:
     """
     Unified entry: detect type and call appropriate API.
@@ -888,7 +902,7 @@ def run_media_generation(
       image → {"type": "image", "images": [...], "revised_prompt": ...}
       video → {"type": "video", "video_url": ..., "status": ...}
     """
-    _log.info("[media] run_media_generation entered | model=%s type=%s base_url=%s size=%s n=%s", model, model_type, base_url, size, n)
+    _log.info("[media] run_media_generation entered | model=%s type=%s base_url=%s size=%s n=%s image_url=%s", model, model_type, base_url, size, n, (image_url or '')[:80])
     if model_type is None:
         model_type = detect_model_type(model)
 
@@ -905,6 +919,8 @@ def run_media_generation(
         vid_kwargs = {}
         if size:
             vid_kwargs['size'] = size
+        if image_url:
+            vid_kwargs['image_url'] = image_url
         result = generate_video(prompt, model, base_url, api_key, **vid_kwargs)
         result["type"] = "video"
         return result
@@ -1062,6 +1078,7 @@ def _make_media_resolver(image_models, video_models):
                 model_type=media_type,
                 size=args.get('size') or None,
                 n=args.get('n') or None,
+                image_url=(args.get('image_url') or '').strip() or None,
             )
         except Exception as _ge:
             return _json.dumps({"error": f"{media_type} generation failed: {_ge}"}, ensure_ascii=False)
@@ -1139,6 +1156,7 @@ def build_media_tool_schemas(image_models, video_models):
     vid_props = {
         "prompt": {"type": "string", "description": "Detailed description of the video to generate."},
         "size": {"type": "string", "description": "Aspect size: 1024x1024 (1:1), 1792x1024 (16:9), or 1024x1792 (9:16).", "enum": ["1024x1024", "1792x1024", "1024x1792"]},
+        "image_url": {"type": "string", "description": "Optional. Reference image URL (http/https) for image-to-video (I2V) models like happyhorse-1.1-i2v. The image becomes the first frame of the generated video. Required when using an I2V model."},
         "save_path": {"type": "string", "description": "Optional. Save the generated video into the workspace (a directory or filename). When set, the response includes 'saved_paths'."},
     }
     if video_models:
@@ -1149,7 +1167,7 @@ def build_media_tool_schemas(image_models, video_models):
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Generate a short video from a text prompt using a registered video model. Call this when the task needs a video or animation. Returns a video URL; if 'save_path' is given, also saves the file to the workspace.",
+            "description": "Generate a short video from a text prompt using a registered video model. Call this when the task needs a video or animation. For image-to-video (I2V) models like happyhorse-1.1-i2v, pass 'image_url' (the reference image becomes the first frame). Returns a video URL; if 'save_path' is given, also saves the file to the workspace.",
             "parameters": {"type": "object", "properties": vid_props, "required": ["prompt"]},
         },
     }
