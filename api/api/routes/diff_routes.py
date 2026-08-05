@@ -266,20 +266,55 @@ def handle_post_file_apply_preview(handler, body) -> bool:
 
     try:
         target = safe_resolve(Path(s.workspace), preview['path'])
-        if not target.exists():
-            return bad(handler, 'Original file no longer exists', 404)
 
-        original_content = target.read_text(encoding='utf-8')
+        original_content = ''
+        file_exists = target.exists() and target.is_file()
+        if file_exists:
+            original_content = target.read_text(encoding='utf-8')
 
-        # Verify file hasn't changed since preview
-        if original_content != preview['original']:
+        new_content = preview['new_content']
+
+        # The preview is registered at tool.started — BEFORE the agent's own
+        # write lands on disk. If the file already contains the previewed
+        # content, treat it as applied instead of erroring with 409.
+        if file_exists and original_content == new_content:
+            cp_id = _create_checkpoint(body['session_id'], preview['path'], preview['original'])
+
+            _add_change_history(body['session_id'], {
+                'time': time.strftime('%H:%M:%S'),
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'agent': preview.get('source_agent', 'unknown'),
+                'file': preview['path'],
+                'checkpoint_id': cp_id,
+                'preview_id': preview_id,
+                'line_changes': preview.get('line_changes', {}),
+                'action': 'applied',
+            })
+
+            with _previews_lock:
+                _diff_previews.pop(preview_id, None)
+
+            return j(handler, {
+                'ok': True,
+                'path': preview['path'],
+                'blocks_applied': len(preview.get('blocks', [])),
+                'checkpoint_id': cp_id,
+                'applied': True,
+                'already_applied': True,
+            })
+
+        # Verify file hasn't changed since preview (third-party modification)
+        if file_exists and original_content != preview['original']:
             return bad(handler, 'File has been modified since preview was created. Please re-preview.', 409)
 
-        # Create checkpoint before modification
-        cp_id = _create_checkpoint(body['session_id'], preview['path'], original_content)
+        if not file_exists and preview['original']:
+            return bad(handler, 'Original file no longer exists', 404)
+
+        # Create checkpoint before modification (pre-change content)
+        cp_id = _create_checkpoint(body['session_id'], preview['path'], preview['original'])
 
         # Apply the previewed content
-        target.write_text(preview['new_content'], encoding='utf-8')
+        target.write_text(new_content, encoding='utf-8')
 
         # Record change history
         _add_change_history(body['session_id'], {
@@ -333,8 +368,25 @@ def handle_post_file_reject_preview(handler, body) -> bool:
     if preview['session_id'] != body['session_id']:
         return bad(handler, 'Preview does not belong to this session', 403)
 
+    # Roll back the agent's write if it already landed on disk. The preview
+    # is registered at tool.started, so by the time the user rejects, the
+    # file usually already contains the previewed content.
+    rolled_back = False
+    cp_id = None
+    try:
+        s = get_session(body['session_id'])
+        target = safe_resolve(Path(s.workspace), preview['path'])
+        if target.exists() and target.is_file():
+            current = target.read_text(encoding='utf-8')
+            if current == preview['new_content'] and current != preview['original']:
+                cp_id = _create_checkpoint(body['session_id'], preview['path'], current)
+                target.write_text(preview['original'], encoding='utf-8')
+                rolled_back = True
+    except Exception as _rb_e:
+        print(f"[DiffPreview] WARNING: reject rollback failed: {_rb_e}", flush=True)
+
     # Record rejection in history
-    _add_change_history(body['session_id'], {
+    history_entry = {
         'time': time.strftime('%H:%M:%S'),
         'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
         'agent': preview.get('source_agent', 'unknown'),
@@ -342,7 +394,11 @@ def handle_post_file_reject_preview(handler, body) -> bool:
         'preview_id': preview_id,
         'line_changes': preview.get('line_changes', {}),
         'action': 'rejected',
-    })
+        'rolled_back': rolled_back,
+    }
+    if cp_id:
+        history_entry['checkpoint_id'] = cp_id
+    _add_change_history(body['session_id'], history_entry)
 
     with _previews_lock:
         _diff_previews.pop(preview_id, None)
@@ -351,6 +407,7 @@ def handle_post_file_reject_preview(handler, body) -> bool:
         'ok': True,
         'rejected': True,
         'preview_id': preview_id,
+        'rolled_back': rolled_back,
     })
 
 

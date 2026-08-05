@@ -190,16 +190,25 @@ def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, fo
         return tool_error(err_msg)
 
 def check_dynamic_harness_requirements() -> bool:
-    """Dynamic Harness tool is available as long as dynamic_hermes.py can be verified."""
+    """Dynamic Harness tool is available as long as the dynamic_hermes engine is present."""
+    # Fast path: engine already importable. At server runtime the workspace root
+    # and <root>/api are on sys.path, so `api.dynamic_hermes` resolves to
+    # api/api/dynamic_hermes.py (regular package wins over the namespace dir).
     try:
-        from api.system_utils import verify_dynamic_harness_engine
-        ok, _ = verify_dynamic_harness_engine()
-        return ok
-    except ImportError:
-        # Fallback if system_utils is not importable
-        root_dir = Path(__file__).resolve().parent.parent.parent
-        engine_path = root_dir / "api" / "dynamic_hermes.py"
-        return engine_path.exists()
+        from api.dynamic_hermes import HermesDynamicRunner  # noqa: F401
+        return True
+    except Exception:
+        pass
+    # Fallback: file-existence check covering both layouts.
+    # After the root-as-truth refactor (7c06a6e) the engine lives at
+    # <root>/api/api/dynamic_hermes.py in dev, while PyInstaller builds
+    # (daon-server.spec) flatten it back to <root>/api/dynamic_hermes.py.
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    candidates = (
+        root_dir / "api" / "api" / "dynamic_hermes.py",
+        root_dir / "api" / "dynamic_hermes.py",
+    )
+    return any(p.exists() for p in candidates)
 
 # --- Registry ---
 from tools.registry import registry, tool_error, tool_result

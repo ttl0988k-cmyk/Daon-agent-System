@@ -285,9 +285,9 @@ MIME_MAP = _load_mime_map(_DEFAULT_MIME_MAP)
 # Toolsets
 # =============================================================================
 _DEFAULT_TOOLSETS = _load_config_value('toolsets.default', None, [
-    'browser', 'clarify', 'code_execution', 'cronjob', 'delegation', 'file',
-    'image_gen', 'memory', 'session_search', 'skills', 'terminal', 'todo',
-    'web', 'webhook',
+    'browser', 'clarify', 'code_execution', 'cronjob', 'delegation',
+    'dynamic_harness', 'file', 'image_gen', 'memory', 'session_search',
+    'skills', 'terminal', 'todo', 'web', 'webhook',
 ])
 CLI_TOOLSETS = _DEFAULT_TOOLSETS  # simple fallback
 

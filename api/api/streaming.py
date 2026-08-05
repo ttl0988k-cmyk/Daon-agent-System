@@ -44,6 +44,16 @@ _ACTIVE_SESSION_STREAMS_LOCK = threading.Lock()
 _COMPLETED_STREAMS = {}
 _COMPLETED_STREAMS_LOCK = threading.Lock()
 
+# Thread-local capture of the active stream's put() callable. Tool handlers
+# running inside the agent thread (e.g. the Dynamic Harness tool) call
+# get_current_thread_put() to emit extra SSE events such as 'agent_log'.
+_thread_put = threading.local()
+
+
+def get_current_thread_put():
+    """Return the put() callable bound to the current stream thread, or None."""
+    return getattr(_thread_put, 'put', None)
+
 # Lazy import to avoid circular deps -- hermes-agent is on sys.path via api/config.py
 try:
     from run_agent import AIAgent
@@ -327,6 +337,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             q.put_nowait((event, data))
         except Exception:
             _logger.warning("Failed to enqueue SSE event %s for stream %s", event, stream_id, exc_info=True)
+
+    # Expose put() to tool handlers running in this agent thread so they can
+    # push extra SSE events (e.g. 'agent_log' from the Dynamic Harness tool).
+    _thread_put.put = put
 
     try:
         s = get_session(session_id)
@@ -1698,6 +1712,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             put('apperror', {'message': err_str, 'type': 'error'})
     finally:
         _clear_thread_env()  # TD1: always clear thread-local context
+        _thread_put.put = None  # release the stream-local put() capture
         with _ACTIVE_AGENTS_LOCK:
             _ACTIVE_AGENTS.pop(stream_id, None)
         with _ACTIVE_SESSION_STREAMS_LOCK:

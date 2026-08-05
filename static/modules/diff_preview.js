@@ -62,6 +62,10 @@ var _diffPanelHTML = [
 // ── Initialization ───────────────────────────────────────────────────────────
 
 function initDiffPreview() {
+    // Guard against duplicate initialization: re-running would stack
+    // addEventListener handlers and fire each click handler multiple times.
+    if (_diffPreviewState._initialized) return;
+
     // Insert diff panel before chat content
     var chatContent = document.getElementById('chatModeContent');
     if (!chatContent || !chatContent.parentNode) return;
@@ -82,8 +86,16 @@ function initDiffPreview() {
     if (rejectBtn) rejectBtn.addEventListener('click', _rejectCurrentPreview);
     if (viewBtn) viewBtn.addEventListener('click', _viewCurrentPreviewDiff);
 
+    _diffPreviewState._initialized = true;
+
     // Load initial history
     _refreshChangeHistory();
+
+    // If an approval banner arrived BEFORE the panel DOM existed, the SSE
+    // handler stored it in _approvalData but could not render. Re-apply now.
+    if (_diffPreviewState._approvalData) {
+        _showApprovalBanner(_diffPreviewState._approvalData);
+    }
 }
 
 // ── Load Preview (called when AI sends a diff) ──────────────────────────────
@@ -152,6 +164,10 @@ function _showDiffPanel() {
 function _hideDiffPanel() {
     var panel = document.getElementById('diffPreviewPanel');
     if (panel) panel.style.display = 'none';
+    // Explicitly hide the active bar too so a stale bar never survives a
+    // panel hide (the bar sets its own display='block' on each render).
+    var bar = document.getElementById('diffActiveBar');
+    if (bar) bar.style.display = 'none';
 }
 
 function _renderActivePreviewBar(preview) {
@@ -243,7 +259,11 @@ function _setCurrentPreview(previewId) {
 
 function _viewCurrentPreviewDiff() {
     var pid = _diffPreviewState.currentPreviewId;
-    if (!pid) return;
+    if (!pid) {
+        _showToast('⚠ 상세 보기를 할 변경사항이 없습니다.');
+        if (Object.keys(_diffPreviewState.activePreviews).length === 0) _hideDiffPanel();
+        return;
+    }
     _viewPreviewDiff(pid);
 }
 
@@ -335,14 +355,29 @@ function _viewPreviewDiff(previewId) {
 // ── Apply / Reject Actions ──────────────────────────────────────────────────
 
 async function _applyCurrentPreview() {
+    // Approval mode (architect/orchestrator): the banner stores the pending
+    // approval in _approvalData — route through the approve+apply flow.
+    var appr = _diffPreviewState._approvalData;
+    if (appr && appr.preview_id) {
+        await _approveAndApply(appr.preview_id, appr.path, appr.is_plan);
+        return;
+    }
     var pid = _diffPreviewState.currentPreviewId;
-    if (!pid) return;
+    if (!pid) {
+        _showToast('⚠ 적용할 변경사항이 없습니다.');
+        if (Object.keys(_diffPreviewState.activePreviews).length === 0) _hideDiffPanel();
+        return;
+    }
     await _applySinglePreview(pid);
 }
 
 async function _applySinglePreview(previewId) {
-    var sid = State.activeSessionId;
-    if (!sid) return;
+    var preview = _diffPreviewState.activePreviews[previewId];
+    var sid = (preview && preview.session_id) || State.activeSessionId;
+    if (!sid) {
+        _showToast('⚠ 세션을 찾을 수 없습니다.');
+        return;
+    }
 
     try {
         var res = await api('/api/file/apply-preview', {
@@ -384,19 +419,46 @@ async function _applySinglePreview(previewId) {
         }
     } catch (e) {
         console.error('[DiffPreview] Apply error:', e);
-        _showToast('⚠ diff 적용 오류: ' + e.message);
+        if (e && e.message && e.message.indexOf('Preview not found') !== -1) {
+            // Server lost the preview (e.g. restart) → clear the stale bar.
+            delete _diffPreviewState.activePreviews[previewId];
+            if (_diffPreviewState.currentPreviewId === previewId) {
+                _diffPreviewState.currentPreviewId = null;
+            }
+            _updateFileChangeList();
+            _closeDiffEditor();
+            if (Object.keys(_diffPreviewState.activePreviews).length === 0) {
+                _hideDiffPanel();
+            }
+            _showToast('⚠ 미리보기가 만료되어 제거되었습니다.');
+        } else {
+            _showToast('⚠ diff 적용 오류: ' + e.message);
+        }
     }
 }
 
 async function _rejectCurrentPreview() {
+    var appr = _diffPreviewState._approvalData;
+    if (appr && appr.preview_id) {
+        await _rejectAndDiscard(appr.preview_id, appr.path);
+        return;
+    }
     var pid = _diffPreviewState.currentPreviewId;
-    if (!pid) return;
+    if (!pid) {
+        _showToast('⚠ 거절할 변경사항이 없습니다.');
+        if (Object.keys(_diffPreviewState.activePreviews).length === 0) _hideDiffPanel();
+        return;
+    }
     await _rejectSinglePreview(pid);
 }
 
 async function _rejectSinglePreview(previewId) {
-    var sid = State.activeSessionId;
-    if (!sid) return;
+    var preview = _diffPreviewState.activePreviews[previewId];
+    var sid = (preview && preview.session_id) || State.activeSessionId;
+    if (!sid) {
+        _showToast('⚠ 세션을 찾을 수 없습니다.');
+        return;
+    }
 
     try {
         var res = await api('/api/file/reject-preview', {
@@ -424,7 +486,21 @@ async function _rejectSinglePreview(previewId) {
         }
     } catch (e) {
         console.error('[DiffPreview] Reject error:', e);
-        _showToast('⚠ diff 거절 오류: ' + e.message);
+        if (e && e.message && e.message.indexOf('Preview not found') !== -1) {
+            // Server lost the preview (e.g. restart) → clear the stale bar.
+            delete _diffPreviewState.activePreviews[previewId];
+            if (_diffPreviewState.currentPreviewId === previewId) {
+                _diffPreviewState.currentPreviewId = null;
+            }
+            _updateFileChangeList();
+            _closeDiffEditor();
+            if (Object.keys(_diffPreviewState.activePreviews).length === 0) {
+                _hideDiffPanel();
+            }
+            _showToast('⚠ 미리보기가 만료되어 제거되었습니다.');
+        } else {
+            _showToast('⚠ diff 거절 오류: ' + e.message);
+        }
     }
 }
 
@@ -646,6 +722,60 @@ async function previewAIDiff(sessionId, filePath, diffText, sourceAgent) {
 }
 
 /**
+ * Register a preview that the SERVER already created.
+ *
+ * streaming.py registers the preview in _diff_previews on tool.started and
+ * emits the full payload via the 'diff_preview' SSE event. Registering it
+ * directly here avoids the old round-trip (re-posting a reconstructed
+ * SEARCH/REPLACE diff to /api/file/preview-diff), which raced with the
+ * agent's own file write (409) and left the apply/reject/view buttons dead
+ * while the bar stayed visible.
+ *
+ * Idempotent: re-registering the same preview_id only refreshes the UI.
+ *
+ * @param {Object} data - SSE payload: { preview_id, session_id, path,
+ *   original_full, new_full, line_changes, source_agent, approval_required }
+ * @returns {string|null} preview_id
+ */
+function registerDiffPreview(data) {
+    if (!data || !data.preview_id) {
+        console.warn('[DiffPreview] registerDiffPreview: missing preview_id');
+        return null;
+    }
+
+    var pid = data.preview_id;
+    var existing = _diffPreviewState.activePreviews[pid];
+
+    var preview = {
+        preview_id: pid,
+        session_id: data.session_id || (existing && existing.session_id) || State.activeSessionId,
+        path: data.path || (existing && existing.path) || 'unknown',
+        original_full: (data.original_full != null) ? data.original_full : ((existing && existing.original_full) || ''),
+        new_full: (data.new_full != null) ? data.new_full : ((existing && existing.new_full) || ''),
+        line_changes: data.line_changes || (existing && existing.line_changes) || {},
+        source_agent: data.source_agent || (existing && existing.source_agent) || 'unknown',
+        approval_required: !!(data.approval_required || (existing && existing.approval_required)),
+    };
+    // Aliases used by _viewPreviewDiff fallbacks
+    preview.original = preview.original_full;
+    preview.new_content = preview.new_full;
+
+    _diffPreviewState.activePreviews[pid] = preview;
+    _diffPreviewState.currentPreviewId = pid;
+
+    if (!existing) {
+        _addWorkflowStep(preview.source_agent, preview.path, preview.line_changes);
+    }
+
+    _renderActivePreviewBar(preview);
+    _updateFileChangeList();
+    _refreshChangeHistory();
+    _showDiffPanel();
+
+    return pid;
+}
+
+/**
  * Direct apply without preview (backward compatible with existing flow).
  */
 // ── Approval Banner (Architect mode) ─────────────────────────────────────────
@@ -657,9 +787,30 @@ async function previewAIDiff(sessionId, filePath, diffText, sourceAgent) {
 function _showApprovalBanner(data) {
     if (!data || data.status !== 'pending') return;
 
+    // Persist state BEFORE the DOM check. If the panel DOM has not been
+    // created yet (approval SSE arrived before initDiffPreview), the state
+    // is preserved and re-applied by initDiffPreview once the DOM exists.
+    // This is the fix for "approve/reject buttons dead": previously the
+    // early return below dropped the approval entirely, leaving
+    // currentPreviewId null so every click hit `if (!pid) return;`.
+    _diffPreviewState._approvalData = data;
+
+    // Make sure the preview is registered client-side so the buttons always
+    // have a preview_id, even if the 'diff_preview' SSE event was missed.
+    if (data.preview_id) {
+        registerDiffPreview({
+            preview_id: data.preview_id,
+            session_id: data.session_id || State.activeSessionId,
+            path: data.path,
+            line_changes: data.line_changes,
+            source_agent: data.source_agent || 'architect',
+            approval_required: true
+        });
+    }
+
     var panel = document.getElementById('diffPreviewPanel');
     var bar = document.getElementById('diffActiveBar');
-    if (!panel || !bar) return;
+    if (!panel || !bar) return; // DOM not ready yet; state saved, init re-applies
 
     panel.style.display = 'block';
     bar.style.display = 'block';
@@ -684,12 +835,12 @@ function _showApprovalBanner(data) {
         applyBtn.style.background = 'var(--warning-orange, #e67e22)';
         applyBtn.style.color = '#fff';
         applyBtn.style.borderColor = 'var(--warning-orange, #e67e22)';
-        applyBtn.onclick = function () { _approveAndApply(data.preview_id, data.path, data.is_plan); };
+        applyBtn.onclick = null; // click handled by _applyCurrentPreview dispatcher
     }
     if (rejectBtn) {
         rejectBtn.textContent = '❌ 거절';
         rejectBtn.style.display = 'inline-block';
-        rejectBtn.onclick = function () { _rejectAndDiscard(data.preview_id, data.path); };
+        rejectBtn.onclick = null; // click handled by _rejectCurrentPreview dispatcher
     }
     if (viewBtn) {
         viewBtn.style.display = 'inline-block';
@@ -772,7 +923,22 @@ async function _approveAndApply(previewId, filePath, isPlan) {
         }
     } catch (e) {
         console.error('[Approval] Approve error:', e);
-        _showToast('⚠ diff 승인 오류: ' + e.message);
+        if (e && e.message && e.message.indexOf('Preview not found') !== -1) {
+            // Server lost the preview (e.g. restart) → clear the stale banner.
+            delete _diffPreviewState.activePreviews[previewId];
+            if (_diffPreviewState.currentPreviewId === previewId) {
+                _diffPreviewState.currentPreviewId = null;
+            }
+            _updateFileChangeList();
+            _closeDiffEditor();
+            _resetApprovalButtons();
+            if (Object.keys(_diffPreviewState.activePreviews).length === 0) {
+                _hideDiffPanel();
+            }
+            _showToast('⚠ 미리보기가 만료되어 제거되었습니다.');
+        } else {
+            _showToast('⚠ diff 승인 오류: ' + e.message);
+        }
     }
 }
 
@@ -829,7 +995,22 @@ async function _rejectAndDiscard(previewId, filePath) {
         }
     } catch (e) {
         console.error('[Approval] Reject error:', e);
-        _showToast('⚠ diff 거절 오류: ' + e.message);
+        if (e && e.message && e.message.indexOf('Preview not found') !== -1) {
+            // Server lost the preview (e.g. restart) → clear the stale banner.
+            delete _diffPreviewState.activePreviews[previewId];
+            if (_diffPreviewState.currentPreviewId === previewId) {
+                _diffPreviewState.currentPreviewId = null;
+            }
+            _updateFileChangeList();
+            _closeDiffEditor();
+            _resetApprovalButtons();
+            if (Object.keys(_diffPreviewState.activePreviews).length === 0) {
+                _hideDiffPanel();
+            }
+            _showToast('⚠ 미리보기가 만료되어 제거되었습니다.');
+        } else {
+            _showToast('⚠ diff 거절 오류: ' + e.message);
+        }
     }
 }
 
@@ -837,6 +1018,8 @@ async function _rejectAndDiscard(previewId, filePath) {
  * Reset the approve/reject buttons to normal apply/reject buttons.
  */
 function _resetApprovalButtons() {
+    _diffPreviewState._approvalData = null;
+
     var bar = document.getElementById('diffActiveBar');
     if (bar) {
         bar.style.borderColor = '';
@@ -847,15 +1030,15 @@ function _resetApprovalButtons() {
     var rejectBtn = document.getElementById('diffRejectBtn');
 
     if (applyBtn) {
-        applyBtn.textContent = '✓ Apply';
+        applyBtn.textContent = '✓ 적용';
         applyBtn.style.background = '';
         applyBtn.style.color = '';
         applyBtn.style.borderColor = '';
-        applyBtn.onclick = _applyCurrentPreview;
+        applyBtn.onclick = null; // click handled by _applyCurrentPreview dispatcher
     }
     if (rejectBtn) {
-        rejectBtn.textContent = '✕ Reject';
-        rejectBtn.onclick = _rejectCurrentPreview;
+        rejectBtn.textContent = '✕ 거절';
+        rejectBtn.onclick = null; // click handled by _rejectCurrentPreview dispatcher
     }
 }
 

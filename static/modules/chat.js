@@ -940,11 +940,18 @@ async function _executeAgentStream(displayText, uploaded) {
     });
 
     // ── Diff Preview SSE (AI → Preview Panel)
+    // The server already registered the preview in _diff_previews and sends the
+    // full payload (preview_id, original_full, new_full, line_changes). Register
+    // it directly on the client. Re-posting a reconstructed SEARCH/REPLACE diff
+    // to /api/file/preview-diff raced with the agent's own file write (409) and
+    // left the apply/reject/view buttons dead while the bar stayed visible.
     sse.addEventListener('diff_preview', (e) => {
       try {
         const data = JSON.parse(e.data);
         console.log('[Streaming→DiffPreview] Received diff_preview event:', data.path, data.preview_id);
-        if (typeof previewAIDiff === 'function') {
+        if (data.preview_id && typeof registerDiffPreview === 'function') {
+          registerDiffPreview(data);
+        } else if (typeof previewAIDiff === 'function') {
           previewAIDiff(data.session_id, data.path,
             data.original_full && data.new_full
               ? `<<<<<<< SEARCH\n:start_line:1\n-------\n${data.original_full}\n=======\n${data.new_full}\n>>>>>>> REPLACE`
