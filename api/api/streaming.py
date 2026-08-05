@@ -44,6 +44,21 @@ _ACTIVE_SESSION_STREAMS_LOCK = threading.Lock()
 _COMPLETED_STREAMS = {}
 _COMPLETED_STREAMS_LOCK = threading.Lock()
 
+# Cache of recently cancelled streams (stream_id → timestamp). When a client's
+# EventSource auto-reconnects after its stream was cancelled, we serve a clean
+# 'cancel' event instead of returning 404 — a 404 would surface in the UI as
+# a scary "connection lost" error right after the user pressed cancel.
+# Entries auto-expire after 60 seconds.
+_CANCELLED_STREAMS = {}
+_CANCELLED_STREAMS_LOCK = threading.Lock()
+
+# Map stream_id → worker thread running _run_agent_streaming. cancel_stream()
+# checks this before force-cleaning STREAMS: while the agent thread is still
+# winding down, force cleanup would make SSE reconnects hit 404 and look like
+# the agent disconnected.
+_STREAM_THREADS = {}
+_STREAM_THREADS_LOCK = threading.Lock()
+
 # Thread-local capture of the active stream's put() callable. Tool handlers
 # running inside the agent thread (e.g. the Dynamic Harness tool) call
 # get_current_thread_put() to emit extra SSE events such as 'agent_log'.
@@ -317,6 +332,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     if q is None:
         return
 
+    # Register the worker thread so cancel_stream() can wait for the agent to
+    # actually wind down before force-cleaning STREAMS. Force-removing the
+    # stream while the agent thread is still finishing (tool abort, session
+    # save) made SSE reconnects hit 404 — which surfaced in the UI as a
+    # "connection lost" error right after the user pressed cancel.
+    with _STREAM_THREADS_LOCK:
+        _STREAM_THREADS[stream_id] = threading.current_thread()
+
     # Auto-cancel any previous stream for this session before starting
     cancel_session_streams(session_id)
 
@@ -461,29 +484,85 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           )
 
           def _is_compaction_text(text):
-              """토큰 텍스트가 컨텍스트 압축 요약인지 확인."""
+              """토큰 텍스트가 컨텍스트 압축 요약인지 확인 (대소문자 무시)."""
+              low = text.lower()
               for pat in _COMPACTION_PATTERNS:
-                  if pat in text:
+                  if pat.lower() in low:
                       return True
               return False
 
+          def _compaction_hold_len(text):
+              """text 끝이 압축 패턴의 접두사로 자라날 수 있으면 그 길이를 반환.
+              패턴이 토큰 경계에서 분할돼도 감지할 수 있도록 해당 꼬리를
+              다음 토큰이 올 때까지 송출 보류한다."""
+              max_hold = 0
+              low = text.lower()
+              for pat in _COMPACTION_PATTERNS:
+                  pl = pat.lower()
+                  k = min(len(pl) - 1, len(low))
+                  while k > 0:
+                      if low.endswith(pl[:k]):
+                          if k > max_hold:
+                              max_hold = k
+                          break
+                      k -= 1
+              return max_hold
+
+          def _compaction_find_pos(text):
+              """전체 버퍼에서 압축 패턴이 처음 나타나는 위치를 반환 (대소문자 무시).
+              패턴이 없으면 -1."""
+              low = text.lower()
+              best = -1
+              for pat in _COMPACTION_PATTERNS:
+                  i = low.find(pat.lower())
+                  if i >= 0 and (best < 0 or i < best):
+                      best = i
+              return best
+
+          # 압축 요약 감지 래치: 한 번 감지되면 이후 모든 토큰을 reasoning
+          # 채널로 라우팅한다 (요약 전문이 챗창에 새는 것을 차단).
+          _compaction_mode = False
+
           def on_token(text):
-              nonlocal _token_buf, _token_sent
+              nonlocal _token_buf, _token_sent, _compaction_mode
               if text is None:
-                  return  # end-of-stream sentinel
+                  # end-of-stream sentinel: 보류 중이던 꼬리가 있으면 플러시
+                  if not _compaction_mode:
+                      cleaned = _ANSI_RE.sub("", _token_buf)
+                      visible = _strip_think_streaming(cleaned)
+                      if len(visible) > _token_sent:
+                          put('token', {'text': visible[_token_sent:]})
+                          _token_sent = len(visible)
+                  return
               _token_buf += text
               cleaned = _ANSI_RE.sub("", _token_buf)
               visible = _strip_think_streaming(cleaned)
-              if len(visible) > _token_sent:
-                  delta = visible[_token_sent:]
+              if len(visible) <= _token_sent:
+                  return
+              delta = visible[_token_sent:]
+              # CONTEXT COMPACTION 요약이 채팅에 노출되는 버그 방지:
+              # 델타가 아닌 전체 버퍼를 검사해 패턴이 토큰 경계에서 분할돼도
+              # 감지하고, 한 번 감지되면 이후 토큰은 모두 'reasoning' 채널로
+              # 라우팅해 프론트엔드의 접이식 "생각 중" 상자에만 표시한다.
+              if _compaction_mode:
                   _token_sent = len(visible)
-                  # CONTEXT COMPACTION 요약이 채팅에 노출되는 버그 방지:
-                  # 압축 요약 패턴이면 'reasoning' 채널로 라우팅하여
-                  # 프론트엔드의 접이식 "생각 중" 상자에 표시
-                  if _is_compaction_text(delta):
-                      on_reasoning(delta)
-                  else:
-                      put('token', {'text': delta})
+                  on_reasoning(delta)
+                  return
+              pos = _compaction_find_pos(visible)
+              if pos >= 0:
+                  # 패턴 앞의 정상 텍스트는 챗창에 남기고, 패턴부터 reasoning으로
+                  if pos > _token_sent:
+                      put('token', {'text': visible[_token_sent:pos]})
+                  _compaction_mode = True
+                  _token_sent = len(visible)
+                  on_reasoning(visible[pos:])
+                  return
+              # 패턴 접두사로 자라날 수 있는 꼬리는 다음 토큰까지 송출 보류
+              hold = _compaction_hold_len(visible)
+              send_end = len(visible) - hold
+              if send_end > _token_sent:
+                  put('token', {'text': visible[_token_sent:send_end]})
+                  _token_sent = send_end
 
           def on_reasoning(text):
               # 추론(reasoning) 델타 — 별도 'reasoning' SSE 이벤트로 전송해
@@ -1501,7 +1580,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # finally 블록 실행 시간을 모두 커버할 수 있도록 충분한 여유를 줌.
           _lock_acquired = _agent_lock.acquire(timeout=25)
           if not _lock_acquired:
-              print(f"[webui] WARN: _agent_lock for session {session_id} not acquired after 15s — aborting", flush=True)
+              # 이전 실행이 아직 정리 중(취소 후 도구 중단/세션 저장 등)일 수
+              # 있다. 즉시 실패하면 사용자에게 "연결 끊김"처럼 보이므로 취소
+              # 정리 시간을 커버할 수 있도록 한 번 더 여유를 두고 대기한다.
+              print(f"[webui] WARN: _agent_lock for session {session_id} not acquired after 25s — retrying (cancel wind-down)", flush=True)
+              _lock_acquired = _agent_lock.acquire(timeout=30)
+          if not _lock_acquired:
+              print(f"[webui] WARN: _agent_lock for session {session_id} not acquired after retry — aborting", flush=True)
               put('apperror', {
                   'message': '이전 작업이 아직 종료되지 않았습니다. 잠시 후 다시 시도하세요.',
                   'type': 'lock_timeout',
@@ -1738,6 +1823,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
         _thread_put.put = None  # release the stream-local put() capture
         with _ACTIVE_AGENTS_LOCK:
             _ACTIVE_AGENTS.pop(stream_id, None)
+        with _STREAM_THREADS_LOCK:
+            _STREAM_THREADS.pop(stream_id, None)
         with _ACTIVE_SESSION_STREAMS_LOCK:
             # Only remove if this stream is still the active one for the session
             if _ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
@@ -1767,6 +1854,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                 _stale = [sid for sid, (_, ts) in _COMPLETED_STREAMS.items() if _now - ts > 60]
                 for sid in _stale:
                     del _COMPLETED_STREAMS[sid]
+        elif cancel_event.is_set():
+            # Cancelled stream: remember it so an EventSource that
+            # auto-reconnects gets a clean 'cancel' event instead of a 404
+            # "stream not found" (which the UI shows as a connection error).
+            with _CANCELLED_STREAMS_LOCK:
+                _CANCELLED_STREAMS[stream_id] = time.time()
+                _now = time.time()
+                _stale = [sid for sid, ts in _CANCELLED_STREAMS.items() if _now - ts > 60]
+                for sid in _stale:
+                    del _CANCELLED_STREAMS[sid]
 
 
 def cancel_stream(stream_id: str) -> bool:
@@ -1792,17 +1889,22 @@ def cancel_stream(stream_id: str) -> bool:
         q = STREAMS.get(stream_id)
         if q:
             q.put_nowait(('cancel', {'message': 'Cancelled by user'}))
-        # #27 fix: cleanup delay 10s → 3s. 10초는 너무 길어서 _agent_lock.acquire(timeout=25)와
-        # 결합될 때 전체 대기 시간이 과도하게 길어짐. 대부분의 API 호출은 interrupt() 후
-        # 3초 이내에 타임아웃되거나 종료되므로 3초면 충분.
-        _cleanup_delay = 3
+        # Cleanup: 에이전트 워커 스레드가 실제로 종료될 때까지 기다렸다가
+        # STREAMS를 제거한다. 워커가 아직 정리 중(도구 중단, 세션 저장)인데
+        # 3초 만에 강제 제거하던 기존 동작은 SSE 재연결이 404를 받게 만들어
+        # 사용자에게 "에이전트 연결 끊김"으로 보였다. 정상 경로에서는 워커의
+        # finally 블록이 STREAMS를 제거하므로 이곳은 안전장치다.
         def _force_cleanup():
-            time.sleep(_cleanup_delay)
+            with _STREAM_THREADS_LOCK:
+                worker = _STREAM_THREADS.get(stream_id)
+            deadline = time.time() + 20
+            while worker is not None and worker.is_alive() and time.time() < deadline:
+                time.sleep(0.5)
             with STREAMS_LOCK:
                 if stream_id in STREAMS:
                     _logger.warning(
-                        "Force-cleaning stale stream %s (agent did not finish within %ds of cancel)",
-                        stream_id, _cleanup_delay
+                        "Force-cleaning stale stream %s (agent did not finish within 20s of cancel)",
+                        stream_id
                     )
                     STREAMS.pop(stream_id, None)
                     CANCEL_FLAGS.pop(stream_id, None)

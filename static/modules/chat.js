@@ -309,10 +309,12 @@ async function clearChatHistory() {
 }
 // ── 내부 제어 nudging 메시지 판별 ──
 // 에이전트가 도구 호출 없이 멈췄을 때 백엔드(hermes-agent)가 role:user로 주입하는
-// 루프 제어 프롬프트는 사용자에게 보여선 안 되므로 렌더링에서 제외한다.
+// 루프 제어 프롬프트와 컨텍스트 압축 요약은 사용자에게 보여선 안 되므로
+// 렌더링에서 제외한다. 압축 요약은 세션 히스토리에 role:user 메시지로
+// 저장되어 done/복구 렌더링 시 챗창에 그대로 노출될 수 있다.
 function _isInternalNudgeMessage(content) {
   if (!content) return false;
-  const sigs = ['[System: Continue now', '단문 확인 메시지만', '[시스템 안내:'];
+  const sigs = ['[System: Continue now', '단문 확인 메시지만', '[시스템 안내:', '[CONTEXT COMPACTION'];
   return sigs.some(s => content.includes(s));
 }
 
@@ -479,6 +481,7 @@ async function _executeAgentStream(displayText, uploaded) {
   }
 
   // Set UI state to active
+  State._userCancelledStream = false;
   setChatStatus('thinking', '생각 중...');
   $('sendPromptBtn').disabled = true;
   $('cancelStreamBtn').style.display = 'block';
@@ -579,6 +582,8 @@ async function _executeAgentStream(displayText, uploaded) {
     if (_streamFinished) return;
     _streamFinished = true;
     clearTimeout(_idleTimer);
+    // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
+    try { if (typeof _stopReasoningTimer === 'function') _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
     try { sse.close(); } catch (_) { }
     cleanupStreamState();
@@ -628,18 +633,37 @@ async function _executeAgentStream(displayText, uploaded) {
     // ── 추론(reasoning) 스트림: 별도 접이식 박스 표시 ──
     // 추론 단계에서는 token 이벤트가 오지 않아 idle timer가 스트림을 조기
     // 종료하던 문제가 있었다. reasoning 이벤트가 타이머를 계속 갱신한다.
+    // Roo Code 스타일로 경과 초를 함께 표시한다 ("💭 생각 중... (Ns)").
     let _reasoningCard = null;
     let _reasoningText = '';
+    let _reasoningStartTs = 0;
+    let _reasoningTimer = null;
+
+    function _reasoningElapsed() {
+      return Math.max(0, Math.floor((Date.now() - _reasoningStartTs) / 1000));
+    }
+
+    function _stopReasoningTimer(finalLabel) {
+      if (_reasoningTimer) {
+        clearInterval(_reasoningTimer);
+        _reasoningTimer = null;
+      }
+      if (_reasoningCard) {
+        const sum = _reasoningCard.querySelector('summary');
+        if (sum) sum.textContent = finalLabel || ('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
+      }
+    }
 
     sse.addEventListener('reasoning', (e) => {
       try {
         const data = JSON.parse(e.data);
         _reasoningText += data.text || '';
         if (!_reasoningCard) {
+          _reasoningStartTs = Date.now();
           _reasoningCard = document.createElement('details');
           _reasoningCard.className = 'tool-card reasoning-card';
           _reasoningCard.innerHTML = `
-            <summary style="cursor:pointer; padding:6px 10px; opacity:0.75;">💭 생각 중...</summary>
+            <summary style="cursor:pointer; padding:6px 10px; opacity:0.75;">💭 생각 중... (0초)</summary>
             <div class="tool-card-body" style="display:block;">
               <pre style="white-space:pre-wrap; max-height:240px; overflow:auto; opacity:0.7; font-size:12px;"></pre>
             </div>
@@ -647,6 +671,12 @@ async function _executeAgentStream(displayText, uploaded) {
           // asstBubble 안에 넣으면 token 스트리밍 시 innerHTML 초기화로 사라지므로
           // 버블 앞의 독립 요소로 삽입한다.
           box.insertBefore(_reasoningCard, asstBubble);
+          // 경과 초를 1초마다 갱신 (Roo Code의 "thinking" 표시 스타일)
+          _reasoningTimer = setInterval(function () {
+            if (!_reasoningCard || _reasoningTimer === null) return;
+            const sum = _reasoningCard.querySelector('summary');
+            if (sum) sum.textContent = '💭 생각 중... (' + _reasoningElapsed() + '초)';
+          }, 1000);
         }
         const pre = _reasoningCard.querySelector('pre');
         if (pre) pre.textContent = _reasoningText;
@@ -662,10 +692,9 @@ async function _executeAgentStream(displayText, uploaded) {
       const data = JSON.parse(e.data);
       incomingText += data.text;
       asstBubble.innerHTML = renderMd(incomingText);
-      // 추론이 끝났으면 카드 제목 갱신
-      if (_reasoningCard) {
-        const sum = _reasoningCard.querySelector('summary');
-        if (sum) sum.textContent = '💭 생각 완료 (클릭하여 보기)';
+      // 추론이 끝났으면 카드 제목 갱신 (경과 초 포함)
+      if (_reasoningCard && _reasoningTimer) {
+        _stopReasoningTimer('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
       }
       scrollToChatBottom();
       _idleExtensions = 0;
@@ -795,6 +824,12 @@ async function _executeAgentStream(displayText, uploaded) {
         _activeTools++;
       } else {
         if (_activeTools > 0) _activeTools--;
+        if (_activeTools === 0) {
+          // 모든 도구가 끝나면 챗창 상태를 즉시 "응답 생성 중"으로 복귀시킨다.
+          // 다음 토큰이 올 때까지 상태표시가 "도구 완료"에 머물러
+          // 원상복구가 늦어 보이는 문제를 방지한다.
+          setChatStatus('thinking', '응답 생성 중...');
+        }
       }
 
       // ── 채팅 → 다이나믹 하네스 연동 ──
@@ -1053,6 +1088,7 @@ async function _executeAgentStream(displayText, uploaded) {
 
     sse.addEventListener('cancel', () => {
       console.log('[SSE-DIAG] ⚠️ cancel event received');
+      State._userCancelledStream = false;
       finishStream('cancel');
       asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[실행 취소됨]</div>');
     });
@@ -1068,6 +1104,18 @@ async function _executeAgentStream(displayText, uploaded) {
       }
       if (e.target && e.target.readyState !== undefined) {
         console.error('[SSE] target readyState:', e.target.readyState);
+      }
+
+      // 사용자가 취소 버튼을 누른 직후의 연결 종료/재연결 실패는 오류가 아닌
+      // 정상 취소로 처리한다. "스트림 오류/연결 끊김"으로 보이는 것을 방지.
+      if (State._userCancelledStream) {
+        console.log('[SSE-DIAG] error after user cancel — treating as clean cancel');
+        State._userCancelledStream = false;
+        finishStream('user_cancel');
+        if (asstBubble && asstBubble.parentNode) {
+          asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[실행 취소됨]</div>');
+        }
+        return;
       }
 
       // EventSource.CLOSED: 서버가 연결을 닫았거나 네트워크가 끊긴 경우 — 곧바로 finishStream
@@ -1148,6 +1196,9 @@ async function _executeAgentStream(displayText, uploaded) {
 
 async function cancelActiveStream() {
   if (!State.currentStreamId) return;
+  // 사용자 취소 표시 — 이후 SSE error/재연결 이벤트가 "에이전트 연결 끊김"
+  // 오류로 표시되지 않도록 한다 (error 핸들러에서 확인).
+  State._userCancelledStream = true;
   try {
     await api('/api/chat/cancel', {
       method: 'POST',

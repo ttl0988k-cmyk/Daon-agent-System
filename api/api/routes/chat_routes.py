@@ -30,7 +30,11 @@ from api.workspace import (
     load_workspaces, save_workspaces, get_last_workspace, set_last_workspace,
     list_dir, read_file_content, safe_resolve_ws,
 )
-from api.streaming import _sse, _run_agent_streaming, cancel_stream, _COMPLETED_STREAMS, _COMPLETED_STREAMS_LOCK
+from api.streaming import (
+    _sse, _run_agent_streaming, cancel_stream,
+    _COMPLETED_STREAMS, _COMPLETED_STREAMS_LOCK,
+    _CANCELLED_STREAMS, _CANCELLED_STREAMS_LOCK,
+)
 
 
 # ── GET route helpers ─────────────────────────────────────────────────────────
@@ -80,6 +84,24 @@ def handle_get_sse_stream(handler, parsed) -> bool:
             handler.end_headers()
             try:
                 _sse(handler, 'done', done_data)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                pass
+            return True
+        # Check the cancelled streams cache — the EventSource may be
+        # auto-reconnecting right after the user pressed cancel. Serve a
+        # clean 'cancel' event instead of a 404, which the UI would surface
+        # as a scary "connection lost" error.
+        with _CANCELLED_STREAMS_LOCK:
+            was_cancelled = stream_id in _CANCELLED_STREAMS
+        if was_cancelled:
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            handler.send_header('Cache-Control', 'no-cache')
+            handler.send_header('X-Accel-Buffering', 'no')
+            handler.send_header('Connection', 'keep-alive')
+            handler.end_headers()
+            try:
+                _sse(handler, 'cancel', {'message': 'Cancelled by user'})
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                 pass
             return True
