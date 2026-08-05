@@ -11,6 +11,7 @@ Usage (in api/streaming.py after AIAgent creation):
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ def patch_browser_tool():
         import tools.browser_tool as bt_module
 
         bt_module._run_browser_command = _run_browser_command_via_bridge
+        bt_module._daon_electron_bridge_ready = True
         _logger.info(
             "browser_tool._run_browser_command patched → Path A (Playwright via CDP)"
         )

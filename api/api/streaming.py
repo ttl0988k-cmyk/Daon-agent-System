@@ -923,6 +923,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception:
               pass
 
+          # Install the Electron/CDP browser bridge before creating the agent.
+          # This prevents initialization paths from starting standalone
+          # agent-browser Chromium before the bridge is installed.
+          try:
+              from api.browser_bridge import patch_browser_tool
+              _browser_bridge_ready = patch_browser_tool()
+              if not _browser_bridge_ready and os.environ.get('BROWSER_CDP_URL'):
+                  print('[webui] WARNING: Electron browser bridge could not be installed; standalone browser fallback is disabled.', flush=True)
+          except Exception as _bt_init_err:
+              _browser_bridge_ready = False
+              print(f"[webui] WARNING: Electron browser bridge initialization failed: {_bt_init_err}", flush=True)
+
           print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_key={'set' if resolved_api_key else 'NONE'}", flush=True)
           agent = AIAgent(
               model=resolved_model,
@@ -941,15 +953,6 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               ephemeral_system_prompt=_ephemeral_prompt,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)
-
-          # ── Path A: Redirect browser_tool._run_browser_command to Playwright via CDP ──
-          # This replaces the agent-browser CLI (Path B) with direct Playwright calls,
-          # eliminating zombie CDP sessions and subprocess.Popen daemon processes.
-          try:
-              from api.browser_bridge import patch_browser_tool
-              patch_browser_tool()
-          except Exception as _bt_err:
-              print(f"[webui] WARNING: browser_tool patch failed (will use CLI fallback): {_bt_err}", flush=True)
 
           # Register agent so cancel_stream() can call agent.interrupt()
           # to force-abort in-flight HTTP requests instead of waiting for the 120s timeout.

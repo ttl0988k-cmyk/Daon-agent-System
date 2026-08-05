@@ -1111,6 +1111,20 @@ def _run_browser_command(
     Returns:
         Parsed JSON response from agent-browser
     """
+    # Electron owns the visible browser tab through TabManager/WebContentsView.
+    # Never fall back to the local agent-browser daemon in this mode: doing so
+    # launches a second Chromium window outside the application and can cover
+    # the entire DAON window. The API bridge is installed by streaming.py;
+    # this guard is the final safety net when that patch cannot be installed.
+    if os.environ.get("BROWSER_CDP_URL"):
+        return {
+            "success": False,
+            "error": (
+                "Electron 내부 브라우저 브리지가 아직 준비되지 않았습니다. "
+                "시스템 브라우저 fallback은 비활성화되어 있습니다."
+            ),
+        }
+
     if timeout is None:
         timeout = _get_command_timeout()
     args = args or []
