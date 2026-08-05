@@ -453,6 +453,20 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       in_think = True
               return ''.join(out)
 
+          # CONTEXT COMPACTION 패턴 감지 — 내부용 요약이 채팅에 표시되는 버그 방지
+          _COMPACTION_PATTERNS = (
+              '[CONTEXT COMPACTION',
+              '## Context Compaction',
+              '## CONTEXT COMPACTION',
+          )
+
+          def _is_compaction_text(text):
+              """토큰 텍스트가 컨텍스트 압축 요약인지 확인."""
+              for pat in _COMPACTION_PATTERNS:
+                  if pat in text:
+                      return True
+              return False
+
           def on_token(text):
               nonlocal _token_buf, _token_sent
               if text is None:
@@ -463,7 +477,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               if len(visible) > _token_sent:
                   delta = visible[_token_sent:]
                   _token_sent = len(visible)
-                  put('token', {'text': delta})
+                  # CONTEXT COMPACTION 요약이 채팅에 노출되는 버그 방지:
+                  # 압축 요약 패턴이면 'reasoning' 채널로 라우팅하여
+                  # 프론트엔드의 접이식 "생각 중" 상자에 표시
+                  if _is_compaction_text(delta):
+                      on_reasoning(delta)
+                  else:
+                      put('token', {'text': delta})
 
           def on_reasoning(text):
               # 추론(reasoning) 델타 — 별도 'reasoning' SSE 이벤트로 전송해
