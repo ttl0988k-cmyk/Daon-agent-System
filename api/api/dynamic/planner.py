@@ -228,10 +228,10 @@ class HermesPlanner:
             for group in available_models_data:
                 for m in group.get('models', []):
                     model_list.append(m['id'])
-            dynamic_model_list = ", ".join(f"'{m}'" for m in model_list) if model_list else "'MiniMax-M3', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'"
+            dynamic_model_list = ", ".join(f"'{m}'" for m in model_list) if model_list else "(no models registered — add a provider in Settings)"
         except Exception as e:
             _log.warning("Failed to resolve dynamic model list: %s", e)
-            dynamic_model_list = "'MiniMax-M3', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'"
+            dynamic_model_list = "(no models registered — add a provider in Settings)"
 
                 # --- Dynamic Model Selector Recommendations ---
         try:

@@ -25,17 +25,32 @@ from api.dynamic.logging_utils import get_logger
 _log = get_logger(__name__)
 
 
-def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: str = "MiniMax-M3") -> str:
-    """Call MiniMax Anthropic-compatible API directly, falling back to MiniMax-M2.7 and MiniMax-M2.5 if needed.
+def _registered_models_for(provider: str) -> list[str]:
+    """Get registered model IDs for a provider from custom_providers.json (dynamic)."""
+    try:
+        from api.managers import model_manager
+        for g in model_manager.get_available_models():
+            if g.get('provider_key') == provider:
+                return [m.get('id') if isinstance(m, dict) else str(m) for m in g.get('models', [])]
+    except Exception as e:
+        _log.info("Failed to load registered models for %s: %s", provider, e)
+    return []
+
+
+def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None) -> str:
+    """Call MiniMax Anthropic-compatible API directly, falling back to other
+    MiniMax models registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
     """
     api_key = _get_minimax_api_key()
     if not api_key:
         raise ValueError("MINIMAX_API_KEY not found in environment or auth.json.")
 
-    models_to_try = [preferred_model, "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1"]
+    models_to_try = ([preferred_model] if preferred_model else []) + _registered_models_for("minimax")
     seen = set()
-    models_to_try = [x for x in models_to_try if not (x in seen or seen.add(x))]
+    models_to_try = [x for x in models_to_try if x and not (x in seen or seen.add(x))]
+    if not models_to_try:
+        raise ValueError("No MiniMax models registered in custom_providers.json.")
 
     base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic").rstrip("/")
     url = f"{base_url}/v1/messages"
@@ -87,20 +102,31 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
     raise last_error
 
 
-def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: str = "deepseek-chat") -> str:
-    """Call DeepSeek API directly, falling back to other deepseek models if needed.
+def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None) -> str:
+    """Call DeepSeek API directly, falling back to other DeepSeek models
+    registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
     """
     api_key = _get_deepseek_api_key()
     if not api_key:
         raise ValueError("DEEPSEEK_API_KEY not found in environment or auth.json.")
 
-    models_to_try = [preferred_model, "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"]
+    models_to_try = ([preferred_model] if preferred_model else []) + _registered_models_for("deepseek")
     seen = set()
-    models_to_try = [x for x in models_to_try if not (x in seen or seen.add(x))]
+    models_to_try = [x for x in models_to_try if x and not (x in seen or seen.add(x))]
+    if not models_to_try:
+        raise ValueError("No DeepSeek models registered in custom_providers.json.")
 
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-    url = f"{base_url}/chat/completions"
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "")
+    if not base_url:
+        try:
+            from api.managers import model_manager
+            base_url = model_manager._get_base_url("deepseek") or ""
+        except Exception:
+            base_url = ""
+    if not base_url:
+        raise ValueError("No base_url configured for the 'deepseek' provider.")
+    url = f"{base_url.rstrip('/')}/chat/completions"
 
     last_error = None
     for model in models_to_try:

@@ -79,76 +79,10 @@ class ModelProfile:
 # Default Model Profiles
 # ---------------------------------------------------------------------------
 
-_DEFAULT_PROFILES: list[ModelProfile] = [
-    # ── MiniMax Family ──
-    ModelProfile(
-        model_id="MiniMax-M3", provider="minimax", display_name="MiniMax M3",
-        cost_per_1m_input=0.30, cost_per_1m_output=1.20,
-        context_window=128000, avg_latency_rank=2,
-        strengths=["code", "reasoning", "creative"],
-        max_output_tokens=4096,
-        base_url="https://api.minimax.io/anthropic",
-    ),
-    ModelProfile(
-        model_id="MiniMax-M2.7", provider="minimax", display_name="MiniMax M2.7",
-        cost_per_1m_input=0.15, cost_per_1m_output=0.60,
-        context_window=128000, avg_latency_rank=3,
-        strengths=["code", "fast"],
-        max_output_tokens=4096,
-        base_url="https://api.minimax.io/anthropic",
-    ),
-    ModelProfile(
-        model_id="MiniMax-M2.5", provider="minimax", display_name="MiniMax M2.5",
-        cost_per_1m_input=0.10, cost_per_1m_output=0.40,
-        context_window=131072, avg_latency_rank=1,
-        strengths=["fast"],
-        max_output_tokens=4096,
-        base_url="https://api.minimax.io/anthropic",
-    ),
-    ModelProfile(
-        model_id="MiniMax-M2.1", provider="minimax", display_name="MiniMax M2.1",
-        cost_per_1m_input=0.05, cost_per_1m_output=0.20,
-        context_window=32768, avg_latency_rank=1,
-        strengths=["fast"],
-        max_output_tokens=4096,
-        base_url="https://api.minimax.io/anthropic",
-    ),
-
-    # ── DeepSeek Family ──
-    ModelProfile(
-        model_id="deepseek-chat", provider="deepseek", display_name="DeepSeek Chat (V3/V4)",
-        cost_per_1m_input=0.14, cost_per_1m_output=0.28,
-        context_window=128000, avg_latency_rank=3,
-        strengths=["code", "reasoning", "creative"],
-        max_output_tokens=8192,
-        base_url="https://api.deepseek.com/v1",
-    ),
-    ModelProfile(
-        model_id="deepseek-v4-pro", provider="deepseek", display_name="DeepSeek V4 Pro",
-        cost_per_1m_input=0.30, cost_per_1m_output=1.20,
-        context_window=128000, avg_latency_rank=3,
-        strengths=["code", "reasoning"],
-        max_output_tokens=8192,
-        base_url="https://api.deepseek.com/v1",
-    ),
-    ModelProfile(
-        model_id="deepseek-v4-flash", provider="deepseek", display_name="DeepSeek V4 Flash",
-        cost_per_1m_input=0.10, cost_per_1m_output=0.20,
-        context_window=128000, avg_latency_rank=1,
-        strengths=["code", "reasoning", "fast"],
-        max_output_tokens=8192,
-        base_url="https://api.deepseek.com/v1",
-    ),
-    ModelProfile(
-        model_id="deepseek-reasoner", provider="deepseek", display_name="DeepSeek Reasoner (R1)",
-        cost_per_1m_input=0.55, cost_per_1m_output=2.19,
-        context_window=65536, avg_latency_rank=5,
-        strengths=["reasoning", "math", "logic"],
-        max_output_tokens=16384,
-        base_url="https://api.deepseek.com/v1",
-    ),
-
-]
+# No hardcoded model profiles. All profiles are loaded dynamically from
+# custom_providers.json via model_manager.get_available_models()
+# (see DynamicModelSelector._load_custom_profiles).
+_DEFAULT_PROFILES: list[ModelProfile] = []
 
 
 # ---------------------------------------------------------------------------
@@ -801,23 +735,18 @@ class DynamicModelSelector:
         # Score all eligible models
         scored = []
         allowed = get_allowed_providers()
-        # Collect known providers (hardcoded + custom + presets)
-        _known_providers = {"minimax", "deepseek", "zyloo"}
+        # Collect known providers dynamically from the single source of truth
+        # (custom_providers.json via model_manager) — no hardcoded provider list.
+        _known_providers = set()
         try:
-            import json as _json
-            from pathlib import Path as _Path
-            _cp = _Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
-            if _cp.exists():
-                _data = _json.loads(_cp.read_text(encoding='utf-8-sig'))
-                # Include custom providers
-                for _pn in _data.get('providers', {}):
-                    _known_providers.add(_pn)
-                # Include preset providers that have models defined
-                for _pn, _pcfg in _data.get('presets', {}).items():
-                    if isinstance(_pcfg, dict) and _pcfg.get('models'):
-                        _known_providers.add(_pn)
+            from api.managers.model_manager import model_manager as _mm
+            for _g in _mm.get_available_models():
+                _pk = _g.get('provider_key') or _g.get('provider')
+                if _pk:
+                    _known_providers.add(_pk)
         except Exception:
-            pass
+            # Fallback: trust the providers of already-loaded profiles
+            _known_providers = {p.provider for p in self._profiles.values() if p.provider}
 
         for model_id, profile in self._profiles.items():
             if allowed is not None:
@@ -861,34 +790,19 @@ class DynamicModelSelector:
             })
         
         # Safety net: ONLY when the scored chain is empty (no eligible model
-        # matched). Previously this force-appended deepseek + minimax on every
-        # call, which overrode the user's registered providers. Now the chain
-        # reflects the actual scored/selected models; the fallback only kicks
-        # in to guarantee a non-empty chain.
-        if not chain:
-            ds_profile = self._profiles.get("deepseek-chat")
-            if ds_profile:
-                chain.append({
-                    "model": "deepseek-chat",
-                    "provider": "deepseek",
-                    "api_key": self._resolve_api_key("deepseek"),
-                    "base_url": ds_profile.base_url,
-                    "_selector_score": 0.0,
-                    "_breakdown": {},
-                    "_cost": ds_profile.cost_per_1m_input
-                })
-
-            mm_profile = self._profiles.get("MiniMax-M3")
-            if mm_profile:
-                chain.append({
-                    "model": "MiniMax-M3",
-                    "provider": "minimax",
-                    "api_key": self._resolve_api_key("minimax"),
-                    "base_url": mm_profile.base_url,
-                    "_selector_score": 0.0,
-                    "_breakdown": {},
-                    "_cost": mm_profile.cost_per_1m_input
-                })
+        # matched). Picks the first available profile dynamically — no
+        # hardcoded model fallback.
+        if not chain and self._profiles:
+            first_profile = next(iter(self._profiles.values()))
+            chain.append({
+                "model": first_profile.model_id,
+                "provider": first_profile.provider,
+                "api_key": self._resolve_api_key(first_profile.provider),
+                "base_url": first_profile.base_url,
+                "_selector_score": 0.0,
+                "_breakdown": {},
+                "_cost": first_profile.cost_per_1m_input
+            })
         
         context_info = {
             "languages": task_context.get("languages", []),

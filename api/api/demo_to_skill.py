@@ -1569,9 +1569,9 @@ def _call_llm_direct(prompt: str, system_instruction: str = "",
     else:
         try:
             from api.config import DEFAULT_MODEL
-            model_id = DEFAULT_MODEL or os.environ.get("DEFAULT_MODEL", "minimax-m3")
+            model_id = DEFAULT_MODEL or os.environ.get("DEFAULT_MODEL", "")
         except ImportError:
-            model_id = os.environ.get("DEFAULT_MODEL", "minimax-m3")
+            model_id = os.environ.get("DEFAULT_MODEL", "")
 
     # Resolve provider from the model_id using ModelManager
     provider_id = None

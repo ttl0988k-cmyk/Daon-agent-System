@@ -6,25 +6,11 @@ import urllib.error
 import ssl
 from pathlib import Path
 
-# ── Known provider presets with base URLs ──
-# These are ONLY first-run seed defaults (used when custom_providers.json does not
-# exist yet). Once the file exists, it is the SINGLE SOURCE OF TRUTH and these
-# hardcoded values are never merged back in — so deleting a provider in the UI
-# stays deleted. Local/self-hosted backends (Ollama / LM Studio / "local") are
-# intentionally NOT seeded: the user manages those explicitly via the provider UI.
-_PROVIDER_PRESETS = {
-    'openai':      {'base_url': 'https://api.openai.com/v1',           'label': 'OpenAI'},
-    'deepseek':    {'base_url': 'https://api.deepseek.com/v1',         'label': 'DeepSeek'},
-    'minimax':     {'base_url': 'https://api.minimax.io/v1',           'label': 'MiniMax'},
-    'anthropic':   {'base_url': 'https://api.anthropic.com/v1',        'label': 'Anthropic'},
-    'google':      {'base_url': 'https://generativelanguage.googleapis.com/v1beta', 'label': 'Google'},
-    'openrouter':  {'base_url': 'https://openrouter.ai/api/v1',       'label': 'OpenRouter'},
-    'together':    {'base_url': 'https://api.together.xyz/v1',        'label': 'Together AI'},
-    'groq':        {'base_url': 'https://api.groq.com/openai/v1',     'label': 'Groq'},
-    'xai':         {'base_url': 'https://api.x.ai/v1',                'label': 'xAI'},
-    'zhipu':       {'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'label': 'ZhipuAI'},
-    'dashscope':   {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'label': 'Alibaba Cloud (DashScope/Qwen)'},
-}
+# ── Known provider presets ──
+# No hardcoded provider presets. Providers are registered by the user via the
+# provider UI (Settings → Providers) and stored in custom_providers.json,
+# which is the SINGLE SOURCE OF TRUTH for providers, base URLs, and models.
+_PROVIDER_PRESETS = {}
 
 # ── File path for custom providers ──
 def _get_custom_providers_path() -> Path:
@@ -93,18 +79,10 @@ def _save_custom_providers(providers: dict) -> None:
         raise RuntimeError(f"Cannot save provider data: {e}")
 
 
-# ── Known hidden models ─────────────────────────────────────────────────
-# Some providers omit models from their OpenAI-compatible /models endpoint
-# (e.g. Alibaba Token Plan omits video models like HappyHorse). Map of
-# base_url substring → extra models to merge into auto-detect results so
-# re-fetching never loses them.
-_KNOWN_HIDDEN_MODELS: Dict[str, List[Dict[str, str]]] = {
-    'aliyuncs.com': [
-        {'id': 'happyhorse-1.1-t2v', 'label': 'HappyHorse 1.1 T2V (영상 생성)', 'type': 'video'},
-        {'id': 'happyhorse-1.1-i2v', 'label': 'HappyHorse 1.1 I2V (영상 생성)', 'type': 'video'},
-        {'id': 'happyhorse-1.1-r2v', 'label': 'HappyHorse 1.1 R2V (영상 생성)', 'type': 'video'},
-    ],
-}
+# ── Hidden models ───────────────────────────────────────────────────────
+# No hardcoded hidden-model list. If a provider's /models endpoint omits
+# models, add them manually via the provider UI — they are persisted in
+# custom_providers.json (the single source of truth) and survive re-fetches.
 
 
 class ModelManager:
@@ -260,16 +238,6 @@ class ModelManager:
                     if isinstance(item, dict) and 'id' in item:
                         mid = item['id']
                         models.append({'id': mid, 'label': item.get('display_name', mid), 'type': self._infer_model_type(mid)})
-
-        # Supplement with known hidden models that the /models endpoint omits
-        _lower_url = (base_url or '').lower()
-        for pattern, hidden in _KNOWN_HIDDEN_MODELS.items():
-            if pattern in _lower_url:
-                existing_ids = {m.get('id') for m in models}
-                for hm in hidden:
-                    if hm['id'] not in existing_ids:
-                        models.append(dict(hm))
-                break
 
         return models
 

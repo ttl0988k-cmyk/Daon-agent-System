@@ -839,8 +839,8 @@ MCP_PRESETS = {
     'playwright': {
         'label': '🎭 플레이라이트(Playwright) MCP',
         'command': 'npx',
-        'args': ['-y', '@playwright/mcp'],
-        'description': 'Playwright를 이용한 향상된 브라우저 제어 및 자동화',
+        'args': ['-y', '@playwright/mcp', '--cdp-endpoint', 'http://127.0.0.1:9222'],
+        'description': 'Playwright를 이용한 향상된 브라우저 제어 및 자동화 (내부 브라우저 CDP 9222 연결)',
     },
     'memory': {
         'label': '🧠 메모리(Memory) MCP',

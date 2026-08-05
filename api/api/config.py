@@ -229,7 +229,22 @@ def _get_session_agent_lock(session_id: str) -> threading.Lock:
 # =============================================================================
 # Model constants
 # =============================================================================
-DEFAULT_MODEL = _load_config_value('model.default', None, "minimax-m3") # fallback default
+def _resolve_default_model_fallback() -> str:
+    """Dynamically resolve the fallback default model: the first registered
+    model from custom_providers.json (via model_manager). No hardcoded names."""
+    try:
+        from api.managers.model_manager import model_manager
+        for g in model_manager.get_available_models():
+            for m in g.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid:
+                    return mid
+    except Exception:
+        pass
+    return ""
+
+
+DEFAULT_MODEL = _load_config_value('model.default', None, None) or _resolve_default_model_fallback()
 
 
 # =============================================================================

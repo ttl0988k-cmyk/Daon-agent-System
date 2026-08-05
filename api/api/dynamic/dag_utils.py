@@ -38,7 +38,7 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
     Phase 3: When role + task context is available, delegates to DynamicModelSelector
     for multi-factor scoring. Falls back to static chain when context is insufficient.
     """
-    from api.dynamic.auth import _get_deepseek_api_key, _get_minimax_api_key
+    # API keys are resolved dynamically per provider in build_config() below.
 
     # --- Try DynamicModelSelector first (Phase 3) ---
     if role and task:
@@ -63,42 +63,29 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
         except Exception as e:
             _log.info("DynamicModelSelector unavailable, using static chain: %s", e)
 
-    # --- Fallback: Static model enforcement (Phase 1-2) ---
+    # --- Fallback: dynamic chain from custom_providers.json (no hardcoded models) ---
     # Accept ANY model the CEO assigned — user-registered providers are valid.
-    # Only fall back to MiniMax-M3 when no model was specified at all.
-    if not preferred_model:
-        preferred_model = "MiniMax-M3"
+    chain_configs: list[dict] = []
+    seen_models: set[str] = set()
 
-    # Need to load resolve_model_provider dynamically
     try:
         from api.managers import model_manager
         resolve_model_provider = model_manager.resolve_model_provider
     except ImportError:
         def resolve_model_provider(m): return m, 'custom', None
 
-    chain_configs: list[dict] = []
-    seen_models: set[str] = set()
-
     def build_config(m_id: str) -> dict:
         m, p, b = resolve_model_provider(m_id)
         if not p:
             p = 'custom'
         key: str | None = None
-        if p == 'openrouter':
-            key = os.getenv('OPENROUTER_API_KEY')
-        elif p == 'deepseek':
-            key = os.getenv('DEEPSEEK_API_KEY') or _get_deepseek_api_key()
-        elif p == 'minimax' or p == 'minimax-cn':
-            key = os.getenv('MINIMAX_API_KEY') or os.getenv('MINIMAX_CN_API_KEY') or _get_minimax_api_key()
-        elif p == 'google' or p == 'gemini':
-            key = os.getenv('GOOGLE_API_KEY')
-        elif p == 'openai':
-            key = os.getenv('OPENAI_API_KEY')
-        elif p == 'anthropic':
-            key = os.getenv('ANTHROPIC_API_KEY')
-        elif p == 'nvidia':
-            key = os.getenv('NVIDIA_API_KEY')
-
+        try:
+            from api.dynamic.auth import _resolve_key_from_pool
+            key = _resolve_key_from_pool(p)
+        except Exception:
+            key = None
+        if not key:
+            key = os.getenv(f'{p.upper()}_API_KEY')
         return {"model": m, "provider": p, "base_url": b, "api_key": key}
 
     # 1. Preferred model (if any)
@@ -108,45 +95,20 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             chain_configs.append(cfg)
             seen_models.add(preferred_model)
 
-    # 2. DeepSeek fallback chain
-    ds_key = os.getenv('DEEPSEEK_API_KEY') or _get_deepseek_api_key()
-    if ds_key:
-        for m in ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"]:
-            if m not in seen_models:
-                chain_configs.append({"model": m, "provider": "deepseek", "base_url": "https://api.deepseek.com/v1", "api_key": ds_key})
-                seen_models.add(m)
-
-    # 3. MiniMax fallback chain
-    mm_key = os.getenv('MINIMAX_API_KEY') or os.getenv('MINIMAX_CN_API_KEY') or _get_minimax_api_key()
-    if mm_key:
-        for m in ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5"]:
-            if m not in seen_models:
-                chain_configs.append({"model": m, "provider": "minimax", "base_url": "https://api.minimax.io/anthropic", "api_key": mm_key})
-                seen_models.add(m)
-
-    # 4. Google/Gemini fallback chain
+    # 2. All registered models (dynamic — from custom_providers.json)
     try:
-        from api.dynamic.auth import _resolve_key_from_pool
-        g_key = _resolve_key_from_pool("google")
-        if g_key:
-            for m in ["gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview"]:
-                if m not in seen_models:
-                    chain_configs.append({"model": m, "provider": "google", "base_url": "https://generativelanguage.googleapis.com/v1beta", "api_key": g_key})
-                    seen_models.add(m)
-    except Exception:
-        pass
-
-    # 5. OpenRouter fallback chain
-    try:
-        from api.dynamic.auth import _resolve_key_from_pool
-        or_key = _resolve_key_from_pool("openrouter")
-        if or_key:
-            for m in ["tencent/hy3:free", "openai/gpt-oss-120b:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]:
-                if m not in seen_models:
-                    chain_configs.append({"model": m, "provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "api_key": or_key})
-                    seen_models.add(m)
-    except Exception:
-        pass
+        from api.managers import model_manager as _mm
+        for group in _mm.get_available_models():
+            for m in group.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if not mid or mid in seen_models:
+                    continue
+                cfg = build_config(mid)
+                if cfg['api_key'] or cfg['provider'] == 'custom':
+                    chain_configs.append(cfg)
+                    seen_models.add(mid)
+    except Exception as e:
+        _log.info("Dynamic fallback chain resolution failed: %s", e)
 
     return chain_configs
 
