@@ -856,12 +856,13 @@ def record_session_artifact(session_id: str, artifact_type: str, path: str,
         return None
 
 
-def get_context_block(max_facts: int = 20, query_text: str = '',
+def get_context_block(max_facts: int = 3, query_text: str = '',
                       session_id: str = '') -> str:
     """Phase 3: 관련성 랭킹 주입. 실패 시 빈 문자열.
 
     query_text에서 키워드를 추출해 facts를 랭킹 정렬 후 상위 max_facts건 주입.
     주입 시 fact_usage에 기록(Phase 2-B).
+    Token 절감을 위해 max_facts 기본값을 3으로 제한 (Top 3 핵심 fact만).
     내부 메타키('_' 접두사)는 주입에서 제외.
     """
     try:
@@ -888,7 +889,7 @@ def get_context_block(max_facts: int = 20, query_text: str = '',
         # Phase 3-D: 카테고리별 쿼터
         selected = []
         cat_counts = {}
-        cat_quota = {'general': max(10, max_facts - 5), 'preference': 3, 'project': 2}
+        cat_quota = {'general': max(3, max_facts - 1), 'preference': 2, 'project': 1}
         for f, sc in scored:
             if len(selected) >= max_facts:
                 break
@@ -965,7 +966,7 @@ def record_chat_activity() -> dict:
     return {'is_wakeup': is_wakeup, 'elapsed_seconds': elapsed, 'elapsed_hours': round(elapsed / 3600.0, 1)}
 
 
-def build_memory_prompt(max_facts: int = 20, query_text: str = '',
+def build_memory_prompt(max_facts: int = 3, query_text: str = '',
                         session_id: str = '') -> str:
     """시스템 프롬프트에 주입할 장기 기억 블록을 만든다.
 
@@ -1005,9 +1006,17 @@ def build_memory_prompt(max_facts: int = 20, query_text: str = '',
 # 세션/채팅/배치를 넘어 영속된다.
 import re as _re
 
-# [MSG to=셜록 cc=빌]본문[/MSG] 형태의 블록을 파싱
+# [MSG to=X task=Y priority=Z context=a,b,c]Body[/MSG] 형태의 블록을 파싱.
+# 구조화된 헤더(to, task, priority, context)를 파싱하고 본문을 분리.
+# 예: [MSG to=Developer task=implement_auth priority=high context=spec.md,issue_102]
+#       spec.md를 읽고 인증을 구현해줘
+#     [/MSG]
 _MSG_BLOCK_RE = _re.compile(
-    r'\[MSG\s+to=([^\]\s]+)(?:\s+cc=([^\]]+))?\](.*?)\[/MSG\]',
+    r'\[MSG\s+to=([^\]\s]+)'
+    r'(?:\s+task=([^\]\s]+))?'
+    r'(?:\s+priority=([^\]\s]+))?'
+    r'(?:\s+context=([^\]]+?))?'
+    r'\](.*?)\[/MSG\]',
     _re.DOTALL | _re.IGNORECASE,
 )
 
@@ -1110,31 +1119,69 @@ def mark_inbox_read(recipient: str, up_to_id: Optional[int] = None) -> int:
 
 def format_inbox_prompt(recipient: str, limit: int = 20, mark_read: bool = True) -> str:
     """시스템 프롬프트에 주입할 '받은 메시지함' 텍스트. 읽지 않은 메시지만.
+
+    구조화된 inbox 포맷 — 토큰 절감을 위해 메시지 헤더(to, from, task, context,
+    priority)와 본문을 분리해 표시. LLM이 파일 참조(context)를 직접 처리한다.
     없으면 빈 문자열. mark_read=True면 주입 후 해당 메시지를 읽음 처리."""
     try:
         msgs = get_agent_inbox(recipient, unread_only=True, limit=limit)
         if not msgs:
             return ''
-        # 오래된 순서로 정렬해 대화 흐름을 자연스럽게
         msgs = list(reversed(msgs))
-        lines = [f"[에이전트 수신함 — {recipient}에게 도착한 메시지 {len(msgs)}건]"]
         max_id = 0
+        parts = [f"=== AGENT MESSAGES ({len(msgs)} unread for {recipient}) ==="]
+
         for m in msgs:
-            cc = m.get('cc')
-            cc_txt = f" (참조: {cc})" if cc else ''
-            lines.append(f"- 발신 {m.get('sender')}{cc_txt}: {m.get('body')}")
+            sender = m.get('sender', 'unknown')
+            body = m.get('body', '')
+            # Parse structured header from body (set by parse_and_dispatch_messages)
+            header_lines = []
+            content_lines = []
+            in_content = False
+            for line in body.split('\n'):
+                stripped = line.strip()
+                if stripped == '---':
+                    in_content = True
+                    continue
+                if in_content:
+                    content_lines.append(line)
+                else:
+                    header_lines.append(line)
+            header = '\n'.join(header_lines)
+            content = '\n'.join(content_lines)
+            if body and not header_lines:
+                # Fallback for legacy unformatted messages
+                header = f"from: {sender}"
+                content = body
+
+            msg_block = [f"--- From: {sender} ---"]
+            if header:
+                msg_block.append(header)
+            if content:
+                msg_block.append(f"---\n{content}")
+            parts.append('\n'.join(msg_block))
             if m.get('id', 0) > max_id:
                 max_id = m['id']
+
+        result = '\n\n'.join(parts)
         if mark_read and max_id:
             mark_inbox_read(recipient, up_to_id=max_id)
-        return '\n'.join(lines)
+        return result
     except Exception:
         return ''
 
 
 def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = None) -> tuple:
-    """에이전트 출력 텍스트에서 [MSG to=X cc=Y]본문[/MSG] 블록을 추출해 발송하고,
-    블록을 제거한 정제 텍스트와 발송 건수를 반환. (cleaned_text, sent_count)"""
+    """에이전트 출력 텍스트에서 [MSG to=X task=Y priority=Z context=a,b]본문[/MSG]
+    블록을 추출해 발송하고, 구조화된 수신함 포맷으로 변환 후 발송 건수를 반환.
+
+    새 포맷 예:
+      [MSG to=Developer task=implement_auth priority=high context=spec.md,issue_102]
+      spec.md를 읽고 인증 기능을 구현해줘.
+      [/MSG]
+
+    수신 에이전트의 inbox는 구조화된 헤더(to, from, task, context, priority)와
+    본문을 분리해 표시하므로 토큰을 절감하고 LLM이 파일 참조를 직접 처리한다."""
     try:
         if not text:
             return (text or '', 0)
@@ -1143,10 +1190,30 @@ def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = 
         def _sub(match):
             nonlocal sent
             to = match.group(1)
-            cc = match.group(2)
-            body = (match.group(3) or '').strip()
-            if to and body:
-                if send_agent_message(sender, to, body, cc=cc, run_id=run_id):
+            task = match.group(2) or ''
+            priority = match.group(3) or ''
+            context = match.group(4) or ''
+            body = (match.group(5) or '').strip()
+
+            # 구조화된 헤더를 본문에 선행시켜 수신 에이전트가 파싱 가능하도록 함.
+            # 수신 함 inbox rendering은 이 헤더를 추출해 깔끔하게 표시한다.
+            header_parts = [f"from: {sender}", f"to: {to}"]
+            if task:
+                header_parts.append(f"task: {task}")
+            if priority:
+                header_parts.append(f"priority: {priority}")
+            if context:
+                ctx_list = [c.strip() for c in context.split(',') if c.strip()]
+                if ctx_list:
+                    header_parts.append("context:")
+                    for c in ctx_list:
+                        header_parts.append(f"  - {c}")
+            structured_body = '\n'.join(header_parts)
+            if body:
+                structured_body += '\n---\n' + body
+
+            if to and structured_body:
+                if send_agent_message(sender, to, structured_body, cc=None, run_id=run_id):
                     sent += 1
             return ''  # 출력에서 메시지 블록은 제거
 
