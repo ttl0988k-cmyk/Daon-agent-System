@@ -352,10 +352,20 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     with STREAMS_LOCK:
         CANCEL_FLAGS[stream_id] = cancel_event
 
+    # Keep the terminal payload outside the queue-draining cleanup path below.
+    # The SSE handler and this worker consume the same queue concurrently.  If
+    # the worker removes/drains the queue immediately after putting ``done``,
+    # the SSE handler can miss the terminal event and wait forever on its local
+    # queue reference, leaving the WebUI input locked until its watchdog fires.
+    _terminal_done_data = None
+
     def put(event, data):
+        nonlocal _terminal_done_data
         # If cancelled, drop all further events except the cancel event itself
         if cancel_event.is_set() and event not in ('cancel', 'error'):
             return
+        if event == 'done':
+            _terminal_done_data = data
         try:
             q.put_nowait((event, data))
         except Exception:
@@ -1843,15 +1853,12 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
         with STREAMS_LOCK:
             _q = STREAMS.pop(stream_id, None)
             CANCEL_FLAGS.pop(stream_id, None)
-        # Drain the queue to find the last 'done' event
-        if _q is not None:
-            while True:
-                try:
-                    evt, data = _q.get_nowait()
-                    if evt == 'done':
-                        _cached_done = data
-                except queue.Empty:
-                    break
+        # Do not drain the queue here.  The SSE handler may already be blocked
+        # in q.get() and must receive the terminal event that was enqueued by
+        # put().  Draining it here creates a race where the browser remains in
+        # the "cancel"/busy state forever.  The captured payload is sufficient
+        # for late EventSource reconnects.
+        _cached_done = _terminal_done_data
         if _cached_done is not None:
             with _COMPLETED_STREAMS_LOCK:
                 _COMPLETED_STREAMS[stream_id] = (_cached_done, time.time())

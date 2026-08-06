@@ -387,7 +387,7 @@ function renderMessages(messages, toolCalls) {
             <div>Output Snippet:</div>
             <pre>${tool.snippet}</pre>
           `;
-          item.addEventListener('click', function() {
+          item.addEventListener('click', function () {
             detailDiv.style.display = detailDiv.style.display === 'none' ? 'block' : 'none';
           });
           item.appendChild(detailDiv);
@@ -505,7 +505,9 @@ async function _executeAgentStream(displayText, uploaded) {
 
   // Set UI state to active
   State._userCancelledStream = false;
-  setChatStatus('thinking', '생각 중...');
+  // "thinking" is the broad transport state; use explicit wording here so
+  // it is not confused with the separate 💭 reasoning card below.
+  setChatStatus('thinking', '에이전트 작업 시작 중...');
   $('sendPromptBtn').disabled = true;
   $('cancelStreamBtn').style.display = 'block';
 
@@ -522,6 +524,7 @@ async function _executeAgentStream(displayText, uploaded) {
   // dedup guard: 두 번 이상 호출되더라도 cleanupStreamState()는 한 번만 실행
   let _streamFinished = false;
   let _idleTimer = null;
+  let _startWatchdog = null;
   // 실행 중인 도구 수. 도구가 돌아가는 동안에는 idle timer가 스트림을
   // 조기 종료하지 않도록 억제한다 (MCP 도구는 2초 이상 소요 가능).
   let _activeTools = 0;
@@ -605,6 +608,7 @@ async function _executeAgentStream(displayText, uploaded) {
     if (_streamFinished) return;
     _streamFinished = true;
     clearTimeout(_idleTimer);
+    clearTimeout(_startWatchdog);
     // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
     try { if (typeof _stopReasoningTimer === 'function') _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
@@ -640,6 +644,20 @@ async function _executeAgentStream(displayText, uploaded) {
     // #33 fix: increase timeout to 45s for /api/chat/start. When the system is busy
     // (e.g. browser operations in progress, previous stream cancel cleanup, session
     // save I/O), the backend handler may need more than the default 15s to respond.
+    // /api/chat/start normally returns immediately, but if the server is
+    // overloaded the request can remain pending before a stream_id exists.
+    // In that window the normal cancel button cannot call the backend and the
+    // input would stay disabled forever.  Fail closed and restore the UI.
+    _startWatchdog = setTimeout(function () {
+      if (_streamFinished) return;
+      console.warn('[SSE-DIAG] chat/start watchdog expired; restoring input UI');
+      finishStream('start_watchdog');
+      if (asstBubble && asstBubble.parentNode) {
+        asstBubble.insertAdjacentHTML('beforeend',
+          '<div class="text-danger" style="margin-top:8px;">[서버 응답이 지연되어 입력을 다시 활성화했습니다]</div>');
+      }
+    }, 60000);
+
     const startRes = await api('/api/chat/start', {
       method: 'POST',
       timeout: 45000,
@@ -654,6 +672,21 @@ async function _executeAgentStream(displayText, uploaded) {
         media_options: buildMediaOptions()
       }
     });
+
+    clearTimeout(_startWatchdog);
+    _startWatchdog = null;
+
+    // The watchdog may have released the UI while the HTTP request was still
+    // completing.  Do not attach a new SSE stream in that stale request.
+    if (_streamFinished) {
+      if (startRes && startRes.stream_id) {
+        api('/api/chat/cancel', {
+          method: 'POST',
+          body: { stream_id: startRes.stream_id }
+        }).catch(() => { });
+      }
+      return;
+    }
 
     const streamId = startRes.stream_id;
     State.currentStreamId = streamId;
@@ -711,6 +744,7 @@ async function _executeAgentStream(displayText, uploaded) {
     sse.addEventListener('reasoning', (e) => {
       try {
         const data = JSON.parse(e.data);
+        setChatStatus('thinking', '모델 추론 중...');
         _reasoningText += data.text || '';
         if (!_reasoningCard) {
           _reasoningStartTs = Date.now();
@@ -744,6 +778,7 @@ async function _executeAgentStream(displayText, uploaded) {
 
     sse.addEventListener('token', (e) => {
       const data = JSON.parse(e.data);
+      setChatStatus('thinking', '최종 답변 생성 중...');
       incomingText += data.text;
       asstBubble.innerHTML = renderMd(incomingText);
       // 추론이 끝났으면 카드 제목 갱신 (경과 초 포함)
@@ -878,7 +913,9 @@ async function _executeAgentStream(displayText, uploaded) {
       const toolName = data.name || 'unknown';
       const toolEvent = data.event || 'tool.started';
       const isStarted = toolEvent === 'tool.started';
-      setChatStatus('tool', `도구 ${isStarted ? '실행 중' : '완료'}: ${toolName}...`);
+      setChatStatus('tool', isStarted
+        ? `도구 실행 중: ${toolName}...`
+        : `도구 실행 완료: ${toolName}`);
 
       // ── 도구 실행 상태 추적: idle timer 조기 종료 방지 ──
       // tool.started → 실행 중 카운트 증가 (idle timer 억제)
@@ -891,7 +928,9 @@ async function _executeAgentStream(displayText, uploaded) {
           // 모든 도구가 끝나면 챗창 상태를 즉시 "응답 생성 중"으로 복귀시킨다.
           // 다음 토큰이 올 때까지 상태표시가 "도구 완료"에 머물러
           // 원상복구가 늦어 보이는 문제를 방지한다.
-          setChatStatus('thinking', '응답 생성 중...');
+          setChatStatus('thinking', '최종 답변 생성 중...');
+        } else {
+          setChatStatus('tool', '도구 완료 — 다음 작업 준비 중...');
         }
       }
 

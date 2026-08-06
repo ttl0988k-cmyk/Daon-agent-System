@@ -6,7 +6,7 @@
 # Run:  powershell -ExecutionPolicy Bypass -File install-portable.ps1
 
 $ErrorActionPreference = 'Stop'
-$src = Join-Path $PSScriptRoot 'dist\win-unpacked'
+$src = Join-Path $PSScriptRoot 'release\win-unpacked'
 $dst = Join-Path $env:LOCALAPPDATA 'Programs\DAON Agent System'
 
 if (-not (Test-Path (Join-Path $src 'DAON Agent System.exe'))) {
