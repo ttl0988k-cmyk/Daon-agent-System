@@ -1033,6 +1033,41 @@ async function _executeAgentStream(displayText, uploaded) {
       }
     });
 
+    // ── Context Compression: session ID rotated — update frontend state ──
+    // When context exceeds threshold, the agent creates a new session and the
+    // backend renames the session file. We must update State.activeSessionId
+    // so subsequent messages are sent to the correct (new) session.
+    sse.addEventListener('compressed', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const oldSid = data.old_session_id;
+        const newSid = data.new_session_id;
+        console.log('[SSE] Context compressed: session', oldSid, '→', newSid);
+
+        // Update the active session ID so subsequent messages use the new session
+        if (newSid && State.activeSessionId === oldSid) {
+          State.activeSessionId = newSid;
+          console.log('[SSE] Updated State.activeSessionId to:', newSid);
+        }
+
+        // Update session list if the session is tracked locally
+        const localSess = State.sessions.find(x => x.session_id === oldSid);
+        if (localSess) {
+          localSess.session_id = newSid;
+        }
+
+        // Show user notification about context compression
+        if (asstBubble && asstBubble.parentNode) {
+          asstBubble.insertAdjacentHTML('beforeend',
+            '<div class="text-muted" style="margin-top:8px;font-size:12px;">' +
+            (data.message || 'Context auto-compressed to continue the conversation') +
+            '</div>');
+        }
+      } catch (err) {
+        console.error('[SSE] compressed handler error:', err);
+      }
+    });
+
     sse.addEventListener('done', (e) => {
       console.log('[SSE-DIAG] ✅ done event received');
       finishStream('done');

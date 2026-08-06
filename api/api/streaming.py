@@ -1639,6 +1639,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # continues writing to the correct session file.
           _agent_sid = getattr(agent, 'session_id', None)
           _compressed = False
+          _old_sid = session_id  # always defined so we can use it in the compressed event
           if _agent_sid and _agent_sid != session_id:
               old_sid = session_id
               new_sid = _agent_sid
@@ -1660,10 +1661,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _compressor = getattr(agent, 'context_compressor', None)
               if _compressor and getattr(_compressor, 'compression_count', 0) > 0:
                   _compressed = True
-          # Notify the frontend that compression happened
+          # Notify the frontend that compression happened — include new_session_id
+          # so the frontend can update State.activeSessionId to avoid "Session not found"
+          # on the next message (the old session_id file was renamed).
           if _compressed:
+              _new_sid = s.session_id
               put('compressed', {
                   'message': 'Context auto-compressed to continue the conversation',
+                  'old_session_id': _old_sid,
+                  'new_session_id': _new_sid,
               })
 
           # Stamp 'timestamp' on any messages that don't have one yet
