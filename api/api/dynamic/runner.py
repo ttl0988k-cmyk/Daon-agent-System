@@ -273,6 +273,16 @@ def _run_node_with_retries(
 
                 agent = agent_class(**_agent_kwargs)
                 agent.is_dynamic_runner = True
+                # Chat streaming patches the browser tool to use the existing
+                # Electron WebContentsView through CDP.  Dynamic Harness runs
+                # create agents through this separate runner, so they must
+                # apply the same bridge here as well; otherwise a browser tool
+                # can launch a standalone window over the DAON UI.
+                try:
+                    from api.browser_bridge import patch_browser_tool
+                    patch_browser_tool()
+                except Exception as _browser_bridge_err:
+                    _log.warning("Dynamic Harness browser bridge unavailable: %s", _browser_bridge_err)
                 # 취소 시 in-flight LLM HTTP 요청을 즉시 중단(interrupt)할 수 있도록 등록.
                 if run_id:
                     try:

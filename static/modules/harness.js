@@ -286,6 +286,7 @@ async function runDynamicHarness() {
 
     if (res.run_id) {
       State.harnessRunId = res.run_id;
+      $('cancelHarnessBtn').style.display = 'block';
       logToConsole(`\n🚀 Dynamic Harness 시작됨 (Run ID: ${res.run_id})`, 'info');
       logToConsole(`📋 작업: ${taskText}`, 'info');
       pollHarnessStatus(res.run_id);
@@ -384,6 +385,7 @@ async function pollHarnessStatus(runId) {
       }
 
       if (res.status === 'awaiting_approval') {
+        $('cancelHarnessBtn').style.display = 'block';
         clearInterval(State.harnessPollInterval);
         State.harnessPollInterval = null;
         _showApprovalBanner({
@@ -408,6 +410,7 @@ async function pollHarnessStatus(runId) {
       }
 
       if (res.status === 'clarifying') {
+        $('cancelHarnessBtn').style.display = 'block';
         clearInterval(State.harnessPollInterval);
         State.harnessPollInterval = null;
         _showClarificationUI(runId, res.clarification);
@@ -500,12 +503,23 @@ function _showClarificationUI(runId, clarification) {
   });
 }
 
-function cancelHarness() {
+async function cancelHarness() {
+  const runId = State.harnessRunId;
   if (State.harnessPollInterval) {
     clearInterval(State.harnessPollInterval);
     State.harnessPollInterval = null;
   }
-  logToConsole('\n⏹️ Harness 취소됨', 'info');
+  if (runId) {
+    try {
+      await api(`/api/dynamic/cancel/${encodeURIComponent(runId)}`, { method: 'POST', body: {} });
+      logToConsole('\n⏹️ Harness 취소 요청 완료', 'warning');
+    } catch (err) {
+      logToConsole(`\n⚠️ Harness 취소 요청 실패: ${err.message}`, 'error');
+      // Keep the local UI usable even if the server is unreachable.
+    }
+  } else {
+    logToConsole('\n⏹️ Harness 취소됨', 'info');
+  }
   $('runHarnessBtn').disabled = false;
   $('cancelHarnessBtn').style.display = 'none';
   State.harnessRunId = null;
