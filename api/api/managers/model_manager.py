@@ -7,9 +7,10 @@ import ssl
 from pathlib import Path
 
 # ── Known provider presets ──
-# No hardcoded provider presets. Providers are registered by the user via the
-# provider UI (Settings → Providers) and stored in custom_providers.json,
-# which is the SINGLE SOURCE OF TRUTH for providers, base URLs, and models.
+# No hardcoded provider presets in code. Provider presets (add-provider
+# suggestions in Settings → Providers) live in custom_providers.json under the
+# 'presets' key — the SINGLE SOURCE OF TRUTH. Presets carry only name/base_url/
+# label (no models, no api keys), so they never inject models into the selector.
 _PROVIDER_PRESETS = {}
 
 # ── File path for custom providers ──
