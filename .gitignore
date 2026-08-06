@@ -42,4 +42,9 @@ dist_old_*/
 # Release artifacts — ignore large binaries, keep scripts/README tracked
 release/*.exe
 release/*.zip
+release/*.yml
+release/win-unpacked/
 release/_stage/
+
+# Electron builder config (duplicated from package.json)
+electron-builder.yml
