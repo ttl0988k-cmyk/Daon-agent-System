@@ -117,12 +117,14 @@ def handle_get_sse_stream(handler, parsed) -> bool:
             try:
                 # 15초: 프론트엔드 idle timer(30초)보다 짧게 유지해,
                 # 백엔드가 오래 걸리는 작업(이미지/영상 생성) 중에도
-                # heartbeat comment가 주기적으로 전송되어 연결이 유지된다.
+                # heartbeat가 주기적으로 전송되어 연결이 유지된다.
+                # 주의: SSE 주석(': heartbeat')은 EventSource에서 어떤 이벤트도
+                # dispatch하지 않으므로, 프론트엔드 idle 타이머가 리셋되려면
+                # 반드시 실제 이벤트여야 한다 (plan.md Cause C).
                 event, data = q.get(timeout=15)
             except queue.Empty:
                 try:
-                    handler.wfile.write(b': heartbeat\n\n')
-                    handler.wfile.flush()
+                    _sse(handler, 'heartbeat', {})
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                     break  # client disconnected during heartbeat
                 continue
@@ -167,9 +169,13 @@ def handle_post_chat_start(handler, body) -> bool:
     # Auto-cancel any existing stream for this session so the new message
     # doesn't have to wait for the previous run_conversation() to finish.
     from api.streaming import cancel_session_streams
-    cancel_session_streams(s.session_id)
+    cancelled_previous = cancel_session_streams(s.session_id)
     stream_id = uuid.uuid4().hex
     q = queue.Queue()
+    if cancelled_previous:
+        # 이전 실행 중이던 작업이 자동 취소되었음을 새 스트림으로 안내해,
+        # 사용자가 이전 작업이 왜 멈췄는지 모르게 되는 상황을 방지 (plan.md Cause D).
+        q.put_nowait(('notice', {'message': '새 메시지 전송으로 이전 작업이 자동 취소되었습니다.'}))
     with STREAMS_LOCK:
         STREAMS[stream_id] = q
     planning_mode = body.get('planning_mode', False)

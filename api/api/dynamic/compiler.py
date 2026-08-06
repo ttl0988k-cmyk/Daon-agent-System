@@ -112,7 +112,7 @@ class AgentCompiler:
                 base_prompt = resolved.get("system_prompt", "")
                 env_note = AgentCompiler._get_env_note()
                 messaging_note = AgentCompiler._get_messaging_note()
-                full_prompt = base_prompt + env_note + messaging_note
+                full_prompt = base_prompt + env_note + messaging_note + AgentCompiler._get_browser_note()
                 if skill_content:
                     full_prompt += f"\n\n{skill_content}"
 
@@ -122,6 +122,12 @@ class AgentCompiler:
                 # generate_image/generate_video 도구를 호출할 수 있도록 toolset을 부여한다.
                 if "media-generation" not in enabled_toolsets:
                     enabled_toolsets.append("media-generation")
+                # 내장(공유) 브라우저도 일반 능력으로 부여: 웹 페이지 열람/조작이
+                # 필요한 서브태스크에서 browser_* 도구를 사용할 수 있게 한다.
+                # (브리지 미준비 등 가용성 미충족 시 registry check_fn이
+                #  스키마에서 자동으로 제외하므로 안전하다.)
+                if "browser" not in enabled_toolsets:
+                    enabled_toolsets.append("browser")
                 # Inject MCP tools
                 enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
 
@@ -157,6 +163,8 @@ class AgentCompiler:
             enabled_toolsets: list[str] = ["file", "terminal"]
             # 미디어 생성은 모든 노드의 일반 능력으로 부여 (특정 노드 타입에 한정하지 않음).
             enabled_toolsets.append("media-generation")
+            # 내장(공유) 브라우저도 모든 노드의 일반 능력으로 부여.
+            enabled_toolsets.append("browser")
             enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
 
             if "web_search" in node_type:
@@ -181,7 +189,7 @@ class AgentCompiler:
             env_note = AgentCompiler._get_env_note()
             messaging_note = AgentCompiler._get_messaging_note()
 
-            full_prompt = base_prompt + env_note + messaging_note
+            full_prompt = base_prompt + env_note + messaging_note + AgentCompiler._get_browser_note()
             if skill_content:
                 full_prompt += f"\n\n{skill_content}"
 
@@ -241,6 +249,27 @@ class AgentCompiler:
             "so put only the message inside it; keep your normal answer outside the block.\n"
             "- Use messaging to hand off results, request help, or coordinate — not for content meant "
             "for the user.\n"
+        )
+
+    @staticmethod
+    def _get_browser_note() -> str:
+        """내장(공유) 브라우저 사용 규칙.
+
+        Dynamic Harness 노드는 별도 headless Chromium 창을 띄우지 않고,
+        앱 내장 브라우저 탭(Electron WebContentsView)을 CDP 브리지 경유로
+        공유한다. browser_* 도구가 스키마에 노출되는 경우 이 규칙이
+        에이전트가 내장 브라우저를 우선 사용하도록 유도한다.
+        """
+        return (
+            "\n\n[BUILT-IN BROWSER]\n"
+            "This app has a built-in shared browser: an in-app tab driven over CDP that the "
+            "user can see. When your subtask requires viewing, scraping, or interacting with "
+            "a web page, use the browser tools (browser_navigate, browser_snapshot, "
+            "browser_click, browser_type, browser_scroll, browser_press, browser_console) — "
+            "they operate this built-in tab. Do NOT launch external browsers, and do NOT use "
+            "curl/wget for pages that need rendering or interaction. Workflow: call "
+            "browser_navigate first; the returned snapshot lists interactive elements as @eN "
+            "refs — use those refs with browser_click/browser_type.\n"
         )
 
     @staticmethod

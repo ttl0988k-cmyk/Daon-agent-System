@@ -11,7 +11,8 @@
  */
 
 function showInlineApproval(data, container) {
-    if (!data || data.status !== 'pending') return;
+    // [A] 위험 명령 pending 데이터는 status 필드가 없을 수 있어 type으로도 판별
+    if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
     if (typeof container === 'string') container = document.getElementById(container);
     if (!container) return;
     var sid = (typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null;
@@ -30,6 +31,7 @@ function showInlineApproval(data, container) {
     card.setAttribute('data-preview-id', previewId);
     card.setAttribute('data-session-id', sid);
     card.setAttribute('data-is-plan', isPlan ? '1' : '');
+    card.setAttribute('data-kind', isDangerous ? 'dangerous_command' : 'architect');
     var icon, title, body;
     if (isSkillSave) {
         icon = '\u{1F4BE}';
@@ -38,7 +40,9 @@ function showInlineApproval(data, container) {
     } else if (isDangerous) {
         icon = '\u26A0\uFE0F';
         title = '위험한 명령 - 승인 필요';
-        body = data.description || data.message || '';
+        body = '<div style="margin-bottom:6px;">' + _escInlineApproval(data.description || data.message || '') + '</div>'
+            + '<pre style="margin:0;padding:8px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all;">'
+            + _escInlineApproval(data.command || '') + '</pre>';
     } else if (isPlan) {
         icon = '\u{1F4CB}';
         title = '실행 계획 승인';
@@ -50,6 +54,19 @@ function showInlineApproval(data, container) {
             + '<span style="color:var(--success)">+' + added + '</span> '
             + '<span style="color:var(--danger)">-' + removed + '</span>';
     }
+    var actionsHtml;
+    if (isDangerous) {
+        // [A] 위험 명령: once|session|always|deny 선택지 제공
+        actionsHtml =
+            '<button class="ia-approve-btn" data-choice="once" onclick="handleInlineApproval(true, this)">승인 (1회)</button>'
+            + '<button class="ia-approve-btn" data-choice="session" onclick="handleInlineApproval(true, this)">세션 동안 승인</button>'
+            + '<button class="ia-approve-btn" data-choice="always" onclick="handleInlineApproval(true, this)">항상 승인</button>'
+            + '<button class="ia-reject-btn" data-choice="deny" onclick="handleInlineApproval(false, this)">거절</button>';
+    } else {
+        actionsHtml =
+            '<button class="ia-approve-btn" onclick="handleInlineApproval(true, this)">승인</button>'
+            + '<button class="ia-reject-btn" onclick="handleInlineApproval(false, this)">거절</button>';
+    }
     card.innerHTML =
         '<div class="inline-approval-card-inner">'
         + '<div class="inline-approval-card-header">'
@@ -57,10 +74,7 @@ function showInlineApproval(data, container) {
         + '<span class="inline-approval-card-title">' + title + '</span>'
         + '</div>'
         + '<div class="inline-approval-card-body">' + body + '</div>'
-        + '<div class="inline-approval-card-actions">'
-        + '<button class="ia-approve-btn" onclick="handleInlineApproval(true, this)">승인</button>'
-        + '<button class="ia-reject-btn" onclick="handleInlineApproval(false, this)">거절</button>'
-        + '</div>'
+        + '<div class="inline-approval-card-actions">' + actionsHtml + '</div>'
         + '</div>';
     var existing = document.getElementById('inlineApprovalCard');
     if (existing) existing.remove();
@@ -74,9 +88,34 @@ async function handleInlineApproval(approved, btnEl) {
     var sid = card.getAttribute('data-session-id');
     var previewId = card.getAttribute('data-preview-id');
     var isPlan = card.getAttribute('data-is-plan') === '1';
+    var kind = card.getAttribute('data-kind') || 'architect';
     var actions = card.querySelector('.inline-approval-card-actions');
     if (actions) {
         actions.innerHTML = '<span style="color:var(--text2);font-size:12px;padding:8px;">처리 중...</span>';
+    }
+    // [A] 위험 명령 승인: Architect diff 플로우가 아니라 /api/approval/respond 로 choice 전달 (once|session|always|deny)
+    if (kind === 'dangerous_command') {
+        var choice = (btnEl && btnEl.getAttribute && btnEl.getAttribute('data-choice')) || (approved ? 'once' : 'deny');
+        try {
+            await api('/api/approval/respond', {
+                method: 'POST',
+                body: JSON.stringify({ session_id: sid, choice: choice })
+            });
+            card.outerHTML = approved
+                ? '<div class="inline-approval-card resolved approved"><div class="inline-approval-card-inner"><span style="color:var(--success)">✅ 명령 승인됨 (' + _escInlineApproval(choice) + ')</span></div></div>'
+                : '<div class="inline-approval-card resolved rejected"><div class="inline-approval-card-inner"><span style="color:var(--danger)">❌ 명령 거절됨</span></div></div>';
+            try { if (typeof _approvalPending !== 'undefined') _approvalPending = false; } catch (e) { }
+        } catch (err) {
+            console.error('[InlineApproval] respond error:', err);
+            if (actions) {
+                actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
+            }
+        }
+        setTimeout(function () {
+            var resolved = document.querySelector('.inline-approval-card.resolved');
+            if (resolved) resolved.remove();
+        }, 5000);
+        return;
     }
     try {
         if (approved) {
@@ -211,7 +250,7 @@ function _scrollContainerToBottom(container) {
 
 var _origShowApprovalBanner = (typeof _showApprovalBanner === 'function') ? _showApprovalBanner : null;
 _showApprovalBanner = function (data) {
-    if (!data || data.status !== 'pending') return;
+    if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
     var chatContent = document.getElementById('chatModeContent');
     var harnessContent = document.getElementById('harnessModeContent');
     var isChatVisible = chatContent && chatContent.style.display !== 'none';
@@ -222,7 +261,8 @@ _showApprovalBanner = function (data) {
     else container = document.getElementById('chatMessages');
     showInlineApproval(data, container);
     // [B] plan.md(is_plan) 승인은 diff 패널과 무관하므로 원본 diffActiveBar 호출을 스킵해 이중 UI를 막는다.
-    if (_origShowApprovalBanner && _origShowApprovalBanner !== _showApprovalBanner && !data.is_plan) {
+    // [A] 위험 명령 승인(dangerous_command)도 diff 패널과 무관하므로 동일하게 스킵한다.
+    if (_origShowApprovalBanner && _origShowApprovalBanner !== _showApprovalBanner && !data.is_plan && data.type !== 'dangerous_command') {
         try { _origShowApprovalBanner(data); } catch (e) { }
     }
 };
@@ -244,7 +284,8 @@ async function _pollApprovalOnce() {
         // 이미 카드가 표시되어 있으면 중복 표시 방지
         if (document.getElementById('inlineApprovalCard')) return;
         var res = await api('/api/approval/pending?session_id=' + encodeURIComponent(sid), { method: 'GET' });
-        if (res && res.has_pending && res.pending && res.pending.status === 'pending') {
+        // [A] CLI 위험 명령 pending 데이터는 status 필드가 없으므로 type으로도 판별
+        if (res && res.has_pending && res.pending && (res.pending.status === 'pending' || res.pending.type === 'dangerous_command')) {
             var container = _resolveApprovalContainer();
             if (container) showInlineApproval(res.pending, container);
         }

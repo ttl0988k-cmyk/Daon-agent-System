@@ -2374,6 +2374,15 @@ def check_browser_requirements() -> bool:
     if _is_camofox_mode():
         return True
 
+    # Daon Electron bridge mode — all browser calls are routed through the
+    # in-app SHARED browser via CDP (api.browser_bridge monkey-patches
+    # _run_browser_command), so the agent-browser CLI is never invoked.
+    # Requiring the CLI here would silently hide every browser tool from
+    # agent tool schemas in the packaged app where the CLI is not on PATH —
+    # the main reason agents "never use" the built-in browser.
+    if os.environ.get("BROWSER_CDP_URL") or globals().get("_daon_electron_bridge_ready"):
+        return True
+
     # The agent-browser CLI is always required
     try:
         browser_cmd = _find_agent_browser()

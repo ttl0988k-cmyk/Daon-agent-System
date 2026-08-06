@@ -375,6 +375,11 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     # push extra SSE events (e.g. 'agent_log' from the Dynamic Harness tool).
     _thread_put.put = put
 
+    # Whether we registered the dangerous-command approval gateway callback for
+    # this session (must be unregistered in the outer finally block).
+    _gateway_notify_registered = False
+    _cmd_approval_notify = None  # 등록된 콜백 참조 (해제 시 소유권 확인용)
+
     try:
         s = get_session(session_id)
         # (Workspace override removed to allow user-selected paths)
@@ -1044,6 +1049,36 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _browser_bridge_ready = False
               print(f"[webui] WARNING: Electron browser bridge initialization failed: {_bt_init_err}", flush=True)
 
+          # ── 위험 명령 승인 (gateway notify) ────────────────────────────────
+          # 일반 채팅은 HERMES_EXEC_ASK=1이라 위험 명령이 승인 분기
+          # (tools/approval.py is_ask)로 진입한다. 이때 세션에 notify 콜백이
+          # 등록되어 있지 않으면 즉각 approval_required를 반환하는 폴백 경로로
+          # 빠져 에이전트가 블로킹되지 않는다 → 사용자에게 보이는 승인 카드를
+          # 승인해도 명령이 실행되지 않는 데드 패스가 된다 (plan.md Cause A).
+          # 여기서는 승인 요청을 SSE로 WebUI에 전달하는 콜백을 등록해,
+          # 에이전트 스레드가 사용자 응답까지 블로킹(최대 5분)되게 한다.
+          try:
+              from tools.approval import register_gateway_notify as _reg_gw_notify
+
+              def _cmd_approval_notify(approval_data):
+                  try:
+                      put('approval', {
+                          'type': 'dangerous_command',
+                          'status': 'pending',
+                          'session_id': session_id,
+                          'command': approval_data.get('command', ''),
+                          'description': approval_data.get('description', ''),
+                          'pattern_key': approval_data.get('pattern_key', ''),
+                          'pattern_keys': approval_data.get('pattern_keys', []),
+                      })
+                  except Exception:
+                      _logger.warning("Failed to emit command approval SSE event", exc_info=True)
+
+              _reg_gw_notify(session_id, _cmd_approval_notify)
+              _gateway_notify_registered = True
+          except Exception as _gw_reg_err:
+              _logger.warning("register_gateway_notify failed for session %s: %s", session_id, _gw_reg_err)
+
           print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_key={'set' if resolved_api_key else 'NONE'}", flush=True)
           agent = AIAgent(
               model=resolved_model,
@@ -1423,6 +1458,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               "IMPORTANT: When you want to show an image, simply write ![description](url) in your response.\n"
               "The frontend already has a working markdown-to-HTML renderer that converts this to an <img> tag.\n"
               "You do NOT need to test, verify, or debug image rendering — just use the markdown syntax.\n\n"
+              "[BUILT-IN BROWSER]\n"
+              "This app has a built-in shared browser: an in-app tab driven over CDP that the user can see.\n"
+              "When a task requires viewing, scraping, or interacting with a web page, use the browser tools\n"
+              "(browser_navigate, browser_snapshot, browser_click, browser_type, browser_scroll, browser_press,\n"
+              "browser_console) — they operate this built-in tab. Do NOT launch external browsers, and do NOT\n"
+              "use curl/wget for pages that need rendering or interaction. Workflow: call browser_navigate\n"
+              "first; the returned snapshot lists interactive elements as @eN refs — use those refs with\n"
+              "browser_click/browser_type. (This does NOT override the markdown rule above — never use the\n"
+              "browser just to verify rendering.)\n\n"
               "[MEMORY POLICY]\n"
               "You have access to Memory MCP tools (mcp_memory_*) for long-term knowledge storage.\n"
               "CRITICAL: Do NOT automatically save information to memory. Only use memory tools when:\n"
@@ -1835,6 +1879,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
         else:
             put('apperror', {'message': err_str, 'type': 'error'})
     finally:
+        # 위험 명령 승인 콜백 등록 해제: 아직 블로킹 중인 승인 스레드가 있으면
+        # 즉시 해제되어 영원히 hang하지 않는다 (unregister가 이벤트 set).
+        if _gateway_notify_registered:
+            try:
+                import tools.approval as _tools_approval_mod
+                # 같은 세션의 스트림 경합 안전장치: 우리가 등록한 콜백이 아직
+                # 그대로일 때만 해제한다. (이전 스트림의 cleanup이 새 스트림의
+                # 콜백을 잘못 해제해 승인 경로가 끊기는 것을 방지)
+                if _tools_approval_mod._gateway_notify_cbs.get(session_id) is _cmd_approval_notify:
+                    _tools_approval_mod.unregister_gateway_notify(session_id)
+            except Exception:
+                _logger.warning("unregister_gateway_notify failed for session %s", session_id, exc_info=True)
         _clear_thread_env()  # TD1: always clear thread-local context
         _thread_put.put = None  # release the stream-local put() capture
         with _ACTIVE_AGENTS_LOCK:

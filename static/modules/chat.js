@@ -525,20 +525,95 @@ async function _executeAgentStream(displayText, uploaded) {
   let _streamFinished = false;
   let _idleTimer = null;
   let _startWatchdog = null;
-  // 실행 중인 도구 수. 도구가 돌아가는 동안에는 idle timer가 스트림을
-  // 조기 종료하지 않도록 억제한다 (MCP 도구는 2초 이상 소요 가능).
+  // 실행 중인 도구 수. 도구가 돌아가는 동안에는 idle timer를 완화한다
+  // (완전 중단이 아님 — tool.completed 이벤트 유실 상황 대비).
   let _activeTools = 0;
+  // 도구 실행 억제 시작 시점 (비정상적으로 긴 억제 상한 처리용)
+  let _toolSuppressStart = 0;
 
   // 연속 idle 연장 횟수. 백엔드 스트림이 아직 활성(추론 단계/긴 도구 실행)이면
   // 타이머를 재가동해 계속 대기한다. 무한 대기를 막기 위해 상한을 둔다
   // (30초 × 40회 = 최대 20분).
   let _idleExtensions = 0;
   let _idleRecoveryInFlight = false;
+  // idle 워치독의 백엔드 상태 조회가 연속 실패한 횟수. 상태 조회 실패는
+  // 백엔드 종료를 의미하지 않으므로(plan.md Cause B) 몇 번은 연장해서 더
+  // 기다리고, 반복 실패 시에만 복구 경로로 진행한다.
+  let _statusCheckFailures = 0;
+  // 백엔드는 활성인데 EventSource 연결이 끊겼을 때 같은 stream_id로
+  // 재연결을 시도한 횟수 (최대 3회, plan.md Phase 2).
+  let _sseReconnects = 0;
+
+  // ── 블록 스코프 주의 (중요) ──
+  // finishStream() / _handleIdleTimeout() 등 종료 경로 함수들은 아래 try 블록
+  // "바깥"에 선언되어 있다. try 블록 안에서 let/const로 선언된 변수는 이
+  // 함수들에서 보이지 않고, 읽는 순간 ReferenceError가 발생해 finishStream()이
+  // 중도에 사망 → cleanupStreamState()가 실행되지 않아 챗창이 영구 잠기는
+  // 문제(전송 버튼 비활성, 상태 표시 멈춤)의 원인이었다.
+  // 따라서 종료 경로 함수가 참조하는 모든 상태 변수는 이곳 함수 최상위에서
+  // 선언하고 try 블록 안에서는 "할당"만 한다.
+  let streamId = null;          // SSE stream ID (try 안에서 할당)
+  let sse = null;               // EventSource 인스턴스 (try 안에서 할당)
+  let _reasoningCard = null;
+  let _reasoningText = '';
+  let _reasoningStartTs = 0;
+  let _reasoningTimer = null;
+  let _toolGroupCard = null;      // <details> 컨테이너 요소
+  let _toolGroupItems = null;     // 도구 항목 리스트 컨테이너
+  let _toolGroupCount = 0;        // 총 도구 이벤트 수 (started 기준)
+  let _toolGroupDoneCount = 0;    // 완료된 도구 수
+  let _toolItemMap = {};          // tool_call_id -> 항목 DOM 요소 매핑
+  // 승인(위험 명령/Architect 변경) 대기 여부. 승인 대기 중에는 이벤트가
+  // 오지 않아도 idle 워치독이 스트림을 종료하면 안 된다 — 백엔드는 사용자
+  // 승인 응답을 기다리며 블로킹 중이기 때문이다 (최대 5분).
+  let _approvalPending = false;
+
+  function _reasoningElapsed() {
+    return Math.max(0, Math.floor((Date.now() - _reasoningStartTs) / 1000));
+  }
+
+  function _stopReasoningTimer(finalLabel) {
+    if (_reasoningTimer) {
+      clearInterval(_reasoningTimer);
+      _reasoningTimer = null;
+    }
+    if (_reasoningCard) {
+      const sum = _reasoningCard.querySelector('summary');
+      if (sum) sum.textContent = finalLabel || ('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
+    }
+  }
+
+  function _updateToolGroupHeader() {
+    if (!_toolGroupCard) return;
+    const label = _toolGroupCard.querySelector('.tool-group-label');
+    const counter = _toolGroupCard.querySelector('.tool-group-counter');
+    const spinner = _toolGroupCard.querySelector('.tool-group-spinner');
+    const running = _toolGroupCount - _toolGroupDoneCount;
+    if (label) {
+      label.textContent = running > 0
+        ? `도구 실행 중... (${_toolGroupDoneCount}/${_toolGroupCount} 완료)`
+        : `도구 실행 완료`;
+    }
+    if (counter) counter.textContent = _toolGroupCount;
+    if (spinner) spinner.style.display = running > 0 ? '' : 'none';
+  }
 
   function resetIdleTimer() {
     clearTimeout(_idleTimer);
-    // 도구 실행 중에는 무응답 감시를 일시 중단 — 도구 결과가 올 때까지 대기.
-    if (_activeTools > 0) return;
+    // 도구 실행 중에도 무응답 감시를 "완전 중단"하지 않고 30초 워치독을
+    // 유지한다. 이전처럼 중단하면 tool.completed 이벤트가 유실됐을 때
+    // 워치독이 영원히 꺼져 챗창이 영구 잠긴다. _handleIdleTimeout()이 백엔드
+    // 상태를 확인하므로 정상적인 긴 도구 실행은 조기 종료되지 않는다.
+    if (_activeTools > 0) {
+      if (!_toolSuppressStart) _toolSuppressStart = Date.now();
+      // 비정상적으로 긴 억제(5분 초과): 카운트 손상(이벤트 유실)으로 간주.
+      if (Date.now() - _toolSuppressStart > 300000) {
+        console.warn('[SSE-DIAG] tool-active suppression exceeded 5min — resetting _activeTools');
+        _activeTools = 0;
+        _toolSuppressStart = 0;
+      }
+    }
+    if (_activeTools === 0) _toolSuppressStart = 0;
     // 30초: 도구 완료 → LLM 재호출 → 첫 토큰(TTFT) 대기 시간을 커버.
     // 이전 2초는 LLM API 첫 토큰이 3~15초 걸리는 경우 스트림을 조기 종료시켰음.
     _idleTimer = setTimeout(function () {
@@ -556,12 +631,79 @@ async function _executeAgentStream(displayText, uploaded) {
     if (_streamFinished || _idleRecoveryInFlight) return;
     _idleRecoveryInFlight = true;
     try {
+      // 0) 승인 대기 중에는 이벤트가 없어도 종료하지 않는다.
+      // 백엔드가 사용자 승인 응답을 기다리며 블로킹 중(최대 5분)이다.
+      // 승인 카드 자체가 타이머를 리셋하지만, 카드 유실 시의 안전장치.
+      if (_approvalPending && _idleExtensions < 40) {
+        _idleExtensions++;
+        console.log('[SSE-DIAG] ⏳ idle timeout but approval pending — extending wait (%d/40)', _idleExtensions);
+        setChatStatus('thinking', '승인 대기 중... (승인 여부를 선택해주세요)');
+        _idleRecoveryInFlight = false;
+        resetIdleTimer();
+        return;
+      }
+
       // 1) 백엔드 스트림 활성 여부 확인
       let active = false;
+      let statusCheckOk = true;
       try {
         const st = await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`);
         active = !!(st && st.active);
-      } catch (_) { active = false; }
+      } catch (_) {
+        // 상태 조회 실패 ≠ 백엔드 종료 (plan.md Cause B). 일시적인 네트워크
+        // 글리치에 곧바로 사망 선언하지 않고 몇 번은 연장해서 더 기다린다.
+        statusCheckOk = false;
+      }
+
+      if (!statusCheckOk && _idleExtensions < 40 && _statusCheckFailures < 3) {
+        _statusCheckFailures++;
+        _idleExtensions++;
+        console.warn('[SSE-DIAG] ⏳ status check failed (%d/3) — extending wait instead of declaring dead', _statusCheckFailures);
+        setChatStatus('thinking', '응답 대기 중... (연결 상태 확인)');
+        _idleRecoveryInFlight = false;
+        resetIdleTimer();
+        return;
+      }
+
+      // 1-1) 백엔드는 활성인데 EventSource가 끊긴 경우 — 같은 stream_id로
+      // 재연결 (최대 3회). 끊겨 있던 동안 발행된 이벤트는 서버 큐에 남아
+      // 있으므로 재연결한 연결이 done 이벤트를 정상 수신할 수 있다.
+      // 재연결된 소스에는 최소한의 터미널 이벤트 리스너만 부착한다
+      // (라이브 토큰은 유실되지만 done이 전체 결과를 렌더링한다).
+      if (active && sse && sse.readyState === EventSource.CLOSED && _sseReconnects < 3) {
+        _sseReconnects++;
+        console.warn('[SSE-DIAG] 🔌 SSE closed while backend active — reconnecting (%d/3)', _sseReconnects);
+        try {
+          const reconnected = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
+          reconnected.addEventListener('done', (ev) => {
+            try {
+              const d = JSON.parse(ev.data);
+              finishStream('done_reconnected');
+              if (d && d.session && d.session.messages) {
+                renderMessages(d.session.messages, d.session.tool_calls);
+                const localSess = State.sessions.find(function (x) { return x.session_id === State.activeSessionId; });
+                if (localSess) localSess.title = d.session.title;
+                renderSessionsList();
+                refreshFileTree();
+              }
+            } catch (innerErr) {
+              console.error('[SSE] reconnect done handler error:', innerErr);
+              finishStream('done_reconnected');
+            }
+          });
+          reconnected.addEventListener('cancel', () => finishStream('cancel_reconnected'));
+          reconnected.addEventListener('apperror', () => finishStream('apperror_reconnected'));
+          reconnected.addEventListener('heartbeat', () => { _idleExtensions = 0; resetIdleTimer(); });
+          sse = reconnected;
+          State.currentEventSource = reconnected;
+          _idleExtensions = 0;
+          _idleRecoveryInFlight = false;
+          resetIdleTimer();
+          return;
+        } catch (reErr) {
+          console.error('[SSE-DIAG] SSE reconnect failed:', reErr);
+        }
+      }
 
       if (active && _idleExtensions < 40) {
         // 백엔드가 아직 실행 중(추론/긴 작업) — 계속 대기
@@ -607,21 +749,26 @@ async function _executeAgentStream(displayText, uploaded) {
   function finishStream(reason) {
     if (_streamFinished) return;
     _streamFinished = true;
+    _approvalPending = false;
     clearTimeout(_idleTimer);
     clearTimeout(_startWatchdog);
     // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
-    try { if (typeof _stopReasoningTimer === 'function') _stopReasoningTimer(); } catch (_) { }
+    try { _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
-    // 도구 그룹 카드가 남아있으면 최종 상태로 갱신
-    if (_toolGroupCard) {
-      _updateToolGroupHeader();
-      _toolGroupCard = null;
-      _toolGroupItems = null;
-      _toolGroupCount = 0;
-      _toolGroupDoneCount = 0;
-      _toolItemMap = {};
-    }
-    try { sse.close(); } catch (_) { }
+    // 도구 그룹 카드가 남아있으면 최종 상태로 갱신.
+    // try/catch로 감싸 DOM 이상으로도 아래 cleanupStreamState()가
+    // 건너뛰어지지 않게 한다 (과거 ReferenceError로 영구 잠김 발생).
+    try {
+      if (_toolGroupCard) {
+        _updateToolGroupHeader();
+        _toolGroupCard = null;
+        _toolGroupItems = null;
+        _toolGroupCount = 0;
+        _toolGroupDoneCount = 0;
+        _toolItemMap = {};
+      }
+    } catch (_) { }
+    try { if (sse) sse.close(); } catch (_) { }
     cleanupStreamState();
   }
 
@@ -688,11 +835,11 @@ async function _executeAgentStream(displayText, uploaded) {
       return;
     }
 
-    const streamId = startRes.stream_id;
+    streamId = startRes.stream_id;
     State.currentStreamId = streamId;
 
     // Connect to SSE endpoint
-    const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
+    sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
     State.currentEventSource = sse;
     // Start the no-event watchdog immediately.  Previously it was only
     // started after the first token/tool/reasoning event, so a backend run
@@ -703,47 +850,10 @@ async function _executeAgentStream(displayText, uploaded) {
     // 추론 단계에서는 token 이벤트가 오지 않아 idle timer가 스트림을 조기
     // 종료하던 문제가 있었다. reasoning 이벤트가 타이머를 계속 갱신한다.
     // Roo Code 스타일로 경과 초를 함께 표시한다 ("💭 생각 중... (Ns)").
-    let _reasoningCard = null;
-    let _reasoningText = '';
-    let _reasoningStartTs = 0;
-    let _reasoningTimer = null;
-
+    // ※ _reasoning* 상태 변수와 _reasoningElapsed()/_stopReasoningTimer()는
+    //   블록 스코프 수정(finishStream 잠김 방지)을 위해 함수 최상위에서 선언.
     // ── 도구 실행 그룹 카드: 반복 도구 호출을 하나의 접이식 카드로 묶음 ──
-    let _toolGroupCard = null;      // <details> 컨테이너 요소
-    let _toolGroupItems = null;     // 도구 항목 리스트 컨테이너
-    let _toolGroupCount = 0;        // 총 도구 이벤트 수 (started 기준)
-    let _toolGroupDoneCount = 0;    // 완료된 도구 수
-    let _toolItemMap = {};          // tool_call_id -> 항목 DOM 요소 매핑
-
-    function _updateToolGroupHeader() {
-      if (!_toolGroupCard) return;
-      const label = _toolGroupCard.querySelector('.tool-group-label');
-      const counter = _toolGroupCard.querySelector('.tool-group-counter');
-      const spinner = _toolGroupCard.querySelector('.tool-group-spinner');
-      const running = _toolGroupCount - _toolGroupDoneCount;
-      if (label) {
-        label.textContent = running > 0
-          ? `도구 실행 중... (${_toolGroupDoneCount}/${_toolGroupCount} 완료)`
-          : `도구 실행 완료`;
-      }
-      if (counter) counter.textContent = _toolGroupCount;
-      if (spinner) spinner.style.display = running > 0 ? '' : 'none';
-    }
-
-    function _reasoningElapsed() {
-      return Math.max(0, Math.floor((Date.now() - _reasoningStartTs) / 1000));
-    }
-
-    function _stopReasoningTimer(finalLabel) {
-      if (_reasoningTimer) {
-        clearInterval(_reasoningTimer);
-        _reasoningTimer = null;
-      }
-      if (_reasoningCard) {
-        const sum = _reasoningCard.querySelector('summary');
-        if (sum) sum.textContent = finalLabel || ('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
-      }
-    }
+    // ※ _toolGroup* 상태 변수와 _updateToolGroupHeader()도 함수 최상위에서 선언.
 
     sse.addEventListener('reasoning', (e) => {
       try {
@@ -800,6 +910,8 @@ async function _executeAgentStream(displayText, uploaded) {
       }
       scrollToChatBottom();
       _idleExtensions = 0;
+      _statusCheckFailures = 0;
+      _approvalPending = false;  // 토큰 재개 = 승인 처리되어 에이전트가 다시 움직임
       resetIdleTimer();
     });
 
@@ -850,6 +962,35 @@ async function _executeAgentStream(displayText, uploaded) {
         outputPre.textContent = _terminalOutputText;
       }
       scrollToChatBottom();
+      resetIdleTimer();
+    });
+
+    // ── heartbeat: 백엔드 keep-alive (미디어 생성 등 장기 작업 중 주기 발행) ──
+    // streaming.py가 "프론트엔드가 heartbeat 리스너에서 resetIdleTimer()를
+    // 호출한다"는 전제로 발행하지만 그동안 리스너가 없어, 토큰/도구 이벤트가
+    // 없는 장기 작업 중 30초 idle 워치독이 불필요하게 firing했다.
+    sse.addEventListener('heartbeat', () => {
+      _idleExtensions = 0;
+      _statusCheckFailures = 0;
+      resetIdleTimer();
+    });
+
+    // ── notice: 서버 안내 (이전 작업 자동 취소 등) ──
+    // chat_routes.py가 새 메시지 발송으로 이전 진행 중 스트림을 취소했을 때
+    // 발행한다 (plan.md Cause D). 사용자에게 조용히 안내한다.
+    sse.addEventListener('notice', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const msg = (data && data.message) || '';
+        if (msg && asstBubble && asstBubble.parentNode) {
+          const note = document.createElement('div');
+          note.className = 'text-muted';
+          note.style.cssText = 'margin-top:8px;font-size:12px;';
+          note.textContent = 'ℹ️ ' + msg;
+          // 토큰 스트리밍이 버블 innerHTML을 덮어쓰므로 버블 앞 독립 요소로 삽입
+          box.insertBefore(note, asstBubble);
+        }
+      } catch (_) { }
       resetIdleTimer();
     });
 
@@ -1051,6 +1192,8 @@ async function _executeAgentStream(displayText, uploaded) {
 
       _updateToolGroupHeader();
       scrollToChatBottom();
+      _idleExtensions = 0;
+      _approvalPending = false;  // 도구 재개 = 승인 처리되어 에이전트가 다시 움직임
       resetIdleTimer();
     });
 
@@ -1153,17 +1296,31 @@ async function _executeAgentStream(displayText, uploaded) {
       }
     });
 
-    // ── Approval SSE (Architect mode approval required)
+    // ── Approval SSE (Architect 변경 승인 + 위험 명령 승인)
     sse.addEventListener('approval', (e) => {
       try {
         const data = JSON.parse(e.data);
-        console.log('[Streaming→Approval] Received approval event:', data.status, data.path);
+        console.log('[Streaming→Approval] Received approval event:', data.status, data.type || '', data.path || data.command || '');
+        if (data && data.status === 'pending') {
+          // 승인 대기 표시 — idle 워치독이 스트림을 종료하지 않게 유예한다.
+          // (백엔드는 사용자 응답을 기다리며 블로킹 중)
+          _approvalPending = true;
+          _idleExtensions = 0;
+          // 상단 상태 표시를 "승인 대기"로 전환해 에이전트가 멈춘 것이 아니라
+          // 사용자 검토를 기다리는 중임을 명확히 한다.
+          if (data.type === 'dangerous_command') {
+            setChatStatus('thinking', '위험 명령 승인 대기 중... (승인 여부를 선택해주세요)');
+          } else {
+            setChatStatus('thinking', '승인 대기 중... (변경사항을 검토해주세요)');
+          }
+        }
         if (typeof _showApprovalBanner === 'function') {
           _showApprovalBanner(data);
         }
       } catch (err) {
         console.error('[Streaming→Approval] Error handling approval:', err);
       }
+      resetIdleTimer();
     });
 
     sse.addEventListener('model_info', (e) => {

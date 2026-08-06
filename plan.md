@@ -1,243 +1,128 @@
-# Daon Creative Director + Reference Library 통합 계획
+# 계획: 승인 요청 시 챗창 멈춤/타임아웃 문제 수정
 
-- 작성일: 2026-08-06
-- 상태: **승인 대기**
-- 범위: Phase 1 코어 통합 + 일반 디자인 요청의 Creative Director 강제 연결 설계
+**작성일:** 2026-08-07
+**상태:** 대표님 승인 대기
 
-## 1. 목표
+---
 
-다온 에이전트 시스템이 디자인/UI 생성 요청을 받을 때 평균적인 템플릿으로 바로 코드를 생성하지 않고, 다음 의사결정 단계를 거치도록 한다.
+## 1. 증상
 
-```text
-디자인 요청
-  → 디자인 요청 판별
-  → Reference Library 검색
-  → Creative Director Design Brief 생성
-  → Frontend Agent에 Brief 전달
-  → 기존 코드 생성/검수 흐름
-```
+대표님 보고: "승인 요청이 뜨면 → 응답대기시간 초과 표시 → 챗창이 안 돌아옴"
 
-핵심 성공 기준은 기능 개수가 아니라 다음 질문에 대한 답이다.
+이번 세션에서 실제로 2회 재현됨 (버블 idx 11, 17에 `[응답 대기 시간 초과]` + `[실행 취소됨]` 흔적 확인,
+도구 그룹 카드 다수가 중간 상태("3/5 완료" 등)에서 얼어붙음 = SSE 이벤트 수신 중단 증거).
 
-> 디자인 요청이 들어왔을 때 Creative Director와 Style Card 검색을 우회해서 코드가 생성되지 않는가?
+---
 
-## 2. 사전 조사 결과
+## 2. 근본 원인 (코드 검증 완료)
 
-### 이미 존재하는 구현
+### 원인 A — 일반 챗의 위험 명령 승인 흐름이 "죽은 길" (핵심)
 
-- `api/api/style_card.py`
-  - `StyleCard`, `StyleCardRegistry`, `DesignGraph`, `ComponentCard`가 이미 구현되어 있음
-  - YAML 직렬화/역직렬화, 평가 점수, Brief 요약, 컴포넌트 분해 기능이 존재
-- `api/api/dynamic/style_card_retriever.py`
-  - TF-IDF 기반 검색기와 `retrieve()`/`rebuild_index()`가 이미 구현됨
-- `api/api/dynamic/style_mixer.py`
-  - 컴포넌트 검색 및 Unified Design Brief 생성 흐름이 이미 구현됨
-- `api/api/mcp/daon_design_mcp.py`
-  - Style Card 검색/오케스트레이션 MCP 도구가 이미 연결됨
-- `api/api/routes/style_card_routes.py`
-  - 목록/검색/상세/추출/저장/삭제/인덱스 재생성 REST 라우트가 이미 존재
-- `api/api/dynamic/style_card_extractor.py`
-  - 텍스트/완성된 UI 결과에서 Style Card 후보를 추출하는 흐름이 존재
-- `skills/Design/creative-director/skill.yaml`
-  - 스켈레톤 메타데이터만 존재하며 실제 판단 절차와 필수 출력 규칙은 없음
+| 단계 | 코드 위치 | 동작 |
+|---|---|---|
+| 1 | `hermes-agent/tools/approval.py:857-862` | gateway 승인 콜백(`notify_cb`) 조회 |
+| 2 | `api/api/dynamic_jobs.py:271` | **콜백 등록은 다이나믹 하네스 잡만 함** — 일반 챗 스트리밍은 등록 안 함 |
+| 3 | `tools/approval.py:964-980` | 콜백 없으면 폴백: `submit_pending` 후 에이전트에 `approval_required` **즉시 반환** (블록 안 함) |
+| 4 | `static/modules/approval.js` 폴링 | `/api/approval/pending`에서 pending 발견 → **사용자에게 승인 카드 표시** |
+| 5 | `api/routes/admin_routes.py:523-547` | 사용자가 "승인" 클릭 → `resolve_gateway_approval` → **대기 중인 스레드가 없으므로 아무 일도 안 일어남**. 명령은 실행되지 않음 |
 
-### 현재 통합상의 문제/주의점
+결과: 에이전트는 이미 다른 길로 갔는데, 사용자는 승인 카드만 보고 기다리게 됨.
+승인해도 명령이 실행되지 않는 죽은 상태 → "챗창이 안 돌아온다" 체감.
 
-1. 기존 Reference Library 경로는 `~/.hermes/references/` 또는 프로필별 경로이며, 합의한 공용 저장소 `data/reference_library/`와 다름.
-2. `StyleCardRegistry.rebuild_index()`는 현재 활성 프로필 경로를 직접 사용하므로 저장/검색 경로를 한 곳에서 주입할 수 있게 정리해야 함.
-3. `StyleCard`와 Retriever는 존재하지만 일반 에이전트 요청에서 Creative Director를 반드시 선행시키는 게이트가 확인되지 않음.
-4. Creative Director 스킬은 `skill.yaml`만 있고 `SKILL.md`가 없음.
-5. 현재 REST 저장/삭제 라우트에는 대표님 승인 상태를 명시하는 운영 경계가 아직 문서/모델로 고정되어 있지 않음. Phase 1에서는 기존 승인 UI/흐름을 깨지 않도록 자동 등록을 새로 만들지 않고, 정책과 확장 지점만 명확히 한다.
-6. 기존 구현을 새 `models/style_card.py`로 중복 복사하지 않는다. 먼저 현재 `api.style_card.StyleCard`를 정식 코어 모델로 유지하고, 필요하면 이후 호환 모듈을 추가한다.
+### 원인 B — 프론트엔드 idle 타임아웃이 너무 쉽게 "사망" 선언
 
-## 3. 설계 원칙
+`static/modules/chat.js:555-605` `_handleIdleTimeout`:
 
-- Reference Library는 다온 시스템 공용 단일 라이브러리로 운영한다.
-- 외부 탐색/후보 분석과 실제 라이브러리 등록은 분리한다.
-- 신규 등록·수정·삭제는 대표님 승인 없이는 실행하지 않는다.
-- Creative Director는 디자인 요청의 필수 중간 단계다.
-- 버그 수정, 작은 CSS 수정, 단순 텍스트 수정 등은 강제 게이트에서 제외한다.
-- Frontend Agent는 Style Card를 직접 검색하지 않고 Design Brief만 받는다.
-- Phase 1 검색은 TF-IDF/메타데이터 기반으로 제한하고, 이미지 임베딩 인터페이스는 확장 지점만 만든다.
-- 기존 Style Card/Style Mixer/MCP API를 재사용하여 중복 시스템을 만들지 않는다.
-- 모든 변경은 기존 API 계약과 기존 사용자 라이브러리를 보존하는 하위 호환 방식으로 진행한다.
+1. 30초 무이벤트 시 `/api/chat/stream/status` 조회
+2. **조회 실패(네트워크 오류) 시 `active=false`로 간주** (line 564: `catch (_) { active = false; }`)
+   → 백엔드가 살아있어도 사망 판정
+3. 세션 복구 시도: 마지막 메시지가 assistant가 아니면(=턴 진행 중) 복구 실패
+4. `[응답 대기 시간 초과]` 표시 후 `finishStream('idle_timeout')` → **SSE 영구 포기**
+5. 재연결 시도 없음 — 백엔드 STREAMS가 아직 살아있는데도 (`chat_routes.py:69` 정상 서빙 가능)
 
-## 4. 구현 범위
+### 원인 C — 백엔드 하트비트가 JS에 안 보임
 
-### 4.1 공용 Reference Library 경로 및 스키마
+`chat_routes.py:121-128`: 큐가 15초 비면 `: heartbeat` 코멘트 전송.
+SSE 스펙상 `:` 시작 코멘트는 **EventSource가 어떤 이벤트로도 디스패치하지 않음**
+→ 연결은 유지되지만 프론트 idle 타이머는 리셋되지 않음.
+승인 대기/긴 작업 중 "보이는" 이벤트가 없으면 원인 B 경로로 빠짐.
 
-대상:
+### 원인 D — 새 메시지 전송이 진행 중 턴을 취소
 
-- `data/reference_library/`
-  - `cards/` — 승인된 Style Card YAML
-  - `screenshots/` — 선택적 원본/미리보기 이미지
-  - `embeddings/` — Phase 3용 예약 디렉토리
-  - `schema/style_card_schema.yaml` — 문서화/검증용 스키마
-  - `index.yaml` — 검색 인덱스 메타데이터
+`api/routes/chat_routes.py:167-170`: `handle_post_chat_start`가
+`cancel_session_streams(session_id)` 호출 → 진행 중 에이전트 작업 강제 취소.
+대표님이 "안 돌아온다"고 느끼고 새 메시지를 보내면 → `[실행 취소됨]` → 작업 손실.
 
-작업:
+---
 
-- 공용 경로 resolver를 추가하고 기존 `~/.hermes/references` 사용자를 마이그레이션/폴백 대상으로 둔다.
-- 경로를 모듈 전역에 흩뿌리지 않고 Registry/Retriever가 같은 resolver를 사용하게 한다.
-- YAML 스키마에 다음 필드를 고정한다.
-  - `id`, `name`, `version`, `created`, `updated`
-  - `category`, `sub_category`, `tags`
-  - `source_url`, `source_type`, `source_author`
-  - `design_dna.colors`, `typography`, `layout`, `animation`, `spacing`
-  - `composition`, `guidelines.do`, `guidelines.dont`
-  - `compatible_with`, `conflicts_with`
-  - `evaluation`
-  - `visual_embedding`은 Phase 3 예약 필드로만 정의
-  - `approval`/`provenance`는 승인 경계 추적을 위해 정의하되 자동 승인하지 않음
-- 기존 YAML의 누락 필드는 현재 기본값으로 읽히도록 한다.
+## 3. 수정 계획
 
-### 4.2 StyleCard 모델 정리
+### Phase 1 — 일반 챗 승인 흐름 살리기 (원인 A) ★핵심
 
-대상:
+**백엔드 (`api/api/streaming.py`):**
+1. 에이전트 실행 전 `register_gateway_notify(session_id, cb)` 등록, 종료 시 unregister
+   (dynamic_jobs.py:256-271, 363-364 패턴 그대로 차용)
+2. `cb(approval_data)`: 해당 세션의 활성 스트림 큐에
+   `('cmd_approval', {command, description, pattern_key, session_id})` 이벤트 put
 
-- `api/api/style_card.py`
+**프론트엔드 (`static/modules/chat.js` + `approval.js`):**
+3. `sse.addEventListener('cmd_approval', ...)` 추가:
+   - 인라인 승인 카드 표시 (승인 1회 / 세션 / 항상 / 거절)
+   - 카드 표시 중 `setChatStatus('thinking', '승인 대기 중...')` + **idle 타이머 일시 정지** (`_approvalPending = true` 플래그)
+4. 버튼 클릭 → `POST /api/approval/respond` (기존 엔드포인트 재사용, admin_routes.py:523)
+   → `resolve_gateway_approval`가 블록된 에이전트 스레드 깨움 → 명령 실행 후 스트림 계속
 
-작업:
+**결과:** 승인 카드가 뜨면 에이전트가 실제로 기다리고, 승인 시 명령 실행 후 대화가 이어짐.
+거절 시 "BLOCKED" 메시지가 에이전트에 전달되어 우회 경로 탐색.
+(이미 `tools/approval.py:894-930`에 300초 블록 + 10초 단위 activity heartbeat 구현 존재)
 
-- 현재 모델을 단일 정식 모델로 명시하고, 새 모델 파일을 중복 생성하지 않는다.
-- 공용 경로를 주입할 수 있도록 `get_references_dir()`/인덱스 관련 메서드를 정리한다.
-- `from_dict`, `to_dict`, `to_yaml`, `from_yaml`, `to_brief_text`의 스키마 호환성을 테스트한다.
-- 승인 상태와 출처 메타데이터가 손실되지 않도록 선택 필드를 추가한다.
-- 라이브러리 파일 삭제 시 Registry 메모리만 삭제되고 디스크 파일이 남는 현재 동작을 점검하여 일관되게 만든다. 단, 승인 정책을 우회하는 자동 삭제는 추가하지 않는다.
+### Phase 2 — 프론트엔드 타임아웃 견고화 (원인 B, C)
 
-### 4.3 Retriever 공개 도구 계약
+**`static/modules/chat.js` `_handleIdleTimeout` 수정:**
+1. 상태 조회 실패 시 사망 판정 대신 **대기 연장** (최대 연장 횟수 내에서 재시도)
+2. 복구 실패(턴 진행 중) 시 포기하지 말고 **같은 stream_id로 EventSource 재연결** 시도
+   (백엔드가 STREAMS/_COMPLETED_STREAMS/_CANCELLED_STREAMS로 재연결 이미 지원)
+   — 최대 3회, 실패 시에만 타임아웃 메시지
+3. `cmd_approval`/`approval` 이벤트 수신 시 idle 타이머 정지 (승인 대기 중 타임아웃 원천 차단)
 
-대상:
+**백엔드 (`chat_routes.py`):**
+4. 15초 heartbeat 코멘트 대신 `('heartbeat', {})` 실제 이벤트 전송 (JS에서 수신 가능)
+   → 프론트가 수신 시 조용히 idle 타이머만 리셋 (UI 노이즈 없음)
 
-- `api/api/dynamic/style_card_retriever.py`
-- `api/api/mcp/daon_design_mcp.py`
-- 관련 테스트
+### Phase 3 — 자동 취소 인지 (원인 D)
 
-작업:
+1. `handle_post_chat_start`에서 기존 스트림 취소 발생 시,
+   새 스트림의 첫 이벤트로 `('notice', {text: '이전 진행 중 작업이 새 메시지로 취소되었습니다'})` 전송
+2. 프론트: notice 이벤트 수신 시 토스트 표시
+   (취소 자체는 현행 유지 — 큐잉 방식은 별개 대형 변경이라 이번 범위에서 제외)
 
-- 다음 논리 계약을 고정한다.
+---
 
-```python
-retrieve_style_cards(
-    component: str | None,
-    intent: str,
-    constraints: dict | None = None,
-    top_k: int = 5,
-) -> list[StyleCardMatch]
-```
+## 4. 변경 파일 목록
 
-- `component`, `intent`, `constraints`를 기존 Retriever의 category/filter/검색어로 변환한다.
-- constraints는 최소한 `originality`, `motion_intensity`, `visual_density`를 지원한다.
-- 검색 결과에는 `card_id`, `score`, `brief_text`, `decision_relevant_fields`를 포함한다.
-- 결과가 없을 때 빈 결과를 명확히 반환하고, 검색 실패가 디자인 요청 전체를 조용히 우회시키지 않게 한다.
-- MCP 도구와 내부 Python 호출이 같은 검색 로직을 사용하게 한다.
-- Phase 3에서 visual embedding을 추가할 수 있도록 Retriever interface에 optional backend 포인트만 둔다.
-
-### 4.4 Creative Director SKILL.md 및 Design Brief 계약
-
-대상:
-
-- `skills/Design/creative-director/SKILL.md`
-- `skills/Design/creative-director/skill.yaml`
-- 필요 시 Brief template 파일
-
-작업:
-
-- 4-layer 절차를 명시한다.
-  1. UX Researcher/Analyst — 사용자·목표·콘텐츠·제약 분석
-  2. Design Librarian/Intelligence — 공용 Reference Library 검색 및 근거 수집
-  3. Art Director/Critic — 평범함·충돌·접근성·구현 위험 비평
-  4. Creative Director/Decision — 하나의 방향으로 결정
-- 필수 출력 블록을 고정한다.
-  - `[DESIGN_BRIEF]`
-  - `[DESIGN_DNA]`
-  - `[SELECTED_REFERENCES]`
-  - `[DECISION_RATIONALE]`
-- “검색 없이 임의 스타일 선택”, “Frontend Agent에 raw Style Card 전달”, “여러 방향을 결정 없이 나열”을 금지 규칙으로 둔다.
-- 평범한 SaaS/히어로/카드/그라디언트 조합으로 수렴하지 않도록 차별화 결정과 금지 목록을 Brief에 포함한다.
-- 단순 버그/CSS 수정 예외를 명시한다.
-- Frontend Agent 입력은 Brief 중심이며 원본 라이브러리 검색 권한을 요구하지 않도록 한다.
-
-### 4.5 일반 모드 Creative Director 게이트
-
-대상 후보:
-
-- `api/api/dynamic/compiler.py`
-- `api/api/dynamic/planner.py`
-- 일반 채팅 프롬프트 조립/도구 라우팅 모듈
-- 필요 시 `api/api/routes/chat_routes.py`
-
-작업:
-
-- 요청이 디자인/UI 생성인지 판별하는 순수 함수와 예외 판별 함수를 만든다.
-- 디자인 요청이면 다음 순서를 강제한다.
-  1. Creative Director 스킬 로드
-  2. Retriever 호출
-  3. 4개 필수 블록이 있는 Design Brief 생성
-  4. 이후 Frontend Agent/코드 생성 단계 진행
-- Brief가 없거나 필수 블록이 누락되면 Frontend 단계로 진행하지 않도록 한다.
-- 일반 모드와 Dynamic Harness가 동일한 판별/계약을 공유하도록 한다.
-- 하네스의 4-layer DAG 분리는 Phase 2로 넘기되, Phase 1 게이트가 재사용 가능한 인터페이스를 제공하게 한다.
-- 버그 수정/CSS 미세 변경은 기존 흐름을 보존한다.
-
-### 4.6 검증
-
-추가/갱신할 테스트:
-
-- StyleCard YAML round-trip 및 누락 필드 기본값
-- 공용 경로 resolver 및 기존 레거시 경로 폴백
-- Registry load/add/remove/index 동작
-- Retriever 검색/카테고리/constraints/top_k/빈 결과
-- MCP retriever contract가 내부 retriever와 동일한 결과를 반환하는지
-- 디자인 요청 판별 및 예외 판별
-- Brief 필수 블록 검증
-- 디자인 요청에서 Brief 없는 Frontend 진행 차단
-- 비디자인 요청과 단순 버그/CSS 수정이 불필요하게 차단되지 않는지
-- 기존 Style Card REST endpoint 회귀 테스트
-
-검증 명령은 구현 시 저장소의 실제 Python 환경/테스트 구조를 확인한 뒤 확정한다. 우선 `api` 모듈 import smoke test와 관련 pytest만 실행하고, 이후 전체 테스트를 실행한다.
-
-## 5. 단계별 실행 순서
-
-1. **승인 전 조사 완료** — 현재 구현/경로/진입점을 이 계획에 반영함
-2. **모델·경로·스키마 정리** — 기존 구현을 보존하면서 공용 라이브러리 계약 확정
-3. **Retriever 계약 고정** — 내부 호출과 MCP 호출 통합
-4. **Creative Director SKILL.md 작성** — 판단 절차·필수 출력·금지 규칙 확정
-5. **일반 모드 게이트 구현** — 디자인 요청만 선행 Brief 강제
-6. **테스트 및 회귀 검증** — 기존 REST/MCP/Style Mixer 영향 확인
-7. **결과 보고** — 변경 파일, 테스트 결과, 남은 Phase 2 항목 보고
-
-## 6. Phase 1에서 하지 않는 것
-
-- CLIP/SigLIP 등 실제 이미지 임베딩 백엔드
-- 자동 외부 레퍼런스 수집 및 무승인 등록
-- 사용자별 Design Memory
-- Dynamic Harness 4개 에이전트 DAG의 완전한 분리
-- Frontend Agent 자체의 대규모 리팩터링
-- UI 대시보드 전면 개편
-
-## 7. 위험요소와 대응
-
-| 위험 | 대응 |
+| 파일 | 변경 내용 |
 |---|---|
-| 기존 프로필별 라이브러리 사용자 데이터 손실 | 공용 경로 우선 전환 전 읽기 폴백/마이그레이션 테스트 |
-| 기존 API/MCP 호출 회귀 | 기존 함수 시그니처 유지, 계약 테스트 추가 |
-| 디자인 판별 오탐으로 일반 작업 차단 | 명시적 예외 규칙과 순수 판별 테스트 |
-| Creative Director가 형식만 출력하고 실질 검색을 생략 | Retriever 호출 결과를 Brief의 `SELECTED_REFERENCES`에 연결하고 검증 |
-| 승인 정책 우회 | Phase 1 자동 등록/삭제를 만들지 않고 승인 메타데이터와 경계만 정의 |
-| 현재 구현과 계획의 중복 | 새 StyleCard 클래스를 만들지 않고 기존 코어 모델을 정식화 |
+| `api/api/streaming.py` | gateway notify 콜백 등록/해제 + cmd_approval 이벤트 방출 (Phase 1) |
+| `api/api/routes/chat_routes.py` | heartbeat를 실제 이벤트로 (Phase 2), 취소 notice (Phase 3) |
+| `dist_new/static/modules/chat.js` | cmd_approval 핸들러, idle 타임아웃 재연결/재시도, 승인 대기 타이머 정지 (Phase 1, 2) |
+| `dist_new/static/modules/approval.js` | cmd_approval 카드 렌더링 헬퍼 (Phase 1) |
 
-## 8. 완료 기준
+> 소스 수정 후 대표님 확인 하에 재배포/재시작 필요 (dist_new가 실사용 경로).
 
-- [ ] `data/reference_library/` 공용 구조와 스키마가 존재한다.
-- [ ] 기존 StyleCard 모델이 공용 경로/스키마와 호환된다.
-- [ ] `retrieve_style_cards()` 계약이 내부 및 MCP에서 사용된다.
-- [ ] Creative Director SKILL.md가 4-layer와 필수 출력 블록을 정의한다.
-- [ ] 디자인 요청은 Brief 없이 코드 생성 단계로 진행되지 않는다.
-- [ ] 비디자인 요청과 단순 수정은 기존 동작을 유지한다.
-- [ ] 관련 테스트와 회귀 테스트가 통과한다.
-- [ ] 대표님께 변경 사항과 Phase 2 이월 범위를 보고한다.
+---
 
-## 9. 승인 후 첫 작업
+## 5. 테스트 계획
 
-승인되면 먼저 `StyleCard`의 실제 import 경로와 공용/레거시 경로 정책을 코드로 고정하고, 그 다음 스키마·Retriever·SKILL.md·게이트 순서로 구현한다. 승인 전에는 코드/설정 파일을 변경하지 않는다.
+1. **승인 흐름:** 일반 챗에서 위험 명령(인라인 python 스크립트 등) 실행 시도
+   → 승인 카드 표시 확인 → "1회 승인" 클릭 → 명령 실행 + 응답 계속되는지 확인
+   → "거절" 클릭 → 에이전트가 BLOCKED 인지 후 우회하는지 확인
+2. **타임아웃 억제:** 승인 카드 표시 후 60초+ 대기 → 타임아웃 메시지 안 뜨는지 확인
+3. **재연결:** SSE 스트림 중 네트워크 흔들림 simulation (긴 작업 중) → 재연결 후 이벤트 복귀 확인
+4. **취소 인지:** 진행 중 새 메시지 전송 → 토스트 표시 확인
+
+---
+
+## 6. 범위 외 (참고)
+
+- 빈 assistant 버블 (0자 메시지): 도구만 실행한 턴의 정상 부산물 — 도구 카드가 표시되므로 cosmetic, 이번 미수정
+- 새 메시지 큐잉 (취소 대신 대기): 설계 결정 필요 — 추후 별도 논의
