@@ -352,26 +352,49 @@ function renderMessages(messages, toolCalls) {
     }
     bubble.innerHTML = html;
 
-    // Find tool calls matching this assistant message
+    // Find tool calls matching this assistant message — 그룹으로 묶어 표시
     if (!isUser && toolCalls) {
       const msgTools = toolCalls.filter(tc => tc.assistant_msg_idx === idx);
-      msgTools.forEach(tool => {
-        const card = document.createElement('div');
-        card.className = 'tool-card';
-        card.innerHTML = `
-          <div class="tool-card-header" onclick="toggleToolCard(this)">
-            <span>Tool Run: ${tool.name}</span>
-            <span>▶</span>
-          </div>
-          <div class="tool-card-body" style="display:none;">
+      if (msgTools.length > 0) {
+        const groupCard = document.createElement('details');
+        groupCard.className = 'tool-group-card';
+        const totalCount = msgTools.length;
+        groupCard.innerHTML = `
+          <summary>
+            <span class="tool-group-icon">🔧</span>
+            <span class="tool-group-label">도구 실행 완료</span>
+            <span class="tool-group-counter">${totalCount}</span>
+            <span class="tool-group-chevron">▶</span>
+          </summary>
+          <div class="tool-group-items"></div>
+        `;
+        const itemsContainer = groupCard.querySelector('.tool-group-items');
+        msgTools.forEach(tool => {
+          const item = document.createElement('div');
+          item.className = 'tool-group-item';
+          item.style.cursor = 'pointer';
+          item.innerHTML = `
+            <span class="tgi-icon">✅</span>
+            <span class="tgi-name">${tool.name}</span>
+          `;
+          // 클릭 시 상세 보기 토글
+          const detailDiv = document.createElement('div');
+          detailDiv.className = 'tool-card-body';
+          detailDiv.style.display = 'none';
+          detailDiv.innerHTML = `
             <div>Arguments:</div>
             <pre style="margin-bottom:8px;">${JSON.stringify(tool.args, null, 2)}</pre>
             <div>Output Snippet:</div>
             <pre>${tool.snippet}</pre>
-          </div>
-        `;
-        bubble.appendChild(card);
-      });
+          `;
+          item.addEventListener('click', function() {
+            detailDiv.style.display = detailDiv.style.display === 'none' ? 'block' : 'none';
+          });
+          item.appendChild(detailDiv);
+          itemsContainer.appendChild(item);
+        });
+        bubble.appendChild(groupCard);
+      }
     }
 
     box.appendChild(bubble);
@@ -585,6 +608,15 @@ async function _executeAgentStream(displayText, uploaded) {
     // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
     try { if (typeof _stopReasoningTimer === 'function') _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
+    // 도구 그룹 카드가 남아있으면 최종 상태로 갱신
+    if (_toolGroupCard) {
+      _updateToolGroupHeader();
+      _toolGroupCard = null;
+      _toolGroupItems = null;
+      _toolGroupCount = 0;
+      _toolGroupDoneCount = 0;
+      _toolItemMap = {};
+    }
     try { sse.close(); } catch (_) { }
     cleanupStreamState();
   }
@@ -638,6 +670,28 @@ async function _executeAgentStream(displayText, uploaded) {
     let _reasoningText = '';
     let _reasoningStartTs = 0;
     let _reasoningTimer = null;
+
+    // ── 도구 실행 그룹 카드: 반복 도구 호출을 하나의 접이식 카드로 묶음 ──
+    let _toolGroupCard = null;      // <details> 컨테이너 요소
+    let _toolGroupItems = null;     // 도구 항목 리스트 컨테이너
+    let _toolGroupCount = 0;        // 총 도구 이벤트 수 (started 기준)
+    let _toolGroupDoneCount = 0;    // 완료된 도구 수
+    let _toolItemMap = {};          // tool_call_id -> 항목 DOM 요소 매핑
+
+    function _updateToolGroupHeader() {
+      if (!_toolGroupCard) return;
+      const label = _toolGroupCard.querySelector('.tool-group-label');
+      const counter = _toolGroupCard.querySelector('.tool-group-counter');
+      const spinner = _toolGroupCard.querySelector('.tool-group-spinner');
+      const running = _toolGroupCount - _toolGroupDoneCount;
+      if (label) {
+        label.textContent = running > 0
+          ? `도구 실행 중... (${_toolGroupDoneCount}/${_toolGroupCount} 완료)`
+          : `도구 실행 완료`;
+      }
+      if (counter) counter.textContent = _toolGroupCount;
+      if (spinner) spinner.style.display = running > 0 ? '' : 'none';
+    }
 
     function _reasoningElapsed() {
       return Math.max(0, Math.floor((Date.now() - _reasoningStartTs) / 1000));
@@ -695,6 +749,15 @@ async function _executeAgentStream(displayText, uploaded) {
       // 추론이 끝났으면 카드 제목 갱신 (경과 초 포함)
       if (_reasoningCard && _reasoningTimer) {
         _stopReasoningTimer('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
+      }
+      // 텍스트 토큰이 오면 현재 도구 그룹 카드를 확정 → 다음 도구 호출 시 새 그룹 시작
+      if (_toolGroupCard) {
+        _updateToolGroupHeader();
+        _toolGroupCard = null;
+        _toolGroupItems = null;
+        _toolGroupCount = 0;
+        _toolGroupDoneCount = 0;
+        _toolItemMap = {};
       }
       scrollToChatBottom();
       _idleExtensions = 0;
@@ -883,19 +946,67 @@ async function _executeAgentStream(displayText, uploaded) {
         }
       }
 
-      // Inline tool card showing tool run progress
-      const card = document.createElement('div');
-      card.className = 'tool-card';
-      card.innerHTML = `
-        <div class="tool-card-header" onclick="toggleToolCard(this)">
-          <span>도구 ${isStarted ? '실행 중' : '완료'}: ${toolName}</span>
-          <span>▶</span>
-        </div>
-        <div class="tool-card-body" style="display:none;">
-          <pre>${data.preview || ''}</pre>
-        </div>
-      `;
-      asstBubble.appendChild(card);
+      // ── 도구 그룹 카드: 반복 호출을 하나의 접이식 카드로 묶음 ──
+      // 그룹 카드가 없으면 새로 생성 (reasoning 카드와 같이 box에 독립 삽입)
+      if (!_toolGroupCard) {
+        _toolGroupCard = document.createElement('details');
+        _toolGroupCard.className = 'tool-group-card';
+        _toolGroupCard.innerHTML = `
+          <summary>
+            <span class="tool-group-icon">🔧</span>
+            <span class="tool-group-label">도구 실행 중...</span>
+            <span class="tool-group-counter">0</span>
+            <span class="tool-group-spinner"></span>
+            <span class="tool-group-chevron">▶</span>
+          </summary>
+          <div class="tool-group-items"></div>
+        `;
+        _toolGroupItems = _toolGroupCard.querySelector('.tool-group-items');
+        _toolGroupCount = 0;
+        _toolGroupDoneCount = 0;
+        _toolItemMap = {};
+        box.insertBefore(_toolGroupCard, asstBubble);
+      }
+
+      // 도구 항목 ID (started/completed 매칭용)
+      const toolCallId = data.tool_call_id || (toolName + '_' + _toolGroupCount);
+
+      if (isStarted) {
+        _toolGroupCount++;
+        // 새 항목 추가
+        const item = document.createElement('div');
+        item.className = 'tool-group-item';
+        item.innerHTML = `
+          <span class="tgi-icon">⏳</span>
+          <span class="tgi-name">${toolName}</span>
+          <span class="tgi-status">실행 중</span>
+        `;
+        _toolItemMap[toolCallId] = item;
+        if (_toolGroupItems) _toolGroupItems.appendChild(item);
+      } else {
+        // completed: 기존 항목을 찾아 상태 업데이트
+        _toolGroupDoneCount++;
+        const existingItem = _toolItemMap[toolCallId];
+        if (existingItem) {
+          const icon = existingItem.querySelector('.tgi-icon');
+          const status = existingItem.querySelector('.tgi-status');
+          if (icon) icon.textContent = '✅';
+          if (status) status.textContent = '완료';
+        } else {
+          // started 없이 completed만 온 경우 — 항목 새로 추가
+          _toolGroupCount++;
+          const item = document.createElement('div');
+          item.className = 'tool-group-item';
+          item.innerHTML = `
+            <span class="tgi-icon">✅</span>
+            <span class="tgi-name">${toolName}</span>
+            <span class="tgi-status">완료</span>
+          `;
+          if (_toolGroupItems) _toolGroupItems.appendChild(item);
+        }
+      }
+
+      _updateToolGroupHeader();
       scrollToChatBottom();
       resetIdleTimer();
     });

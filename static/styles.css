@@ -1415,6 +1415,121 @@
       overflow-x: auto;
     }
 
+    /* ── Tool Group Card (도구 실행 그룹 요약 카드) ── */
+    .tool-group-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 6px 0;
+      overflow: hidden;
+      background: var(--bg2);
+    }
+
+    .tool-group-card summary {
+      padding: 8px 12px;
+      background: var(--bg3);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text2);
+      font-weight: 600;
+      user-select: none;
+      list-style: none;
+      transition: background 0.15s ease;
+    }
+
+    .tool-group-card summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .tool-group-card summary:hover {
+      background: var(--border);
+    }
+
+    .tool-group-card summary .tool-group-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .tool-group-card summary .tool-group-label {
+      flex: 1;
+    }
+
+    .tool-group-card summary .tool-group-chevron {
+      font-size: 10px;
+      transition: transform 0.2s ease;
+      opacity: 0.6;
+    }
+
+    .tool-group-card[open] summary .tool-group-chevron {
+      transform: rotate(90deg);
+    }
+
+    .tool-group-card summary .tool-group-counter {
+      background: var(--accent);
+      color: white;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      min-width: 18px;
+      text-align: center;
+    }
+
+    .tool-group-card summary .tool-group-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: tool-spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes tool-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .tool-group-items {
+      padding: 4px 8px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .tool-group-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      font-size: 11px;
+      color: var(--text2);
+      border-radius: 4px;
+      transition: background 0.1s ease;
+    }
+
+    .tool-group-item:hover {
+      background: var(--bg3);
+    }
+
+    .tool-group-item .tgi-icon {
+      font-size: 12px;
+      flex-shrink: 0;
+      width: 16px;
+      text-align: center;
+    }
+
+    .tool-group-item .tgi-name {
+      flex: 1;
+      font-family: var(--mono-font, 'JetBrains Mono', monospace);
+      font-size: 11px;
+    }
+
+    .tool-group-item .tgi-status {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+
     /* ── Terminal live output card ── */
     .terminal-live-card .tool-card-header {
       background: rgba(16, 185, 129, 0.08);
