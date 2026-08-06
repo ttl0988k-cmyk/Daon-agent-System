@@ -694,6 +694,10 @@ async function _executeAgentStream(displayText, uploaded) {
     // Connect to SSE endpoint
     const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
     State.currentEventSource = sse;
+    // Start the no-event watchdog immediately.  Previously it was only
+    // started after the first token/tool/reasoning event, so a backend run
+    // that produced no SSE event could leave the input locked forever.
+    resetIdleTimer();
 
     // ── 추론(reasoning) 스트림: 별도 접이식 박스 표시 ──
     // 추론 단계에서는 token 이벤트가 오지 않아 idle timer가 스트림을 조기
@@ -1275,7 +1279,9 @@ async function _executeAgentStream(displayText, uploaded) {
       console.log('[SSE-DIAG] ⚠️ cancel event received');
       State._userCancelledStream = false;
       finishStream('cancel');
-      asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[실행 취소됨]</div>');
+      if (asstBubble && asstBubble.parentNode) {
+        asstBubble.insertAdjacentHTML('beforeend', '<div class="text-danger" style="margin-top:8px;">[실행 취소됨]</div>');
+      }
     });
 
     sse.addEventListener('error', (e) => {
@@ -1367,9 +1373,14 @@ async function _executeAgentStream(displayText, uploaded) {
 
     sse.addEventListener('apperror', (e) => {
       console.log('[SSE-DIAG] 💥 apperror event received');
-      const data = JSON.parse(e.data);
+      // Always release the UI first.  Malformed error payloads must never
+      // prevent finishStream() from re-enabling the composer.
       finishStream('apperror');
-      asstBubble.insertAdjacentHTML('beforeend', `<div class="text-danger" style="margin-top:8px;">[오류: ${data.message}]</div>`);
+      let data = {};
+      try { data = JSON.parse(e.data || '{}'); } catch (_) { data = { message: e.data || '알 수 없는 오류' }; }
+      if (asstBubble && asstBubble.parentNode) {
+        asstBubble.insertAdjacentHTML('beforeend', `<div class="text-danger" style="margin-top:8px;">[오류: ${data.message || '알 수 없는 오류'}]</div>`);
+      }
     });
 
   } catch (err) {
@@ -1396,24 +1407,34 @@ async function cancelActiveStream() {
 }
 
 function cleanupStreamState() {
-  console.log('[SSE-DIAG] 🧹 cleanupStreamState called, isConnected=',
-    $('sendPromptBtn') ? $('sendPromptBtn').isConnected : 'null');
-  if (State.currentEventSource) {
-    State.currentEventSource.close();
+  console.log('[SSE-DIAG] 🧹 cleanupStreamState called');
+  // Cleanup is called from several asynchronous SSE/error paths.  Each UI
+  // operation must be isolated so one missing/replaced DOM node cannot leave
+  // the composer permanently disabled.
+  try {
+    if (State.currentEventSource) State.currentEventSource.close();
+  } catch (err) {
+    console.warn('[SSE-DIAG] EventSource close failed:', err);
+  } finally {
     State.currentEventSource = null;
+    State.currentStreamId = null;
   }
-  State.currentStreamId = null;
-  setChatStatus('idle', '대기 중');
-  $('sendPromptBtn').disabled = false;
-  console.log('[SSE-DIAG] 🧹 cleanup done, disabled=',
-    $('sendPromptBtn') ? $('sendPromptBtn').disabled : 'null');
-  $('cancelStreamBtn').style.display = 'none';
+  try { setChatStatus('idle', '대기 중'); } catch (err) { console.warn('[SSE-DIAG] status reset failed:', err); }
+  try {
+    const sendBtn = $('sendPromptBtn');
+    if (sendBtn) sendBtn.disabled = false;
+  } catch (err) { console.warn('[SSE-DIAG] send button reset failed:', err); }
+  try {
+    const cancelBtn = $('cancelStreamBtn');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+  } catch (err) { console.warn('[SSE-DIAG] cancel button reset failed:', err); }
 }
 
 function setChatStatus(status, text) {
   const ind = $('statusIndicator');
-  ind.className = `status-indicator ${status}`;
-  $('statusText').textContent = text;
+  const statusText = $('statusText');
+  if (ind) ind.className = `status-indicator ${status}`;
+  if (statusText) statusText.textContent = text;
 }
 // ── Modals Setup ──
 
