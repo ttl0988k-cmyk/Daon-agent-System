@@ -12,7 +12,6 @@
 import { configApi, sessionApi } from "./bridge/api"
 import { bridge } from "./bridge/DaonBridge"
 import { installNormalizer } from "./normalizer/EventNormalizer"
-import { installParentBridge } from "./parent-bridge"
 import { useApprovalStore } from "./stores/approvalStore"
 import { nextMessageId, useChatStore, type DaonMessage } from "./stores/chatStore"
 import { useSessionStore } from "./stores/sessionStore"
@@ -30,10 +29,6 @@ export function installDaonRuntime(): void {
     installed = true
 
     installNormalizer()
-
-    // 임베드(iframe) 모드: 하네스 연동 이벤트를 DAON shell(부모 창)로 전달.
-    // 단독 페이지 로드 시에는 내부에서 no-op.
-    installParentBridge()
 
     // 세션 전환 감시 → 히스토리 다시 로드
     useSessionStore.subscribe((state, prev) => {

@@ -1099,8 +1099,6 @@
           <button class="mode-tab-btn" id="toggleDebateModeBtn" onclick="switchMode('debate')"
             style="color:var(--accent);">⚖️ 토론</button>
           <button class="mode-tab-btn" id="modeHarnessBtn">⚡ 하네스</button>
-          <button class="mode-tab-btn" id="rooChatToggleBtn" onclick="toggleRooChatUI()"
-            title="Roo React 채팅 UI ↔ 기존 채팅 UI 전환" style="margin-left:auto;">🧪 Roo</button>
         </div>
         <div
           style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">
@@ -1109,10 +1107,6 @@
 
         <!-- Chat Mode Content -->
         <div id="chatModeContent">
-          <!-- Roo React ChatView 임베드 지점. DAON shell은 그대로 유지하고
-               우측 채팅 패널만 교체하기 위해 iframe으로 격리한다.
-               /webview/ 는 server.py가 webview/dist 빌드 산출물을 서빙. -->
-          <iframe id="rooChatFrame" title="Roo Chat" style="display:none;"></iframe>
           <div id="chatMessages"></div>
           <div id="debateMessages" style="display:none;"></div>
           <button id="cancelStreamBtn">■ 취소</button>
@@ -1502,7 +1496,6 @@
   <script src="/static/modules/approval.js?v=2"></script>
   <script src="/static/modules/mcp.js"></script>
   <script src="/static/modules/harness.js"></script>
-  <script src="/static/modules/roo_chat.js?v=1"></script>
   <script src="/static/modules/beginner.js"></script>
 </body>
 

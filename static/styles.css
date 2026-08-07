@@ -1282,15 +1282,6 @@
       overflow: hidden;
     }
 
-    /* Roo React ChatView 임베드 iframe — 기존 채팅 UI와 1:1 교체 영역 */
-    #rooChatFrame {
-      flex: 1;
-      width: 100%;
-      min-height: 0;
-      border: none;
-      background: var(--bg1);
-    }
-
     #chatMessages,
     #debateMessages {
       flex: 1;
@@ -1521,9 +1512,7 @@
     }
 
     @keyframes tool-spin {
-      to {
-        transform: rotate(360deg);
-      }
+      to { transform: rotate(360deg); }
     }
 
     .tool-group-items {
