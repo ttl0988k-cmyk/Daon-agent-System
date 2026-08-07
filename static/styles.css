@@ -1315,6 +1315,12 @@
       color: var(--text);
     }
 
+    /* 안전망: 자식이 전혀 없는 빈 버블은 렌더하지 않는다.
+       (도구 전용 턴/잔여 live 버블이 얇은 빈 줄로 보이는 아티팩트 방지) */
+    .message-bubble:empty {
+      display: none;
+    }
+
     /* Roo-style transient agent state, rendered inside the existing DAON
        chat stream rather than replacing the application shell. */
     .agent-status-bubble {

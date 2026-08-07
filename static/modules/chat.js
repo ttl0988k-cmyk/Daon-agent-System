@@ -328,6 +328,26 @@ function stripThinkBlocks(text) {
 
 function renderMessages(messages, toolCalls) {
   const box = $('chatMessages');
+  // ── 진행 중 승인/선택 카드 보존 ──
+  // innerHTML 초기화로 pending 승인 카드가 사라지면 승인 버튼이 영구 유실된다
+  // ("승인/거절 버튼이 안 먹히는" 문제의 주원인). 렌더 후 다시 붙인다.
+  const preservedCards = [];
+  try {
+    const approvalCard = document.getElementById('inlineApprovalCard');
+    if (approvalCard && approvalCard.parentNode === box) {
+      approvalCard.remove();
+      // 현재 세션의 카드만 보존 (세션 전환 시 이전 세션 카드는 제거)
+      if (approvalCard.getAttribute('data-session-id') === State.activeSessionId) {
+        preservedCards.push(approvalCard);
+      }
+    }
+    // 미응답 선택 카드(ask_followup_question)는 스트림 진행 중 렌더링에서만 보존
+    if (State.currentStreamId) {
+      box.querySelectorAll('.inline-choice-card').forEach((c) => {
+        if (!c.querySelector('.inline-choice-selected')) { c.remove(); preservedCards.push(c); }
+      });
+    }
+  } catch (_) { }
   box.innerHTML = '';
 
   messages.forEach((msg, idx) => {
@@ -335,6 +355,14 @@ function renderMessages(messages, toolCalls) {
     // 내부 제어 nudging 메시지(role:user 주입)는 채팅에 노출하지 않음
     if (msg.role === 'user' && _isInternalNudgeMessage(msg.content)) return;
     const isUser = msg.role === 'user';
+    // ── 빈 assistant 버블 스킵 (얇은 빈 줄 아티팩트 방지) ──
+    // 도구 전용 턴은 content가 비어 있거나 think 블록뿐인 assistant 메시지를 남긴다.
+    // 이걸 버블로 렌더링하면 테두리만 있는 얇은 빈 줄로 보인다.
+    if (!isUser) {
+      const plain = stripThinkBlocks(msg.content);
+      const msgToolsPre = toolCalls ? toolCalls.filter(tc => tc.assistant_msg_idx === idx) : [];
+      if (!plain.trim() && msgToolsPre.length === 0) return;
+    }
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${isUser ? 'user' : 'assistant'}`;
 
@@ -399,6 +427,8 @@ function renderMessages(messages, toolCalls) {
 
     box.appendChild(bubble);
   });
+  // 보존한 카드(승인/선택)를 맨 아래에 복원 — 재렌더링 후에도 승인 버튼 유지
+  preservedCards.forEach((c) => box.appendChild(c));
   scrollToChatBottom();
 }
 
@@ -784,6 +814,24 @@ async function _executeAgentStream(displayText, uploaded) {
         _toolGroupCount = 0;
         _toolGroupDoneCount = 0;
         _toolItemMap = {};
+      }
+    } catch (_) { }
+    // ── 잔여 live 요소 정리 (얇은 줄/생각 중 필 아티팩트 방지) ──
+    // agentStatusBubble("💭 생각 중..." 등)은 일시 표시용 — 스트림 종료 시 항상 제거.
+    try {
+      if (agentStatusBubble && agentStatusBubble.parentNode) agentStatusBubble.remove();
+    } catch (_) { }
+    try {
+      if (asstBubble) {
+        const _cur = asstBubble.querySelector('.cursor');
+        if (_cur) _cur.remove();
+        // 뒤에서 피드백 문구를 붙이지 않는 종료 사유라면, 빈 버블을 통째로 제거
+        const _noFeedback = (reason === 'done' || reason === 'sse_closed' || reason === 'done_reconnected' || reason === 'cancel_reconnected' || reason === 'apperror_reconnected');
+        if (_noFeedback && asstBubble.parentNode) {
+          const _txt = (asstBubble.textContent || '').trim();
+          const _hasMedia = asstBubble.querySelector('img, video, .tool-group-card, .text-muted, .text-danger');
+          if (!_txt && !_hasMedia) asstBubble.remove();
+        }
       }
     } catch (_) { }
     try { if (sse) sse.close(); } catch (_) { }

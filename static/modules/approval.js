@@ -15,7 +15,8 @@ function showInlineApproval(data, container) {
     if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
     if (typeof container === 'string') container = document.getElementById(container);
     if (!container) return;
-    var sid = (typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null;
+    // 이벤트가 담은 session_id 우선 (컨텍스트 압축으로 세션이 회전된 뒤에도 정확)
+    var sid = data.session_id || ((typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null);
     if (!sid) return;
     var lc = data.line_changes || {};
     var file = data.path || '';
@@ -31,7 +32,7 @@ function showInlineApproval(data, container) {
     card.setAttribute('data-preview-id', previewId);
     card.setAttribute('data-session-id', sid);
     card.setAttribute('data-is-plan', isPlan ? '1' : '');
-    card.setAttribute('data-kind', isDangerous ? 'dangerous_command' : 'architect');
+    card.setAttribute('data-kind', isDangerous ? 'dangerous_command' : (isSkillSave ? 'skill_save' : 'architect'));
     var icon, title, body;
     if (isSkillSave) {
         icon = '\u{1F4BE}';
@@ -83,8 +84,11 @@ function showInlineApproval(data, container) {
 }
 
 async function handleInlineApproval(approved, btnEl) {
-    var card = btnEl.closest('.inline-approval-card');
+    var card = btnEl ? btnEl.closest('.inline-approval-card') : null;
     if (!card) return;
+    // 이중 클릭/중복 처리 방지 (같은 카드는 한 번만 처리)
+    if (card.getAttribute('data-busy') === '1') return;
+    card.setAttribute('data-busy', '1');
     var sid = card.getAttribute('data-session-id');
     var previewId = card.getAttribute('data-preview-id');
     var isPlan = card.getAttribute('data-is-plan') === '1';
@@ -92,6 +96,29 @@ async function handleInlineApproval(approved, btnEl) {
     var actions = card.querySelector('.inline-approval-card-actions');
     if (actions) {
         actions.innerHTML = '<span style="color:var(--text2);font-size:12px;padding:8px;">처리 중...</span>';
+    }
+    // 스킬 저장 승인: 전용 엔드포인트 사용 (Architect approve/reject 경로로 가면 스킬 추출이 시작되지 않음)
+    if (kind === 'skill_save') {
+        try {
+            await api(approved ? '/api/approval/skill-save/approve' : '/api/approval/skill-save/reject', {
+                method: 'POST',
+                body: JSON.stringify({ session_id: sid })
+            });
+            card.outerHTML = approved
+                ? '<div class="inline-approval-card resolved approved"><div class="inline-approval-card-inner"><span style="color:var(--success)">✅ 스킬로 저장 중...</span></div></div>'
+                : '<div class="inline-approval-card resolved rejected"><div class="inline-approval-card-inner"><span style="color:var(--text2)">❌ 스킬 저장 안 함</span></div></div>';
+        } catch (err) {
+            console.error('[InlineApproval] skill-save error:', err);
+            if (actions && card.isConnected) {
+                actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
+            }
+            card.removeAttribute('data-busy');
+        }
+        setTimeout(function () {
+            var resolved = document.querySelector('.inline-approval-card.resolved');
+            if (resolved) resolved.remove();
+        }, 5000);
+        return;
     }
     // [A] 위험 명령 승인: Architect diff 플로우가 아니라 /api/approval/respond 로 choice 전달 (once|session|always|deny)
     if (kind === 'dangerous_command') {
@@ -128,6 +155,7 @@ async function handleInlineApproval(approved, btnEl) {
                 try {
                     await api('/api/file/apply-preview', {
                         method: 'POST',
+                        timeout: 30000,
                         body: JSON.stringify({ session_id: sid, preview_id: previewId })
                     });
                 } catch (e) { console.warn('[InlineApproval] Apply-preview failed:', e); }
@@ -160,8 +188,15 @@ async function handleInlineApproval(approved, btnEl) {
         }
     } catch (err) {
         console.error('[InlineApproval] Error:', err);
-        if (actions) {
-            actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
+        var errMsg = (err && err.message) || '';
+        if (/no pending/i.test(errMsg)) {
+            // 서버 측 승인이 이미 처리된 경우(타임아웃/중복 처리) — 카드를 우아하게 정리
+            if (card.isConnected) {
+                card.outerHTML = '<div class="inline-approval-card resolved approved"><div class="inline-approval-card-inner"><span style="color:var(--text2)">⌛ 이미 처리된 승인 요청입니다</span></div></div>';
+            }
+        } else if (actions && card.isConnected) {
+            actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(errMsg) + '</span>';
+            card.removeAttribute('data-busy'); // 일시 실패 시 재시도 허용
         }
     }
     // [C] 혹시 남아있을 수 있는 diff 패널 상단 bar 숨김
@@ -250,14 +285,23 @@ function _scrollContainerToBottom(container) {
 
 var _origShowApprovalBanner = (typeof _showApprovalBanner === 'function') ? _showApprovalBanner : null;
 _showApprovalBanner = function (data) {
-    if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
+    if (!data) return;
+    // 하네스 동적 승인({message, actions, onAction} 형태): 액션 버튼 인라인 카드로 렌더.
+    // (diff 승인으로 취급하면 아무것도 표시되지 않아 하네스 승인이 불가능해진다.)
+    if (data.actions && data.actions.length && typeof data.onAction === 'function') {
+        var hContainer = _resolveApprovalContainer();
+        if (hContainer) showHarnessApprovalCard(data, hContainer);
+        if (typeof _showToast === 'function') { try { _showToast('⚠ 작업 승인이 필요합니다.'); } catch (e) { } }
+        return;
+    }
+    if (data.status !== 'pending' && data.type !== 'dangerous_command') return;
     // 상단 diff 바(diffActiveBar)는 더 이상 표시하지 않는다. 모든 승인(파일 변경/계획/위험 명령)은
     // 채팅 하단 인라인 카드로 통일한다. 미리보기 등록만 유지해 클라이언트 상태 일관성을 지킨다.
     if (data.preview_id && typeof registerDiffPreview === 'function') {
         try {
             registerDiffPreview({
                 preview_id: data.preview_id,
-                session_id: data.session_id || ((typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null),
+                session_id: data.session_id || ((typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null),
                 path: data.path,
                 line_changes: data.line_changes,
                 source_agent: data.source_agent || 'architect',
@@ -276,6 +320,63 @@ _showApprovalBanner = function (data) {
     }
 };
 
+// ── 하네스 동적 승인 인라인 카드 ──
+// harness.js의 {message, actions, onAction} 형태 승인을 인라인 카드로 렌더링한다.
+function showHarnessApprovalCard(data, container) {
+    if (typeof container === 'string') container = document.getElementById(container);
+    if (!container) return;
+    var existing = document.getElementById('inlineApprovalCard');
+    if (existing) existing.remove();
+    var card = document.createElement('div');
+    card.className = 'inline-approval-card';
+    card.id = 'inlineApprovalCard';
+    card.setAttribute('data-kind', 'harness');
+    var actionsHtml = data.actions.map(function (a) {
+        var val = (typeof a === 'string') ? a : (a.action || a.label || String(a));
+        var label = (typeof a === 'string') ? a : (a.label || a.action || String(a));
+        var cls = /approve|accept|continue|proceed|yes|승인|계속|진행/i.test(val) ? 'ia-approve-btn' : 'ia-reject-btn';
+        return '<button class="' + cls + '" data-action="' + _escInlineApproval(val) + '">' + _escInlineApproval(label) + '</button>';
+    }).join('');
+    card.innerHTML =
+        '<div class="inline-approval-card-inner">'
+        + '<div class="inline-approval-card-header">'
+        + '<span class="inline-approval-card-icon">\u{1F6A7}</span>'
+        + '<span class="inline-approval-card-title">작업 승인 필요</span>'
+        + '</div>'
+        + '<div class="inline-approval-card-body">' + _escInlineApproval(data.message || '작업을 계속하려면 승인해 주세요.') + '</div>'
+        + '<div class="inline-approval-card-actions">' + actionsHtml + '</div>'
+        + '</div>';
+    card.querySelectorAll('button[data-action]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            if (card.getAttribute('data-busy') === '1') return;
+            card.setAttribute('data-busy', '1');
+            var action = btn.getAttribute('data-action');
+            var wrap = card.querySelector('.inline-approval-card-actions');
+            if (wrap) wrap.innerHTML = '<span style="color:var(--text2);font-size:12px;padding:8px;">처리 중...</span>';
+            Promise.resolve()
+                .then(function () { return data.onAction(action); })
+                .then(function () {
+                    if (!card.isConnected) return;
+                    card.removeAttribute('id');
+                    card.outerHTML = '<div class="inline-approval-card resolved approved"><div class="inline-approval-card-inner"><span style="color:var(--success)">✅ 응답 완료 (' + _escInlineApproval(action) + ')</span></div></div>';
+                    setTimeout(function () {
+                        var resolved = document.querySelector('.inline-approval-card.resolved');
+                        if (resolved) resolved.remove();
+                    }, 5000);
+                })
+                .catch(function (err) {
+                    console.error('[HarnessApproval] onAction error:', err);
+                    card.removeAttribute('data-busy');
+                    if (card.isConnected && wrap) {
+                        wrap.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval((err && err.message) || '') + '</span>';
+                    }
+                });
+        });
+    });
+    container.appendChild(card);
+    _scrollContainerToBottom(container);
+}
+
 // ── [D] Approval 폴링: SSE 이벤트를 놓쳐도 복구 ──
 var _approvalPollTimer = null;
 function _resolveApprovalContainer() {
@@ -288,7 +389,7 @@ function _resolveApprovalContainer() {
 }
 async function _pollApprovalOnce() {
     try {
-        var sid = (typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null;
+        var sid = (typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null;
         if (!sid) return;
         // 이미 카드가 표시되어 있으면 중복 표시 방지
         if (document.getElementById('inlineApprovalCard')) return;
