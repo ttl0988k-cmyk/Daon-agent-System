@@ -190,7 +190,10 @@ class Handler(BaseHTTPRequestHandler):
 
             # Serve Frontend
             if path in ('/', '/index.html'):
-                index_path = WEBVIEW_INDEX if WEBVIEW_INDEX.exists() else RESOURCE_DIR / 'index.html'
+                # Preserve the original DAON workspace UI. Roo-derived
+                # behavior must be integrated into the existing chat surface,
+                # not replace the application shell.
+                index_path = RESOURCE_DIR / 'index.html'
                 self.serve_file(index_path)
                 return
 
