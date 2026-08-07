@@ -518,6 +518,24 @@ async function _executeAgentStream(displayText, uploaded) {
   asstBubble.innerHTML = '<span class="cursor">|</span>';
   box.appendChild(asstBubble);
 
+  // Keep the agent's transient state visible in the chat stream as well as in
+  // the compact header status.  The legacy DAON shell does not have Roo's
+  // separate status message component, so this small independent element is
+  // the equivalent without replacing the existing UI.
+  const agentStatusBubble = document.createElement('div');
+  agentStatusBubble.className = 'agent-status-bubble thinking';
+  agentStatusBubble.textContent = '⏳ 에이전트 작업 시작 중...';
+  box.insertBefore(agentStatusBubble, asstBubble);
+
+  function setStreamStatus(status, text) {
+    setChatStatus(status, text);
+    if (agentStatusBubble && agentStatusBubble.parentNode) {
+      agentStatusBubble.className = `agent-status-bubble ${status}`;
+      agentStatusBubble.textContent = text || '';
+      agentStatusBubble.style.display = text ? '' : 'none';
+    }
+  }
+
   let incomingText = '';
 
   // ── finishStream: 단일 진입점 — 모든 스트림 종료 경로를 이곳으로 통합 ──
@@ -858,7 +876,7 @@ async function _executeAgentStream(displayText, uploaded) {
     sse.addEventListener('reasoning', (e) => {
       try {
         const data = JSON.parse(e.data);
-        setChatStatus('thinking', '모델 추론 중...');
+        setStreamStatus('thinking', '💭 생각 중...');
         _reasoningText += data.text || '';
         if (!_reasoningCard) {
           _reasoningStartTs = Date.now();
@@ -892,7 +910,7 @@ async function _executeAgentStream(displayText, uploaded) {
 
     sse.addEventListener('token', (e) => {
       const data = JSON.parse(e.data);
-      setChatStatus('thinking', '최종 답변 생성 중...');
+      setStreamStatus('thinking', '✍️ 최종 답변 생성 중...');
       incomingText += data.text;
       asstBubble.innerHTML = renderMd(incomingText);
       // 추론이 끝났으면 카드 제목 갱신 (경과 초 포함)
@@ -954,7 +972,10 @@ async function _executeAgentStream(displayText, uploaded) {
             <pre class="terminal-live-output"></pre>
           </div>
         `;
-        asstBubble.appendChild(_terminalOutputCard);
+        // Keep this outside the token bubble.  Each token replaces
+        // asstBubble.innerHTML, which otherwise silently removes the live
+        // terminal card on the next streamed token.
+        box.insertBefore(_terminalOutputCard, asstBubble);
       }
 
       var outputPre = _terminalOutputCard.querySelector('.terminal-live-output');
@@ -1058,7 +1079,7 @@ async function _executeAgentStream(displayText, uploaded) {
       const toolName = data.name || 'unknown';
       const toolEvent = data.event || 'tool.started';
       const isStarted = toolEvent === 'tool.started';
-      setChatStatus('tool', isStarted
+      setStreamStatus('tool', isStarted
         ? `도구 실행 중: ${toolName}...`
         : `도구 실행 완료: ${toolName}`);
 
@@ -1073,9 +1094,9 @@ async function _executeAgentStream(displayText, uploaded) {
           // 모든 도구가 끝나면 챗창 상태를 즉시 "응답 생성 중"으로 복귀시킨다.
           // 다음 토큰이 올 때까지 상태표시가 "도구 완료"에 머물러
           // 원상복구가 늦어 보이는 문제를 방지한다.
-          setChatStatus('thinking', '최종 답변 생성 중...');
+          setStreamStatus('thinking', '✍️ 최종 답변 생성 중...');
         } else {
-          setChatStatus('tool', '도구 완료 — 다음 작업 준비 중...');
+          setStreamStatus('tool', '✅ 도구 완료 — 다음 작업 준비 중...');
         }
       }
 
@@ -1309,9 +1330,9 @@ async function _executeAgentStream(displayText, uploaded) {
           // 상단 상태 표시를 "승인 대기"로 전환해 에이전트가 멈춘 것이 아니라
           // 사용자 검토를 기다리는 중임을 명확히 한다.
           if (data.type === 'dangerous_command') {
-            setChatStatus('thinking', '위험 명령 승인 대기 중... (승인 여부를 선택해주세요)');
+            setStreamStatus('thinking', '⚠️ 위험 명령 승인 대기 중...');
           } else {
-            setChatStatus('thinking', '승인 대기 중... (변경사항을 검토해주세요)');
+            setStreamStatus('thinking', '🛡️ 승인 대기 중...');
           }
         }
         if (typeof _showApprovalBanner === 'function') {

@@ -1315,6 +1315,30 @@
       color: var(--text);
     }
 
+    /* Roo-style transient agent state, rendered inside the existing DAON
+       chat stream rather than replacing the application shell. */
+    .agent-status-bubble {
+      align-self: flex-start;
+      max-width: 90%;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+      opacity: .9;
+    }
+
+    .agent-status-bubble.thinking {
+      border-color: rgba(79, 110, 247, .45);
+    }
+
+    .agent-status-bubble.tool {
+      border-color: rgba(245, 158, 11, .55);
+      color: var(--text2);
+    }
+
     .message-bubble h1,
     .message-bubble h2,
     .message-bubble h3 {
