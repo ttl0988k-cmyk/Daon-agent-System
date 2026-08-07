@@ -1,0 +1,70 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    /* Roo 원본 코드는 strict 모드 기준으로 작성되어 있다.
+       strictNullChecks가 꺼지면 zod 스키마 추론(z.infer)이 모든 프로퍼티를
+       optional로 만들어 타입 오류가 발생하므로 반드시 켜야 한다. */
+    "strict": true,
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "module": "esnext",
+    "types": [
+      "vite/client"
+    ],
+    "allowArbitraryExtensions": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    /* vendored Roo 코드는 type-only import를 표시하지 않는 경우가 있어 비활성화 */
+    "verbatimModuleSyntax": false,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    /* 경로 별칭 — vite.config.ts의 alias와 반드시 일치시켜야 한다 */
+    "baseUrl": ".",
+    "paths": {
+      "@roo-code/core/browser": [
+        "./src/daon/roo-core/browser.ts"
+      ],
+      "vscode": [
+        "./src/daon/stubs/vscode.ts"
+      ],
+      "@anthropic-ai/sdk": [
+        "./src/daon/stubs/anthropic-sdk.ts"
+      ],
+      "ai-sdk-provider-poe/code": [
+        "./src/daon/stubs/poe-provider.ts"
+      ],
+      "@roo-code/types": [
+        "./src/roo-types/index.ts"
+      ],
+      "@roo/*": [
+        "./src/roo-shared/*"
+      ],
+      "@src/*": [
+        "./src/roo/*"
+      ],
+      "@/*": [
+        "./src/roo/*"
+      ]
+    },
+    /* Linting — vendored Roo 코드 호환을 위해 완화 */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "erasableSyntaxOnly": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "src/roo/utils/test-utils.tsx"
+  ]
+}

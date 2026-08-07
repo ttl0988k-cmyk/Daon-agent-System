@@ -46,7 +46,12 @@ from pathlib import Path
 # Resolve static resource paths and run directories for PyInstaller environment
 if hasattr(sys, '_MEIPASS'):
     RUN_DIR = Path(sys.executable).parent.resolve()
-    if (RUN_DIR / 'static').exists():
+    # One-file PyInstaller data files live under _MEIPASS. Prefer that
+    # location so the bundled React webview is not shadowed by a developer's
+    # working-directory legacy static folder.
+    if (Path(sys._MEIPASS) / 'webview' / 'index.html').exists():
+        RESOURCE_DIR = Path(sys._MEIPASS)
+    elif (RUN_DIR / 'static').exists():
         RESOURCE_DIR = RUN_DIR
     elif (Path.cwd() / 'static').exists():
         RESOURCE_DIR = Path.cwd()
@@ -55,6 +60,12 @@ if hasattr(sys, '_MEIPASS'):
 else:
     RESOURCE_DIR = Path(__file__).parent.resolve()
     RUN_DIR = Path(__file__).parent.resolve()
+
+# Roo/DAON React webview build.  The bundled server owns the frontend route so
+# Electron, portable builds, and local development all use the same artifact.
+# Keep the legacy root frontend as a fallback while the webview is absent.
+WEBVIEW_DIR = RESOURCE_DIR / 'webview'
+WEBVIEW_INDEX = WEBVIEW_DIR / 'index.html'
 
 # PyInstaller bundle helper imports
 import asyncio
@@ -179,7 +190,13 @@ class Handler(BaseHTTPRequestHandler):
 
             # Serve Frontend
             if path in ('/', '/index.html'):
-                self.serve_file(RESOURCE_DIR / 'index.html')
+                index_path = WEBVIEW_INDEX if WEBVIEW_INDEX.exists() else RESOURCE_DIR / 'index.html'
+                self.serve_file(index_path)
+                return
+
+            if path.startswith('/assets/') and WEBVIEW_DIR.exists():
+                rel_path = path[len('/assets/'):]
+                self.serve_file(WEBVIEW_DIR / 'assets' / rel_path)
                 return
 
             if path.startswith('/static/'):
