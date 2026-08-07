@@ -1294,9 +1294,9 @@
 
     .message-bubble {
       max-width: 90%;
-      padding: 8px 12px;
+      padding: 9px 13px;
       border-radius: 10px;
-      font-size: 13px;
+      font-size: 14px;
       line-height: 1.6;
       word-wrap: break-word;
     }
@@ -1512,7 +1512,9 @@
     }
 
     @keyframes tool-spin {
-      to { transform: rotate(360deg); }
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     .tool-group-items {
@@ -1622,13 +1624,13 @@
       border: 1px solid var(--border2);
       color: var(--text);
       border-radius: 7px;
-      padding: 8px 10px;
-      font-size: 12px;
+      padding: 10px 12px;
+      font-size: 13px;
       font-family: inherit;
       outline: none;
       resize: none;
-      min-height: 36px;
-      max-height: 120px;
+      min-height: 64px;
+      max-height: 200px;
       overflow-y: auto;
       transition: border-color 0.15s;
     }
@@ -4085,6 +4087,7 @@
       flex-wrap: wrap;
     }
 
+    /* 깔끔한 플랫 스타일: 채우기 없이 얇은 테두리 + 텍스트 강조만 */
     .ia-approve-btn,
     .ia-reject-btn {
       padding: 5px 14px;
@@ -4092,28 +4095,25 @@
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
+      background: transparent;
       border: 1px solid var(--border);
-      transition: background 0.15s;
+      color: var(--text2);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
 
     .ia-approve-btn {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
+      color: var(--accent);
+      border-color: var(--border);
     }
 
     .ia-approve-btn:hover {
-      filter: brightness(0.92);
-    }
-
-    .ia-reject-btn {
-      background: transparent;
-      color: var(--text2);
-      border-color: var(--border);
+      background: var(--bg3);
+      border-color: var(--accent);
     }
 
     .ia-reject-btn:hover {
       background: var(--bg3);
+      border-color: var(--border2);
     }
 
     /* ═══════════════════════════════════════════════════════════════

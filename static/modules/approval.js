@@ -251,19 +251,28 @@ function _scrollContainerToBottom(container) {
 var _origShowApprovalBanner = (typeof _showApprovalBanner === 'function') ? _showApprovalBanner : null;
 _showApprovalBanner = function (data) {
     if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
-    var chatContent = document.getElementById('chatModeContent');
-    var harnessContent = document.getElementById('harnessModeContent');
-    var isChatVisible = chatContent && chatContent.style.display !== 'none';
-    var isHarnessVisible = harnessContent && harnessContent.style.display !== 'none';
-    var container;
-    if (isChatVisible) container = document.getElementById('chatMessages');
-    else if (isHarnessVisible) container = document.getElementById('harnessConsole');
-    else container = document.getElementById('chatMessages');
-    showInlineApproval(data, container);
-    // [B] plan.md(is_plan) 승인은 diff 패널과 무관하므로 원본 diffActiveBar 호출을 스킵해 이중 UI를 막는다.
-    // [A] 위험 명령 승인(dangerous_command)도 diff 패널과 무관하므로 동일하게 스킵한다.
-    if (_origShowApprovalBanner && _origShowApprovalBanner !== _showApprovalBanner && !data.is_plan && data.type !== 'dangerous_command') {
-        try { _origShowApprovalBanner(data); } catch (e) { }
+    // 상단 diff 바(diffActiveBar)는 더 이상 표시하지 않는다. 모든 승인(파일 변경/계획/위험 명령)은
+    // 채팅 하단 인라인 카드로 통일한다. 미리보기 등록만 유지해 클라이언트 상태 일관성을 지킨다.
+    if (data.preview_id && typeof registerDiffPreview === 'function') {
+        try {
+            registerDiffPreview({
+                preview_id: data.preview_id,
+                session_id: data.session_id || ((typeof State !== 'undefined') ? (State.sessionId || State.activeSessionId) : null),
+                path: data.path,
+                line_changes: data.line_changes,
+                source_agent: data.source_agent || 'architect',
+                approval_required: true
+            });
+        } catch (e) { }
+    }
+    var container = _resolveApprovalContainer();
+    if (container) showInlineApproval(data, container);
+    if (typeof _showToast === 'function') {
+        try {
+            if (data.type === 'dangerous_command') _showToast('⚠ 위험 명령 승인이 필요합니다.');
+            else if (data.is_plan) _showToast('⚠ 실행 계획 승인이 필요합니다.');
+            else _showToast('⚠ 승인이 필요합니다: ' + (data.path || ''));
+        } catch (e) { }
     }
 };
 
