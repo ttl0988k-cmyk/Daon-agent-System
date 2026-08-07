@@ -44,6 +44,12 @@ DIR_PAIRS = [
     ('skills', 'dist_new/skills'),
 ]
 
+# 1-1) webview 빌드 산출물 (Vite dist) → dist_new/webview
+#      패키징 시 webview/ 루트에 dist 내용이 그대로 들어가야 server.py의
+#      WEBVIEW_DIR(_MEIPASS/webview) 탐지가 동작한다. .map은 제외.
+WEBVIEW_SRC = _p('webview/dist')
+WEBVIEW_DST = _p('dist_new/webview')
+
 # 2) 개별 파일 쌍
 FILE_PAIRS = [
     ('config.yaml', 'dist_new/config.yaml'),
@@ -65,6 +71,18 @@ for src, dst in DIR_PAIRS:
     except Exception as e:
         fail.append((dst, str(e)))
         print('[FAIL]', dst, '::', e)
+
+try:
+    if not os.path.isdir(WEBVIEW_SRC):
+        raise FileNotFoundError('source missing: ' + WEBVIEW_SRC + ' (run: cd webview && npm run build)')
+    os.makedirs(WEBVIEW_DST, exist_ok=True)
+    shutil.copytree(WEBVIEW_SRC, WEBVIEW_DST, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('*.map'))
+    ok.append('dist_new/webview')
+    print('[OK ] dist_new/webview')
+except Exception as e:
+    fail.append(('dist_new/webview', str(e)))
+    print('[FAIL] dist_new/webview ::', e)
 
 for src, dst in FILE_PAIRS:
     s, d = _p(src), _p(dst)

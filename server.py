@@ -65,6 +65,10 @@ else:
 # Electron, portable builds, and local development all use the same artifact.
 # Keep the legacy root frontend as a fallback while the webview is absent.
 WEBVIEW_DIR = RESOURCE_DIR / 'webview'
+# 개발 트리에서는 빌드 산출물이 webview/dist 에 있다. 패키징된 exe는
+# webview/ 루트에 dist 내용이 그대로 복사되어 있다. dist 우선.
+if (WEBVIEW_DIR / 'dist' / 'index.html').exists():
+    WEBVIEW_DIR = WEBVIEW_DIR / 'dist'
 WEBVIEW_INDEX = WEBVIEW_DIR / 'index.html'
 
 # PyInstaller bundle helper imports
@@ -200,6 +204,20 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/assets/') and WEBVIEW_DIR.exists():
                 rel_path = path[len('/assets/'):]
                 self.serve_file(WEBVIEW_DIR / 'assets' / rel_path)
+                return
+
+            # ── Roo React ChatView 임베드 (iframe) 서빙 ──
+            # 레거시 DAON shell(index.html)이 #chatModeContent 안 iframe으로
+            # /webview/ 를 로드한다. Vite 빌드가 절대 경로(/assets/...)를
+            # 쓰므로 위 /assets/ 라우트가 번들을 서빙하고, 여기서는 엔트리와
+            # webview 프리픽스 경로만 담당한다.
+            if path in ('/webview', '/webview/'):
+                self.serve_file(WEBVIEW_INDEX)
+                return
+
+            if path.startswith('/webview/') and WEBVIEW_DIR.exists():
+                rel_path = path[len('/webview/'):]
+                self.serve_file(WEBVIEW_DIR / rel_path)
                 return
 
             if path.startswith('/static/'):
