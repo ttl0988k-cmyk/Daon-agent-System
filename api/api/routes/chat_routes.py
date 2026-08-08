@@ -68,15 +68,6 @@ def handle_post_chat_cancel(handler, body) -> bool:
     return j(handler, {'ok': True, 'cancelled': cancelled, 'stream_id': stream_id})
 
 
-def handle_post_chat_cancel(handler, body) -> bool:
-    """POST /api/chat/cancel — cancel an active stream (body: {stream_id})."""
-    stream_id = (body or {}).get('stream_id', '')
-    if not stream_id:
-        return bad(handler, 'stream_id required')
-    cancelled = cancel_stream(stream_id)
-    return j(handler, {'ok': True, 'cancelled': cancelled, 'stream_id': stream_id})
-
-
 def handle_get_sse_stream(handler, parsed) -> bool:
     """GET /api/chat/stream — SSE stream endpoint."""
     stream_id = parse_qs(parsed.query).get('stream_id', [''])[0]
