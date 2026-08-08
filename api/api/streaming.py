@@ -1472,7 +1472,12 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               "CRITICAL: Do NOT automatically save information to memory. Only use memory tools when:\n"
               "1. The user explicitly asks you to remember/save/store something, OR\n"
               "2. The user asks you to recall/search previously stored memories.\n"
-              "Do not proactively create entities or relations. Memory is on-demand only.\n\n"
+              "Do not proactively create entities or relations. Memory is on-demand only.\n"
+              "Never store transient tool-state as durable memory: MCP server connection errors "
+              "('server is not connected / unreachable / dead'), API outages, timeouts, or failed "
+              "tool calls are momentary states, not lasting facts. If an MCP server call fails, "
+              "re-check the server's live status (status / reconnect) before concluding anything; "
+              "a liveness assumption about a server is never a memory-worthy fact.\n\n"
               f"You are running as model: {resolved_model}."
           ) + _os_ctx
 
@@ -1655,7 +1660,12 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   persist_user_message=msg_text,
               )
           finally:
-              _agent_lock.release()
+              # cancel_stream()이 취소 시 세션 락을 강제 해제한 경우,
+              # 여기서 또 release()하면 RuntimeError가 발생하므로 무시한다.
+              try:
+                  _agent_lock.release()
+              except RuntimeError:
+                  pass
           print(f"[webui-debug] run_conversation completed for session={session_id}", flush=True)
           _result_msgs = result.get('messages')
           if _result_msgs:
@@ -1963,9 +1973,27 @@ def cancel_stream(stream_id: str) -> bool:
         # 3초 만에 강제 제거하던 기존 동작은 SSE 재연결이 404를 받게 만들어
         # 사용자에게 "에이전트 연결 끊김"으로 보였다. 정상 경로에서는 워커의
         # finally 블록이 STREAMS를 제거하므로 이곳은 안전장치다.
+        #
+        # 추가: 도구(terminal 등)가 인터럽트를 반영하지 못하고 계속 실행 중이면
+        # 세션 락(_agent_lock)이 풀리지 않아 새 메시지가 "이전 작업이 아직
+        # 종료되지 않았습니다"로 거부될 수 있다. 인터럽트가 도구에 전파될 시간
+        # (3초)을 기다린 뒤에도 락이 잠겨 있으면 강제로 해제해, 취소 후 즉시
+        # 다음 메시지를 보낼 수 있게 한다.
         def _force_cleanup():
             with _STREAM_THREADS_LOCK:
                 worker = _STREAM_THREADS.get(stream_id)
+            # 1) 도구가 인터럽트를 반영해 스스로 종료되기를 잠시 기다린다.
+            _grace_deadline = time.time() + 3
+            while worker is not None and worker.is_alive() and time.time() < _grace_deadline:
+                time.sleep(0.5)
+            # 2) 인터럽트 전파 후에도 워커가 계속 실행 중이면(도구가 인터럽트를
+            #    반영하지 못해 run_conversation()이 아직 반환하지 않은 경우)
+            #    세션 락을 강제 해제해 다음 메시지가 즉시 진행될 수 있게 한다.
+            #    (워커가 이미 종료됐다면 finally 블록이 락을 해제했으므로 이
+            #    호출은 lock.locked()==False라서 no-op이다.)
+            if worker is not None and worker.is_alive():
+                _force_release_session_lock(stream_id)
+            # 3) STREAMS 정리 안전장치 (최대 20초 대기)
             deadline = time.time() + 20
             while worker is not None and worker.is_alive() and time.time() < deadline:
                 time.sleep(0.5)
@@ -1981,3 +2009,34 @@ def cancel_stream(stream_id: str) -> bool:
                 _ACTIVE_AGENTS.pop(stream_id, None)
         threading.Thread(target=_force_cleanup, daemon=True).start()
         return True
+
+
+def _force_release_session_lock(stream_id: str) -> None:
+    """취소 후에도 세션 락이 남아 있으면 강제로 해제한다.
+
+    도구(terminal 등)가 인터럽트를 반영하지 못하고 오래 실행 중이어도,
+    새 메시지가 '이전 작업이 아직 종료되지 않았습니다'로 거부되지 않도록
+    한다. 워커의 finally 블록에서 release()를 한 번 더 호출해도
+    RuntimeError가 발생하지 않도록 이미 try/except로 보호되어 있다.
+    """
+    session_id = None
+    with _ACTIVE_SESSION_STREAMS_LOCK:
+        for _sid, _sid_stream in _ACTIVE_SESSION_STREAMS.items():
+            if _sid_stream == stream_id:
+                session_id = _sid
+                break
+    if not session_id:
+        return
+    try:
+        lock = _get_session_agent_lock(session_id)
+        if lock.locked():
+            lock.release()
+            _logger.info(
+                "Force-released session lock for session %s (stream %s cancelled)",
+                session_id, stream_id,
+            )
+    except Exception as e:
+        _logger.warning(
+            "Failed to force-release session lock for session %s: %s",
+            session_id, e,
+        )

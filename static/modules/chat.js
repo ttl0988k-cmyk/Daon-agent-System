@@ -611,6 +611,11 @@ async function _executeAgentStream(displayText, uploaded) {
   let _toolGroupCount = 0;        // 총 도구 이벤트 수 (started 기준)
   let _toolGroupDoneCount = 0;    // 완료된 도구 수
   let _toolItemMap = {};          // tool_call_id -> 항목 DOM 요소 매핑
+  // 터미널 실시간 출력 카드. finishStream()이 참조하므로 함수 최상위에 선언
+  // (try 블록 안에 두면 종료 경로에서 ReferenceError → 정리 생략 → 카드가
+  //  빈 줄로 남는 문제의 원인이 된다).
+  let _terminalOutputCard = null;
+  let _terminalOutputText = '';
   // 승인(위험 명령/Architect 변경) 대기 여부. 승인 대기 중에는 이벤트가
   // 오지 않아도 idle 워치독이 스트림을 종료하면 안 된다 — 백엔드는 사용자
   // 승인 응답을 기다리며 블로킹 중이기 때문이다 (최대 5분).
@@ -821,6 +826,19 @@ async function _executeAgentStream(displayText, uploaded) {
     try {
       if (agentStatusBubble && agentStatusBubble.parentNode) agentStatusBubble.remove();
     } catch (_) { }
+    // 추론 카드 / 도구 그룹 카드 / 터미널 live 카드 등 transient 카드도 DOM에서
+    // 제거한다. done 경로는 renderMessages(innerHTML 초기화)가 정리해주지만,
+    // cancel/error/sse_closed 경로는 renderMessages가 호출되지 않아 이 카드들이
+    // 얇은 빈 줄(또는 접힌 카드 헤더)로 남는 문제가 있었다.
+    try {
+      if (_reasoningCard && _reasoningCard.parentNode) _reasoningCard.remove();
+    } catch (_) { }
+    try {
+      if (_toolGroupCard && _toolGroupCard.parentNode) _toolGroupCard.remove();
+    } catch (_) { }
+    try {
+      if (_terminalOutputCard && _terminalOutputCard.parentNode) _terminalOutputCard.remove();
+    } catch (_) { }
     try {
       if (asstBubble) {
         const _cur = asstBubble.querySelector('.cursor');
@@ -1001,8 +1019,7 @@ async function _executeAgentStream(displayText, uploaded) {
     });
 
     // ── Real-time terminal output streaming ──────────────────────────────
-    let _terminalOutputCard = null;
-    let _terminalOutputText = '';
+    // (_terminalOutputCard/_terminalOutputText 는 함수 최상위에 선언됨)
 
     sse.addEventListener('terminal_output', (e) => {
       const data = JSON.parse(e.data);
@@ -1629,6 +1646,19 @@ async function cancelActiveStream() {
   } catch (e) {
     console.error("Cancel failed:", e);
   }
+  // 취소 버튼 경로는 SSE를 즉시 닫으므로(cleanupStreamState) 블록 클로저의
+  // finishStream()이 실행되기 전에 transient 카드가 남을 수 있다. DOM에서
+  // 직접 찾아 제거해 얇은 빈 줄/접힌 카드 헤더가 남지 않게 한다.
+  try {
+    const box = $('chatMessages');
+    if (box) {
+      box.querySelectorAll('.reasoning-card, .tool-group-card, .terminal-live-card').forEach((el) => el.remove());
+      // 빈 assistant 버블(커서만 남은)도 제거
+      box.querySelectorAll('.message-bubble.assistant').forEach((el) => {
+        if (!(el.textContent || '').trim() && !el.querySelector('img, video, .text-muted, .text-danger')) el.remove();
+      });
+    }
+  } catch (_) { }
   cleanupStreamState();
 }
 

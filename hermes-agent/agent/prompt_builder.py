@@ -82,6 +82,11 @@ DEFAULT_AGENT_IDENTITY = (
 MEMORY_GUIDANCE = (
     "You have persistent memory. Save durable facts (preferences, environment, conventions) "
     "as declarative statements, not instructions. Don't save task progress or TODOs.\n"
+    "NEVER store transient tool-state as durable memory: MCP server connection errors, "
+    "'server is not connected / unreachable / dead' messages, API outages, timeouts, or failed "
+    "tool calls are momentary states, NOT lasting facts — do not save them.\n"
+    "If an MCP server call fails, re-check the server's live status (status / reconnect) before "
+    "concluding anything; never record a liveness assumption about a server in memory.\n"
     "Use session_search for past conversations; save reusable workflows as skills."
 )
 

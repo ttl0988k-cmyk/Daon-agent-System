@@ -2823,6 +2823,11 @@ class AIAgent:
         "preferences, or personal details worth remembering?\n"
         "2. Has the user expressed expectations about how you should behave, their work "
         "style, or ways they want you to operate?\n\n"
+        "NEVER save transient tool-state as durable memory: MCP server connection errors, "
+        "'server is not connected / unreachable / dead' messages, API outages, timeouts, "
+        "or failed tool calls are momentary states, NOT lasting facts — do not save them. "
+        "If an MCP server call failed, treat it as temporary; a liveness assumption about "
+        "any server is never a memory-worthy fact.\n\n"
         "If something stands out, save it using the memory tool. "
         "If nothing is worth saving, just say 'Nothing to save.' and stop."
     )
@@ -2847,6 +2852,10 @@ class AIAgent:
         "and error, or changing course due to experiential findings along the way, or did "
         "the user expect or desire a different method or outcome? If a relevant skill "
         "already exists, update it. Otherwise, create a new one if the approach is reusable.\n\n"
+        "IMPORTANT: Never save transient tool-state as durable memory — MCP server "
+        "connection errors ('server is not connected / unreachable / dead'), API outages, "
+        "timeouts, or failed tool calls are momentary states, NOT lasting facts. Never "
+        "record a liveness assumption about any server.\n\n"
         "Only act if there's something genuinely worth saving. "
         "If nothing stands out, just say 'Nothing to save.' and stop."
     )
@@ -5542,7 +5551,10 @@ class AIAgent:
         flush_content = (
             "[System: The session is being compressed. "
             "Save anything worth remembering — prioritize user preferences, "
-            "corrections, and recurring patterns over task-specific details.]"
+            "corrections, and recurring patterns over task-specific details.\n"
+            "Do NOT save transient tool-state as durable memory: MCP server connection "
+            "errors ('server is not connected / unreachable / dead'), API outages, timeouts, "
+            "or failed tool calls are momentary states, not lasting facts — skip them.]"
         )
         _sentinel = f"__flush_{id(self)}_{time.monotonic()}"
         flush_msg = {"role": "user", "content": flush_content, "_flush_sentinel": _sentinel}
