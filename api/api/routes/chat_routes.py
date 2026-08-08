@@ -47,10 +47,24 @@ def handle_get_stream_status(handler, parsed) -> bool:
 
 def handle_get_chat_cancel(handler, parsed) -> bool:
     """GET /api/chat/cancel — cancel an active stream."""
-    stream_id = parse_qs(parsed.query).get('stream_id', [''])[0]
+    qs = parse_qs(parsed.query)
+    stream_id = qs.get('stream_id', [''])[0]
     if not stream_id:
         return bad(handler, 'stream_id required')
-    cancelled = cancel_stream(stream_id)
+    # session_id를 함께 전달해야 _force_release_session_lock이 역방향 조회(실패
+    # 가능) 없이 락을 직접 해제한다. (streaming.cancel_stream 참고)
+    session_id = qs.get('session_id', [''])[0] or None
+    cancelled = cancel_stream(stream_id, session_id=session_id)
+    return j(handler, {'ok': True, 'cancelled': cancelled, 'stream_id': stream_id})
+
+
+def handle_post_chat_cancel(handler, body) -> bool:
+    """POST /api/chat/cancel — cancel an active stream (body: {stream_id})."""
+    stream_id = (body or {}).get('stream_id', '')
+    if not stream_id:
+        return bad(handler, 'stream_id required')
+    session_id = (body or {}).get('session_id', '') or None
+    cancelled = cancel_stream(stream_id, session_id=session_id)
     return j(handler, {'ok': True, 'cancelled': cancelled, 'stream_id': stream_id})
 
 

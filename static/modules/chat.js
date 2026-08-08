@@ -1641,7 +1641,14 @@ async function cancelActiveStream() {
   try {
     await api('/api/chat/cancel', {
       method: 'POST',
-      body: { stream_id: State.currentStreamId }
+      body: {
+        stream_id: State.currentStreamId,
+        // session_id를 함께 보내야 streaming.cancel_stream()이
+        // _force_release_session_lock에서 역방향 조회(실패 가능) 대신
+        // 락을 직접 해제할 수 있다. 취소 직후 새 메시지가
+        // '이전 작업이 아직 종료되지 않았습니다'로 거부되는 것을 방지.
+        session_id: State.activeSessionId || ''
+      }
     });
   } catch (e) {
     console.error("Cancel failed:", e);
