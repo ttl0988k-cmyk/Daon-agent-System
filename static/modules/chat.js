@@ -1399,6 +1399,21 @@ async function _executeAgentStream(displayText, uploaded) {
           } else {
             setStreamStatus('thinking', '🛡️ 승인 대기 중...');
           }
+          // ── 승인 카드 가시성 보장 ──
+          // 승인 카드는 chat 스트림의 일부로 chatMessages에 렌더된다. 그런데
+          // 사용자가 harness 모드에 머문 상태에서 chat 스트림이 위험 명령을
+          // 실행하면 _resolveApprovalContainer()가 harnessConsole을 반환해
+          // 카드가 숨겨진 컨테이너에 붙어 보이지 않게 된다 ("승인 대기 중인데
+          // 승인 창이 안 뜬다" 원인). chat 모드로 강제 전환해 카드를 노출한다.
+          if (data.type === 'dangerous_command' && typeof switchMode === 'function') {
+            try {
+              const _cc = document.getElementById('chatModeContent');
+              const _hc = document.getElementById('harnessModeContent');
+              if (_cc && _hc && _cc.style.display === 'none') {
+                switchMode('chat');
+              }
+            } catch (_swErr) { /* 무시 */ }
+          }
         }
         if (typeof _showApprovalBanner === 'function') {
           _showApprovalBanner(data);

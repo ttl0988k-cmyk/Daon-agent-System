@@ -309,7 +309,7 @@ _showApprovalBanner = function (data) {
             });
         } catch (e) { }
     }
-    var container = _resolveApprovalContainer();
+    var container = _resolveApprovalContainer(data);
     if (container) showInlineApproval(data, container);
     if (typeof _showToast === 'function') {
         try {
@@ -379,7 +379,16 @@ function showHarnessApprovalCard(data, container) {
 
 // ── [D] Approval 폴링: SSE 이벤트를 놓쳐도 복구 ──
 var _approvalPollTimer = null;
-function _resolveApprovalContainer() {
+function _resolveApprovalContainer(data) {
+    // ── chat 스트림 승인(위험 명령)은 항상 chatMessages로 렌더 ──
+    // harness 모드가 활성 상태여도 chat 스트림에서 온 위험 명령 승인은
+    // 사용자가 보고 있는(또는 봐야 하는) chat 화면의 인라인 카드여야 한다.
+    // harnessConsole에 붙으면 숨겨진 컨테이너에 렌더되어 "승인 창이 안 뜬다"
+    // 버그가 된다.
+    if (data && (data.type === 'dangerous_command' || data.type === 'skill_save' || data.is_plan)) {
+        var chatBox = document.getElementById('chatMessages');
+        if (chatBox) return chatBox;
+    }
     var chatContent = document.getElementById('chatModeContent');
     var harnessContent = document.getElementById('harnessModeContent');
     var isHarnessVisible = harnessContent && harnessContent.style.display !== 'none'
@@ -396,7 +405,7 @@ async function _pollApprovalOnce() {
         var res = await api('/api/approval/pending?session_id=' + encodeURIComponent(sid), { method: 'GET' });
         // [A] CLI 위험 명령 pending 데이터는 status 필드가 없으므로 type으로도 판별
         if (res && res.has_pending && res.pending && (res.pending.status === 'pending' || res.pending.type === 'dangerous_command')) {
-            var container = _resolveApprovalContainer();
+            var container = _resolveApprovalContainer(res.pending);
             if (container) showInlineApproval(res.pending, container);
         }
     } catch (e) { /* 폴링 실패는 조용히 무시 */ }
