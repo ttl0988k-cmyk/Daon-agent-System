@@ -322,7 +322,11 @@ def cancel_session_streams(session_id: str) -> bool:
         old_stream_id = _ACTIVE_SESSION_STREAMS.get(session_id)
     if old_stream_id:
         _logger.info("Auto-cancelling previous stream %s for session %s", old_stream_id, session_id)
-        cancelled_any = cancel_stream(old_stream_id)
+        # session_id를 명시적으로 넘긴다. 그렇지 않으면 취소 직후 새 스트림이
+        # _ACTIVE_SESSION_STREAMS[session_id]를 덮어써 _force_release_session_lock의
+        # 역방향 조회가 실패해 세션 락이 해제되지 않고, 새 메시지가
+        # "이전 작업이 아직 종료되지 않았습니다"로 거부되는 레이스 컨디션이 발생한다.
+        cancelled_any = cancel_stream(old_stream_id, session_id=session_id)
     return cancelled_any
 
 
@@ -1948,8 +1952,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                     del _CANCELLED_STREAMS[sid]
 
 
-def cancel_stream(stream_id: str) -> bool:
-    """Signal an in-flight stream to cancel. Returns True if the stream existed."""
+def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
+    """Signal an in-flight stream to cancel. Returns True if the stream existed.
+
+    session_id가 주어지면 강제 정리 시 세션 락을 직접 해제할 수 있어,
+    새 스트림이 _ACTIVE_SESSION_STREAMS[session_id]를 덮어쓴 뒤에도
+    (역방향 조회 실패로 인한) 락 누수가 발생하지 않는다.
+    """
     # NEW: Tell the AIAgent to stop its in-flight HTTP request immediately.
     # Without this, cancel_event.set() has no way to reach the agent thread —
     # the HTTP request keeps running until its own 120s timeout.
@@ -1995,7 +2004,7 @@ def cancel_stream(stream_id: str) -> bool:
             #    (워커가 이미 종료됐다면 finally 블록이 락을 해제했으므로 이
             #    호출은 lock.locked()==False라서 no-op이다.)
             if worker is not None and worker.is_alive():
-                _force_release_session_lock(stream_id)
+                _force_release_session_lock(stream_id, session_id=session_id)
             # 3) STREAMS 정리 안전장치 (최대 20초 대기)
             deadline = time.time() + 20
             while worker is not None and worker.is_alive() and time.time() < deadline:
@@ -2014,20 +2023,25 @@ def cancel_stream(stream_id: str) -> bool:
         return True
 
 
-def _force_release_session_lock(stream_id: str) -> None:
+def _force_release_session_lock(stream_id: str, session_id: str | None = None) -> None:
     """취소 후에도 세션 락이 남아 있으면 강제로 해제한다.
 
     도구(terminal 등)가 인터럽트를 반영하지 못하고 오래 실행 중이어도,
     새 메시지가 '이전 작업이 아직 종료되지 않았습니다'로 거부되지 않도록
     한다. 워커의 finally 블록에서 release()를 한 번 더 호출해도
     RuntimeError가 발생하지 않도록 이미 try/except로 보호되어 있다.
+
+    session_id를 명시적으로 받은 경우 그대로 사용하고, 받지 못한 경우에만
+    (하위 호환) 역방향 조회로 찾는다. 역방향 조회는 취소 직후 새 스트림이
+    _ACTIVE_SESSION_STREAMS[session_id]를 덮어쓰면 실패할 수 있으므로,
+    취소 경로에서는 반드시 session_id를 전달해야 락이 해제된다.
     """
-    session_id = None
-    with _ACTIVE_SESSION_STREAMS_LOCK:
-        for _sid, _sid_stream in _ACTIVE_SESSION_STREAMS.items():
-            if _sid_stream == stream_id:
-                session_id = _sid
-                break
+    if not session_id:
+        with _ACTIVE_SESSION_STREAMS_LOCK:
+            for _sid, _sid_stream in _ACTIVE_SESSION_STREAMS.items():
+                if _sid_stream == stream_id:
+                    session_id = _sid
+                    break
     if not session_id:
         return
     try:

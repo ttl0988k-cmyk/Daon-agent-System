@@ -963,11 +963,17 @@ def check_all_command_guards(command: str, env_type: str,
 
         # Fallback: no gateway callback registered (e.g. cron, batch).
         # Return approval_required for backward compat.
+        # NOTE: status/type are required by the WebUI polling guard
+        # (static/modules/approval.js `_pollApprovalOnce`) — without them the
+        # frontend rejects the pending record and the approve/reject card
+        # never renders, blocking the next step of the flow.
         submit_pending(session_key, {
             "command": command,
             "pattern_key": primary_key,
             "pattern_keys": all_keys,
             "description": combined_desc,
+            "status": "pending",
+            "type": "dangerous_command",
         })
         return {
             "approved": False,
