@@ -603,14 +603,19 @@ class MCPManager:
     def _load_config(self):
         if not self._config_path.exists():
             # Load defaults if config doesn't exist
-            # filesystem + playwright + playmcp-gateway are always registered;
+            # filesystem + playmcp-gateway are always registered.
+            # Playwright MCP is deliberately NOT auto-connected: its browser_new_page tool
+            # spawns a new full-screen BrowserWindow over the app when pointed at Electron's
+            # CDP port (9222). DAON has its own shared internal browser (browser_navigate /
+            # browser_snapshot / browser_click, etc.) which renders inside the app window,
+            # so Playwright MCP is left as an opt-in preset for users who explicitly need it.
             # NOTE: the external Memory MCP (@modelcontextprotocol/server-memory) is NOT
             # auto-registered. DAON's own memory_store (memory.db) already handles long-term
             # facts/profile, so auto-enabling Memory MCP would only duplicate injected context
             # (extra tokens) without adding value. Users can still enable it manually via the
             # MCP UI panel if they want the knowledge-graph backend.
             # other servers should be explicitly enabled by the user via the MCP UI panel.
-            defaults = ['filesystem', 'playwright']
+            defaults = ['filesystem']
             for preset_id in defaults:
                 if preset_id in MCP_PRESETS:
                     preset = MCP_PRESETS[preset_id]
@@ -660,6 +665,24 @@ class MCPManager:
                 transport = srv.get('transport', TRANSPORT_STDIO)
                 auth_token = srv.get('auth_token', '')
                 
+                # Migration: strip --cdp-endpoint from the Playwright MCP preset.
+                # Connecting Playwright MCP to Electron's CDP port (9222) made its
+                # browser_new_page tool spawn a full-screen BrowserWindow over the app.
+                # Stale saved configs may still carry the flag — remove it on load.
+                if server_id == 'playwright' and srv.get('args'):
+                    _args = list(srv.get('args', []))
+                    if '--cdp-endpoint' in _args:
+                        _logger.warning(
+                            "MCP playwright: removing stale --cdp-endpoint flag from saved config "
+                            "(prevents full-screen BrowserWindow takeover)."
+                        )
+                        _idx = _args.index('--cdp-endpoint')
+                        # Remove the flag and its value (if present)
+                        del _args[_idx]
+                        if _idx < len(_args) and not _args[_idx].startswith('-'):
+                            del _args[_idx]
+                        srv['args'] = _args
+                
                 is_expired = False
                 if transport == TRANSPORT_HTTP and auth_token and self._is_jwt_expired(auth_token):
                     _logger.warning(
@@ -667,6 +690,12 @@ class MCPManager:
                         server_id or 'unknown'
                     )
                     is_expired = True
+
+                # Playwright MCP is never auto-connected: even without --cdp-endpoint it
+                # would spawn its own Chromium, but the app already ships a shared internal
+                # browser (browser_navigate etc.) that renders inside the app window.
+                # Only connect it when the user explicitly enables it via the MCP UI panel.
+                _auto = (not is_expired) and server_id != 'playwright'
 
                 self.add_server(
                     server_id=server_id,
@@ -678,7 +707,7 @@ class MCPManager:
                     transport=transport,
                     url=srv.get('url', ''),
                     auth_token=auth_token,
-                    auto_connect=not is_expired,
+                    auto_connect=_auto,
                     _save=False  # defer save until all servers are loaded
                 )
                 
@@ -687,7 +716,7 @@ class MCPManager:
                     if conn:
                         conn.expired = True
                         conn.error = "Token Expired (재인증 필요)"
-                else:
+                elif server_id != 'playwright':
                     if server_id:
                         threading.Thread(target=self.connect_server, args=(server_id,), daemon=True).start()
 
@@ -839,8 +868,13 @@ MCP_PRESETS = {
     'playwright': {
         'label': '🎭 플레이라이트(Playwright) MCP',
         'command': 'npx',
-        'args': ['-y', '@playwright/mcp', '--cdp-endpoint', 'http://127.0.0.1:9222'],
-        'description': 'Playwright를 이용한 향상된 브라우저 제어 및 자동화 (내부 브라우저 CDP 9222 연결)',
+        # NOTE: Do NOT add `--cdp-endpoint http://127.0.0.1:9222` here.
+        # Connecting Playwright MCP to Electron's CDP port makes its browser_new_page
+        # tool call new_page() against Electron, which spawns a NEW BrowserWindow
+        # that covers the entire app screen. Instead it launches its own headless
+        # Chromium, which is fully contained and never takes over the app window.
+        'args': ['-y', '@playwright/mcp'],
+        'description': 'Playwright를 이용한 향상된 브라우저 제어 및 자동화 (자체 headless Chromium 사용 — 앱 창 보호)',
     },
     'memory': {
         'label': '🧠 메모리(Memory) MCP',

@@ -609,6 +609,30 @@ app.whenReady().then(async () => {
     mainWindow.center();
     mainWindow.setMenu(null);
 
+    // ── STEP 4b: Guard against full-screen takeover by CDP-created BrowserWindows ──
+    // When Playwright MCP or any CDP client calls new_page() against port 9222,
+    // Electron spawns a brand-new BrowserWindow that covers the entire app screen.
+    // Intercept any window created AFTER the main window is up and:
+    //   1) destroy it immediately (no full-screen takeover), and
+    //   2) if it holds a real URL, redirect that URL into the shared WebContentsView
+    //      (tabManager.navigate) so the agent's page still renders in-app.
+    // This is a belt-and-suspenders guard on top of the backend fixes in mcp_client.py.
+    app.on('browser-window-created', (_evt, win) => {
+      if (!win || win.isDestroyed()) return;
+      if (win === mainWindow || win === splashWindow) return;
+      let wc = null;
+      try { wc = win.webContents; } catch (_) { }
+      let url = '';
+      if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
+      dbgLog(`[BrowserGuard] Stray BrowserWindow created (CDP new_page?) url='${url}' — destroying + redirecting`);
+      if (url && url !== 'about:blank' && tabManager) {
+        try { tabManager.navigate('tab1', url); } catch (e) { dbgLog(`[BrowserGuard] redirect failed: ${e.message}`); }
+      }
+      // Remove from screen ASAP so the app never becomes unusable.
+      try { win.hide(); } catch (_) { }
+      setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
+    });
+
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
     let _balloonShownOnce = false;
     mainWindow.on('close', (event) => {

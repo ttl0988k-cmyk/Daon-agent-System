@@ -1540,10 +1540,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               workspace_system_msg += (
                   f"\n\n[MCP INJECTION ACTIVE]\n"
                   f"You have been dynamically injected with {injected_count} MCP tools from the WebUI.\n"
-                  f"These tools are prefixed with `mcp_` (e.g. `mcp_playwright_...`).\n"
+                  f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
                   f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
                   f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
                   f"They are fully registered in your environment; just call them directly!\n"
+                  f"IMPORTANT: For ANY browser/web-page work, use the dedicated browser tools "
+                  f"(browser_navigate, browser_snapshot, browser_click, etc.) instead of mcp_playwright_* "
+                  f"tools — the internal browser shares the app window and is always available.\n"
               )
 
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
