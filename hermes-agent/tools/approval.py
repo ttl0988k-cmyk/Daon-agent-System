@@ -868,10 +868,22 @@ def check_all_command_guards(command: str, env_type: str,
                 "pattern_key": primary_key,
                 "pattern_keys": all_keys,
                 "description": combined_desc,
+                # status/type are required by the WebUI polling guard
+                # (static/modules/approval.js `_pollApprovalOnce`) — without them
+                # the frontend rejects the pending record and the approve/reject
+                # card never renders (Task D root cause).
+                "status": "pending",
+                "type": "dangerous_command",
             }
             entry = _ApprovalEntry(approval_data)
             with _lock:
                 _gateway_queues.setdefault(session_key, []).append(entry)
+
+            # Also store in _pending so the WebUI polling-recovery path
+            # (/api/approval/pending) can re-render the card after an SSE
+            # miss or a page reload. `/api/approval/respond` pops this on
+            # resolution, so it does not leak.
+            submit_pending(session_key, dict(approval_data))
 
             # Notify the user (bridges sync agent thread → async gateway)
             try:
@@ -884,6 +896,8 @@ def check_all_command_guards(command: str, env_type: str,
                         queue.remove(entry)
                     if not queue:
                         _gateway_queues.pop(session_key, None)
+                # Leave _pending in place so the card stays visible; the
+                # user can still act on it, and a later respond clears it.
                 return {
                     "approved": False,
                     "message": "BLOCKED: Failed to send approval request to user. Do NOT retry.",

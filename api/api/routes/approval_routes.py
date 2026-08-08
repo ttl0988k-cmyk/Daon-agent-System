@@ -39,6 +39,11 @@ def handle_get_approval_pending(handler, parsed) -> bool:
         if has_cmd_pending(sid):
             with cmd_lock:
                 pending = dict(cmd_pending_dict.get(sid, {}))
+            # Defensive: the WebUI polling guard (approval.js `_pollApprovalOnce`)
+            # requires status/type to render the approve/reject card. Ensure they
+            # are present even for pending records stored without them.
+            pending.setdefault('status', 'pending')
+            pending.setdefault('type', 'dangerous_command')
             return j_ok(handler, {'session_id': sid, 'has_pending': True, 'pending': pending})
     except ImportError:
         pass
