@@ -72,6 +72,32 @@ function cleanupOrphanedTemp() {
   }, 5000); // Run 5 seconds after app starts — never block startup
 }
 
+// ── CDP (Chrome DevTools Protocol) port for browser automation ──
+// app.commandLine.appendSwitch is NOT reliable in packaged Electron builds —
+// it does not reliably open the debugging port on the main (browser) process,
+// so Playwright can't connect to the shared browser. The only guaranteed way
+// is to pass --remote-debugging-port on the REAL command line. If we were not
+// launched with it, relaunch ourselves with the switch BEFORE acquiring the
+// single instance lock, so the restart never races the lock.
+const NEEDED_CDP_PORT = '9222';
+const _hasCdpArg = process.argv.some((a) => a.indexOf('remote-debugging-port') !== -1);
+if (!_hasCdpArg) {
+  try {
+    app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
+    app.commandLine.appendSwitch('remote-allow-origins', '*');
+    const relaunchArgs = process.argv.slice(1).filter(
+      (a) => a.indexOf('remote-debugging-port') === -1 && a.indexOf('remote-allow-origins') === -1
+    );
+    relaunchArgs.push('--remote-debugging-port=' + NEEDED_CDP_PORT, '--remote-allow-origins=*');
+    app.relaunch({ args: relaunchArgs });
+    console.log('[Electron] Relaunching with CDP port ' + NEEDED_CDP_PORT + '...');
+    // Immediate exit — code below must not run in this short-lived process.
+    process.exit(0);
+  } catch (e) {
+    console.warn('[Electron] CDP relaunch failed (will try appendSwitch):', e && e.message);
+  }
+}
+
 // ── Single Instance Lock ──
 // Each instance needs exclusive access to CDP port 9222 and spawns its own
 // Python server.  A second launch must bail immediately to avoid port wars.
@@ -218,12 +244,10 @@ function createTray() {
   }
 }
 
-// --- CDP (Chrome DevTools Protocol) port for browser automation ---
-// app.commandLine.appendSwitch is NOT reliable in packaged Electron builds.
-// The only guaranteed way to open a Chromium debugging port is to have
-const NEEDED_CDP_PORT = '9222';
-app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
-app.commandLine.appendSwitch('remote-allow-origins', '*');
+// NOTE: CDP relaunch logic now lives at the top of this file (before the
+// single instance lock) so the --remote-debugging-port switch lands on the
+// real command line of the main (browser) process — appendSwitch alone is not
+// reliable in packaged builds and only leaked the flag onto renderers.
 
 // --- Helper: Find Free Port ---
 function findFreePort(startPort) {
