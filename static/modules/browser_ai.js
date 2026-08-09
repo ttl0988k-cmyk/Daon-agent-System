@@ -673,5 +673,6 @@ setInterval(syncElectronBrowserBounds, 500);
         }
       })
       .catch(function () { /* ignore poll errors */ });
-  }, 1000); // Check every 1 second (backend waits up to 10 seconds)
+  }, 5000); // 5초 폴링 — 서버 CDP 재연결 백오프(5초)와 정합. 1초 폴링은 CDP 미준비 시
+  // connect_over_cdp 실패를 반복시켜 서버 스레드를 소진하고 다른 API를 15초 타임아웃에 빠뜨림.
 })();

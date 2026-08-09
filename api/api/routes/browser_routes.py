@@ -43,6 +43,13 @@ _last_url = ""
 _browser_active = False
 _pending_url = ""  # AI requested navigate but no browser tab yet — frontend should auto-open
 
+# CDP 재연결 백오프: Electron이 준비되지 않았을 때 폴링마다 connect_over_cdp를
+# 다시 시도하면 asyncio 소켓 예외가 반복되고 서버 스레드가 소진되어
+# 다른 API(/api/approval/respond 등)가 15초 타임아웃에 걸린다.
+# 실패 직후 _CDP_RETRY_COOLDOWN 초간은 CDP 연결 시도를 건너뛰고 즉시 실패 처리한다.
+_CDP_RETRY_COOLDOWN = 5.0
+_last_cdp_attempt = 0.0  # worker 전용, _ensure_browser 내에서만 접근
+
 
 def _browser_worker_loop():
     """Dedicated thread: runs all Playwright operations sequentially."""
@@ -82,6 +89,7 @@ def _browser_worker_loop():
     def _ensure_browser():
         """Connect to Electron's WebContentsView via CDP."""
         nonlocal browser, browser_page, pw
+        global _last_cdp_attempt
         if browser is not None:
             try:
                 browser_page.title()
@@ -89,6 +97,14 @@ def _browser_worker_loop():
             except Exception:
                 browser = None
                 browser_page = None
+
+        # CDP 재연결 백오프: 최근 실패 후 쿨다운 동안에는 연결 시도를 건너뛰고
+        # 즉시 "준비 안 됨"으로 응답한다. 그래야 /api/browser/status 폴링이
+        # 반복적인 connect_over_cdp 실패(asyncio socket.send 예외)로 서버를
+        # 압박하지 않는다.
+        now = time.time()
+        if now - _last_cdp_attempt < _CDP_RETRY_COOLDOWN:
+            return None, "Electron CDP not ready yet (cooldown). 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
 
         try:
             from playwright.sync_api import sync_playwright
@@ -125,6 +141,7 @@ def _browser_worker_loop():
 
             if target_page:
                 browser_page = target_page
+                _last_cdp_attempt = time.time()  # 연결 성공 → 백오프 기준 리셋
                 _logger.info("Connected to existing browser tab: %s", browser_page.url)
             elif pages:
                 # Use the last non-UI page, even if about:blank
@@ -142,6 +159,8 @@ def _browser_worker_loop():
             return browser_page, None
         except Exception as e:
             _logger.warning("Electron CDP connection failed: %s", str(e))
+            # CDP 연결 실패 시각 기록 → 다음 _CDP_RETRY_COOLDOWN 초간 재시도 방지
+            _last_cdp_attempt = time.time()
             # In Electron mode (BROWSER_CDP_URL is set), do NOT fall back to headless —
             # user and AI must share the same WebContentsView page.
             if os.environ.get("BROWSER_CDP_URL"):
