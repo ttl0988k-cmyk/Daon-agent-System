@@ -520,6 +520,30 @@ def handle_function_call(
             except Exception:
                 pass  # file_tools may not be loaded yet
 
+        # ── File-modifying tool approval gate (Roo-style auto-approve) ──
+        # read/search tools run automatically, but file-modifying tools
+        # (write_file / patch / apply_diff / …) require user approval in the
+        # gateway/WebUI flow.  This BLOCKS the agent thread until the user
+        # responds via /api/approval/respond (or timeout → BLOCKED), so the
+        # agent can't chain file edits without an intermediate answer.
+        try:
+            from tools.approval import _APPROVAL_REQUIRED_TOOLS, check_file_tool_approval
+        except Exception:
+            _APPROVAL_REQUIRED_TOOLS = frozenset()  # gate unavailable → disabled
+        if function_name in _APPROVAL_REQUIRED_TOOLS:
+            try:
+                _appr = check_file_tool_approval(
+                    function_name, function_args, session_key=session_id or None)
+                if not _appr.get("approved"):
+                    return json.dumps({
+                        "error": _appr.get("message", "File change requires user approval"),
+                        "status": "blocked",
+                        "command": _appr.get("command", function_name),
+                        "description": _appr.get("description", ""),
+                    }, ensure_ascii=False)
+            except Exception:
+                pass  # fail-open: never block tool execution on gate errors
+
         if function_name == "execute_code":
             # Prefer the caller-provided list so subagents can't overwrite
             # the parent's tool set via the process-global.

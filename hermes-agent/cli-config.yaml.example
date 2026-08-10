@@ -278,6 +278,28 @@ terminal:
 #   tirith_fail_open: true      # Allow commands if tirith unavailable
 
 # =============================================================================
+# Tool Approvals
+# =============================================================================
+# Dangerous-command and file-tool approval behavior.
+#
+#   mode       — manual (always prompt, default) | smart (LLM auto-decides) | off (--yolo)
+#   timeout    — prompt timeout for dangerous commands (seconds)
+#   cron_mode  — deny (block dangerous commands in cron) | approve (auto-approve)
+#
+#   file_tool_auto_timeout — seconds to wait for user approval of a file-tool
+#     change (write/edit/delete) before auto-approving it (default: 45).  This
+#     lets a WebUI chat or dynamic-harness run keep going instead of blocking
+#     forever when nobody is watching the approval box.  Override with env
+#     HERMES_AUTO_APPROVE_SECONDS.  Set to 0 or negative to disable
+#     auto-approve and always wait for the user.
+#
+# approvals:
+#   mode: manual
+#   timeout: 60
+#   cron_mode: deny
+#   file_tool_auto_timeout: 45
+
+# =============================================================================
 # Browser Tool Configuration
 # =============================================================================
 browser:

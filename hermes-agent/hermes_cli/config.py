@@ -763,10 +763,18 @@ DEFAULT_CONFIG = {
     # cron_mode — what to do when a cron job hits a dangerous command:
     #   deny    — block the command and let the agent find another way (default, safe)
     #   approve — auto-approve all dangerous commands in cron jobs
+    #
+    # file_tool_auto_timeout — seconds to wait for user approval of a file-tool
+    #   change before auto-approving it (default: 45).  This covers file
+    #   write/edit/delete tools (WebUI chat + dynamic harness plan.md) and lets
+    #   a run continue instead of blocking forever when the user isn't looking.
+    #   Overridable via env HERMES_AUTO_APPROVE_SECONDS.  Set to 0 or a
+    #   negative value to disable auto-approve (always wait for the user).
     "approvals": {
         "mode": "manual",
         "timeout": 60,
         "cron_mode": "deny",
+        "file_tool_auto_timeout": 45,
     },
 
     # Permanently allowed dangerous command patterns (added via "always" approval)

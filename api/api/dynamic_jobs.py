@@ -257,16 +257,26 @@ def start_harness_job(body: dict) -> str:
                 def _approval_notify(approval_data):
                     cmd = approval_data.get("command", "")
                     desc = approval_data.get("description", "dangerous command")
-                    log_callback("System", f"⚠️ Command approval required ({desc}): {cmd}\nPlease review and approve in the chat interface.", "running")
-                    
+                    status = approval_data.get("status", "pending")
+                    if status == "auto_approved":
+                        log_callback("System", f"⏱️ 응답 없음 — 파일 변경이 자동 승인되었습니다. ({cmd})", "running")
+                    else:
+                        log_callback("System", f"⚠️ Command approval required ({desc}): {cmd}\nPlease review and approve in the chat interface.", "running")
                     from api.config import STREAMS
                     q = STREAMS.get(session_id)
                     if q:
+                        # type을 'dangerous_command'로 통일 — 프론트(approval.js)가
+                        # 이 타입을 /api/approval/respond 로 라우팅한다. 'command' 타입은
+                        # architect diff 경로로 잘못 응답되므로 사용하지 않는다.
                         q.put(('approval', {
-                            'type': 'command',
+                            'type': 'dangerous_command',
                             'command': cmd,
                             'description': desc,
-                            'status': 'pending'
+                            'status': status,
+                            'session_id': session_id,
+                            'pattern_key': approval_data.get('pattern_key', ''),
+                            'pattern_keys': approval_data.get('pattern_keys', []),
+                            'message': approval_data.get('message', ''),
                         }))
                 register_gateway_notify(session_id, _approval_notify)
             except ImportError:

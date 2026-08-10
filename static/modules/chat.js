@@ -1405,6 +1405,30 @@ async function _executeAgentStream(displayText, uploaded) {
       try {
         const data = JSON.parse(e.data);
         console.log('[Streaming→Approval] Received approval event:', data.status, data.type || '', data.path || data.command || '');
+        if (data && data.status === 'auto_approved') {
+          // ── [E] 자동 승인(auto_approved): 대기 플래그 해제 + 완료 카드 ──
+          // 백엔드가 45초 무응답 후 자동 승인했다. pending 블록과 달리 대기 상태로
+          // 두면 안 되고, 승인 대기 중이던 상태를 즉시 해제해 에이전트가 계속 진행
+          // 중임을 표시한다. 카드 자체는 _showApprovalBanner → showInlineApproval 이
+          // 읽기 전용 "✅ 자동 승인됨" 카드로 교체한다.
+          _approvalPending = false;
+          _idleExtensions = 0;
+          if (data.type === 'dangerous_command') {
+            setStreamStatus('thinking', '⏱️ 응답 없음 — 자동 승인됨');
+          } else {
+            setStreamStatus('thinking', '⏱️ 자동 승인됨');
+          }
+          // 완료 카드도 승인 카드와 같은 컨테이너 가시성 규칙을 따른다.
+          if (data.type === 'dangerous_command' && typeof switchMode === 'function') {
+            try {
+              const _cc = document.getElementById('chatModeContent');
+              const _hc = document.getElementById('harnessModeContent');
+              if (_cc && _hc && _cc.style.display === 'none') {
+                switchMode('chat');
+              }
+            } catch (_swErr) { /* 무시 */ }
+          }
+        }
         if (data && data.status === 'pending') {
           // 승인 대기 표시 — idle 워치독이 스트림을 종료하지 않게 유예한다.
           // (백엔드는 사용자 응답을 기다리며 블로킹 중)

@@ -28,6 +28,10 @@ const State = {
   harnessPollInterval: null,
   harnessRunId: null,
   harnessLogCursor: 0,
+  // [E] 하네스 plan.md 승인 대기 중 여부 — 자동 승인(45초 무응답) 감지에 사용
+  harnessAwaitingApproval: false,
+  // [E] 수동 승인 버튼 클릭 후 API 왕복 중 여부 — 자동 승인 오감지 방지
+  harnessManualAction: false,
   harnessAgentCards: {},
 
   // File upload queue

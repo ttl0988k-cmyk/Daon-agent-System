@@ -1087,14 +1087,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
               def _cmd_approval_notify(approval_data):
                   try:
+                      # status를 그대로 전달한다: 'pending'(대기) 또는
+                      # 'auto_approved'(파일 도구 승인 45초 무응답 자동 실행) —
+                      # 프론트가 auto_approved를 받으면 카드를 자동 승인 완료로 교체한다.
                       put('approval', {
                           'type': 'dangerous_command',
-                          'status': 'pending',
+                          'status': approval_data.get('status', 'pending'),
                           'session_id': session_id,
                           'command': approval_data.get('command', ''),
                           'description': approval_data.get('description', ''),
                           'pattern_key': approval_data.get('pattern_key', ''),
                           'pattern_keys': approval_data.get('pattern_keys', []),
+                          'message': approval_data.get('message', ''),
                       })
                   except Exception:
                       _logger.warning("Failed to emit command approval SSE event", exc_info=True)

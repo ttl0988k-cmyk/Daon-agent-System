@@ -348,6 +348,20 @@ async function pollHarnessStatus(runId) {
         });
       }
 
+      // ── [E] 자동 승인 감지: awaiting_approval 상태였는데 사용자 클릭 없이
+      // 풀렸으면 백엔드가 45초 무응답 후 자동 승인한 것이다. 대화형 카드를
+      // 읽기 전용 "✅ 자동 승인됨" 카드로 교체하고 진행을 이어간다.
+      // (수동 승인은 onAction finally에서 플래그를 해제하므로 여기 도달하지 않는다.
+      //  수동 버튼 클릭 후 API 왕복 중에는 harnessManualAction이 참이라 스킵한다.)
+      if (State.harnessAwaitingApproval && !State.harnessManualAction) {
+        State.harnessAwaitingApproval = false;
+        _showApprovalBanner({
+          status: 'auto_approved',
+          is_plan: true,
+          message: '⏱️ 응답 없음 — 45초 후 실행 계획이 자동 승인되었습니다.',
+        });
+      }
+
       // ── Handle terminal states AFTER rendering logs/cards ──
       if (res.status === 'completed') {
         clearInterval(State.harnessPollInterval);
@@ -390,26 +404,38 @@ async function pollHarnessStatus(runId) {
 
       if (res.status === 'awaiting_approval') {
         $('cancelHarnessBtn').style.display = 'block';
-        clearInterval(State.harnessPollInterval);
-        State.harnessPollInterval = null;
-        _showApprovalBanner({
-          message: res.approval_message || '작업 승인이 필요합니다.',
-          actions: res.available_actions || [],
-          onAction: async (action) => {
-            try {
-              await api(`/api/dynamic/approve/${runId}`, {
-                method: 'POST',
-                body: { action: action },
-              });
-            } catch (e) {
-              logToConsole(`⚠️ 승인 요청 실패: ${e.message}`, 'error');
-            } finally {
-              // ── 안전장치: 승인 API 성패와 무관하게 폴링을 반드시 재개 ──
-              // (여전히 awaiting_approval이면 배너가 다시 표시되고, 진행됐으면 완료 보고로 이어짐)
-              pollHarnessStatus(runId);
-            }
-          },
-        });
+        // ── [E] 자동 승인 감지를 위해 폴링을 멈추지 않는다 ──
+        // 기존에는 await 상태에서 폴링을 중단해, 백엔드가 45초 무응답 후
+        // set_job_running(run_id)으로 자동 승인해도 UI가 대화형 카드에 멈춰 남았다.
+        // 폴링을 유지하면 위의 자동 승인 감지 분기가 상태 전이를 잡아
+        // 읽기 전용 "✅ 자동 승인됨" 카드로 교체한다.
+        // 카드 중복 렌더는 State.harnessAwaitingApproval 가드로 방지한다.
+        if (!State.harnessAwaitingApproval) {
+          State.harnessAwaitingApproval = true;
+          _showApprovalBanner({
+            message: res.approval_message || '작업 승인이 필요합니다.',
+            actions: res.available_actions || [],
+            onAction: async (action) => {
+              State.harnessManualAction = true;
+              try {
+                await api(`/api/dynamic/approve/${runId}`, {
+                  method: 'POST',
+                  body: { action: action },
+                });
+              } catch (e) {
+                logToConsole(`⚠️ 승인 요청 실패: ${e.message}`, 'error');
+              } finally {
+                // ── 안전장치: 수동 승인 완료 플래그 해제 후 폴링 재개 ──
+                // 수동 승인이 자동 승인 감지 분기에서 완료 카드로 오인되지 않도록
+                // 여기서 명시적으로 플래그를 해제한다. (harnessManualAction은
+                // 다음 폴링 틱에서 자동 승인 분기를 막고, 해제 후에는 원래 흐름)
+                State.harnessAwaitingApproval = false;
+                State.harnessManualAction = false;
+                pollHarnessStatus(runId);
+              }
+            },
+          });
+        }
         return;
       }
 
@@ -527,10 +553,12 @@ async function cancelHarness() {
   $('runHarnessBtn').disabled = false;
   $('cancelHarnessBtn').style.display = 'none';
   State.harnessRunId = null;
+  State.harnessAwaitingApproval = false;
 }
 
 function cleanupHarnessState() {
   State.harnessLogCursor = 0;
+  State.harnessAwaitingApproval = false;
   // 이전 실행의 에이전트 카드 DOM을 제거한다.
   if (State.harnessAgentCards) {
     Object.values(State.harnessAgentCards).forEach((el) => {

@@ -7,6 +7,7 @@ Provides:
 """
 
 import json
+import os
 import sys
 import time
 from dataclasses import asdict
@@ -423,7 +424,7 @@ class HermesDynamicRunner:
                 if log_callback:
                     log_callback("CEO", f"Planner finished. Displaying {plan_file_path} in editor and waiting for user approval...", "running")
                 
-                from api.approval import set_pending, has_pending, get_history
+                from api.approval import set_pending, has_pending, get_history, approve as _auto_approve
                 import uuid
                 preview_id = uuid.uuid4().hex[:16]
                 _plan_msg = f"제품 기획서({plan_file_path}) 작성이 완료되었습니다. 검토 후 승인하시면 개발 에이전트들이 구현을 시작합니다."
@@ -463,9 +464,48 @@ class HermesDynamicRunner:
                         'status': 'pending'
                     }))
                 
-                # Block until approval is resolved
+                # Block until approval is resolved, or auto-approve after timeout.
+                # [E] 사용자가 오랜 시간 응답하지 않으면 45초(설정 가능) 후 자동 승인한다.
+                # skill_save는 이 흐름을 타지 않으므로(전용 set_skill_save_pending 경로)
+                # 스킬 저장 승인 로직은 영향받지 않는다.
+                # 설정 우선순위: approvals.file_tool_auto_timeout (config.yaml)
+                #   → env HERMES_AUTO_APPROVE_SECONDS → 기본 45초. (chat 쪽
+                #   check_file_tool_approval 과 동일한 키를 공유한다.)
+                _auto_timeout = 45
+                try:
+                    from hermes_cli.config import load_config as _load_hf_config
+                    _cfg_approvals = (_load_hf_config() or {}).get("approvals", {}) or {}
+                    _auto_timeout = int(_cfg_approvals.get("file_tool_auto_timeout", 45))
+                except Exception:
+                    _auto_timeout = 45
+                try:
+                    _auto_timeout = int(os.getenv("HERMES_AUTO_APPROVE_SECONDS", _auto_timeout))
+                except (ValueError, TypeError):
+                    pass
+                if _auto_timeout <= 0:
+                    _auto_timeout = None  # 자동 승인 비활성화 — 사용자 응답까지 대기
+                _approval_started = time.time()
+                _auto_done = False
                 while has_pending(session_id):
                     check_timeout()
+                    if not _auto_done and _auto_timeout is not None and (time.time() - _approval_started) >= _auto_timeout:
+                        _auto_done = True
+                        try:
+                            _auto_approve(session_id, reviewer="auto")
+                        except Exception as _aae:
+                            _log.warning("Auto-approve plan failed: %s", _aae)
+                        # SSE로 자동 승인 이벤트 전송 → 프론트가 읽기 전용 완료 카드로 교체
+                        if q:
+                            q.put(('approval', {
+                                'preview_id': preview_id,
+                                'path': plan_file_path,
+                                'line_changes': [],
+                                'is_plan': True,
+                                'message': f"응답 없음 — {_auto_timeout}초 후 실행 계획이 자동 승인되었습니다.",
+                                'status': 'auto_approved'
+                            }))
+                        if log_callback:
+                            log_callback("CEO", f"⏱️ 응답 없음 — {_auto_timeout}초 후 실행 계획이 자동 승인되었습니다. 구현을 시작합니다.", "running")
                     time.sleep(1.0)
                 
                 # Restore job status to running now that approval is resolved

@@ -12,9 +12,39 @@
 
 function showInlineApproval(data, container) {
     // [A] 위험 명령 pending 데이터는 status 필드가 없을 수 있어 type으로도 판별
-    if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command')) return;
+    // auto_approved(자동 승인)는 type이 없어도(is_plan 하네스 등) 읽기 전용 완료 카드를 그린다.
+    if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command' && data.status !== 'auto_approved')) return;
     if (typeof container === 'string') container = document.getElementById(container);
     if (!container) return;
+    // ── [E] 자동 승인(auto_approved): 버튼 없는 읽기 전용 완료 카드 ──
+    // 백엔드가 45초 무응답 후 자동 승인했으므로 인터랙티브 승인 UI를 다시 그리면
+    // 안 된다. 기존 pending 카드가 있다면 완료 카드로 교체한다.
+    if (data.status === 'auto_approved') {
+        var autoMsg = data.message || ('응답 없음 — 45초 후 자동 승인되었습니다.');
+        var autoCard = document.createElement('div');
+        autoCard.className = 'inline-approval-card resolved auto-approved';
+        autoCard.id = 'inlineApprovalCard';
+        autoCard.innerHTML =
+            '<div class="inline-approval-card-inner">'
+            + '<div class="inline-approval-card-header">'
+            + '<span class="inline-approval-card-icon">✅</span>'
+            + '<span class="inline-approval-card-title">자동 승인됨</span>'
+            + '</div>'
+            + '<div class="inline-approval-card-body" style="color:var(--success);">'
+            + _escInlineApproval(autoMsg)
+            + '</div>'
+            + '</div>';
+        var _exAuto = document.getElementById('inlineApprovalCard');
+        if (_exAuto) _exAuto.remove();
+        container.appendChild(autoCard);
+        _scrollContainerToBottom(container);
+        // 완료 카드는 잠시 후 자동 제거 (다음 승인/폴링에 지장 없도록)
+        setTimeout(function () {
+            var _c = document.getElementById('inlineApprovalCard');
+            if (_c && _c.classList.contains('auto-approved')) _c.remove();
+        }, 6000);
+        return;
+    }
     // 이벤트가 담은 session_id 우선 (컨텍스트 압축으로 세션이 회전된 뒤에도 정확)
     var sid = data.session_id || ((typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null);
     if (!sid) return;
@@ -294,7 +324,8 @@ _showApprovalBanner = function (data) {
         if (typeof _showToast === 'function') { try { _showToast('⚠ 작업 승인이 필요합니다.'); } catch (e) { } }
         return;
     }
-    if (data.status !== 'pending' && data.type !== 'dangerous_command') return;
+    // auto_approved(자동 승인)는 type이 없어도(is_plan 하네스 등) 배너로 알린다.
+    if (data.status !== 'pending' && data.type !== 'dangerous_command' && data.status !== 'auto_approved') return;
     // 상단 diff 바(diffActiveBar)는 더 이상 표시하지 않는다. 모든 승인(파일 변경/계획/위험 명령)은
     // 채팅 하단 인라인 카드로 통일한다. 미리보기 등록만 유지해 클라이언트 상태 일관성을 지킨다.
     if (data.preview_id && typeof registerDiffPreview === 'function') {
@@ -313,7 +344,9 @@ _showApprovalBanner = function (data) {
     if (container) showInlineApproval(data, container);
     if (typeof _showToast === 'function') {
         try {
-            if (data.type === 'dangerous_command') _showToast('⚠ 위험 명령 승인이 필요합니다.');
+            // [E] 자동 승인: "승인 필요"가 아니라 "자동 승인됨"을 알린다.
+            if (data.status === 'auto_approved') _showToast('✅ 응답 없음 — 자동 승인됨');
+            else if (data.type === 'dangerous_command') _showToast('⚠ 위험 명령 승인이 필요합니다.');
             else if (data.is_plan) _showToast('⚠ 실행 계획 승인이 필요합니다.');
             else _showToast('⚠ 승인이 필요합니다: ' + (data.path || ''));
         } catch (e) { }

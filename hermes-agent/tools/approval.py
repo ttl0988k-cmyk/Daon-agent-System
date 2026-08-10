@@ -1029,5 +1029,192 @@ def check_all_command_guards(command: str, env_type: str,
             "user_approved": True, "description": combined_desc}
 
 
+# =========================================================================
+# File-modifying tool approval (write_file / patch / apply_diff, …)
+# =========================================================================
+# Roo Code-style auto-approve: read/search tools run automatically, but
+# file-modifying tools require user approval in the gateway/WebUI flow.
+# Reuses the same blocking _gateway_queues machinery as
+# check_all_command_guards, so the existing SSE notify callback +
+# /api/approval/respond path works unchanged (type='dangerous_command').
+
+_APPROVAL_REQUIRED_TOOLS = frozenset({
+    "write_file", "patch", "write_to_file",
+    "apply_diff", "edit_file", "replace_in_file",
+    "create_file", "delete_file", "delete", "move_file", "move", "rename",
+})
+
+
+def check_file_tool_approval(function_name: str, function_args: dict,
+                             session_key: str = None) -> dict:
+    """Gate a file-modifying tool behind user approval (gateway mode only).
+
+    Read/search tools never reach here.  In CLI mode this is a no-op
+    (auto-approve) so existing terminal behaviour is unchanged.  In the
+    gateway/WebUI flow (HERMES_EXEC_ASK or HERMES_GATEWAY_SESSION) a
+    blocking approval is submitted exactly like a dangerous command: the
+    agent thread waits until the user responds via /api/approval/respond.
+
+    Returns {"approved": True/False, "message": str or None, ...}.
+    """
+    # --yolo / approvals.mode=off: bypass all prompts.
+    if os.getenv("HERMES_YOLO_MODE") or is_current_session_yolo_enabled():
+        return {"approved": True, "message": None}
+    approval_mode = _get_approval_mode()
+    if approval_mode == "off":
+        return {"approved": True, "message": None}
+
+    is_cli = os.getenv("HERMES_INTERACTIVE")
+    is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
+    is_ask = os.getenv("HERMES_EXEC_ASK")
+
+    # CLI interactive (no ask/gateway): the user is already driving the
+    # process and every edit is visible — auto-approve to preserve behavior.
+    if is_cli and not is_ask and not is_gateway:
+        return {"approved": True, "message": None}
+    # Non-interactive, non-gateway (cron, batch, library callers): file
+    # edits are the whole point of those flows — auto-approve.
+    if not is_ask and not is_gateway:
+        return {"approved": True, "message": None}
+
+    key = session_key or get_current_session_key()
+    pattern_key = f"file_tool:{function_name}"
+    if is_approved(key, pattern_key):
+        return {"approved": True, "message": None}
+
+    # Human-readable description of the requested change.
+    path = (function_args or {}).get("path") or (function_args or {}).get("file_path") or ""
+    desc = f"파일 수정 도구({function_name})가 실행됩니다."
+    if path:
+        desc += f" 대상: {path}"
+
+    approval_data = {
+        "command": (function_name + (f": {path}" if path else "")),
+        "description": desc,
+        "pattern_key": pattern_key,
+        "pattern_keys": [pattern_key],
+        # status/type are required by the WebUI polling guard.
+        "status": "pending",
+        "type": "dangerous_command",
+    }
+
+    notify_cb = None
+    with _lock:
+        notify_cb = _gateway_notify_cbs.get(key)
+
+    if notify_cb is not None:
+        # --- Blocking gateway approval (queue-based) ---
+        entry = _ApprovalEntry(approval_data)
+        with _lock:
+            _gateway_queues.setdefault(key, []).append(entry)
+        submit_pending(key, dict(approval_data))
+
+        try:
+            notify_cb(approval_data)
+        except Exception as exc:
+            logger.warning("Gateway file-tool approval notify failed: %s", exc)
+            with _lock:
+                queue = _gateway_queues.get(key, [])
+                if entry in queue:
+                    queue.remove(entry)
+                if not queue:
+                    _gateway_queues.pop(key, None)
+            # Leave _pending in place so the card stays visible.
+            return {"approved": False,
+                    "message": "BLOCKED: Failed to send approval request to user. Do NOT retry.",
+                    "pattern_key": pattern_key, "description": desc}
+
+        # Block until the user responds or timeout (mirrors command guard).
+        timeout = _get_approval_config().get("gateway_timeout", 300)
+        try:
+            timeout = int(timeout)
+        except (ValueError, TypeError):
+            timeout = 300
+        # ── Auto-approve on no response ───────────────────────────────────────
+        # If the user doesn't answer within `file_tool_auto_timeout` seconds the
+        # file edit proceeds automatically (once semantics — no persistence), so
+        # the agent never stalls on an unseen approval card. 0/off disables auto
+        # approval (falls back to blocking until gateway_timeout, then BLOCKED).
+        # Env override: HERMES_AUTO_APPROVE_SECONDS.
+        auto_timeout = _get_approval_config().get("file_tool_auto_timeout", 45)
+        try:
+            auto_timeout = int(os.getenv("HERMES_AUTO_APPROVE_SECONDS", auto_timeout))
+        except (ValueError, TypeError):
+            auto_timeout = 45
+        if auto_timeout <= 0:
+            auto_timeout = None
+        try:
+            from tools.environments.base import touch_activity_if_due
+        except Exception:  # pragma: no cover
+            touch_activity_if_due = None
+
+        _now = time.monotonic()
+        _deadline = _now + max(timeout, 0)
+        if auto_timeout is not None:
+            _deadline = min(_deadline, _now + max(auto_timeout, 0))
+        _activity_state = {"last_touch": _now, "start": _now}
+        resolved = False
+        while True:
+            _remaining = _deadline - time.monotonic()
+            if _remaining <= 0:
+                break
+            if entry.event.wait(timeout=min(1.0, _remaining)):
+                resolved = True
+                break
+            if touch_activity_if_due is not None:
+                touch_activity_if_due(_activity_state, "waiting for user approval")
+
+        # Clean up this entry from the queue
+        with _lock:
+            queue = _gateway_queues.get(key, [])
+            if entry in queue:
+                queue.remove(entry)
+            if not queue:
+                _gateway_queues.pop(key, None)
+
+        choice = entry.result
+        if not resolved:
+            # No user response within the wait window — auto-approve this single
+            # edit (once semantics) so the agent doesn't stall on an unseen card.
+            if auto_timeout is not None:
+                pop_pending(key)
+                try:
+                    notify_cb({**approval_data, "status": "auto_approved",
+                               "auto_approved": True,
+                               "message": f"응답 없음 — {auto_timeout}초 후 자동 승인되었습니다."})
+                except Exception:
+                    pass
+                return {"approved": True, "message": None,
+                        "auto_approved": True, "description": desc}
+            return {"approved": False,
+                    "message": "BLOCKED: File change timed out. Do NOT retry this edit.",
+                    "pattern_key": pattern_key, "description": desc}
+        if choice is None or choice == "deny":
+            return {"approved": False,
+                    "message": "BLOCKED: File change denied by user. Do NOT retry this edit.",
+                    "pattern_key": pattern_key, "description": desc}
+
+        # User approved — persist based on scope (same semantics as commands)
+        if choice in ("session", "always"):
+            approve_session(key, pattern_key)
+        if choice == "always":
+            approve_permanent(pattern_key)
+            save_permanent_allowlist(_permanent_approved)
+        # choice == "once": no persistence — this single edit only.
+
+        return {"approved": True, "message": None,
+                "user_approved": True, "description": desc}
+
+    # Fallback: no gateway callback registered (e.g. cron, batch).  Submit
+    # pending for the polling path and return approval_required.
+    submit_pending(key, dict(approval_data))
+    return {"approved": False,
+            "pattern_key": pattern_key,
+            "status": "approval_required",
+            "command": approval_data["command"],
+            "description": desc,
+            "message": f"⚠️ {desc}. Asking the user for approval."}
+
+
 # Load permanent allowlist from config on module import
 load_permanent_allowlist()
