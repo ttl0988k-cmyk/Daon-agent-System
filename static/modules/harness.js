@@ -299,6 +299,10 @@ async function runDynamicHarness() {
 }
 
 async function pollHarnessStatus(runId) {
+  // ── [E] runId 방어: 승인 재개(onAction finally) 등에서 runId 가 소실되면
+  // 최근 실행 ID(State.harnessRunId)로 복구한다. 없으면 폴링을 시작하지 않는다.
+  if (!runId && State.harnessRunId) runId = State.harnessRunId;
+  if (!runId) return;
   if (State.harnessPollInterval) {
     clearInterval(State.harnessPollInterval);
   }

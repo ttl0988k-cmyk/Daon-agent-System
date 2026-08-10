@@ -385,7 +385,7 @@ function _resolveApprovalContainer(data) {
     // 사용자가 보고 있는(또는 봐야 하는) chat 화면의 인라인 카드여야 한다.
     // harnessConsole에 붙으면 숨겨진 컨테이너에 렌더되어 "승인 창이 안 뜬다"
     // 버그가 된다.
-    if (data && (data.type === 'dangerous_command' || data.type === 'skill_save' || data.is_plan)) {
+    if (data && data.type === 'dangerous_command') {
         var chatBox = document.getElementById('chatMessages');
         if (chatBox) return chatBox;
     }
@@ -393,6 +393,14 @@ function _resolveApprovalContainer(data) {
     var harnessContent = document.getElementById('harnessModeContent');
     var isHarnessVisible = harnessContent && harnessContent.style.display !== 'none'
         && (!chatContent || chatContent.style.display === 'none');
+    // ── [E] 하네스 모드가 보이는 동안 skill_save / is_plan 은 harnessConsole 로 렌더 ──
+    // 다이나믹 하네스 완료 후 뜨는 '스킬로 저장할까요' 팝업과 실행 계획 승인 카드는
+    // 채팅창이 아니라 하네스 창에서 보여야 한다. skill_save 는 언제나 하네스 산출물이고,
+    // is_plan(plan.md) 은 하네스 모드 실행 시 하네스 계획이므로 하네스 창이 적절하다.
+    // (dangerous_command 만 chat 스트림 경유이므로 chatMessages 를 유지한다.)
+    if (isHarnessVisible && data && (data.type === 'skill_save' || data.is_plan)) {
+        return document.getElementById('harnessConsole');
+    }
     if (isHarnessVisible) return document.getElementById('harnessConsole');
     return document.getElementById('chatMessages');
 }

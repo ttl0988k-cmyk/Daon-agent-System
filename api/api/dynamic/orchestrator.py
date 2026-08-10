@@ -269,7 +269,14 @@ class HermesDynamicRunner:
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = f"dynamic_run_{timestamp}"
+        # IMPORTANT: dynamic_jobs.start_harness_job 이 생성한 run_id(uuid)를 반드시 유지한다.
+        # 여기서 run_id 를 덮어쓰면 아래의 set_job_awaiting_approval / set_job_running /
+        # is_job_cancelled / register_running_agent / set_skill_save_pending 가 모두
+        # 존재하지 않는 키로 호출되어 하네스 승인·취소·완료 상태 전파가 깨진다.
+        # (harness 프론트엔드는 start_harness_job 이 반환한 uuid 로 /api/dynamic/status/{run_id} 를 폴링한다.)
+        # run_id 가 전달되지 않은 독립 실행 경로에서만 사람이 읽기 좋은 ID 를 붙인다.
+        if not run_id:
+            run_id = f"dynamic_run_{timestamp}"
 
         # Initialize Mission Tracker
         mission_metrics = MissionMetrics(task=task, start_time=mission_start)

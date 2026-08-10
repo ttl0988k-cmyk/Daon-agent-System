@@ -1169,7 +1169,9 @@ async function _executeAgentStream(displayText, uploaded) {
       // 채팅 에이전트가 execute_dynamic_harness 도구를 호출하면 자동으로
       // 하네스 탭으로 전환한다. 실행 로그는 agent_log SSE 이벤트로 들어와
       // 하네스 콘솔의 에이전트 노드 카드에 라우팅된다(채팅 버블에는 렌더링 안 함).
-      // 도구 완료 시 채팅 탭으로 복귀해 최종 보고서를 보여준다.
+      // 하네스는 채팅 경로에서 동기적으로 실행되므로 /api/dynamic/run 폴링이
+      // 없다. 완료 이벤트의 preview(formatted_output)를 하네스 콘솔에 직접
+      // 결과 보고 박스로 렌더링해 "완료 보고가 안 뜬다" 문제를 해결한다.
       if (toolName === 'execute_dynamic_harness') {
         if (isStarted) {
           try {
@@ -1186,13 +1188,29 @@ async function _executeAgentStream(displayText, uploaded) {
             console.error('[Chat→Harness] switch failed:', _dhErr);
           }
         } else {
+          // ── 완료: 하네스 창에 최종 결과 보고 박스를 직접 렌더 ──
           try {
-            if (typeof logToConsole === 'function') {
-              logToConsole('✅ 다이나믹 하네스 실행 완료 — 채팅에서 최종 보고를 확인하세요', 'success');
+            const _consoleEl = (typeof $ === 'function') ? $('harnessConsole') : null;
+            if (_consoleEl) {
+              const _report = (data.preview && data.preview.formatted_output)
+                ? data.preview.formatted_output
+                : (typeof data.preview === 'string' ? data.preview : '');
+              const _resultEl = document.createElement('div');
+              _resultEl.className = 'harness-result-output';
+              if (_report && _report.trim()) {
+                _resultEl.innerHTML = '<div class="harness-result-header">📄 최종 결과물</div>' + renderMd(_report);
+              } else {
+                _resultEl.innerHTML = '<div class="harness-result-header">✅ 작업 완료</div>' +
+                  '<div class="harness-result-empty">채팅 에이전트가 실행한 다이나믹 하네스가 완료되었습니다. 최종 보고는 위 채팅에서 확인할 수 있습니다.</div>';
+              }
+              _consoleEl.appendChild(_resultEl);
+              if (typeof scrollToHarnessBottom === 'function') scrollToHarnessBottom();
             }
-            if (typeof switchMode === 'function') switchMode('chat');
+            if (typeof logToConsole === 'function') {
+              logToConsole('✅ 다이나믹 하네스 실행 완료', 'success');
+            }
           } catch (_dhErr2) {
-            console.error('[Chat→Harness] return failed:', _dhErr2);
+            console.error('[Chat→Harness] report render failed:', _dhErr2);
           }
         }
       }
