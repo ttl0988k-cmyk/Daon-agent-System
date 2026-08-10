@@ -27,7 +27,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "signAndEditExecutable": false
     },
     "nsis": {
       "include": "installer.nsh",
