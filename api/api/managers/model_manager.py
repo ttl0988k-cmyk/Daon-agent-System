@@ -197,6 +197,19 @@ class ModelManager:
     def fetch_models_from_provider(self, base_url: str, api_key: str) -> List[Dict[str, str]]:
         """Try to fetch available models from the provider's /models endpoint (OpenAI-compatible)."""
         url = base_url.rstrip('/') + '/models'
+        # ── DEBUG: diagnose auto-detect failures (401 / latin-1 / timeout) ──
+        try:
+            _mask = (api_key[:6] + '...' + api_key[-4:]) if len(api_key) > 10 else ('<empty>' if not api_key else '<short:' + str(len(api_key)) + '>')
+            print(f"[ModelManager] fetch_models_from_provider url={url} api_key_mask={_mask} has_emoji={'❌' in api_key or any(ord(c) > 255 for c in api_key)} key_len={len(api_key)}", flush=True)
+            # Check whether the key can even be latin-1 encoded (pre-empt header error)
+            try:
+                api_key.encode('latin-1')
+                _enc_ok = True
+            except UnicodeEncodeError:
+                _enc_ok = False
+            print(f"[ModelManager] fetch_models_from_provider key_latin1_encodable={_enc_ok}", flush=True)
+        except Exception as _de:
+            print(f"[ModelManager] fetch_models_from_provider DEBUG log failed: {_de}", flush=True)
         headers = {
             'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
@@ -208,16 +221,20 @@ class ModelManager:
         try:
             with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
                 body = json.loads(resp.read().decode('utf-8'))
+            print(f"[ModelManager] fetch_models_from_provider OK url={url} status={getattr(resp, 'status', '?')} models={len(body.get('data', [])) if isinstance(body, dict) else 0}", flush=True)
         except urllib.error.HTTPError as e:
             body = None
             try:
                 body = json.loads(e.read().decode('utf-8'))
             except Exception:
                 pass
+            print(f"[ModelManager] fetch_models_from_provider HTTPError code={e.code} url={url} body={str(body)[:300]}", flush=True)
             raise RuntimeError(f"HTTP {e.code}: {body.get('error', {}).get('message', str(e)) if isinstance(body, dict) else str(e)}")
         except urllib.error.URLError as e:
+            print(f"[ModelManager] fetch_models_from_provider URLError url={url} reason={e.reason}", flush=True)
             raise RuntimeError(f"Connection failed: {e.reason}")
         except Exception as e:
+            print(f"[ModelManager] fetch_models_from_provider EXC type={type(e).__name__} msg={e} url={url}", flush=True)
             raise RuntimeError(f"Failed to fetch models: {e}")
 
         models = []

@@ -848,20 +848,41 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # ?�경변??주입 ??모델/?�로바이???�결??
           resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(model)
 
-          # Resolve API key via Hermes runtime provider (matches gateway behaviour)
+          # ── UI 등록 프로바이더(custom_providers.json) 우선 해석 ──
+          # 사용자가 WebUI의 프로바이더 관리에서 등록/저장한 키와 base_url을 최우선으로 사용한다.
+          # resolve_runtime_provider(auth.json credential_pool)가 먼저 실행되면
+          # 구버전 키가 우선되어 UI에서 새로 등록한 키가 영원히 무시되는 문제를 막는다.
           resolved_api_key = None
+          rt_provider = None
+          rt_base_url = None
           try:
-              from hermes_cli.runtime_provider import resolve_runtime_provider
-              _rt = resolve_runtime_provider(requested=resolved_provider)
-              resolved_api_key = _rt.get("api_key")
-              rt_provider = _rt.get("provider")
-              rt_base_url = _rt.get("base_url")
-              if rt_provider:
-                  resolved_provider = rt_provider
-              if rt_base_url and (not resolved_base_url or str(resolved_provider).startswith('custom')):
-                  resolved_base_url = rt_base_url
-          except Exception as _e:
-              print(f"[webui] WARNING: resolve_runtime_provider failed: {_e}", flush=True)
+              from api.managers.model_manager import model_manager as _mm
+              _cp_key = _mm._get_api_key(resolved_provider) if resolved_provider else ''
+              _cp_url = _mm._get_base_url(resolved_provider) if resolved_provider else None
+              if _cp_key:
+                  resolved_api_key = _cp_key
+                  print(f"[webui] API key from custom_providers.json (UI) for '{resolved_provider}'", flush=True)
+              if _cp_url:
+                  resolved_base_url = _cp_url.rstrip('/')
+                  print(f"[webui] base_url from custom_providers.json (UI) for '{resolved_provider}': {resolved_base_url}", flush=True)
+          except Exception as _cp_ui_e:
+              print(f"[webui] WARNING: custom_providers.json UI lookup failed: {_cp_ui_e}", flush=True)
+
+          # Resolve API key via Hermes runtime provider (matches gateway behaviour)
+          # UI 등록 키가 없을 때만 auth.json credential_pool을 사용한다.
+          if not resolved_api_key:
+              try:
+                  from hermes_cli.runtime_provider import resolve_runtime_provider
+                  _rt = resolve_runtime_provider(requested=resolved_provider)
+                  resolved_api_key = _rt.get("api_key")
+                  rt_provider = _rt.get("provider")
+                  rt_base_url = _rt.get("base_url")
+                  if rt_provider:
+                      resolved_provider = rt_provider
+                  if rt_base_url and (not resolved_base_url or str(resolved_provider).startswith('custom')):
+                      resolved_base_url = rt_base_url
+              except Exception as _e:
+                  print(f"[webui] WARNING: resolve_runtime_provider failed: {_e}", flush=True)
 
           if not resolved_api_key:
               # auth.json credential_pool?�서 직접 ??추출
@@ -892,8 +913,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # custom_providers.json에서 API 키 fallback (UI에서 등록한 프로바이더)
           if not resolved_api_key and resolved_provider and resolved_provider != 'custom':
               try:
-                  from api.managers.model_manager import model_manager as _mm
-                  _cp_key = _mm._get_api_key(resolved_provider)
+                  from api.managers.model_manager import model_manager as _mm2
+                  _cp_key = _mm2._get_api_key(resolved_provider)
                   if _cp_key:
                       resolved_api_key = _cp_key
                       print(f"[webui] API key resolved from custom_providers.json for '{resolved_provider}'", flush=True)
