@@ -2309,6 +2309,8 @@ async function startDebateWorkflow() {
     // Re-bind token, debate_token, and other listeners dynamically to this stream
     let debateBubbles = {};
     let debateTexts = {};
+    // done/cancel 수신 후 발생하는 자동 재연결 error는 진짜 에러가 아니다.
+    let debateStreamFinished = false;
 
     sse.addEventListener('debate_token', (e) => {
       const data = JSON.parse(e.data);
@@ -2357,6 +2359,7 @@ async function startDebateWorkflow() {
 
     sse.addEventListener('done', (e) => {
       const data = JSON.parse(e.data);
+      debateStreamFinished = true;
       sse.close();
       State.currentEventSource = null;
       State.currentStreamId = null;
@@ -2376,6 +2379,13 @@ async function startDebateWorkflow() {
     });
 
     sse.addEventListener('error', (e) => {
+      // done/cancel 후 정상 종료로 연결이 닫히면 EventSource가 자동 재연결을
+      // 시도하며 error 이벤트를 발생시킨다. 이미 완료(또는 교체)된 스트림의
+      // error는 진짜 에러가 아니므로 조용히 닫고 무시한다.
+      if (debateStreamFinished || State.currentEventSource !== sse) {
+        sse.close();
+        return;
+      }
       sse.close();
       showToast('토론 스트리밍 에러가 발생했습니다.');
       cancelDebateWorkflow();
@@ -2413,6 +2423,8 @@ async function proceedDebateRound() {
     const box = $('debateMessages');
     let debateBubbles = {};
     let debateTexts = {};
+    // done/cancel 수신 후 발생하는 자동 재연결 error는 진짜 에러가 아니다.
+    let debateStreamFinished = false;
 
     sse.addEventListener('debate_token', (e) => {
       const data = JSON.parse(e.data);
@@ -2461,6 +2473,7 @@ async function proceedDebateRound() {
 
     sse.addEventListener('done', (e) => {
       const data = JSON.parse(e.data);
+      debateStreamFinished = true;
       sse.close();
       State.currentEventSource = null;
       State.currentStreamId = null;
@@ -2476,6 +2489,13 @@ async function proceedDebateRound() {
     });
 
     sse.addEventListener('error', (e) => {
+      // done/cancel 후 정상 종료로 연결이 닫히면 EventSource가 자동 재연결을
+      // 시도하며 error 이벤트를 발생시킨다. 이미 완료(또는 교체)된 스트림의
+      // error는 진짜 에러가 아니므로 조용히 닫고 무시한다.
+      if (debateStreamFinished || State.currentEventSource !== sse) {
+        sse.close();
+        return;
+      }
       sse.close();
       showToast('토론 스트리밍 에러가 발생했습니다.');
       cancelDebateWorkflow();
