@@ -9,16 +9,6 @@ const net = require('net');
 if (net.setDefaultAutoSelectFamily) { net.setDefaultAutoSelectFamily(false); }
 const os = require('os');
 
-// ── [v4] File-based debug logger (GUI app has no console) ──
-const _dbgLogPath = path.join(process.env.APPDATA || 'C:\\', 'daon-agent-system', 'main_debug.log');
-function dbgLog(msg) {
-  const ts = new Date().toISOString();
-  const line = `[${ts}] ${msg}\n`;
-  try { fs.appendFileSync(_dbgLogPath, line); } catch (e) { try { fs.appendFileSync('C:\\daon_debug.log', line + ' ERR:' + e.message + '\n'); } catch (_) { } }
-  console.log(msg);
-}
-dbgLog("MAIN START 1 - before single instance lock");
-
 // ── Temp Folder Cleanup (PyInstaller _MEI* orphan prevention) ──
 // PyInstaller onefile mode extracts ~1.76GB to %TEMP%\_MEIxxxxx on every launch.
 // If the app crashes or is force-killed, these folders are never cleaned up.
@@ -101,18 +91,14 @@ if (!_hasCdpArg) {
 // ── Single Instance Lock ──
 // Each instance needs exclusive access to CDP port 9222 and spawns its own
 // Python server.  A second launch must bail immediately to avoid port wars.
-dbgLog("MAIN START 2 - requesting single instance lock");
 const gotTheLock = app.requestSingleInstanceLock();
-dbgLog(`MAIN START 3 - gotTheLock=${gotTheLock}`);
 if (!gotTheLock) {
   // Another instance is already running — quit silently.
-  dbgLog("MAIN EXIT - another instance holds the lock, quitting");
   app.quit();
   // Prevent app.whenReady() from ever firing.
   // On Windows, app.quit() may not exit immediately; we force it.
   process.exit(0);
 }
-dbgLog("MAIN START 4 - lock acquired, continuing");
 
 // When a second instance tries to launch, focus the existing window
 // instead of silently doing nothing.
@@ -130,6 +116,7 @@ let ttsProcess = null;
 let serverPort = 9090;  // Updated to match DEFAULT_PORT; was 8000 which caused confusion
 let ttsPort = 9091;
 let watchdogTimer = null;
+let watchdogSuppressUntil = 0;  // F5 reload 후 일시적으로 watchdog 실패 감지 보류
 let isQuitting = false;
 let tray = null;
 let trayStatusTimer = null;
@@ -390,7 +377,8 @@ function startPythonProcess(port) {
 
   // Safety Net: If Python crashes or exits unexpectedly, auto-restart immediately
   pythonProcess.on('exit', (code, signal) => {
-    console.warn(`[Electron] Main Python server exited (code=${code}, signal=${signal})`);
+    const msg = `[Electron] Main Python server exited (code=${code}, signal=${signal}, isQuitting=${isQuitting})`;
+    console.warn(msg);
     pythonProcess = null;
     if (!isQuitting) {
       console.log('[Electron] Server exit detected — Auto-restarting Python server in 2s...');
@@ -462,6 +450,10 @@ const WATCHDOG_INTERVAL = 30_000;
 const MAX_RESTARTS = 3;
 
 function handleWatchdogFailure(port) {
+  // F5 reload 직후 보류 구간: 일시적 과부하로 오탐할 수 있으므로 카운트하지 않음
+  if (Date.now() < watchdogSuppressUntil) {
+    return;
+  }
   watchdogRestartCount++;
   console.warn(`[Watchdog] Health check failure (${watchdogRestartCount}/${MAX_RESTARTS})`);
   if (watchdogRestartCount >= MAX_RESTARTS) {
@@ -648,9 +640,8 @@ app.whenReady().then(async () => {
       try { wc = win.webContents; } catch (_) { }
       let url = '';
       if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
-      dbgLog(`[BrowserGuard] Stray BrowserWindow created (CDP new_page?) url='${url}' — destroying + redirecting`);
       if (url && url !== 'about:blank' && tabManager) {
-        try { tabManager.navigate('tab1', url); } catch (e) { dbgLog(`[BrowserGuard] redirect failed: ${e.message}`); }
+        try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
       }
       // Remove from screen ASAP so the app never becomes unusable.
       try { win.hide(); } catch (_) { }
@@ -696,6 +687,9 @@ app.whenReady().then(async () => {
       if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) {
         if (now - _lastF5Time > DEBOUNCE_MS) {
           _lastF5Time = now;
+          // F5 reload 직후 서버가 일시 과부하로 /health에 늦게 응답해도
+          // watchdog이 오탐하지 않도록 90초 보류 구간 설정 (MAX_RESTARTS=3, 30s 간격)
+          watchdogSuppressUntil = Date.now() + 3 * WATCHDOG_INTERVAL;
           mainWindow.webContents.reload();
         }
         event.preventDefault();
