@@ -2200,8 +2200,8 @@ function toggleDebateModeUI(show) {
       const activeSess = State.sessions.find(x => x.session_id === State.activeSessionId);
       if (activeSess) {
         // filter out any debate messages from the normal chat view if they were saved in session
-        const normalMessages = activeSess.messages.filter(msg => !msg.sender);
-        renderMessages(normalMessages, activeSess.tool_calls);
+        const normalMessages = (activeSess.messages || []).filter(msg => !msg.sender);
+        renderMessages(normalMessages, activeSess.tool_calls || []);
       }
     }
   }
