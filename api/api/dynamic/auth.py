@@ -17,7 +17,12 @@ _log = get_logger(__name__)
 def _resolve_key_from_custom_providers(provider: str) -> str:
     """Extract an API key from custom_providers.json if the provider is registered there."""
     try:
-        cp_path = Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
+        # STATE_DIR is profile/install-aware: %LOCALAPPDATA%/DAON Agent System/data for
+        # PyInstaller builds (not the empty bundled resources/data), repo data/ in dev.
+        from api.config import STATE_DIR
+        cp_path = STATE_DIR / 'custom_providers.json'
+        if not cp_path.exists():
+            cp_path = Path(__file__).parent.parent.parent.parent / 'data' / 'custom_providers.json'
         if cp_path.exists():
             data = json.loads(cp_path.read_text(encoding='utf-8'))
             providers = data.get('providers', {})
