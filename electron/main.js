@@ -129,26 +129,34 @@ let splashWindow = null;
 // where the old guard was only registered inside whenReady and could miss
 // windows spawned between the CDP relaunch (port 9222 already open) and ready.
 app.on('browser-window-created', (_evt, win) => {
-  if (!win || win.isDestroyed()) return;
-  if (win === mainWindow || win === splashWindow) return;
-  // Even if this window somehow survives (e.g. a second CDP attach during the
-  // 50ms destroy delay), closing it must never take the whole app down while
-  // the tray is running. Redirect its close into a destroy instead.
-  try {
-    win.on('close', (e) => {
-      if (!isQuitting) { e.preventDefault(); try { win.destroy(); } catch (_) { } }
-    });
-  } catch (_) { }
-  let wc = null;
-  try { wc = win.webContents; } catch (_) { }
-  let url = '';
-  if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
-  if (url && url !== 'about:blank' && tabManager) {
-    try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
-  }
-  // Remove from screen ASAP so the app never becomes unusable.
-  try { win.hide(); } catch (_) { }
-  setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
+  // Defer to the next tick: the 'browser-window-created' event fires DURING the
+  // `new BrowserWindow(...)` constructor, BEFORE the assignment (e.g.
+  // `splashWindow = new BrowserWindow(...)`) completes. Running the guard
+  // immediately here would see splashWindow/mainWindow as null and wrongly
+  // destroy the app's own windows. setImmediate ensures the assignment has
+  // landed before we compare.
+  setImmediate(() => {
+    if (!win || win.isDestroyed()) return;
+    if (win === mainWindow || win === splashWindow) return;
+    // Even if this window somehow survives (e.g. a second CDP attach during the
+    // 50ms destroy delay), closing it must never take the whole app down while
+    // the tray is running. Redirect its close into a destroy instead.
+    try {
+      win.on('close', (e) => {
+        if (!isQuitting) { e.preventDefault(); try { win.destroy(); } catch (_) { } }
+      });
+    } catch (_) { }
+    let wc = null;
+    try { wc = win.webContents; } catch (_) { }
+    let url = '';
+    if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
+    if (url && url !== 'about:blank' && tabManager) {
+      try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
+    }
+    // Remove from screen ASAP so the app never becomes unusable.
+    try { win.hide(); } catch (_) { }
+    setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
+  });
 });
 
 // ── Always-on: 트레이 아이콘 경로 해석 (dev / packaged 둘 다 지원) ──
@@ -580,8 +588,10 @@ app.whenReady().then(async () => {
   splashWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   splashWindow.loadFile(path.join(__dirname, 'splash.html'));
   splashWindow.once('ready-to-show', () => {
-    splashWindow.show();
-    try { splashWindow.focus(); } catch (_) { }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+      try { splashWindow.focus(); } catch (_) { }
+    }
   });
   try {
     // ── STEP 1: Run cleanup & cache clear in PARALLEL (not sequentially) ──
