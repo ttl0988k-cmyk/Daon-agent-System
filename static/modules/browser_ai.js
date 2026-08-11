@@ -102,6 +102,10 @@ function toggleBrowserView() {
     if (toggleBtn) toggleBtn.classList.add('active');
     // Sync Electron browser bounds
     syncElectronBrowserBounds();
+    // Re-attach the Electron WebContentsView (it may have been detached when hidden)
+    if (window.electronAPI) {
+      window.electronAPI.setVisibility(true);
+    }
     // Show default BrowserAI recommendations
     if (typeof onBrowserUrlChange === 'function') {
       onBrowserUrlChange(_browserCurrentUrl || '');

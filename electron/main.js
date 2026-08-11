@@ -120,6 +120,36 @@ let watchdogSuppressUntil = 0;  // F5 reload 후 일시적으로 watchdog 실패
 let isQuitting = false;
 let tray = null;
 let trayStatusTimer = null;
+let splashWindow = null;
+
+// ── Global guard: CDP-created BrowserWindows must never take over the app ──
+// Registered at MODULE scope (BEFORE whenReady) so ANY window created by a
+// CDP client (Playwright MCP new_page against port 9222) or by target=_blank
+// links is caught even before the app is fully ready. This fixes the race
+// where the old guard was only registered inside whenReady and could miss
+// windows spawned between the CDP relaunch (port 9222 already open) and ready.
+app.on('browser-window-created', (_evt, win) => {
+  if (!win || win.isDestroyed()) return;
+  if (win === mainWindow || win === splashWindow) return;
+  // Even if this window somehow survives (e.g. a second CDP attach during the
+  // 50ms destroy delay), closing it must never take the whole app down while
+  // the tray is running. Redirect its close into a destroy instead.
+  try {
+    win.on('close', (e) => {
+      if (!isQuitting) { e.preventDefault(); try { win.destroy(); } catch (_) { } }
+    });
+  } catch (_) { }
+  let wc = null;
+  try { wc = win.webContents; } catch (_) { }
+  let url = '';
+  if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
+  if (url && url !== 'about:blank' && tabManager) {
+    try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
+  }
+  // Remove from screen ASAP so the app never becomes unusable.
+  try { win.hide(); } catch (_) { }
+  setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
+});
 
 // ── Always-on: 트레이 아이콘 경로 해석 (dev / packaged 둘 다 지원) ──
 function findTrayIcon() {
@@ -530,7 +560,7 @@ app.whenReady().then(async () => {
   createTray();
 
   // ── STEP 0: Show splash window safely on ready-to-show without any white/black blank flash ──
-  let splashWindow = new BrowserWindow({
+  splashWindow = new BrowserWindow({
     width: 420,
     height: 340,
     frame: false,
@@ -546,6 +576,8 @@ app.whenReady().then(async () => {
       contextIsolation: true,
     }
   });
+  // Splash is a static loader page — never allow it to spawn popup windows.
+  splashWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   splashWindow.loadFile(path.join(__dirname, 'splash.html'));
   splashWindow.once('ready-to-show', () => {
     splashWindow.show();
@@ -625,28 +657,36 @@ app.whenReady().then(async () => {
     mainWindow.center();
     mainWindow.setMenu(null);
 
-    // ── STEP 4b: Guard against full-screen takeover by CDP-created BrowserWindows ──
-    // When Playwright MCP or any CDP client calls new_page() against port 9222,
-    // Electron spawns a brand-new BrowserWindow that covers the entire app screen.
-    // Intercept any window created AFTER the main window is up and:
-    //   1) destroy it immediately (no full-screen takeover), and
-    //   2) if it holds a real URL, redirect that URL into the shared WebContentsView
-    //      (tabManager.navigate) so the agent's page still renders in-app.
-    // This is a belt-and-suspenders guard on top of the backend fixes in mcp_client.py.
-    app.on('browser-window-created', (_evt, win) => {
-      if (!win || win.isDestroyed()) return;
-      if (win === mainWindow || win === splashWindow) return;
-      let wc = null;
-      try { wc = win.webContents; } catch (_) { }
-      let url = '';
-      if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
-      if (url && url !== 'about:blank' && tabManager) {
-        try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
+    // ── STEP 4a: Prevent popup windows / target=_blank from spawning BrowserWindows ──
+    // Route any window.open() / target=_blank from the app UI back into the
+    // in-app WebContentsView (tabManager) or the same local window, never a
+    // new full-screen BrowserWindow.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url && url !== 'about:blank') {
+        try {
+          if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+            mainWindow.loadURL(url);
+          } else if (tabManager) {
+            tabManager.navigate('tab1', url);
+          }
+        } catch (e) { console.warn('[BrowserGuard] window.open redirect failed:', e.message); }
       }
-      // Remove from screen ASAP so the app never becomes unusable.
-      try { win.hide(); } catch (_) { }
-      setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
+      return { action: 'deny' };
     });
+    // Block full-page navigation away from the local UI into a separate window.
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      const isLocalUi = url &&
+        (url.indexOf(`127.0.0.1:${serverPort}`) !== -1 || url.indexOf(`localhost:${serverPort}`) !== -1);
+      if (url && !isLocalUi) {
+        event.preventDefault();
+        try {
+          if (tabManager) tabManager.navigate('tab1', url);
+        } catch (e) { console.warn('[BrowserGuard] will-navigate redirect failed:', e.message); }
+      }
+    });
+
+    // ── STEP 4b: (Global guard moved to module scope above whenReady — it now
+    // also covers windows created before the app is fully ready.) ──
 
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
     let _balloonShownOnce = false;
@@ -783,19 +823,17 @@ class TabManager {
   navigate(tabId, url) {
     let view = this.tabs.get(tabId);
     if (!view) {
-      view = this.createTab(tabId, url);
-      // Ensure visibility — if navigate is called, the user/frontend wants to see it
-      this.isVisible = true;
-      this.activeTabId = tabId;
-      try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-      view.setBounds(this.bounds);
+      view = this.createTab(tabId, url); // createTab already loads the URL
     } else {
       view.webContents.loadURL(url);
-      // Ensure the existing tab is visible and active
-      if (this.activeTabId !== tabId) {
-        this.switchTab(tabId);
-      }
     }
+    // Ensure visibility — if navigate is called, the user/frontend wants to see it.
+    // This also re-attaches the view when it was previously hidden (editor shown),
+    // fixing the case where a hidden WebContentsView never returned to the screen.
+    this.isVisible = true;
+    this.activeTabId = tabId;
+    try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
+    view.setBounds(this.bounds);
   }
 
   setBounds(bounds) {
