@@ -63,15 +63,20 @@ function cleanupOrphanedTemp() {
 }
 
 // ── CDP (Chrome DevTools Protocol) port for browser automation ──
-// app.commandLine.appendSwitch is NOT reliable in packaged Electron builds —
-// it does not reliably open the debugging port on the main (browser) process,
-// so Playwright can't connect to the shared browser. The only guaranteed way
-// is to pass --remote-debugging-port on the REAL command line. If we were not
-// launched with it, relaunch ourselves with the switch BEFORE acquiring the
-// single instance lock, so the restart never races the lock.
+// ⚠ 기본값: OFF. 구글 등은 CDP 디버깅 포트가 열린 브라우저를 자동화/원격제어
+// 환경으로 감지하여 "브라우저 또는 앱이 안전하지 않을 수 있습니다"로 로그인을
+// 차단한다. 브라우저 자동화(Playwright MCP)가 필요할 때만 아래 두 방법 중
+// 하나로 켠다:
+//   1) 환경변수 DAON_ENABLE_CDP=1
+//   2) 실행 인자 --enable-cdp
+// (app.commandLine.appendSwitch 는 패키징된 Electron 에서 신뢰할 수 없어,
+//  실제 커맨드라인 재실행 방식으로만 동작한다.)
 const NEEDED_CDP_PORT = '9222';
+const _enableCdp =
+  process.env.DAON_ENABLE_CDP === '1' ||
+  process.argv.some((a) => a.indexOf('--enable-cdp') !== -1 || a.indexOf('remote-debugging-port') !== -1);
 const _hasCdpArg = process.argv.some((a) => a.indexOf('remote-debugging-port') !== -1);
-if (!_hasCdpArg) {
+if (_enableCdp && !_hasCdpArg) {
   try {
     app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
     app.commandLine.appendSwitch('remote-allow-origins', '*');
@@ -86,6 +91,10 @@ if (!_hasCdpArg) {
   } catch (e) {
     console.warn('[Electron] CDP relaunch failed (will try appendSwitch):', e && e.message);
   }
+} else if (_enableCdp) {
+  console.log('[Electron] CDP already enabled via command line.');
+} else {
+  console.log('[Electron] CDP is OFF (DAON_ENABLE_CDP=1 or --enable-cdp to enable). Google login works.');
 }
 
 // ── Single Instance Lock ──
@@ -398,9 +407,59 @@ function findServerExe() {
 
 // ── Process Spawning & Auto-Restart Safety Net ──
 
+// CDP 자동 재시작 플래그: browser_* 도구가 호출됐는데 CDP(9222)가 꺼져 있으면
+// 서버가 이 파일을 생성하고, Electron이 감지해 --remote-debugging-port=9222 로
+// 스스로 재실행한다. (구글 로그인 정상화를 위해 기본 CDP는 OFF.)
+function getCdpRestartFlagPath() {
+  try {
+    return path.join(app.getPath('userData'), 'restart-for-cdp.flag');
+  } catch (e) {
+    return path.join(os.tmpdir(), 'daon-restart-for-cdp.flag');
+  }
+}
+
+// ── CDP 자동 전환 폴링 ──
+// 서버가 재시작 요청 플래그(restart-for-cdp.flag)를 쓰면, 이를 감지해
+// --remote-debugging-port=9222 로 앱을 재실행한다. 2초 간격으로 폴링.
+let cdpRestartTimer = null;
+function startCdpRestartPolling() {
+  if (cdpRestartTimer) return;
+  const flagPath = getCdpRestartFlagPath();
+  cdpRestartTimer = setInterval(() => {
+    try {
+      if (fs.existsSync(flagPath)) {
+        console.log('[CDP] Restart flag detected — relaunching with CDP enabled...');
+        clearInterval(cdpRestartTimer);
+        cdpRestartTimer = null;
+        // 플래그 제거 (다음 실행 시 재트리거 방지)
+        try { fs.unlinkSync(flagPath); } catch (_) { }
+        isQuitting = true;
+        // 서버 프로세스도 종료 → 재시작된 Electron이 새 env(BROWSER_CDP_URL)로 재스폰
+        if (pythonProcess && pythonProcess.pid) {
+          try { killProcessTree(pythonProcess.pid); } catch (_) { }
+        }
+        try {
+          // 직접 --remote-debugging-port 를 실커맨드라인에 넣으면
+          // _hasCdpArg=true 가 되어 추가 재시작 없이 즉시 CDP가 켜진다.
+          app.relaunch({ args: ['--remote-debugging-port=9222', '--remote-allow-origins=*'] });
+        } catch (e) {
+          console.warn('[CDP] app.relaunch failed:', e && e.message);
+        }
+        app.quit();
+      }
+    } catch (e) {
+      console.warn('[CDP] Restart polling error:', e && e.message);
+    }
+  }, 2000);
+}
+
 function startPythonProcess(port) {
   if (isQuitting) return;
-  const env = { ...process.env, BROWSER_CDP_URL: 'ws://localhost:9222' };
+  const env = {
+    ...process.env,
+    BROWSER_CDP_URL: 'ws://localhost:9222',
+    DAON_CDP_RESTART_FLAG: getCdpRestartFlagPath(),
+  };
   const exePath = findServerExe();
 
   if (exePath) {
@@ -675,6 +734,19 @@ app.whenReady().then(async () => {
     console.log(`[Electron] Waiting for server on port ${serverPort}...`);
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
+
+    // ── STEP 3a: CDP 자동 전환 폴링 시작 ──
+    // 서버가 browser_* 도구 호출 시 재시작 플래그를 쓰면 이를 감지해
+    // --remote-debugging-port=9222 로 앱을 재실행한다. (구글 로그인은 CDP OFF 유지)
+    if (!_enableCdp) {
+      startCdpRestartPolling();
+    } else {
+      // CDP가 이미 켜져 있으면 재시작 요청 플래그가 남아있지 않도록 정리
+      try {
+        const _flag = getCdpRestartFlagPath();
+        if (fs.existsSync(_flag)) fs.unlinkSync(_flag);
+      } catch (_) { }
+    }
 
     // ── STEP 3b: Start TTS Server (reuse if healthy, else spawn non-blocking) ──
     let reusedTts = false;
