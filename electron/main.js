@@ -322,6 +322,27 @@ function checkServerHealth(port, retries = 180, delayMs = 1000) {
   });
 }
 
+// --- Helper: Probe Server Health (returns parsed JSON body or null) ---
+// Used to detect an already-running healthy server so the app can REUSE it
+// instead of killing it on every restart (fixes server dying after app reopen).
+function probeServerHealth(port, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: port, path: '/health', family: 4 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch (_) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(timeoutMs, () => { req.destroy(); resolve(null); });
+  });
+}
+
 function checkCdpHealth(retries = 10, delayMs = 500) {
   let attempted = 0;
   const poll = () => {
@@ -608,12 +629,27 @@ app.whenReady().then(async () => {
       console.warn('[Electron] Cache clear failed:', e);
     }
 
-    // Kill old server processes synchronously BEFORE spawning new server
-    try {
-      if (process.platform === 'win32') {
-        execSync('taskkill /F /IM server.exe /T 2>nul', { windowsHide: true });
-      }
-    } catch (_) { }
+    // ── STEP 1: Reuse an already-healthy server on the default port if present ──
+    // Fix: we previously ran `taskkill /F /IM server.exe /T` unconditionally here,
+    // which killed a healthy long-running server (live sessions / harness state)
+    // on every app restart. Now we probe port 9090 first and reuse a healthy server.
+    let reusedServer = false;
+    const healthProbe = await probeServerHealth(DEFAULT_PORT, 1200);
+    if (healthProbe && healthProbe.healthy && healthProbe.pid) {
+      reusedServer = true;
+      console.log(`[Electron] Reusing healthy main server on ${DEFAULT_PORT} (pid=${healthProbe.pid}, uptime=${healthProbe.uptime_display || '?'}) — skipping taskkill & spawn.`);
+      // Adopt the running server so quit / watchdog cleanup can still target it.
+      pythonProcess = { pid: healthProbe.pid, _adopted: true };
+    }
+
+    if (!reusedServer) {
+      // Kill old server processes synchronously BEFORE spawning new server
+      try {
+        if (process.platform === 'win32') {
+          execSync('taskkill /F /IM server.exe /T 2>nul', { windowsHide: true });
+        }
+      } catch (_) { }
+    }
 
     // ── STEP 1b: Cleanup orphaned PyInstaller _MEI* temp folders ──
     // This runs AFTER server processes are killed so their _MEI folders are unlocked.
@@ -626,23 +662,38 @@ app.whenReady().then(async () => {
     // Brief pause for processes to fully terminate
     await new Promise(r => setTimeout(r, 500));
 
-    // ── STEP 2: Start Main Python Server ──
+    // ── STEP 2: Start Main Python Server (unless a healthy server was reused) ──
     serverPort = DEFAULT_PORT;
-    console.log(`[Electron] Using default port: ${serverPort}`);
-    startPythonProcess(serverPort);
+    if (!reusedServer) {
+      console.log(`[Electron] Using default port: ${serverPort}`);
+      startPythonProcess(serverPort);
+    } else {
+      console.log(`[Electron] Using existing server on port ${serverPort} (adopted — not respawned).`);
+    }
 
     // ── STEP 3: Wait for server health (splash is showing during this wait) ──
     console.log(`[Electron] Waiting for server on port ${serverPort}...`);
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
 
-    // ── STEP 3b: Start TTS Server (non-blocking) ──
-    startTtsProcess(ttsPort);
-    checkServerHealth(ttsPort, 30).then(() => {
-      console.log(`[Electron] TTS server is ready!`);
-    }).catch((err) => {
-      console.error(`[Electron] TTS server health check failed (app will continue): ${err.message}`);
-    });
+    // ── STEP 3b: Start TTS Server (reuse if healthy, else spawn non-blocking) ──
+    let reusedTts = false;
+    const ttsHealthProbe = await probeServerHealth(ttsPort, 800);
+    if (ttsHealthProbe && ttsHealthProbe.healthy && ttsHealthProbe.pid) {
+      reusedTts = true;
+      console.log(`[Electron] Reusing healthy TTS server on ${ttsPort} (pid=${ttsHealthProbe.pid})`);
+      ttsProcess = { pid: ttsHealthProbe.pid, _adopted: true };
+    }
+    if (!reusedTts) {
+      startTtsProcess(ttsPort);
+      checkServerHealth(ttsPort, 30).then(() => {
+        console.log(`[Electron] TTS server is ready!`);
+      }).catch((err) => {
+        console.error(`[Electron] TTS server health check failed (app will continue): ${err.message}`);
+      });
+    } else {
+      console.log(`[Electron] TTS server adopted — health check skipped.`);
+    }
 
     // ── STEP 3c: Verify CDP port 9222 ──
     checkCdpHealth(10);
@@ -802,9 +853,22 @@ class TabManager {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        javascript: true,
       }
     });
     this.tabs.set(tabId, view);
+
+    // Google 로그인 등이 'JavaScript 미지원 브라우저'로 오인되지 않도록
+    // 공유 브라우저의 User-Agent를 최신 Chrome으로 재정의한다.
+    // (Electron 기본 UA에는 'Electron/x.y.z'가 포함되어 일부 사이트에서
+    //  "자바스크립트가 사용 중지되었습니다" 같은 차단 메시지를 띄운다.)
+    try {
+      view.webContents.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+      );
+    } catch (e) {
+      console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);
+    }
 
     // Prevent new BrowserWindows from opening — navigate in the same view instead
     view.webContents.setWindowOpenHandler(({ url: newUrl }) => {
