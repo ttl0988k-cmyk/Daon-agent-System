@@ -63,15 +63,17 @@ function cleanupOrphanedTemp() {
 }
 
 // ── CDP (Chrome DevTools Protocol) port for browser automation ──
-// Electron 37(Chromium 138) 업그레이드로 내장 WebContentsView 자체가 구글
-// 로그인을 허용하므로, 이제 CDP 9222는 "항상 ON"이다. 에이전트(browser_*)는
-// 9222로 연결해 사용자와 같은 내부 WebContentsView(같은 세션/로그인)를
-// 공유·제어한다. (구버전 Electron 31에서는 구글이 CDP가 열린 브라우저를
-// 자동화 환경으로 의심해 로그인을 차단했지만, Chromium 138은 정상 동작한다.)
-// (app.commandLine.appendSwitch 는 패키징된 Electron 에서 신뢰할 수 없어,
-//  실제 커맨드라인 재실행 방식으로만 동작한다.)
+// 실험 설정: 기본 CDP는 OFF 이다. 에이전트(browser_*)가 브라우저 도구를 호출하면
+// browser_routes.py 가 restart-for-cdp.flag 를 쓰고, 아래 폴링(startCdpRestartPolling)
+// 이 이를 감지해 --remote-debugging-port=9222 로 앱을 재실행(relaunch)한다.
+// 이렇게 하면 구글 로그인을 할 때는 CDP(자동화 시그널)가 꺼진 상태로 내부
+// WebContentsView 를 사용할 수 있어, "CDP ON이 구글 로그인 차단의 원인인지"
+// 분리 검증이 가능하다. (app.commandLine.appendSwitch 는 패키징된 Electron 에서
+// 신뢰할 수 없어, 실제 커맨드라인 재실행 방식으로만 동작한다.)
 const NEEDED_CDP_PORT = '9222';
-const _enableCdp = true; // Electron 37+ 내장 Chromium은 구글 로그인을 허용 → CDP 상시 ON
+const _enableCdp = process.argv.some(
+  (a) => a.indexOf('--daon-enable-cdp') !== -1 || a.indexOf('remote-debugging-port') !== -1
+);
 const _hasCdpArg = process.argv.some((a) => a.indexOf('remote-debugging-port') !== -1);
 if (_enableCdp && !_hasCdpArg) {
   try {
@@ -91,7 +93,7 @@ if (_enableCdp && !_hasCdpArg) {
 } else if (_hasCdpArg) {
   console.log('[Electron] CDP already enabled via command line.');
 } else {
-  console.log('[Electron] CDP is ON (Electron 37+ internal Chromium — Google login OK).');
+  console.log('[Electron] CDP is OFF at startup (기본). restart-for-cdp.flag 감지 시 9222로 재실행.');
 }
 
 // ── 전역 User-Agent 일관화 (구글 로그인 허용) ──
@@ -541,13 +543,13 @@ function getCdpRestartFlagPath() {
   }
 }
 
-// ── 내부 공유 브라우저(WebContentsView) CDP 9222 노출 폴링 ──
-// 이제 Electron 37(내장 Chromium 138)이 항상 --remote-debugging-port=9222 로
-// 떠 있어, 내부 WebContentsView(DAON 브라우저 패널)가 CDP 타겟으로 노출된다.
-// 구버전(DAON 전용 Chrome.exe 실행) 방식은 ①번 '현재 Chrome 방식 보존' 요구에
-// 따라 startDaonChrome() 함수로 유지하되, 포트 9222가 이제 Electron 소유이므로
-// 폴링에서는 더 이상 DAON Chrome을 띄우지 않는다. 남은 restart-for-cdp.flag 는
-// 정리만 하고, 내부 공유 브라우저가 이미 9222로 노출돼 있음을 로그로 남긴다.
+// ── 온디맨드 CDP 9222 폴링 ──
+// 기본 실행은 CDP OFF(구글 로그인 자동화 시그널 없음). 에이전트가 browser_*
+// 도구를 호출하면 browser_routes.py 가 restart-for-cdp.flag 를 쓴다. 이 폴링이
+// flag 를 감지하면 --remote-debugging-port=9222 로 앱을 재실행(relaunch)해
+// 내부 WebContentsView(DAON 브라우저 패널)를 CDP 타겟으로 노출시킨다.
+// (한 번 relaunch 로 9222가 켜지면 _hasCdpArg 가 true 가 되어 이후에는
+// 재실행하지 않고 그대로 유지된다. 에이전트는 사용자와 같은 뷰/세션을 공유.)
 let cdpRestartTimer = null;
 function startCdpRestartPolling() {
   if (cdpRestartTimer) return;
@@ -555,13 +557,25 @@ function startCdpRestartPolling() {
   cdpRestartTimer = setInterval(() => {
     try {
       if (fs.existsSync(flagPath)) {
-        console.log('[CDP] Restart flag detected — internal WebContentsView is already exposed on 9222 (cleaning flag).');
+        console.log('[CDP] Restart flag detected — relaunching app with --remote-debugging-port=9222 (agent browser tool requested CDP).');
         try { fs.unlinkSync(flagPath); } catch (_) { }
-        // NOTE: 이전에는 이 지점에서 DAON 전용 Chrome.exe(진짜 Chrome)를
-        // startDaonChrome('https://www.google.com') 로 띄웠다. 그러나 이제
-        // Electron 37+ 내장 Chromium이 9222를 소유하므로 DAON Chrome을 띄우면
-        // 포트 충돌이 발생한다. ①번 보존 요구에 따라 startDaonChrome() 코드는
-        // 유지하되, 여기서는 호출하지 않는다.
+        // ①번 '현재 Chrome 방식 보존' 요구에 따라 startDaonChrome()/stopDaonChrome()
+        // 함수는 유지하지만, 9222는 이제 Electron 자체가 소유해야 하므로 여기서
+        // DAON Chrome.exe 를 띄우지 않는다. 대신 Electron 을 9222 로 재실행한다.
+        try {
+          app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
+          app.commandLine.appendSwitch('remote-allow-origins', '*');
+          const relaunchArgs = process.argv.slice(1).filter(
+            (a) => a.indexOf('remote-debugging-port') === -1 && a.indexOf('remote-allow-origins') === -1
+          );
+          relaunchArgs.push('--remote-debugging-port=' + NEEDED_CDP_PORT, '--remote-allow-origins=*');
+          app.relaunch({ args: relaunchArgs });
+          console.log('[CDP] Relaunching with CDP port ' + NEEDED_CDP_PORT + ' (agent requested)...');
+          // relaunch 후 이 프로세스는 즉시 종료된다. (새 인스턴스가 9222로 뜸)
+          app.exit(0);
+        } catch (e) {
+          console.warn('[CDP] Failed to relaunch with CDP:', e && e.message);
+        }
       }
     } catch (e) {
       console.warn('[CDP] Restart polling error:', e && e.message);
@@ -851,13 +865,14 @@ app.whenReady().then(async () => {
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
 
-    // ── STEP 3a: 내부 WebContentsView CDP(9222) 노출 폴링 ──
-    // Electron 37+ 내장 Chromium이 항상 9222로 노출되므로 별도 Chrome 실행은
-    // 필요 없다. 남아있을 수 있는 구버전 restart-for-cdp.flag 를 정리하는
-    // 폴링만 유지한다. (DAON 전용 Chrome.exe 실행 방식은 ①번 보존 요구에 따라
-    // startDaonChrome() 코드로 유지 — 9222가 Electron 소유이므로 폴링에서 호출 안 함)
+    // ── STEP 3a: 온디맨드 CDP(9222) 폴링 ──
+    // 기본 실행은 CDP OFF (구글 로그인 자동화 시그널 없음). 에이전트가 browser_*
+    // 도구를 호출하면 restart-for-cdp.flag 가 생기고, 이 폴링이 감지해 앱을
+    // --remote-debugging-port=9222 로 재실행한다. (DAON 전용 Chrome.exe 방식은
+    // ①번 보존 요구에 따라 startDaonChrome() 코드로 유지 — 9222는 Electron 소유)
     startCdpRestartPolling();
-    // 구버전 CDP 재시작 플래그(restart-for-cdp.flag)가 남아있으면 정리
+    // 이전 세션에서 남은 restart-for-cdp.flag 정리 (이번 실행에서 CDP가 이미
+    // 켜져 있으면 무시, 꺼져 있으면 정리해 불필요한 즉시 relaunch 방지)
     try {
       const _oldFlag = getCdpRestartFlagPath();
       if (fs.existsSync(_oldFlag)) fs.unlinkSync(_oldFlag);
