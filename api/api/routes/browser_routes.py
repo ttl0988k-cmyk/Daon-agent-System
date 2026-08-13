@@ -67,7 +67,7 @@ _cdp_restart_requested = False  # 세션당 한 번만 요청하도록 가드
 
 
 def _request_cdp_restart() -> bool:
-    """Create the restart flag file (once per session) so Electron relaunches with CDP."""
+    """Create the restart flag file (once per session) so Electron ensures DAON Chrome (CDP 9222) is running."""
     global _cdp_restart_requested
     if _cdp_restart_requested:
         return False
@@ -80,7 +80,7 @@ def _request_cdp_restart() -> bool:
             f.write("restart-with-cdp")
         _logger.warning(
             "[CDP] Browser tool called but CDP(9222) is OFF — restart flag written at %s. "
-            "Electron will relaunch with --remote-debugging-port=9222.",
+            "Electron will ensure DAON Chrome is running on --remote-debugging-port=9222.",
             _CDP_RESTART_FLAG_PATH,
         )
         return True
@@ -125,12 +125,17 @@ def _browser_worker_loop():
         return None, None
 
     def _ensure_browser(auto_restart: bool = False):
-        """Connect to Electron's WebContentsView via CDP.
+        """Connect to DAON 전용 Chrome (real Chrome.exe, CDP 9222) via Playwright.
+
+        내장 Electron WebContentsView 대신, DAON이 띄운 '진짜 Chrome.exe'의 전용
+        프로필에 --remote-debugging-port=9222 로 연결한다. 사용자가 이 Chrome 창에서
+        로그인하면 세션이 전용 프로필에 저장되고, 에이전트(browser_*)가 CDP로
+        같은 세션을 공유·제어한다.
 
         auto_restart=True 일 때 CDP(9222)가 꺼져 있으면(연결 실패) 재시작 요청
-        플래그를 써서 Electron이 --remote-debugging-port=9222 로 자동 재실행하게
-        한다. status 폴링(5초 간격)은 auto_restart=False 로 호출해, 브라우저를
-        쓰지 않는 동안에는 재시작이 일어나지 않도록 한다.
+        플래그를 써서 Electron이 DAON Chrome을 (재)실행하게 한다. status 폴링
+        (5초 간격)은 auto_restart=False 로 호출해, 브라우저를 쓰지 않는 동안에는
+        재실행이 일어나지 않도록 한다.
         """
         nonlocal browser, browser_page, pw
         global _last_cdp_attempt
@@ -162,14 +167,14 @@ def _browser_worker_loop():
                 return None, f"Failed to start Playwright: {str(e)}"
 
         try:
-            # Connect to Electron remote debugging port
-            _logger.info("Attempting CDP connection to Electron at localhost:9222")
+            # Connect to DAON 전용 Chrome remote debugging port
+            _logger.info("Attempting CDP connection to DAON Chrome at localhost:9222")
             browser = pw.chromium.connect_over_cdp("http://localhost:9222")
 
-            # Find the TabManager's WebContentsView page.
-            # In Electron, the TabManager creates a WebContentsView for the browser tab.
-            # We find a page that is NOT the main UI (http://127.0.0.1:xxxx) and
-            # NOT about:blank (which is the default empty page).
+            # Find a usable DAON Chrome page.
+            # DAON Chrome starts with a real URL (e.g. https://www.google.com) so
+            # CDP can immediately pick a target page. We skip the main UI
+            # (http://127.0.0.1:xxxx) and about:blank (default empty page).
             # IMPORTANT: NEVER call new_page() in CDP mode — it spawns a new
             # BrowserWindow in Electron, taking over the entire screen.
             pages = browser.contexts[0].pages
