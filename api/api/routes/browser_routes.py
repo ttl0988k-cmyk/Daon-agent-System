@@ -175,8 +175,10 @@ def _browser_worker_loop():
             # DAON Chrome starts with a real URL (e.g. https://www.google.com) so
             # CDP can immediately pick a target page. We skip the main UI
             # (http://127.0.0.1:xxxx) and about:blank (default empty page).
-            # IMPORTANT: NEVER call new_page() in CDP mode — it spawns a new
-            # BrowserWindow in Electron, taking over the entire screen.
+            # IMPORTANT (구버전 Electron BrowserView): NEVER call new_page() —
+            # it spawned a new BrowserWindow taking over the screen.
+            # 현재는 DAON 전용 Chrome.exe(CDP 9222)이므로 new_page()는 Chrome의
+            # 실제 새 탭을 만들 뿐이며, 같은 프로필/세션을 공유한다.
             pages = browser.contexts[0].pages
             target_page = None
             for p in pages:
@@ -203,7 +205,19 @@ def _browser_worker_loop():
                 else:
                     return None, "Electron CDP connected but no browser tab found. Open a browser tab first."
             else:
-                return None, "Electron CDP connected but no pages available. Open a browser tab first."
+                # DAON 전용 Chrome이 떠 있어도 시작 URL이 없어 탭 0개인 경우
+                # (예: CDP 플래그 폴링이 기본 URL 없이 실행). 이때는 CDP 상에서
+                # 실제 새 탭을 만들어 제어 대상으로 삼는다. 진짜 Chrome 탭이므로
+                # 같은 프로필/세션을 공유하며 사용자 화면에도 보이는 창이 된다.
+                try:
+                    ctx = browser.contexts[0]
+                    browser_page = ctx.new_page()
+                    browser_page.goto("https://www.google.com", timeout=30000)
+                    _last_cdp_attempt = time.time()
+                    _logger.info("No CDP pages — created a new DAON Chrome tab: %s", browser_page.url)
+                except Exception as np_e:
+                    _logger.warning("Failed to create a new CDP tab: %s", str(np_e))
+                    return None, "Electron CDP connected but no pages available, and creating a new tab failed."
 
             return browser_page, None
         except Exception as e:

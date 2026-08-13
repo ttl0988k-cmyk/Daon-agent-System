@@ -560,7 +560,10 @@ function startCdpRestartPolling() {
       if (fs.existsSync(flagPath)) {
         console.log('[CDP] Restart flag detected — ensuring DAON Chrome is running...');
         try { fs.unlinkSync(flagPath); } catch (_) { }
-        try { startDaonChrome(); } catch (e) {
+        // 기본 URL로 실행해 보이는 시작 탭을 보장한다. 시작 URL 없이 띄우면
+        // 탭 0개의 빈 Chrome이 백그라운드로 떠서, 사용자가 일반 Chrome에서
+        // 별도로 브라우징해 에이전트가 공유 브라우저를 못 찾는 문제가 생긴다.
+        try { startDaonChrome('https://www.google.com'); } catch (e) {
           console.warn('[CDP] Failed to (re)start DAON Chrome:', e && e.message);
         }
       }
