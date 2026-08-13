@@ -63,18 +63,15 @@ function cleanupOrphanedTemp() {
 }
 
 // ── CDP (Chrome DevTools Protocol) port for browser automation ──
-// ⚠ 기본값: OFF. 구글 등은 CDP 디버깅 포트가 열린 브라우저를 자동화/원격제어
-// 환경으로 감지하여 "브라우저 또는 앱이 안전하지 않을 수 있습니다"로 로그인을
-// 차단한다. 브라우저 자동화(Playwright MCP)가 필요할 때만 아래 두 방법 중
-// 하나로 켠다:
-//   1) 환경변수 DAON_ENABLE_CDP=1
-//   2) 실행 인자 --enable-cdp
+// Electron 37(Chromium 138) 업그레이드로 내장 WebContentsView 자체가 구글
+// 로그인을 허용하므로, 이제 CDP 9222는 "항상 ON"이다. 에이전트(browser_*)는
+// 9222로 연결해 사용자와 같은 내부 WebContentsView(같은 세션/로그인)를
+// 공유·제어한다. (구버전 Electron 31에서는 구글이 CDP가 열린 브라우저를
+// 자동화 환경으로 의심해 로그인을 차단했지만, Chromium 138은 정상 동작한다.)
 // (app.commandLine.appendSwitch 는 패키징된 Electron 에서 신뢰할 수 없어,
 //  실제 커맨드라인 재실행 방식으로만 동작한다.)
 const NEEDED_CDP_PORT = '9222';
-const _enableCdp =
-  process.env.DAON_ENABLE_CDP === '1' ||
-  process.argv.some((a) => a.indexOf('--enable-cdp') !== -1 || a.indexOf('remote-debugging-port') !== -1);
+const _enableCdp = true; // Electron 37+ 내장 Chromium은 구글 로그인을 허용 → CDP 상시 ON
 const _hasCdpArg = process.argv.some((a) => a.indexOf('remote-debugging-port') !== -1);
 if (_enableCdp && !_hasCdpArg) {
   try {
@@ -91,30 +88,27 @@ if (_enableCdp && !_hasCdpArg) {
   } catch (e) {
     console.warn('[Electron] CDP relaunch failed (will try appendSwitch):', e && e.message);
   }
-} else if (_enableCdp) {
+} else if (_hasCdpArg) {
   console.log('[Electron] CDP already enabled via command line.');
 } else {
-  console.log('[Electron] CDP is OFF (DAON_ENABLE_CDP=1 or --enable-cdp to enable). Google login works.');
+  console.log('[Electron] CDP is ON (Electron 37+ internal Chromium — Google login OK).');
 }
 
-// ── 전역 User-Agent 일관화 (구글 로그인 차단 해결) ──
-// Electron 31.7.7 의 실제 Chromium 버전은 126. 구글은 UA + Sec-CH-UA(Client
-// Hints)로 실제 엔진 버전을 교차 검증하므로, UA와 Client Hints 를 모두 126으로
-// 일치시켜야 "브라우저 또는 앱이 안전하지 않을 수 있습니다" 차단을 피할 수 있다.
-// userAgentFallback 은 기본 세션의 UA 와 Sec-CH-UA 헤더를 함께 갱신한다.
+// ── 전역 User-Agent 일관화 (구글 로그인 허용) ──
+// Electron 37.10.3 의 실제 Chromium 버전은 138. 구글은 UA + Sec-CH-UA(Client
+// Hints)로 실제 엔진 버전을 교차 검증하므로, UA와 Client Hints 를 실제 138로
+// 일치시킨다. userAgentFallback 은 기본 세션의 UA 와 Sec-CH-UA 헤더를 함께 갱신한다.
 try {
   app.userAgentFallback =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-  // 구글이 Client Hints 로 실제 버전을 추적하지 못하도록 기본 Client Hints 를
-  // 데스크톱 Chrome/126 값으로 고정한다. (automation 시그널 제거)
-  app.commandLine.appendSwitch('user-agent-product', 'Chrome/126.0.0.0');
-  // navigator.webdriver 를 false 로 강제 — 구글은 자동화 시그널을
-  // "브라우저 또는 앱이 안전하지 않을 수 있습니다" 로 판정한다.
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+  // 기본 Client Hints 를 실제 데스크톱 Chrome/138 값으로 맞춘다.
+  app.commandLine.appendSwitch('user-agent-product', 'Chrome/138.0.0.0');
+  // navigator.webdriver 를 false 로 강제 — 자동화 시그널 제거 (구글 로그인 차단 방지)
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
   // 첫 실행/기본 브라우저 알림 등 자동화 특유 UI 시그널 제거
   app.commandLine.appendSwitch('no-first-run');
   app.commandLine.appendSwitch('no-default-browser-check');
-  console.log('[Electron] UA fallback set to Chrome/126 (matches Electron 31 Chromium).');
+  console.log('[Electron] UA fallback set to Chrome/138 (matches Electron 37 Chromium).');
 } catch (e) {
   console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
 }
@@ -547,10 +541,13 @@ function getCdpRestartFlagPath() {
   }
 }
 
-// ── CDP(DAON Chrome) 실행 보장 폴링 ──
-// 구버전 로직: restart-for-cdp.flag 를 감지해 Electron을 CDP로 재실행했다.
-// 이제는 DAON 전용 Chrome이 항상 9222로 떠 있으므로, 플래그가 남아 있으면
-// (1) 플래그를 제거하고 (2) DAON Chrome이 아직 없으면 실행하기만 한다.
+// ── 내부 공유 브라우저(WebContentsView) CDP 9222 노출 폴링 ──
+// 이제 Electron 37(내장 Chromium 138)이 항상 --remote-debugging-port=9222 로
+// 떠 있어, 내부 WebContentsView(DAON 브라우저 패널)가 CDP 타겟으로 노출된다.
+// 구버전(DAON 전용 Chrome.exe 실행) 방식은 ①번 '현재 Chrome 방식 보존' 요구에
+// 따라 startDaonChrome() 함수로 유지하되, 포트 9222가 이제 Electron 소유이므로
+// 폴링에서는 더 이상 DAON Chrome을 띄우지 않는다. 남은 restart-for-cdp.flag 는
+// 정리만 하고, 내부 공유 브라우저가 이미 9222로 노출돼 있음을 로그로 남긴다.
 let cdpRestartTimer = null;
 function startCdpRestartPolling() {
   if (cdpRestartTimer) return;
@@ -558,14 +555,13 @@ function startCdpRestartPolling() {
   cdpRestartTimer = setInterval(() => {
     try {
       if (fs.existsSync(flagPath)) {
-        console.log('[CDP] Restart flag detected — ensuring DAON Chrome is running...');
+        console.log('[CDP] Restart flag detected — internal WebContentsView is already exposed on 9222 (cleaning flag).');
         try { fs.unlinkSync(flagPath); } catch (_) { }
-        // 기본 URL로 실행해 보이는 시작 탭을 보장한다. 시작 URL 없이 띄우면
-        // 탭 0개의 빈 Chrome이 백그라운드로 떠서, 사용자가 일반 Chrome에서
-        // 별도로 브라우징해 에이전트가 공유 브라우저를 못 찾는 문제가 생긴다.
-        try { startDaonChrome('https://www.google.com'); } catch (e) {
-          console.warn('[CDP] Failed to (re)start DAON Chrome:', e && e.message);
-        }
+        // NOTE: 이전에는 이 지점에서 DAON 전용 Chrome.exe(진짜 Chrome)를
+        // startDaonChrome('https://www.google.com') 로 띄웠다. 그러나 이제
+        // Electron 37+ 내장 Chromium이 9222를 소유하므로 DAON Chrome을 띄우면
+        // 포트 충돌이 발생한다. ①번 보존 요구에 따라 startDaonChrome() 코드는
+        // 유지하되, 여기서는 호출하지 않는다.
       }
     } catch (e) {
       console.warn('[CDP] Restart polling error:', e && e.message);
@@ -855,12 +851,11 @@ app.whenReady().then(async () => {
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
 
-    // ── STEP 3a: CDP(DAON Chrome) 지연 실행 폴링 ──
-    // DAON 전용 Chrome은 앱 시작 시 자동으로 띄우지 않는다. 대신 서버가
-    // browser_* 도구 호출 시 restart-for-cdp.flag 를 쓰면, 이 폴링이 감지해
-    // DAON Chrome(진짜 Chrome.exe, 전용 프로필, CDP 9222)을 (재)실행한다.
-    // 이렇게 하면 사용자가 브라우저 도구를 쓰기 전에는 Chrome 창이 떠 있지
-    // 않고, 정작 필요할 때만 Chrome이 떠서 같은 세션으로 에이전트가 제어한다.
+    // ── STEP 3a: 내부 WebContentsView CDP(9222) 노출 폴링 ──
+    // Electron 37+ 내장 Chromium이 항상 9222로 노출되므로 별도 Chrome 실행은
+    // 필요 없다. 남아있을 수 있는 구버전 restart-for-cdp.flag 를 정리하는
+    // 폴링만 유지한다. (DAON 전용 Chrome.exe 실행 방식은 ①번 보존 요구에 따라
+    // startDaonChrome() 코드로 유지 — 9222가 Electron 소유이므로 폴링에서 호출 안 함)
     startCdpRestartPolling();
     // 구버전 CDP 재시작 플래그(restart-for-cdp.flag)가 남아있으면 정리
     try {
@@ -1032,34 +1027,16 @@ app.whenReady().then(async () => {
 
 // ── OAuth 인증 URL 감지 (구글 로그인 차단 우회) ──
 // 내장 Chromium 126(Electron 31.7.7)은 구글이 오래된/자동화 환경으로 판정해
-// "브라우저 또는 앱이 안전하지 않을 수 있습니다"로 로그인을 차단한다. UA/Client
-// Hints/CSP/플래그를 모두 맞춰도 내장 엔진 자체가 차단 대상이므로, accounts
-// .google.com 등 인증 URL이 내부 브라우저로 진입하면 내부에서 렌더링하지 않고
-// 시스템 기본 브라우저(Chrome/Edge)로 위임해 로그인하게 한다.
-const EXTERNAL_AUTH_HOSTS = new Set([
-  'accounts.google.com',
-  'accounts.google.co.kr',
-  'myaccount.google.com',
-  'accounts.youtube.com',
-  'business.google.com',
-  'console.cloud.google.com',
-]);
+// Electron 37(Chromium 138) 업그레이드로 내부 WebContentsView 자체가 구글
+// 로그인을 허용한다. 따라서 더 이상 인증 URL을 시스템 브라우저로 위임하지
+// 않는다 — accounts.google.com 등도 내부 공유 브라우저에서 그대로 렌더링해
+// 사용자와 에이전트가 같은 세션으로 로그인한다.
+// (구버전 Electron 31/Chromium 126은 UA/Client Hints/CSP/플래그를 모두 맞춰도
+// 내장 엔진 자체가 차단 대상이었기에 위임했다.)
+const EXTERNAL_AUTH_HOSTS = new Set([]); // 내부 공유 브라우저에서 구글 로그인 허용
 function isExternalAuthUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    if (EXTERNAL_AUTH_HOSTS.has(host)) return true;
-    if (host === 'github.com' && u.pathname.startsWith('/login/oauth/')) return true;
-    if (host === 'huggingface.co' && u.pathname.startsWith('/oauth/')) return true;
-    // oauth2 인증 경로 / ServiceLogin / signin 하위 경로
-    if (host.endsWith('.google.com') && (
-      u.pathname.startsWith('/o/oauth2') ||
-      u.pathname.startsWith('/ServiceLogin') ||
-      u.pathname.startsWith('/signin/')
-    )) return true;
-    return false;
-  } catch (e) { return false; }
+  // Electron 37+ 내장 Chromium은 구글 로그인을 허용하므로 항상 false (내부 렌더링)
+  return false;
 }
 
 function openOAuthInSystemBrowser(url) {
@@ -1097,25 +1074,31 @@ class TabManager {
   }
 
   createTab(tabId, url) {
+    // 영속 파티션(persist:daon-shared-browser)을 사용해 사용자와 에이전트가
+    // 같은 WebContents/Session/로그인 상태를 공유하고, 앱 재시작 후에도 구글
+    // 로그인이 유지되게 한다. UA/Client Hints/AutomationControlled 는 전역
+    // 스위치(app.userAgentFallback 등)라 이 파티션 세션에도 동일 적용된다.
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         javascript: true,
+        partition: 'persist:daon-shared-browser',
       }
     });
     this.tabs.set(tabId, view);
+    console.log('[TabManager] WebContentsView created (tab=' + tabId + ', url=' + url +
+      ', partition=persist:daon-shared-browser) — exposed on CDP 9222 for agent sharing.');
 
-    // Google 로그인 등이 'JavaScript 미지원 브라우저'로 오인되지 않도록
-    // 공유 브라우저의 User-Agent를 Electron 31(Chromium 126)과 일치하는
-    // 최신 Chrome UA로 재정의한다. 반드시 실제 Chromium 버전과 맞춰야 한다 —
-    // 구글은 UA와 함께 Sec-CH-UA(Client Hints)로 실제 엔진 버전을 검증하므로,
-    // UA만 최신(예: Chrome/131)으로 속이면 "브라우저 또는 앱이 안전하지 않을
-    // 수 있습니다"로 로그인을 차단한다. 126은 Electron 31.7.7 의 Chromium 버전.
+    // Google 로그인이 'JavaScript 미지원 브라우저'로 오인되지 않도록 공유
+    // 브라우저의 User-Agent를 Electron 37(Chromium 138)과 일치하는 Chrome UA로
+    // 재정의한다. 반드시 실제 Chromium 버전과 맞춰야 한다 — 구글은 UA와 함께
+    // Sec-CH-UA(Client Hints)로 실제 엔진 버전을 검증하므로, 138은 Electron
+    // 37.10.3 의 Chromium 버전.
     try {
       view.webContents.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
       );
     } catch (e) {
       console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);

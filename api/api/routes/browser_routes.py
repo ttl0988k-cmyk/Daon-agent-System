@@ -167,50 +167,60 @@ def _browser_worker_loop():
                 return None, f"Failed to start Playwright: {str(e)}"
 
         try:
-            # Connect to DAON 전용 Chrome remote debugging port
-            _logger.info("Attempting CDP connection to DAON Chrome at localhost:9222")
+            # Connect to DAON 전용 Chrome / 내부 WebContentsView remote debugging port
+            _logger.info("Attempting CDP connection to DAON browser at localhost:9222")
             browser = pw.chromium.connect_over_cdp("http://localhost:9222")
 
-            # Find a usable DAON Chrome page.
-            # DAON Chrome starts with a real URL (e.g. https://www.google.com) so
-            # CDP can immediately pick a target page. We skip the main UI
-            # (http://127.0.0.1:xxxx) and about:blank (default empty page).
+            # Find a usable browser page.
+            # DAON 내부 공유 브라우저(WebContentsView, 파티션 persist:daon-shared-browser)
+            # 는 브라우저 패널이 열리면 실제 URL(예: https://www.google.com)로 CDP 타겟이
+            # 노출된다. Electron CDP에는 여러 context(파티션)가 있을 수 있으므로 모든
+            # context 를 순회하며, 메인 UI(http://127.0.0.1:xxxx)와 about:blank(기본 빈
+            # 페이지)는 건너뛰고 실제 URL을 가진 페이지를 우선 선택한다.
             # IMPORTANT (구버전 Electron BrowserView): NEVER call new_page() —
             # it spawned a new BrowserWindow taking over the screen.
-            # 현재는 DAON 전용 Chrome.exe(CDP 9222)이므로 new_page()는 Chrome의
-            # 실제 새 탭을 만들 뿐이며, 같은 프로필/세션을 공유한다.
-            pages = browser.contexts[0].pages
+            # 현재는 DAON 전용 Chrome.exe(CDP 9222) 방식이면 new_page()가 Chrome의
+            # 실제 새 탭을 만들어 같은 프로필/세션을 공유한다. 단, Electron 모드
+            # (BROWSER_CDP_URL 설정, 내부 WebContentsView)에서는 new_page()가 새
+            # BrowserWindow를 만들어 화면을 가로채므로 절대 호출하지 않는다 — 이때는
+            # frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
+            contexts = browser.contexts
             target_page = None
-            for p in pages:
-                _logger.debug("CDP page: %s", p.url)
-                if p.url.startswith("http://127.0.0.1"):
-                    continue  # skip main UI
-                if p.url == "about:blank":
-                    continue  # skip blank pages
-                target_page = p
-                break
+            fallback_page = None  # 실 URL이 없어도 쓸 수 있는 마지막 비-UI 페이지
+            for ctx in contexts:
+                for p in ctx.pages:
+                    url = (p.url or "").strip()
+                    _logger.debug("CDP page: %s", url)
+                    if url.startswith("http://127.0.0.1"):
+                        continue  # skip main UI
+                    if url == "about:blank" or url == "":
+                        fallback_page = fallback_page or p
+                        continue  # remember but don't stop — keep looking for a real URL
+                    target_page = p
+                    break
+                if target_page:
+                    break
 
             if target_page:
                 browser_page = target_page
                 _last_cdp_attempt = time.time()  # 연결 성공 → 백오프 기준 리셋
                 _logger.info("Connected to existing browser tab: %s", browser_page.url)
-            elif pages:
-                # Use the last non-UI page, even if about:blank
-                for p in reversed(pages):
-                    if not p.url.startswith("http://127.0.0.1"):
-                        browser_page = p
-                        break
-                if browser_page:
-                    _logger.info("Using fallback CDP page: %s", browser_page.url)
-                else:
-                    return None, "Electron CDP connected but no browser tab found. Open a browser tab first."
+            elif fallback_page:
+                browser_page = fallback_page
+                _last_cdp_attempt = time.time()
+                _logger.info("Using fallback CDP page (about:blank): %s", browser_page.url)
             else:
+                if os.environ.get("BROWSER_CDP_URL"):
+                    # Electron 모드(내부 WebContentsView): new_page()는 새 BrowserWindow를
+                    # 만들어 화면을 가로채므로 금지. frontend가 pending_url 로 내부 패널을
+                    # 자동 생성하도록 안내한다.
+                    return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
                 # DAON 전용 Chrome이 떠 있어도 시작 URL이 없어 탭 0개인 경우
                 # (예: CDP 플래그 폴링이 기본 URL 없이 실행). 이때는 CDP 상에서
                 # 실제 새 탭을 만들어 제어 대상으로 삼는다. 진짜 Chrome 탭이므로
                 # 같은 프로필/세션을 공유하며 사용자 화면에도 보이는 창이 된다.
                 try:
-                    ctx = browser.contexts[0]
+                    ctx = contexts[0] if contexts else browser.new_context()
                     browser_page = ctx.new_page()
                     browser_page.goto("https://www.google.com", timeout=30000)
                     _last_cdp_attempt = time.time()
