@@ -1,4 +1,4 @@
-print("[BUILD ID]: server-v5-2026-08-03-22:50", flush=True)
+print("[BUILD ID]: server-v5-2026-08-14-20:05", flush=True)
 import json
 import os
 import sys
@@ -13,7 +13,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class RobustThreadingHTTPServer(ThreadingHTTPServer):
     """ThreadingHTTPServer가 예외로 죽지 않도록 보호."""
     request_queue_size = 32
-    allow_reuse_address = True
+    # [v5-fix] allow_reuse_address는 반드시 False.
+    # Windows에서 True(SO_REUSEADDR)는 기존 server.exe가 같은 포트에 LISTENING 중인
+    # 상태에서도 새 프로세스의 바인드를 허용 → 두 서버가 동일 포트에 동시 리슨하는
+    # "좀비 리스너"가 생기고, 브라우저가 깨진 인스턴스로 연결돼
+    # "잘못된 응답(ERR_EMPTY_RESPONSE)"이 발생한다. (2026-08-14 재현 확인)
+    allow_reuse_address = False
     daemon_threads = True
 
     def handle_error(self, request, client_address):
@@ -652,6 +657,26 @@ class Handler(BaseHTTPRequestHandler):
             if event in ('done', 'error', 'cancel', 'apperror'):
                 break
 
+def _find_port_owner(port: int):
+    """지정 포트에 LISTENING 중인 프로세스의 PID를 찾는다.
+
+    psutil을 사용할 수 없거나 리스너가 없으면 None을 반환한다.
+    (권한 부족 시 conn.pid가 None일 수 있음 — 이 경우에도 None 반환,
+    실제 바인드 시도의 OSError 폴백이 최종 방어선 역할을 한다.)
+    """
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind='tcp'):
+            try:
+                if conn.laddr and conn.laddr.port == port and conn.status == psutil.CONN_LISTEN:
+                    return conn.pid
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -698,7 +723,22 @@ def main():
     # HTTP 서버를 먼저 바인딩하여 Electron 헬스체크(/health)에 즉시 응답.
     # 무거운 초기화(Profile, Whisper CUDA)는 서버 LISTENING 후 백그라운드 수행.
     # ══════════════════════════════════════════════════════════════════════
-    server = RobustThreadingHTTPServer((HOST, PORT), Handler)
+
+    # ── [v5-fix] 포트 점유 사전 검사 ──
+    # 기존 인스턴스(좀비 리스너)가 포트를 LISTENING 중이면 명확한 메시지와 함께
+    # 즉시 종료한다. 이전처럼 조용히 겹쳐 바인드되는 것을 허용하지 않는다.
+    _owner_pid = _find_port_owner(PORT)
+    if _owner_pid is not None and _owner_pid != os.getpid():
+        print(f"[ERROR] 포트 {PORT}는 이미 다른 프로세스(PID {_owner_pid})가 사용 중입니다.", flush=True)
+        print("[ERROR] 기존 DAON 서버를 종료한 후 다시 실행하세요. (taskkill /PID " + str(_owner_pid) + " /F)", flush=True)
+        sys.exit(1)
+
+    try:
+        server = RobustThreadingHTTPServer((HOST, PORT), Handler)
+    except OSError as e:
+        print(f"[ERROR] 포트 {PORT} 바인딩 실패: {e}", flush=True)
+        print(f"[ERROR] 이 포트에 다른 서버가 이미 실행 중일 수 있습니다. 'netstat -ano | findstr :{PORT}' 로 확인하세요.", flush=True)
+        sys.exit(1)
     print(f"Server running at http://localhost:{PORT}", flush=True)
     global _server_start_ts
     _server_start_ts = time.time()
