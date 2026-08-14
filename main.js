@@ -1,6 +1,6 @@
 console.log("[BUILD ID]: main-v5-2026-08-03-22:50");
-console.log("[BUILD ID]: client-hints-fix-2026-08-14-21:47");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
+console.log("[BUILD ID]: restore-aug3-browser-2026-08-14-23:35");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -64,92 +64,12 @@ function cleanupOrphanedTemp() {
 }
 
 // ── CDP (Chrome DevTools Protocol) port for browser automation ──
-// 실험 설정: 기본 CDP는 OFF 이다. 에이전트(browser_*)가 브라우저 도구를 호출하면
-// browser_routes.py 가 restart-for-cdp.flag 를 쓰고, 아래 폴링(startCdpRestartPolling)
-// 이 이를 감지해 --remote-debugging-port=9222 로 앱을 재실행(relaunch)한다.
-// 이렇게 하면 구글 로그인을 할 때는 CDP(자동화 시그널)가 꺼진 상태로 내부
-// WebContentsView 를 사용할 수 있어, "CDP ON이 구글 로그인 차단의 원인인지"
-// 분리 검증이 가능하다. (app.commandLine.appendSwitch 는 패키징된 Electron 에서
-// 신뢰할 수 없어, 실제 커맨드라인 재실행 방식으로만 동작한다.)
+// 8월 3일 정상 빌드 복원: CDP 9222는 앱 시작 시 항상 ON (무조건 appendSwitch).
+// 에이전트(browser_*)는 connect_over_cdp("http://localhost:9222")로
+// 사용자와 같은 WebContentsView(세션/로그인 상태)를 공유·제어한다.
 const NEEDED_CDP_PORT = '9222';
-const _enableCdp = process.argv.some(
-  (a) => a.indexOf('--daon-enable-cdp') !== -1 || a.indexOf('remote-debugging-port') !== -1
-);
-const _hasCdpArg = process.argv.some((a) => a.indexOf('remote-debugging-port') !== -1);
-if (_enableCdp && !_hasCdpArg) {
-  try {
-    app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
-    app.commandLine.appendSwitch('remote-allow-origins', '*');
-    const relaunchArgs = process.argv.slice(1).filter(
-      (a) => a.indexOf('remote-debugging-port') === -1 && a.indexOf('remote-allow-origins') === -1
-    );
-    relaunchArgs.push('--remote-debugging-port=' + NEEDED_CDP_PORT, '--remote-allow-origins=*');
-    app.relaunch({ args: relaunchArgs });
-    console.log('[Electron] Relaunching with CDP port ' + NEEDED_CDP_PORT + '...');
-    // Immediate exit — code below must not run in this short-lived process.
-    process.exit(0);
-  } catch (e) {
-    console.warn('[Electron] CDP relaunch failed (will try appendSwitch):', e && e.message);
-  }
-} else if (_hasCdpArg) {
-  console.log('[Electron] CDP already enabled via command line.');
-} else {
-  console.log('[Electron] CDP is OFF at startup (기본). restart-for-cdp.flag 감지 시 9222로 재실행.');
-}
-
-// ── 전역 User-Agent 일관화 (구글 로그인 허용) ──
-// Electron 37.10.3 의 실제 Chromium 버전은 138. 구글은 UA + Sec-CH-UA(Client
-// Hints)로 실제 엔진 버전을 교차 검증하므로, UA와 Client Hints 를 실제 138로
-// 일치시킨다. userAgentFallback 은 기본 세션의 UA 와 Sec-CH-UA 헤더를 함께 갱신한다.
-try {
-  app.userAgentFallback =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
-  // 기본 Client Hints 를 실제 데스크톱 Chrome/138 값으로 맞춘다.
-  app.commandLine.appendSwitch('user-agent-product', 'Chrome/138.0.0.0');
-  // navigator.webdriver 를 false 로 강제 — 자동화 시그널 제거 (구글 로그인 차단 방지)
-  app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  // 첫 실행/기본 브라우저 알림 등 자동화 특유 UI 시그널 제거
-  app.commandLine.appendSwitch('no-first-run');
-  app.commandLine.appendSwitch('no-default-browser-check');
-  console.log('[Electron] UA fallback set to Chrome/138 (matches Electron 37 Chromium).');
-} catch (e) {
-  console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
-}
-
-// ── Client Hints 복원 (구글 로그인 신뢰 신호) ──
-// 실측(2026-08-14, _probe/echo*.log): Electron 내장 Chromium은 UA fallback 설정
-// 여부와 무관하게 Sec-CH-UA* 헤더를 아예 송신하지 않는다(실제 Chrome은 송신).
-// 구글은 "Chrome이라고 주장하면서 Client Hints가 없는 브라우저"를 임베디드/위장
-// 브라우저로 간주하므로, webRequest 단계에서 실제 Chrome과 동일한 Sec-CH-UA* /
-// Accept-Language 를 복원한다. (와이어 실측으로 주입 유효 확인됨)
-const CH_UA_138 = '"Not)A;Brand";v="8", "Google Chrome";v="138", "Chromium";v="138"';
-const FULL_ACCEPT_LANG = 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7';
-function _hasHeader(headers, name) {
-  const ln = name.toLowerCase();
-  return Object.keys(headers).some((k) => k.toLowerCase() === ln);
-}
-function normalizeChromeHeaders(headers, url) {
-  const h = { ...headers };
-  const secure = url.startsWith('https://') || url.indexOf('127.0.0.1') !== -1 || url.indexOf('localhost') !== -1;
-  if (secure) {
-    if (!_hasHeader(h, 'sec-ch-ua')) h['sec-ch-ua'] = CH_UA_138;
-    if (!_hasHeader(h, 'sec-ch-ua-mobile')) h['sec-ch-ua-mobile'] = '?0';
-    if (!_hasHeader(h, 'sec-ch-ua-platform')) h['sec-ch-ua-platform'] = '"Windows"';
-  }
-  const alKey = Object.keys(h).find((k) => k.toLowerCase() === 'accept-language');
-  if (alKey && (h[alKey] === 'ko' || h[alKey] === 'en' || !h[alKey])) h[alKey] = FULL_ACCEPT_LANG;
-  return h;
-}
-function attachChromeHeaderNormalization(ses, label) {
-  try {
-    ses.webRequest.onBeforeSendHeaders((details, callback) => {
-      callback({ requestHeaders: normalizeChromeHeaders(details.requestHeaders, details.url) });
-    });
-    console.log('[ClientHints] Header normalization attached: ' + label);
-  } catch (e) {
-    console.warn('[ClientHints] attach failed (' + label + '):', e && e.message);
-  }
-}
+app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
+app.commandLine.appendSwitch('remote-allow-origins', '*');
 
 // ── Single Instance Lock ──
 // Each instance needs exclusive access to CDP port 9222 and spawns its own
@@ -185,42 +105,14 @@ let tray = null;
 let trayStatusTimer = null;
 let splashWindow = null;
 
-// ── Global guard: CDP-created BrowserWindows must never take over the app ──
-// Registered at MODULE scope (BEFORE whenReady) so ANY window created by a
-// CDP client (Playwright MCP new_page against port 9222) or by target=_blank
-// links is caught even before the app is fully ready. This fixes the race
-// where the old guard was only registered inside whenReady and could miss
-// windows spawned between the CDP relaunch (port 9222 already open) and ready.
-app.on('browser-window-created', (_evt, win) => {
-  // Defer to the next tick: the 'browser-window-created' event fires DURING the
-  // `new BrowserWindow(...)` constructor, BEFORE the assignment (e.g.
-  // `splashWindow = new BrowserWindow(...)`) completes. Running the guard
-  // immediately here would see splashWindow/mainWindow as null and wrongly
-  // destroy the app's own windows. setImmediate ensures the assignment has
-  // landed before we compare.
-  setImmediate(() => {
-    if (!win || win.isDestroyed()) return;
-    if (win === mainWindow || win === splashWindow) return;
-    // Even if this window somehow survives (e.g. a second CDP attach during the
-    // 50ms destroy delay), closing it must never take the whole app down while
-    // the tray is running. Redirect its close into a destroy instead.
-    try {
-      win.on('close', (e) => {
-        if (!isQuitting) { e.preventDefault(); try { win.destroy(); } catch (_) { } }
-      });
-    } catch (_) { }
-    let wc = null;
-    try { wc = win.webContents; } catch (_) { }
-    let url = '';
-    if (wc) { try { url = wc.getURL() || ''; } catch (_) { } }
-    if (url && url !== 'about:blank' && tabManager) {
-      try { tabManager.navigate('tab1', url); } catch (e) { console.warn('[BrowserGuard] redirect failed:', e.message); }
-    }
-    // Remove from screen ASAP so the app never becomes unusable.
-    try { win.hide(); } catch (_) { }
-    setTimeout(() => { try { if (!win.isDestroyed()) win.destroy(); } catch (_) { } }, 50);
-  });
-});
+// ── 8월 3일 정상 빌드 복원 ──
+// 모듈 스코프 전역 'browser-window-created' 가드는 제거했다. 이 가드는 CDP가
+// 만든 BrowserWindow를 destroy 했는데, 구글 OAuth 팝업/리다이렉트 창까지 함께
+// 파괴해 로그인을 끊었다(384e8fb/06e1c87 에서 도입 후 로그인 차단 확인).
+// 백업(로그인 정상)은 전역 창 가드 없이, (a) 뷰 단위 setWindowOpenHandler로
+// target=_blank/window.open 을 같은 뷰 내비게이션으로 흡수하고, (b) 백엔드
+// browser_routes.py 가 Electron 모드에서 new_page()를 절대 호출하지 않아
+// 에이전트가 외부 창을 만들지 않도록 했다. 이 두 가지를 아래에서 복원한다.
 
 // ── Always-on: 트레이 아이콘 경로 해석 (dev / packaged 둘 다 지원) ──
 function findTrayIcon() {
@@ -441,113 +333,6 @@ function killProcessTree(pid) {
   }
 }
 
-// ── DAON 전용 Chrome (구글 로그인 차단 우회 최종 구조) ──
-// 내장 Chromium 126(Electron 31)은 구글이 로그인을 차단하므로, 브라우저
-// 자동화(CDP 9222)는 '진짜 Chrome.exe'를 DAON 전용 프로필로 실행해 연결한다.
-// 사용자가 이 Chrome 창에서 로그인하면 세션이 전용 프로필에 저장되어
-// 에이전트(browser_*)가 CDP로 같은 세션을 공유·제어할 수 있다.
-const DAON_CHROME_PROFILE_DIR = (() => {
-  try {
-    return path.join(app.getPath('userData'), 'browser-profile');
-  } catch (_) {
-    return path.join(
-      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-      'DAON Agent System',
-      'browser-profile'
-    );
-  }
-})();
-const DAON_CHROME_PORT = '9222';
-let daonChromeProcess = null;
-
-// Chrome.exe 후보 경로 (설치 위치 우선순위)
-function findSystemChromePath() {
-  const candidates = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  ];
-  for (const p of candidates) {
-    try { if (fs.existsSync(p)) return p; } catch (_) { }
-  }
-  // PATH에서 chrome/msedge 검색
-  const pathDirs = (process.env.PATH || '').split(';');
-  for (const dir of pathDirs) {
-    for (const name of ['chrome.exe', 'msedge.exe']) {
-      try {
-        const p = path.join(dir, name);
-        if (fs.existsSync(p)) return p;
-      } catch (_) { }
-    }
-  }
-  return null;
-}
-
-// DAON 전용 Chrome을 --remote-debugging-port=9222 + 전용 프로필로 실행.
-// 이미 9222가 열려 있으면(기존 DAON Chrome 실행 중) 중복 실행하지 않는다.
-function startDaonChrome(startUrl) {
-  if (daonChromeProcess && daonChromeProcess.pid) {
-    // 이미 실행 중이면 요청 URL로 새 탭을 열도록 9222 json/new 요청 (없으면 무시)
-    try {
-      if (startUrl) {
-        http.get(`http://127.0.0.1:9222/json/new?${encodeURIComponent(startUrl)}`, () => { }).on('error', () => { });
-      }
-    } catch (_) { }
-    return daonChromeProcess;
-  }
-  const chromePath = findSystemChromePath();
-  if (!chromePath) {
-    console.warn('[DaonChrome] 시스템 Chrome/Edge를 찾을 수 없습니다. browser_* 도구는 동작하지 않습니다.');
-    return null;
-  }
-  try {
-    fs.mkdirSync(DAON_CHROME_PROFILE_DIR, { recursive: true });
-  } catch (_) { }
-
-  const args = [
-    `--user-data-dir=${DAON_CHROME_PROFILE_DIR}`,
-    `--remote-debugging-port=${DAON_CHROME_PORT}`,
-    '--remote-allow-origins=*',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-features=Translate,OptimizationHints,MediaRouter',
-  ];
-  if (startUrl) args.push(startUrl);
-
-  console.log('[DaonChrome] Launching DAON 전용 Chrome:', chromePath);
-  console.log('[DaonChrome]   profile:', DAON_CHROME_PROFILE_DIR);
-  console.log('[DaonChrome]   CDP:    http://127.0.0.1:' + DAON_CHROME_PORT);
-
-  try {
-    daonChromeProcess = spawn(chromePath, args, {
-      detached: false,
-      windowsHide: false,
-      stdio: 'ignore',
-    });
-    daonChromeProcess.on('error', (err) => {
-      console.warn('[DaonChrome] spawn error:', err && err.message);
-      daonChromeProcess = null;
-    });
-    daonChromeProcess.on('exit', (code) => {
-      console.log('[DaonChrome] DAON Chrome exited (code=' + code + ').');
-      daonChromeProcess = null;
-    });
-    return daonChromeProcess;
-  } catch (e) {
-    console.warn('[DaonChrome] Failed to launch Chrome:', e && e.message);
-    daonChromeProcess = null;
-    return null;
-  }
-}
-
-function stopDaonChrome() {
-  if (daonChromeProcess && daonChromeProcess.pid) {
-    try { killProcessTree(daonChromeProcess.pid); } catch (_) { }
-    daonChromeProcess = null;
-  }
-}
-
 // ── Helper: Unified Server EXE Path Resolution ──
 function findServerExe() {
   const candidates = [
@@ -568,64 +353,9 @@ function findServerExe() {
 
 // ── Process Spawning & Auto-Restart Safety Net ──
 
-// CDP 자동 재시작 플래그: browser_* 도구가 호출됐는데 CDP(9222)가 꺼져 있으면
-// 서버가 이 파일을 생성하고, Electron이 감지해 --remote-debugging-port=9222 로
-// 스스로 재실행한다. (구글 로그인 정상화를 위해 기본 CDP는 OFF.)
-function getCdpRestartFlagPath() {
-  try {
-    return path.join(app.getPath('userData'), 'restart-for-cdp.flag');
-  } catch (e) {
-    return path.join(os.tmpdir(), 'daon-restart-for-cdp.flag');
-  }
-}
-
-// ── 온디맨드 CDP 9222 폴링 ──
-// 기본 실행은 CDP OFF(구글 로그인 자동화 시그널 없음). 에이전트가 browser_*
-// 도구를 호출하면 browser_routes.py 가 restart-for-cdp.flag 를 쓴다. 이 폴링이
-// flag 를 감지하면 --remote-debugging-port=9222 로 앱을 재실행(relaunch)해
-// 내부 WebContentsView(DAON 브라우저 패널)를 CDP 타겟으로 노출시킨다.
-// (한 번 relaunch 로 9222가 켜지면 _hasCdpArg 가 true 가 되어 이후에는
-// 재실행하지 않고 그대로 유지된다. 에이전트는 사용자와 같은 뷰/세션을 공유.)
-let cdpRestartTimer = null;
-function startCdpRestartPolling() {
-  if (cdpRestartTimer) return;
-  const flagPath = getCdpRestartFlagPath();
-  cdpRestartTimer = setInterval(() => {
-    try {
-      if (fs.existsSync(flagPath)) {
-        console.log('[CDP] Restart flag detected — relaunching app with --remote-debugging-port=9222 (agent browser tool requested CDP).');
-        try { fs.unlinkSync(flagPath); } catch (_) { }
-        // ①번 '현재 Chrome 방식 보존' 요구에 따라 startDaonChrome()/stopDaonChrome()
-        // 함수는 유지하지만, 9222는 이제 Electron 자체가 소유해야 하므로 여기서
-        // DAON Chrome.exe 를 띄우지 않는다. 대신 Electron 을 9222 로 재실행한다.
-        try {
-          app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
-          app.commandLine.appendSwitch('remote-allow-origins', '*');
-          const relaunchArgs = process.argv.slice(1).filter(
-            (a) => a.indexOf('remote-debugging-port') === -1 && a.indexOf('remote-allow-origins') === -1
-          );
-          relaunchArgs.push('--remote-debugging-port=' + NEEDED_CDP_PORT, '--remote-allow-origins=*');
-          app.relaunch({ args: relaunchArgs });
-          console.log('[CDP] Relaunching with CDP port ' + NEEDED_CDP_PORT + ' (agent requested)...');
-          // relaunch 후 이 프로세스는 즉시 종료된다. (새 인스턴스가 9222로 뜸)
-          app.exit(0);
-        } catch (e) {
-          console.warn('[CDP] Failed to relaunch with CDP:', e && e.message);
-        }
-      }
-    } catch (e) {
-      console.warn('[CDP] Restart polling error:', e && e.message);
-    }
-  }, 2000);
-}
-
 function startPythonProcess(port) {
   if (isQuitting) return;
-  const env = {
-    ...process.env,
-    BROWSER_CDP_URL: 'ws://localhost:9222',
-    DAON_CDP_RESTART_FLAG: getCdpRestartFlagPath(),
-  };
+  const env = { ...process.env, BROWSER_CDP_URL: 'ws://localhost:9222' };
   const exePath = findServerExe();
 
   if (exePath) {
@@ -813,9 +543,6 @@ app.whenReady().then(async () => {
   // ── Always-on: 트레이 아이콘 생성 (서버 백그라운드 상주) ──
   createTray();
 
-  // ── Client Hints 복원: 기본 세션 (메인 UI) ──
-  attachChromeHeaderNormalization(session.defaultSession, 'defaultSession');
-
   // ── STEP 0: Show splash window safely on ready-to-show without any white/black blank flash ──
   splashWindow = new BrowserWindow({
     width: 420,
@@ -904,18 +631,10 @@ app.whenReady().then(async () => {
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
 
-    // ── STEP 3a: 온디맨드 CDP(9222) 폴링 ──
-    // 기본 실행은 CDP OFF (구글 로그인 자동화 시그널 없음). 에이전트가 browser_*
-    // 도구를 호출하면 restart-for-cdp.flag 가 생기고, 이 폴링이 감지해 앱을
-    // --remote-debugging-port=9222 로 재실행한다. (DAON 전용 Chrome.exe 방식은
-    // ①번 보존 요구에 따라 startDaonChrome() 코드로 유지 — 9222는 Electron 소유)
-    startCdpRestartPolling();
-    // 이전 세션에서 남은 restart-for-cdp.flag 정리 (이번 실행에서 CDP가 이미
-    // 켜져 있으면 무시, 꺼져 있으면 정리해 불필요한 즉시 relaunch 방지)
-    try {
-      const _oldFlag = getCdpRestartFlagPath();
-      if (fs.existsSync(_oldFlag)) fs.unlinkSync(_oldFlag);
-    } catch (_) { }
+    // ── STEP 3a: CDP 9222는 앱 시작부터 항상 ON (8월 3일 정상 빌드 복원) ──
+    // 온디맨드 relaunch 폴링(restart-for-cdp.flag)은 제거했다. 백업은 앱 시작
+    // 시 appendSwitch 로 9222를 무조건 열었고, 그 상태에서 구글 로그인과
+    // 에이전트 공유가 모두 정상 동작했다.
 
     // ── STEP 3b: Start TTS Server (reuse if healthy, else spawn non-blocking) ──
     let reusedTts = false;
@@ -959,36 +678,12 @@ app.whenReady().then(async () => {
     mainWindow.center();
     mainWindow.setMenu(null);
 
-    // ── STEP 4a: Prevent popup windows / target=_blank from spawning BrowserWindows ──
-    // Route any window.open() / target=_blank from the app UI back into the
-    // in-app WebContentsView (tabManager) or the same local window, never a
-    // new full-screen BrowserWindow.
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (url && url !== 'about:blank') {
-        try {
-          if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
-            mainWindow.loadURL(url);
-          } else if (tabManager) {
-            tabManager.navigate('tab1', url);
-          }
-        } catch (e) { console.warn('[BrowserGuard] window.open redirect failed:', e.message); }
-      }
-      return { action: 'deny' };
-    });
-    // Block full-page navigation away from the local UI into a separate window.
-    mainWindow.webContents.on('will-navigate', (event, url) => {
-      const isLocalUi = url &&
-        (url.indexOf(`127.0.0.1:${serverPort}`) !== -1 || url.indexOf(`localhost:${serverPort}`) !== -1);
-      if (url && !isLocalUi) {
-        event.preventDefault();
-        try {
-          if (tabManager) tabManager.navigate('tab1', url);
-        } catch (e) { console.warn('[BrowserGuard] will-navigate redirect failed:', e.message); }
-      }
-    });
-
-    // ── STEP 4b: (Global guard moved to module scope above whenReady — it now
-    // also covers windows created before the app is fully ready.) ──
+    // ── STEP 4a: 8월 3일 정상 빌드 복원 ──
+    // mainWindow 의 setWindowOpenHandler(deny) + will-navigate 차단 가드는
+    // 제거했다. 이 가드들은 구글 OAuth 팝업/리다이렉트 창을 차단해 로그인
+    // 흐름을 끊었다(06e1c87 도입). 백업은 mainWindow 에 창 가드를 두지 않았고,
+    // 팝업 억제는 브라우저 뷰 단위의 setWindowOpenHandler(TabManager.createTab)로만
+    // 수행했다. 에이전트의 외부 창 생성은 백엔드(browser_routes.py)에서 차단한다.
 
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
     let _balloonShownOnce = false;
@@ -1079,45 +774,6 @@ app.whenReady().then(async () => {
 });
 
 
-// ── OAuth 인증 URL 감지 (구글 로그인 차단 우회) ──
-// 내장 Chromium 126(Electron 31.7.7)은 구글이 오래된/자동화 환경으로 판정해
-// Electron 37(Chromium 138) 업그레이드로 내부 WebContentsView 자체가 구글
-// 로그인을 허용한다. 따라서 더 이상 인증 URL을 시스템 브라우저로 위임하지
-// 않는다 — accounts.google.com 등도 내부 공유 브라우저에서 그대로 렌더링해
-// 사용자와 에이전트가 같은 세션으로 로그인한다.
-// (구버전 Electron 31/Chromium 126은 UA/Client Hints/CSP/플래그를 모두 맞춰도
-// 내장 엔진 자체가 차단 대상이었기에 위임했다.)
-const EXTERNAL_AUTH_HOSTS = new Set([]); // 내부 공유 브라우저에서 구글 로그인 허용
-function isExternalAuthUrl(url) {
-  // Electron 37+ 내장 Chromium은 구글 로그인을 허용하므로 항상 false (내부 렌더링)
-  return false;
-}
-
-function openOAuthInSystemBrowser(url) {
-  console.log('[OAuth] 인증 URL 감지 → 시스템 브라우저로 위임:', url);
-  shell.openExternal(url).catch((err) => console.error('[OAuth] openExternal failed:', err));
-}
-
-function oauthNoticeHtml(url) {
-  const safe = String(url || '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
-  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>
-    body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#f5f6fa;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-    .card{background:#fff;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:40px 48px;max-width:520px;text-align:center}
-    .badge{display:inline-block;background:#34a853;color:#fff;font-size:12px;padding:4px 10px;border-radius:20px;margin-bottom:16px}
-    h1{font-size:20px;color:#1a1a2e;margin:0 0 12px}
-    p{font-size:14px;color:#555;line-height:1.6;margin:8px 0}
-    .url{font-size:12px;color:#777;word-break:break-all;background:#f0f1f5;padding:8px 12px;border-radius:8px;display:inline-block;margin-top:8px}
-  </style></head><body><div class="card">
-    <span class="badge">외부 브라우저</span>
-    <h1>시스템 브라우저에서 로그인을 진행합니다</h1>
-    <p>구글 계정 보안 정책상 내장 브라우저 로그인은 제한됩니다.<br>기본 브라우저(Chrome/Edge)가 열리며, 거기서 로그인을 완료하세요.</p>
-    <div class="url">${safe}</div>
-    <p style="font-size:12px;color:#999;margin-top:16px">로그인 후 이 창에서 DAON으로 계속 작업할 수 있습니다.</p>
-  </div></body></html>`;
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
-}
-
-
 class TabManager {
   constructor(mainWindow) {
     this.mainWindow = mainWindow;
@@ -1125,104 +781,32 @@ class TabManager {
     this.activeTabId = null;
     this.bounds = { x: 300, y: 50, width: 800, height: 600 };
     this.isVisible = false;
-    // 공유 브라우저 파티션 세션에도 Client Hints 복원 적용
-    attachChromeHeaderNormalization(session.fromPartition('persist:daon-shared-browser'), 'persist:daon-shared-browser');
   }
 
   createTab(tabId, url) {
-    // 영속 파티션(persist:daon-shared-browser)을 사용해 사용자와 에이전트가
-    // 같은 WebContents/Session/로그인 상태를 공유하고, 앱 재시작 후에도 구글
-    // 로그인이 유지되게 한다. UA/Client Hints/AutomationControlled 는 전역
-    // 스위치(app.userAgentFallback 등)라 이 파티션 세션에도 동일 적용된다.
+    // 8월 3일 정상 빌드 구조: 기본 세션(partition 없음) WebContentsView.
+    // 앱 기본 세션과 동일한 세션/쿠키를 써서 내부 패널에서 구글 로그인이
+    // 가능하고, 에이전트(browser_*)가 CDP 9222로 이 동일한 뷰를 공유·조작한다.
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
-        javascript: true,
-        partition: 'persist:daon-shared-browser',
       }
     });
     this.tabs.set(tabId, view);
-    console.log('[TabManager] WebContentsView created (tab=' + tabId + ', url=' + url +
-      ', partition=persist:daon-shared-browser) — exposed on CDP 9222 for agent sharing.');
-
-    // Google 로그인이 'JavaScript 미지원 브라우저'로 오인되지 않도록 공유
-    // 브라우저의 User-Agent를 Electron 37(Chromium 138)과 일치하는 Chrome UA로
-    // 재정의한다. 반드시 실제 Chromium 버전과 맞춰야 한다 — 구글은 UA와 함께
-    // Sec-CH-UA(Client Hints)로 실제 엔진 버전을 검증하므로, 138은 Electron
-    // 37.10.3 의 Chromium 버전.
-    try {
-      view.webContents.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
-      );
-    } catch (e) {
-      console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);
-    }
-
-    // JS 측 navigator.userAgentData 브랜드도 실제 Chrome과 일치시킨다.
-    // (실측: CDP Emulation 적용 시 brands가 Google Chrome으로 전환됨 —
-    //  구글의 클라이언트 측 JS 검증과 헤더 간 정합성 확보)
-    try {
-      view.webContents.debugger.attach('1.3');
-      view.webContents.debugger.sendCommand('Emulation.setUserAgentOverride', {
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-        platform: 'Win32',
-        userAgentMetadata: {
-          brands: [
-            { brand: 'Google Chrome', version: '138' },
-            { brand: 'Chromium', version: '138' },
-            { brand: 'Not)A;Brand', version: '8' },
-          ],
-          fullVersionList: [
-            { brand: 'Google Chrome', version: '138.0.0.0' },
-            { brand: 'Chromium', version: '138.0.7204.251' },
-            { brand: 'Not)A;Brand', version: '8.0.0.0' },
-          ],
-          fullVersion: '138.0.7204.251',
-          platform: 'Windows',
-          platformVersion: '10.0.0',
-          architecture: 'x86',
-          bitness: '64',
-          mobile: false,
-          model: '',
-          wow64: false,
-        },
-      }).catch((e) => console.warn('[TabManager] UA emulation failed:', e && e.message));
-    } catch (e) {
-      console.warn('[TabManager] debugger attach failed:', e && e.message);
-    }
 
     // Prevent new BrowserWindows from opening — navigate in the same view instead
+    // (뷰 단위 팝업 억제: 외부 창 튀어나옴을 막되, 구글 OAuth 팝업/리다이렉트는
+    //  같은 뷰 내 탐색으로 처리되어 로그인 흐름이 끊기지 않는다 — 8월 3일 방식)
     view.webContents.setWindowOpenHandler(({ url: newUrl }) => {
       if (newUrl && newUrl !== 'about:blank') {
-        if (isExternalAuthUrl(newUrl)) {
-          // 인증 URL → 시스템 브라우저로 위임, 내부에는 안내 페이지 표시
-          openOAuthInSystemBrowser(newUrl);
-          view.webContents.loadURL(oauthNoticeHtml(newUrl));
-        } else {
-          view.webContents.loadURL(newUrl);
-        }
+        view.webContents.loadURL(newUrl);
       }
       return { action: 'deny' };
     });
 
-    // 페이지 내 링크/리다이렉트로 인증 URL 진입 시에도 시스템 브라우저로 위임
-    view.webContents.on('will-navigate', (event, targetUrl) => {
-      if (isExternalAuthUrl(targetUrl)) {
-        event.preventDefault();
-        openOAuthInSystemBrowser(targetUrl);
-        try { view.webContents.loadURL(oauthNoticeHtml(targetUrl)); } catch (_) { }
-      }
-    });
-
-    if (isExternalAuthUrl(url)) {
-      // 초기 진입 URL이 인증 URL이면 시스템 브라우저로 위임
-      openOAuthInSystemBrowser(url);
-      view.webContents.loadURL(oauthNoticeHtml(url));
-    } else {
-      view.webContents.loadURL(url);
-    }
+    view.webContents.loadURL(url);
     return view;
   }
 
@@ -1242,10 +826,6 @@ class TabManager {
     let view = this.tabs.get(tabId);
     if (!view) {
       view = this.createTab(tabId, url); // createTab already loads the URL
-    } else if (isExternalAuthUrl(url)) {
-      // OAuth 인증 URL → 시스템 브라우저로 위임 (구글 로그인 차단 우회)
-      openOAuthInSystemBrowser(url);
-      try { view.webContents.loadURL(oauthNoticeHtml(url)); } catch (_) { }
     } else {
       view.webContents.loadURL(url);
     }
@@ -1395,7 +975,6 @@ ipcMain.on('install-update', (event, installerPath) => {
 app.on('before-quit', () => {
   isQuitting = true;
   stopWatchdog();
-  stopDaonChrome();
   if (pythonProcess && pythonProcess.pid) {
     killProcessTree(pythonProcess.pid);
     pythonProcess = null;

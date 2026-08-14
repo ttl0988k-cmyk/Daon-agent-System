@@ -50,45 +50,6 @@ _pending_url = ""  # AI requested navigate but no browser tab yet — frontend s
 _CDP_RETRY_COOLDOWN = 5.0
 _last_cdp_attempt = 0.0  # worker 전용, _ensure_browser 내에서만 접근
 
-# ── CDP 자동 재시작 요청 ──
-# 기본 CDP는 OFF(구글 로그인 정상화). browser_* 도구가 호출됐는데 포트 9222가
-# 닫혀 있으면 이 플래그 파일을 생성해 Electron에게 "CDP 켜고 재시작해달라"고
-# 요청한다. Electron은 2초 폴링으로 감지해 --remote-debugging-port=9222 로
-# 자동 재실행한다. (브라우저를 쓰지 않는 구글 로그인 등은 재시작이 일어나지 않는다.)
-_CDP_RESTART_FLAG_PATH = os.environ.get(
-    "DAON_CDP_RESTART_FLAG",
-    os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "DAON Agent System",
-        "restart-for-cdp.flag",
-    ),
-)
-_cdp_restart_requested = False  # 세션당 한 번만 요청하도록 가드
-
-
-def _request_cdp_restart() -> bool:
-    """Create the restart flag file (once per session) so Electron ensures DAON Chrome (CDP 9222) is running."""
-    global _cdp_restart_requested
-    if _cdp_restart_requested:
-        return False
-    _cdp_restart_requested = True
-    try:
-        flag_dir = os.path.dirname(_CDP_RESTART_FLAG_PATH)
-        if flag_dir:
-            os.makedirs(flag_dir, exist_ok=True)
-        with open(_CDP_RESTART_FLAG_PATH, "w", encoding="utf-8") as f:
-            f.write("restart-with-cdp")
-        _logger.warning(
-            "[CDP] Browser tool called but CDP(9222) is OFF — restart flag written at %s. "
-            "Electron will ensure DAON Chrome is running on --remote-debugging-port=9222.",
-            _CDP_RESTART_FLAG_PATH,
-        )
-        return True
-    except Exception as e:
-        _logger.warning("[CDP] Failed to write restart flag: %s", e)
-        return False
-
-
 def _browser_worker_loop():
     """Dedicated thread: runs all Playwright operations sequentially."""
     global _last_url, _browser_active, _pending_url
@@ -124,18 +85,14 @@ def _browser_worker_loop():
             pass
         return None, None
 
-    def _ensure_browser(auto_restart: bool = False):
-        """Connect to DAON 전용 Chrome (real Chrome.exe, CDP 9222) via Playwright.
+    def _ensure_browser():
+        """Connect to Electron's WebContentsView via CDP.
 
-        내장 Electron WebContentsView 대신, DAON이 띄운 '진짜 Chrome.exe'의 전용
-        프로필에 --remote-debugging-port=9222 로 연결한다. 사용자가 이 Chrome 창에서
-        로그인하면 세션이 전용 프로필에 저장되고, 에이전트(browser_*)가 CDP로
-        같은 세션을 공유·제어한다.
-
-        auto_restart=True 일 때 CDP(9222)가 꺼져 있으면(연결 실패) 재시작 요청
-        플래그를 써서 Electron이 DAON Chrome을 (재)실행하게 한다. status 폴링
-        (5초 간격)은 auto_restart=False 로 호출해, 브라우저를 쓰지 않는 동안에는
-        재실행이 일어나지 않도록 한다.
+        (8월 3일 정상 빌드 복원) 앱 시작 시 CDP 9222가 항상 ON이므로 연결만 하면
+        된다. 사용자가 본 내부 WebContentsView(기본 세션) 페이지를 그대로 공유·
+        제어한다 — new_page()는 절대 호출하지 않는다(Electron에서 새 BrowserWindow
+        를 만들어 화면을 가로채므로). 브라우저 패널을 열지 않았으면 "탭 없음"으로
+        응답하고, frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
         """
         nonlocal browser, browser_page, pw
         global _last_cdp_attempt
@@ -210,39 +167,16 @@ def _browser_worker_loop():
                 _last_cdp_attempt = time.time()
                 _logger.info("Using fallback CDP page (about:blank): %s", browser_page.url)
             else:
-                if os.environ.get("BROWSER_CDP_URL"):
-                    # Electron 모드(내부 WebContentsView): new_page()는 새 BrowserWindow를
-                    # 만들어 화면을 가로채므로 금지. frontend가 pending_url 로 내부 패널을
-                    # 자동 생성하도록 안내한다.
-                    return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
-                # DAON 전용 Chrome이 떠 있어도 시작 URL이 없어 탭 0개인 경우
-                # (예: CDP 플래그 폴링이 기본 URL 없이 실행). 이때는 CDP 상에서
-                # 실제 새 탭을 만들어 제어 대상으로 삼는다. 진짜 Chrome 탭이므로
-                # 같은 프로필/세션을 공유하며 사용자 화면에도 보이는 창이 된다.
-                try:
-                    ctx = contexts[0] if contexts else browser.new_context()
-                    browser_page = ctx.new_page()
-                    browser_page.goto("https://www.google.com", timeout=30000)
-                    _last_cdp_attempt = time.time()
-                    _logger.info("No CDP pages — created a new DAON Chrome tab: %s", browser_page.url)
-                except Exception as np_e:
-                    _logger.warning("Failed to create a new CDP tab: %s", str(np_e))
-                    return None, "Electron CDP connected but no pages available, and creating a new tab failed."
+                # Electron 모드(내부 WebContentsView): new_page()는 새 BrowserWindow를
+                # 만들어 화면을 가로채므로 절대 금지(8월 3일 방식).
+                # frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
+                return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
 
             return browser_page, None
         except Exception as e:
             _logger.warning("Electron CDP connection failed: %s", str(e))
             # CDP 연결 실패 시각 기록 → 다음 _CDP_RETRY_COOLDOWN 초간 재시도 방지
             _last_cdp_attempt = time.time()
-            # 실제 browser_* 도구 호출(auto_restart=True)이고 CDP가 꺼져 있으면
-            # Electron에게 재시작 요청 플래그를 쓴다. Electron이 이를 감지해
-            # --remote-debugging-port=9222 로 자동 재실행한다.
-            if auto_restart and os.environ.get("BROWSER_CDP_URL"):
-                _request_cdp_restart()
-                return None, (
-                    "브라우저 자동화(CDP)가 꺼져 있어 앱을 자동 재시작합니다. "
-                    "잠시 후 같은 요청을 다시 시도하세요. (구글 로그인은 CDP OFF 상태에서도 정상 동작)"
-                )
             # In Electron mode (BROWSER_CDP_URL is set), do NOT fall back to headless —
             # user and AI must share the same WebContentsView page.
             if os.environ.get("BROWSER_CDP_URL"):
@@ -320,7 +254,7 @@ def _browser_worker_loop():
 
             elif action == "navigate":
                 url = task.get("url", "about:blank")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     # In Electron mode, no browser tab yet — signal frontend to auto-open
                     if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
@@ -329,7 +263,7 @@ def _browser_worker_loop():
                         page = None
                         for _ in range(20):  # 20 × 500ms = 10s
                             time.sleep(0.5)
-                            page, err2 = _ensure_browser(auto_restart=True)
+                            page, err2 = _ensure_browser()
                             if not err2:
                                 break
                         _pending_url = ""
@@ -362,7 +296,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "snapshot":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -449,7 +383,7 @@ def _browser_worker_loop():
 
             elif action == "click":
                 ref = task.get("ref", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -486,7 +420,7 @@ def _browser_worker_loop():
             elif action == "type":
                 ref = task.get("ref", "")
                 text = task.get("text", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -527,7 +461,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "screenshot":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -542,7 +476,7 @@ def _browser_worker_loop():
 
             elif action == "execute":
                 expression = task.get("expression", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -556,7 +490,7 @@ def _browser_worker_loop():
             elif action == "evaluate":
                 # Alias for execute
                 expression = task.get("expression", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -594,7 +528,7 @@ def _browser_worker_loop():
                 })
 
             elif action == "recommend":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -639,7 +573,7 @@ def _browser_worker_loop():
                     px = int(px_raw)
                 except (ValueError, TypeError):
                     px = 500
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -652,7 +586,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "back":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -665,7 +599,7 @@ def _browser_worker_loop():
 
             elif action == "press":
                 key = task.get("key", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -679,7 +613,7 @@ def _browser_worker_loop():
             elif action == "fill":
                 ref = task.get("ref", "")
                 text = task.get("text", "")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -720,14 +654,14 @@ def _browser_worker_loop():
 
             elif action == "open":
                 url = task.get("url", "about:blank")
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
                         _pending_url = url
                         page = None
                         for _ in range(20):
                             time.sleep(0.5)
-                            page, err2 = _ensure_browser(auto_restart=True)
+                            page, err2 = _ensure_browser()
                             if not err2:
                                 break
                         _pending_url = ""
@@ -758,7 +692,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "get_images":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -781,7 +715,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "console":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -792,7 +726,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "errors":
-                page, err = _ensure_browser(auto_restart=True)
+                page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
