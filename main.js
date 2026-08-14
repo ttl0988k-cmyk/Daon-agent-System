@@ -1,4 +1,5 @@
 console.log("[BUILD ID]: main-v5-2026-08-03-22:50");
+console.log("[BUILD ID]: client-hints-fix-2026-08-14-21:47");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
@@ -113,6 +114,41 @@ try {
   console.log('[Electron] UA fallback set to Chrome/138 (matches Electron 37 Chromium).');
 } catch (e) {
   console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
+}
+
+// ── Client Hints 복원 (구글 로그인 신뢰 신호) ──
+// 실측(2026-08-14, _probe/echo*.log): Electron 내장 Chromium은 UA fallback 설정
+// 여부와 무관하게 Sec-CH-UA* 헤더를 아예 송신하지 않는다(실제 Chrome은 송신).
+// 구글은 "Chrome이라고 주장하면서 Client Hints가 없는 브라우저"를 임베디드/위장
+// 브라우저로 간주하므로, webRequest 단계에서 실제 Chrome과 동일한 Sec-CH-UA* /
+// Accept-Language 를 복원한다. (와이어 실측으로 주입 유효 확인됨)
+const CH_UA_138 = '"Not)A;Brand";v="8", "Google Chrome";v="138", "Chromium";v="138"';
+const FULL_ACCEPT_LANG = 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7';
+function _hasHeader(headers, name) {
+  const ln = name.toLowerCase();
+  return Object.keys(headers).some((k) => k.toLowerCase() === ln);
+}
+function normalizeChromeHeaders(headers, url) {
+  const h = { ...headers };
+  const secure = url.startsWith('https://') || url.indexOf('127.0.0.1') !== -1 || url.indexOf('localhost') !== -1;
+  if (secure) {
+    if (!_hasHeader(h, 'sec-ch-ua')) h['sec-ch-ua'] = CH_UA_138;
+    if (!_hasHeader(h, 'sec-ch-ua-mobile')) h['sec-ch-ua-mobile'] = '?0';
+    if (!_hasHeader(h, 'sec-ch-ua-platform')) h['sec-ch-ua-platform'] = '"Windows"';
+  }
+  const alKey = Object.keys(h).find((k) => k.toLowerCase() === 'accept-language');
+  if (alKey && (h[alKey] === 'ko' || h[alKey] === 'en' || !h[alKey])) h[alKey] = FULL_ACCEPT_LANG;
+  return h;
+}
+function attachChromeHeaderNormalization(ses, label) {
+  try {
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: normalizeChromeHeaders(details.requestHeaders, details.url) });
+    });
+    console.log('[ClientHints] Header normalization attached: ' + label);
+  } catch (e) {
+    console.warn('[ClientHints] attach failed (' + label + '):', e && e.message);
+  }
 }
 
 // ── Single Instance Lock ──
@@ -777,6 +813,9 @@ app.whenReady().then(async () => {
   // ── Always-on: 트레이 아이콘 생성 (서버 백그라운드 상주) ──
   createTray();
 
+  // ── Client Hints 복원: 기본 세션 (메인 UI) ──
+  attachChromeHeaderNormalization(session.defaultSession, 'defaultSession');
+
   // ── STEP 0: Show splash window safely on ready-to-show without any white/black blank flash ──
   splashWindow = new BrowserWindow({
     width: 420,
@@ -1086,6 +1125,8 @@ class TabManager {
     this.activeTabId = null;
     this.bounds = { x: 300, y: 50, width: 800, height: 600 };
     this.isVisible = false;
+    // 공유 브라우저 파티션 세션에도 Client Hints 복원 적용
+    attachChromeHeaderNormalization(session.fromPartition('persist:daon-shared-browser'), 'persist:daon-shared-browser');
   }
 
   createTab(tabId, url) {
@@ -1117,6 +1158,39 @@ class TabManager {
       );
     } catch (e) {
       console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);
+    }
+
+    // JS 측 navigator.userAgentData 브랜드도 실제 Chrome과 일치시킨다.
+    // (실측: CDP Emulation 적용 시 brands가 Google Chrome으로 전환됨 —
+    //  구글의 클라이언트 측 JS 검증과 헤더 간 정합성 확보)
+    try {
+      view.webContents.debugger.attach('1.3');
+      view.webContents.debugger.sendCommand('Emulation.setUserAgentOverride', {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        platform: 'Win32',
+        userAgentMetadata: {
+          brands: [
+            { brand: 'Google Chrome', version: '138' },
+            { brand: 'Chromium', version: '138' },
+            { brand: 'Not)A;Brand', version: '8' },
+          ],
+          fullVersionList: [
+            { brand: 'Google Chrome', version: '138.0.0.0' },
+            { brand: 'Chromium', version: '138.0.7204.251' },
+            { brand: 'Not)A;Brand', version: '8.0.0.0' },
+          ],
+          fullVersion: '138.0.7204.251',
+          platform: 'Windows',
+          platformVersion: '10.0.0',
+          architecture: 'x86',
+          bitness: '64',
+          mobile: false,
+          model: '',
+          wow64: false,
+        },
+      }).catch((e) => console.warn('[TabManager] UA emulation failed:', e && e.message));
+    } catch (e) {
+      console.warn('[TabManager] debugger attach failed:', e && e.message);
     }
 
     // Prevent new BrowserWindows from opening — navigate in the same view instead
