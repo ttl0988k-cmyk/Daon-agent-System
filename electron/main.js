@@ -10,6 +10,34 @@ const net = require('net');
 if (net.setDefaultAutoSelectFamily) { net.setDefaultAutoSelectFamily(false); }
 const os = require('os');
 
+// ── Electron main 로그 파일화 (서버 사망 원인 추적용) ──
+// 기존엔 main process의 console.log/console.error가 어떤 파일에도 저장되지 않아,
+// 서버가 왜 죽는지(exit code / watchdog / taskkill) 전혀 추적할 수 없었다.
+// userData/daon-main.log 로 append 하여 다음 사망 시 정확한 원인을 확정한다.
+// 경로: %APPDATA%\daon-agent-system\daon-main.log
+let _mainLogStream = null;
+function _mainLogInit() {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'daon-main.log');
+    _mainLogStream = fs.createWriteStream(logPath, { flags: 'a' });
+    _mainLogStream.write(`\n===== Electron main started ${new Date().toISOString()} (pid=${process.pid}) =====\n`);
+  } catch (_) { }
+}
+function mlog(...args) {
+  try {
+    const line = `[${new Date().toISOString()}] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    console.log(line);
+    if (_mainLogStream) _mainLogStream.write(line + '\n');
+  } catch (_) { }
+}
+function merr(...args) {
+  try {
+    const line = `[${new Date().toISOString()}] [ERR] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    console.error(line);
+    if (_mainLogStream) _mainLogStream.write(line + '\n');
+  } catch (_) { }
+}
+
 // ── Temp Folder Cleanup (PyInstaller _MEI* orphan prevention) ──
 // PyInstaller onefile mode extracts ~1.76GB to %TEMP%\_MEIxxxxx on every launch.
 // If the app crashes or is force-killed, these folders are never cleaned up.
@@ -282,20 +310,35 @@ function checkServerHealth(port, retries = 180, delayMs = 1000) {
 // instead of killing it on every restart (fixes server dying after app reopen).
 function probeServerHealth(port, timeoutMs = 1000) {
   return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
     const req = http.get({ host: '127.0.0.1', port: port, path: '/health', family: 4 }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
         try {
-          resolve(JSON.parse(body));
+          done(JSON.parse(body));
         } catch (_) {
-          resolve(null);
+          done(null);
         }
       });
     });
-    req.on('error', () => resolve(null));
-    req.setTimeout(timeoutMs, () => { req.destroy(); resolve(null); });
+    req.on('error', () => done(null));
+    req.setTimeout(timeoutMs, () => { req.destroy(); done(null); });
   });
+}
+
+// [stability] 안전 재사용 판정: 1회 probe 실패(오탐 가능성)는 곧바로
+// '재사용 불가'로 확정하지 않고, 짧은 재시도를 거쳐 진짜 죽었는지 확인한다.
+// 기존엔 probe 1회 실패 → taskkill /F /IM server.exe 로 healthy 서버까지 죽였다.
+async function probeServerHealthStable(port) {
+  const first = await probeServerHealth(port, 1500);
+  if (first && first.healthy && first.pid) return first;
+  // 1차 실패 — 500ms 후 2차 시도 (진짜 다운인지 일시 지연인지 구분)
+  await new Promise(r => setTimeout(r, 500));
+  const second = await probeServerHealth(port, 2000);
+  if (second && second.healthy && second.pid) return second;
+  return null;
 }
 
 function checkCdpHealth(retries = 10, delayMs = 500) {
@@ -463,39 +506,56 @@ let watchdogRestartCount = 0;
 const WATCHDOG_INTERVAL = 30_000;
 const MAX_RESTARTS = 3;
 
-function handleWatchdogFailure(port) {
+async function handleWatchdogFailure(port) {
   // F5 reload 직후 보류 구간: 일시적 과부하로 오탐할 수 있으므로 카운트하지 않음
   if (Date.now() < watchdogSuppressUntil) {
     return;
   }
   watchdogRestartCount++;
-  console.warn(`[Watchdog] Health check failure (${watchdogRestartCount}/${MAX_RESTARTS})`);
-  if (watchdogRestartCount >= MAX_RESTARTS) {
-    console.error('[Watchdog] Server unresponsive after 3 consecutive checks. Restarting Python server...');
-    watchdogRestartCount = 0;
-    if (pythonProcess && pythonProcess.pid) {
-      killProcessTree(pythonProcess.pid);
-      pythonProcess = null;
-    }
-    startPythonProcess(port);
+  merr(`[Watchdog] Health check failure (${watchdogRestartCount}/${MAX_RESTARTS})`);
+  if (watchdogRestartCount < MAX_RESTARTS) {
+    return;
   }
+  // [stability] 3회 연속 실패해도 즉시 kill하지 않고, 실제 서버 생존 여부를 2차 확인한다.
+  // watchdog probe 오탐(일시 과부하/타임아웃)으로 healthy 서버를 taskkill로 죽이는 사고를 차단.
+  const confirm = await probeServerHealthStable(port);
+  if (confirm && confirm.healthy && confirm.pid) {
+    mlog(`[Watchdog] ${MAX_RESTARTS} failures but server is ALIVE (pid=${confirm.pid}) — false positive, resetting counter (no kill).`);
+    watchdogRestartCount = 0;
+    return;
+  }
+  watchdogRestartCount = 0;
+  merr(`[Watchdog] Confirmed server dead after ${MAX_RESTARTS} consecutive checks. Restarting Python server...`);
+  if (pythonProcess && pythonProcess.pid) {
+    killProcessTree(pythonProcess.pid);
+    pythonProcess = null;
+  }
+  startPythonProcess(port);
 }
 
 function startWatchdog(port) {
   if (watchdogTimer) return;
-  console.log('[Watchdog] Starting health monitor (every 30s)...');
+  mlog('[Watchdog] Starting health monitor (every 30s)...');
   watchdogRestartCount = 0;
 
   if (powerMonitor) {
     powerMonitor.on('resume', () => {
-      console.log('[Electron] System resumed from sleep/idle - resetting watchdog...');
+      mlog('[Electron] System resumed from sleep/idle - resetting watchdog...');
       watchdogRestartCount = 0;
       checkServerHealth(port, 10).catch(() => {
-        if (pythonProcess && pythonProcess.pid) {
-          killProcessTree(pythonProcess.pid);
-          pythonProcess = null;
-        }
-        startPythonProcess(port);
+        merr('[Watchdog] Post-resume health check failed - re-verifying before kill...');
+        probeServerHealthStable(port).then((confirm) => {
+          if (confirm && confirm.healthy && confirm.pid) {
+            mlog(`[Watchdog] Post-resume false positive — server alive (pid=${confirm.pid}), no kill.`);
+            return;
+          }
+          merr('[Watchdog] Confirmed server dead after resume - restarting.');
+          if (pythonProcess && pythonProcess.pid) {
+            killProcessTree(pythonProcess.pid);
+            pythonProcess = null;
+          }
+          startPythonProcess(port);
+        });
       });
     });
   }
@@ -507,17 +567,17 @@ function startWatchdog(port) {
       if (res.statusCode === 200) {
         watchdogRestartCount = 0;
       } else {
-        console.warn(`[Watchdog] Health check non-200: ${res.statusCode}`);
+        merr(`[Watchdog] Health check non-200: ${res.statusCode}`);
         handleWatchdogFailure(port);
       }
     });
     req.on('error', (err) => {
-      console.warn(`[Watchdog] Health check request failed: ${err.message}`);
+      merr(`[Watchdog] Health check request failed: ${err.message}`);
       handleWatchdogFailure(port);
     });
     req.setTimeout(5000, () => {
       req.destroy();
-      console.warn('[Watchdog] Health check timed out');
+      merr('[Watchdog] Health check timed out');
       handleWatchdogFailure(port);
     });
   }, WATCHDOG_INTERVAL);
@@ -532,6 +592,9 @@ function stopWatchdog() {
 }
 
 app.whenReady().then(async () => {
+  _mainLogInit();
+  mlog('[BUILD] electron main ready');
+
   // ── Always-on: 로그인 시 자동 시작 등록 (Windows) ──
   try {
     app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false });
@@ -589,12 +652,16 @@ app.whenReady().then(async () => {
     // which killed a healthy long-running server (live sessions / harness state)
     // on every app restart. Now we probe port 9090 first and reuse a healthy server.
     let reusedServer = false;
-    const healthProbe = await probeServerHealth(DEFAULT_PORT, 1200);
+    // [stability] 1회 probe 오탐으로 healthy 서버를 taskkill 로 죽이지 않도록,
+    // 안정 판정(1차 실패 시 2차 재시도)을 거친 뒤에만 '재사용 불가'로 확정한다.
+    const healthProbe = await probeServerHealthStable(DEFAULT_PORT);
     if (healthProbe && healthProbe.healthy && healthProbe.pid) {
       reusedServer = true;
-      console.log(`[Electron] Reusing healthy main server on ${DEFAULT_PORT} (pid=${healthProbe.pid}, uptime=${healthProbe.uptime_display || '?'}) — skipping taskkill & spawn.`);
+      mlog(`[Electron] Reusing healthy main server on ${DEFAULT_PORT} (pid=${healthProbe.pid}, uptime=${healthProbe.uptime_display || '?'}) — skipping taskkill & spawn.`);
       // Adopt the running server so quit / watchdog cleanup can still target it.
       pythonProcess = { pid: healthProbe.pid, _adopted: true };
+    } else {
+      merr(`[Electron] No healthy server to reuse on ${DEFAULT_PORT} — will taskkill + spawn fresh. probe=`, healthProbe);
     }
 
     if (!reusedServer) {
