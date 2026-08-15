@@ -299,13 +299,21 @@ def _generate_voice_summary(resolved_model: str, resolved_provider: str,
 
 
 def _sse(handler, event, data):
-    """Write one SSE event to the response stream."""
+    """Write one SSE event to the response stream.
+
+    Returns False if the client disconnected (socket write failed) so callers
+    can break their loop instead of hammering a dead socket — which previously
+    produced thousands of WinError 10053 logs and made agent responses vanish
+    from the UI. Returns True on success.
+    """
     payload = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
     try:
         handler.wfile.write(payload.encode('utf-8'))
         handler.wfile.flush()
+        return True
     except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError) as e:
         print(f'[SSE-DIAG] _sse write failed for event={event}: {e}', flush=True)  # Client disconnected before SSE event could be sent
+        return False
 
 
 def cancel_session_streams(session_id: str) -> bool:

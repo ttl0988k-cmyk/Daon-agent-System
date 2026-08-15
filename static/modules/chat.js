@@ -887,6 +887,22 @@ async function _executeAgentStream(displayText, uploaded) {
         asstBubble.insertAdjacentHTML('beforeend',
           '<div class="text-danger" style="margin-top:8px;">[서버 응답이 지연되어 입력을 다시 활성화했습니다]</div>');
       }
+      // 백엔드가 busy여서 /api/chat/start가 늦게 응답하고 이미 스트림을
+      // 시작한 경우, 늦게 저장된 assistant 응답을 놓치지 않도록 잠시 후
+      // 세션 결과를 자동 복구해 렌더링한다. ("서버응답 없음" 재발 방지)
+      setTimeout(function () {
+        if (!State.activeSessionId) return;
+        api('/api/sessions').then(function (sessRes) {
+          var sessions = (sessRes && sessRes.sessions) || [];
+          var found = sessions.find(function (s) { return s.session_id === State.activeSessionId; });
+          if (found && found.messages && found.messages.length) {
+            var lastMsg = found.messages[found.messages.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content) {
+              renderMessages(found.messages, found.tool_calls);
+            }
+          }
+        }).catch(function () { });
+      }, 5000);
     }, 60000);
 
     const startRes = await api('/api/chat/start', {

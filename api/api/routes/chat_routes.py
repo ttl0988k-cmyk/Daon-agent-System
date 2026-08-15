@@ -129,11 +129,17 @@ def handle_get_sse_stream(handler, parsed) -> bool:
                 event, data = q.get(timeout=15)
             except queue.Empty:
                 try:
-                    _sse(handler, 'heartbeat', {})
+                    if not _sse(handler, 'heartbeat', {}):
+                        break  # client disconnected during heartbeat
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                     break  # client disconnected during heartbeat
                 continue
-            _sse(handler, event, data)
+            # _sse()는 클라이언트 연결이 끊어지면 False를 반환한다.
+            # False면 즉시 루프를 종료해 죽은 소켓에 계속 쓰지 않게 한다
+            # (WinError 10053 폭주 방지 — 에이전트 응답이 UI에 전달되지
+            # 않는 "서버응답 없음" 증상의 근본 원인).
+            if not _sse(handler, event, data):
+                break
             if event in ('done', 'error', 'cancel'):
                 break
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
