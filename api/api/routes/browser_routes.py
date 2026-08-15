@@ -43,9 +43,12 @@ _last_url = ""
 _browser_active = False
 # AI requested navigate — frontend polls /api/browser/status and auto-opens the browser view.
 # TTL 기반: 탭 유무와 무관하게 navigate/open 실행 시 항상 설정하고, _PENDING_TTL 초 후 자동 만료.
+# 첫-navigate 타임아웃 수정 후 백엔드는 블로킹 없이 즉시 pending 응답하므로, 프론트 5초 폴링이
+# 뷰를 만들고 이동할 시간 여유를 주기 위해 TTL을 15초로 확보한다. (동일 URL 반복은 프론트가
+# "새 pending"으로만 1회 처리하므로 길어도 부작용 없음)
 _pending_url = ""
 _pending_url_ts = 0.0
-_PENDING_TTL = 5.0
+_PENDING_TTL = 15.0
 
 # CDP 재연결 백오프: Electron이 준비되지 않았을 때 폴링마다 connect_over_cdp를
 # 다시 시도하면 asyncio 소켓 예외가 반복되고 서버 스레드가 소진되어
@@ -290,32 +293,23 @@ def _browser_worker_loop():
                 _set_pending(url)
                 page, err = _ensure_browser()
                 if err:
-                    # In Electron mode, no browser tab yet — signal frontend to auto-open
-                    if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
-                        _logger.info("No browser tab — waiting for frontend auto-open (url=%s)", url)
-                        page = None
-                        for _ in range(20):  # 20 × 500ms = 10s
-                            time.sleep(0.5)
-                            page, err2 = _ensure_browser()
-                            if not err2:
-                                break
-                        if page is None:
-                            _clear_pending()
-                            _browser_result_queue.put({
-                                "_result_id": result_id,
-                                "error": "브라우저 뷰가 열리지 않았습니다. 우측 상단 브라우저 아이콘을 클릭하거나 '/b' 명령을 먼저 실행하세요.",
-                            })
-                        else:
-                            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                            _last_url = page.url
-                            _browser_active = True
-                            _set_pending(page.url)  # navigate 완료 후에도 TTL 연장 — 프론트 폴링이 잡도록
-                            _browser_result_queue.put({
-                                "_result_id": result_id,
-                                "status": "ok",
-                                "url": page.url,
-                                "title": page.title(),
-                            })
+                    # In Electron mode, no browser tab yet — signal frontend to auto-open.
+                    # 백엔드 블로킹 제거: 이전엔 10초 대기 루프(20×0.5s)가 _CDP_RETRY_COOLDOWN(5s)과
+                    # 충돌해 실질 재시도가 1~2회뿐이었고, 10초 후 실패하면서 curl 8초 타임아웃이 먼저 발생했다.
+                    # 이제 pending_url은 TTL 동안 유지되고 프론트 5초 폴링(_autoOpenBrowserPoll)이
+                    # 뷰를 자동 생성/네비게이션하므로, 즉시 pending 응답을 반환한다.
+                    # "탭 없음"뿐 아니라 CDP cooldown/미준비 오류도 pending으로 처리 — 어느 쪽이든
+                    # 프론트가 뷰를 만들면 해결되므로 pending을 지우면 안 된다.
+                    if os.environ.get("BROWSER_CDP_URL") and any(
+                        k in str(err).lower() for k in ("tab", "cooldown", "not ready", "cdp connection failed")
+                    ):
+                        _logger.info("No browser view ready — respond pending, frontend auto-open will create view (url=%s)", url)
+                        _browser_result_queue.put({
+                            "_result_id": result_id,
+                            "status": "pending",
+                            "url": url,
+                            "message": "브라우저 뷰를 여는 중입니다. 잠시 후 자동으로 열리고 이동합니다.",
+                        })
                     else:
                         _clear_pending()
                         _browser_result_queue.put({"_result_id": result_id, "error": err})
@@ -694,30 +688,19 @@ def _browser_worker_loop():
                 _set_pending(url)
                 page, err = _ensure_browser()
                 if err:
-                    if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
-                        _logger.info("No browser tab — waiting for frontend auto-open (url=%s)", url)
-                        page = None
-                        for _ in range(20):
-                            time.sleep(0.5)
-                            page, err2 = _ensure_browser()
-                            if not err2:
-                                break
-                        if page is None:
-                            _clear_pending()
-                            _browser_result_queue.put({
-                                "_result_id": result_id,
-                                "error": "브라우저 뷰가 열리지 않았습니다. 브라우저를 먼저 열어주세요.",
-                            })
-                        else:
-                            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                            _last_url = page.url
-                            _browser_active = True
-                            _set_pending(page.url)
-                            _browser_result_queue.put({
-                                "_result_id": result_id,
-                                "status": "ok",
-                                "data": {"url": page.url, "title": page.title()},
-                            })
+                    # navigate와 동일: 10초 블로킹 루프 제거, 즉시 pending 응답.
+                    # pending_url은 TTL 동안 유지되고 프론트 5초 폴링이 뷰를 자동 생성/이동한다.
+                    # "탭 없음"뿐 아니라 CDP cooldown/미준비 오류도 pending으로 처리한다.
+                    if os.environ.get("BROWSER_CDP_URL") and any(
+                        k in str(err).lower() for k in ("tab", "cooldown", "not ready", "cdp connection failed")
+                    ):
+                        _logger.info("No browser view ready — respond pending, frontend auto-open will create view (url=%s)", url)
+                        _browser_result_queue.put({
+                            "_result_id": result_id,
+                            "status": "pending",
+                            "url": url,
+                            "data": {"url": url, "message": "브라우저 뷰를 여는 중입니다. 잠시 후 자동으로 열리고 이동합니다."},
+                        })
                     else:
                         _clear_pending()
                         _browser_result_queue.put({"_result_id": result_id, "error": err})
