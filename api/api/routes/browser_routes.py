@@ -41,7 +41,11 @@ _BROWSER_WORKER_STOP = object()  # sentinel to stop the worker thread
 # Cached state accessible from any thread (read-only after worker sets them)
 _last_url = ""
 _browser_active = False
-_pending_url = ""  # AI requested navigate but no browser tab yet — frontend should auto-open
+# AI requested navigate — frontend polls /api/browser/status and auto-opens the browser view.
+# TTL 기반: 탭 유무와 무관하게 navigate/open 실행 시 항상 설정하고, _PENDING_TTL 초 후 자동 만료.
+_pending_url = ""
+_pending_url_ts = 0.0
+_PENDING_TTL = 5.0
 
 # CDP 재연결 백오프: Electron이 준비되지 않았을 때 폴링마다 connect_over_cdp를
 # 다시 시도하면 asyncio 소켓 예외가 반복되고 서버 스레드가 소진되어
@@ -49,6 +53,32 @@ _pending_url = ""  # AI requested navigate but no browser tab yet — frontend s
 # 실패 직후 _CDP_RETRY_COOLDOWN 초간은 CDP 연결 시도를 건너뛰고 즉시 실패 처리한다.
 _CDP_RETRY_COOLDOWN = 5.0
 _last_cdp_attempt = 0.0  # worker 전용, _ensure_browser 내에서만 접근
+
+
+def _set_pending(url: str) -> None:
+    """AI가 요청한 navigate URL을 기록해 프론트 폴링이 브라우저 뷰를 자동으로 열게 한다."""
+    global _pending_url, _pending_url_ts
+    _pending_url = url
+    _pending_url_ts = time.time()
+
+
+def _get_pending() -> str:
+    """TTL 내의 pending URL을 반환한다. TTL이 지났으면 비운다."""
+    global _pending_url, _pending_url_ts
+    if not _pending_url:
+        return ""
+    if (time.time() - _pending_url_ts) > _PENDING_TTL:
+        _pending_url = ""
+        _pending_url_ts = 0.0
+        return ""
+    return _pending_url
+
+
+def _clear_pending() -> None:
+    """pending URL을 즉시 비운다(오류 발생 시)."""
+    global _pending_url, _pending_url_ts
+    _pending_url = ""
+    _pending_url_ts = 0.0
 
 def _browser_worker_loop():
     """Dedicated thread: runs all Playwright operations sequentially."""
@@ -254,11 +284,14 @@ def _browser_worker_loop():
 
             elif action == "navigate":
                 url = task.get("url", "about:blank")
+                # TTL pending: 탭 유무와 무관하게 항상 설정 → 프론트 폴링이 에디터 뒤 브라우저 뷰를
+                # 자동으로 앞으로 가져온다. (이전엔 탭 없음 분기에서만 설정되어, 이미 뷰가 존재하지만
+                # 숨겨진 경우 폴링이 토글을 잡지 못하는 race가 있었다.)
+                _set_pending(url)
                 page, err = _ensure_browser()
                 if err:
                     # In Electron mode, no browser tab yet — signal frontend to auto-open
                     if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
-                        _pending_url = url
                         _logger.info("No browser tab — waiting for frontend auto-open (url=%s)", url)
                         page = None
                         for _ in range(20):  # 20 × 500ms = 10s
@@ -266,8 +299,8 @@ def _browser_worker_loop():
                             page, err2 = _ensure_browser()
                             if not err2:
                                 break
-                        _pending_url = ""
                         if page is None:
+                            _clear_pending()
                             _browser_result_queue.put({
                                 "_result_id": result_id,
                                 "error": "브라우저 뷰가 열리지 않았습니다. 우측 상단 브라우저 아이콘을 클릭하거나 '/b' 명령을 먼저 실행하세요.",
@@ -276,6 +309,7 @@ def _browser_worker_loop():
                             page.goto(url, wait_until="domcontentloaded", timeout=30000)
                             _last_url = page.url
                             _browser_active = True
+                            _set_pending(page.url)  # navigate 완료 후에도 TTL 연장 — 프론트 폴링이 잡도록
                             _browser_result_queue.put({
                                 "_result_id": result_id,
                                 "status": "ok",
@@ -283,11 +317,13 @@ def _browser_worker_loop():
                                 "title": page.title(),
                             })
                     else:
+                        _clear_pending()
                         _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
                     page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     _last_url = page.url
                     _browser_active = True
+                    _set_pending(page.url)  # 탭 존재(숨김) 케이스: navigate 완료 후에도 TTL 연장
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
@@ -654,18 +690,20 @@ def _browser_worker_loop():
 
             elif action == "open":
                 url = task.get("url", "about:blank")
+                # TTL pending: navigate와 동일하게 탭 유무와 무관하게 항상 설정
+                _set_pending(url)
                 page, err = _ensure_browser()
                 if err:
                     if os.environ.get("BROWSER_CDP_URL") and ("no browser tab" in str(err).lower() or "tab" in str(err).lower()):
-                        _pending_url = url
+                        _logger.info("No browser tab — waiting for frontend auto-open (url=%s)", url)
                         page = None
                         for _ in range(20):
                             time.sleep(0.5)
                             page, err2 = _ensure_browser()
                             if not err2:
                                 break
-                        _pending_url = ""
                         if page is None:
+                            _clear_pending()
                             _browser_result_queue.put({
                                 "_result_id": result_id,
                                 "error": "브라우저 뷰가 열리지 않았습니다. 브라우저를 먼저 열어주세요.",
@@ -674,17 +712,20 @@ def _browser_worker_loop():
                             page.goto(url, wait_until="domcontentloaded", timeout=30000)
                             _last_url = page.url
                             _browser_active = True
+                            _set_pending(page.url)
                             _browser_result_queue.put({
                                 "_result_id": result_id,
                                 "status": "ok",
                                 "data": {"url": page.url, "title": page.title()},
                             })
                     else:
+                        _clear_pending()
                         _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
                     page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     _last_url = page.url
                     _browser_active = True
+                    _set_pending(page.url)
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
@@ -826,13 +867,13 @@ def handle_get_browser_status(handler, parsed):
             "status": "disconnected",
             "url": "",
             "error": result["error"],
-            "pending_url": _pending_url,
+            "pending_url": _get_pending(),
         })
     return j_ok(handler, {
         "status": result.get("status", "unknown"),
         "url": result.get("url", ""),
         "title": result.get("title", ""),
-        "pending_url": _pending_url,
+        "pending_url": _get_pending(),
     })
 
 

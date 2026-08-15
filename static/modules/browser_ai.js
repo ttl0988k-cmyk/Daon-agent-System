@@ -656,24 +656,36 @@ setInterval(syncElectronBrowserBounds, 500);
   if (!window.electronAPI) return; // Electron-only feature
 
   var _lastPending = '';
+  var _lastPendingTs = 0;
   setInterval(function () {
     fetch('/api/browser/status')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         var pending = data.pending_url || '';
-        if (pending && pending !== _lastPending) {
-          _lastPending = pending;
-          console.log('[BrowserAI] AI requested navigate to:', pending, '- auto-opening browser view');
-          // Auto-open browser view if not already visible
-          if (!_browserViewVisible) {
+        if (pending) {
+          if (pending !== _lastPending) {
+            // 새 pending URL — 브라우저 뷰를 앞으로 가져오고 해당 URL로 이동
+            _lastPending = pending;
+            _lastPendingTs = Date.now();
+            console.log('[BrowserAI] AI requested navigate to:', pending, '- auto-opening browser view');
+            if (!_browserViewVisible) {
+              toggleBrowserView();
+            } else {
+              // 이미 표시 중이면 바운드만 재동기화 (뷰를 앞으로 유지)
+              syncElectronBrowserBounds();
+            }
+            // Navigate to the pending URL
+            var input = document.getElementById('browserCanvasUrlInput') || document.getElementById('browserUrlInput');
+            if (input) input.value = pending;
+            browserGoToAddress();
+          } else if (!_browserViewVisible) {
+            // 동일 URL이지만 사용자가 수동으로 브라우저 뷰를 숨긴 경우 — 재이동 없이 뷰만 복원
+            console.log('[BrowserAI] Same pending URL, browser view hidden — restoring view');
             toggleBrowserView();
           }
-          // Navigate to the pending URL
-          var input = document.getElementById('browserCanvasUrlInput') || document.getElementById('browserUrlInput');
-          if (input) input.value = pending;
-          browserGoToAddress();
-        } else if (!pending) {
+        } else {
           _lastPending = '';
+          _lastPendingTs = 0;
         }
       })
       .catch(function () { /* ignore poll errors */ });
