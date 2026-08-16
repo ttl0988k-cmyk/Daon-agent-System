@@ -114,6 +114,9 @@
             style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">📄</button>
           <button class="nav-tab" data-panel="mcp" onclick="switchPanel('mcp')" title="MCP 서버 관리"
             style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔌</button>
+          <button class="nav-tab" data-panel="plugins" onclick="switchPanel('plugins')"
+            title="플러그인 관리 (가져오기/전역·세션 ON-OFF)"
+            style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🪄</button>
           <button class="nav-tab" data-panel="integrations" onclick="switchPanel('integrations')"
             title="Slack & Notion 연동"
             style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.15s; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">🔗</button>
@@ -853,6 +856,35 @@
             </div>
           </div>
 
+          <!-- ── PLUGINS PANEL (Plugin Manager) ── -->
+          <div class="panel-view" id="panelPlugins">
+            <div class="panel-header-simple">
+              <span class="panel-header-title">🪄 플러그인 매니저</span>
+              <button class="cron-btn run" style="padding:3px 8px;font-size:10px" onclick="refreshPlugins()">🔄
+                새로고침</button>
+            </div>
+            <div class="panel-body-scroll" style="gap:8px;padding:8px;">
+
+              <!-- import 폼 -->
+              <div
+                style="background:var(--bg2);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;">
+                <div style="font-size:11px;font-weight:600;color:var(--text);">📥 플러그인 가져오기</div>
+                <input id="pluginImportInput" placeholder="Git URL 또는 로컬 폴더 경로 (예: https://github.com/owner/repo)"
+                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;" />
+                <button class="action-btn" onclick="importPlugin()"
+                  style="background:var(--success);color:white;">가져오기</button>
+              </div>
+
+              <!-- 상태 요약 -->
+              <div id="pluginStateSummary" style="font-size:10px;color:var(--muted);padding:2px 2px 0;"></div>
+
+              <!-- 플러그인 목록 -->
+              <div id="pluginList" style="display:flex;flex-direction:column;gap:6px;">
+                <div style="padding:12px;color:var(--muted);text-align:center;font-size:13px;">로딩 중...</div>
+              </div>
+            </div>
+          </div>
+
           <!-- ── INTEGRATIONS PANEL (Slack & Notion) ── -->
           <div class="panel-view" id="panelIntegrations">
             <div class="panel-header-simple">
@@ -1495,6 +1527,7 @@
   <script src="/static/modules/skills_hub.js"></script>
   <script src="/static/modules/approval.js?v=3"></script>
   <script src="/static/modules/mcp.js"></script>
+  <script src="/static/modules/plugins.js"></script>
   <script src="/static/modules/harness.js"></script>
   <script src="/static/modules/beginner.js"></script>
 </body>

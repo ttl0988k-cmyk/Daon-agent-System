@@ -34,6 +34,7 @@ async function switchPanel(name) {
   if (name === 'docs') { loadDocsPanel(); }
   if (name === 'integrations') { loadIntegrationsPanel(); }
   if (name === 'mcp') { loadMcpPanel(); }
+  if (name === 'plugins') { loadPluginsPanel(); }
 }
 
 
