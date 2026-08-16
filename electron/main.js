@@ -93,8 +93,10 @@ function cleanupOrphanedTemp() {
 
 // ── CDP (Chrome DevTools Protocol) port for browser automation ──
 // 8월 3일 정상 빌드 복원: CDP 9222는 앱 시작 시 항상 ON (무조건 appendSwitch).
-// 에이전트(browser_*)는 connect_over_cdp("http://localhost:9222")로
+// 에이전트(browser_*)는 connect_over_cdp("http://127.0.0.1:9222")로
 // 사용자와 같은 WebContentsView(세션/로그인 상태)를 공유·제어한다.
+// 127.0.0.1 명시: Windows가 localhost를 IPv6(::1)로 우선 해석해 CDP 리스너
+// (IPv4)와 불일치하면 ECONNREFUSED ::1:9222 로 연결이 실패하므로 피한다.
 const NEEDED_CDP_PORT = '9222';
 app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
 app.commandLine.appendSwitch('remote-allow-origins', '*');
@@ -398,7 +400,9 @@ function findServerExe() {
 
 function startPythonProcess(port) {
   if (isQuitting) return;
-  const env = { ...process.env, BROWSER_CDP_URL: 'ws://localhost:9222' };
+  // 127.0.0.1 명시: IPv6(::1) 우선 해석으로 인한 ECONNREFUSED ::1:9222 방지
+  // (browser_routes.py 의 connect_over_cdp 와 동일한 주소를 사용해야 한다).
+  const env = { ...process.env, BROWSER_CDP_URL: 'ws://127.0.0.1:9222' };
   const exePath = findServerExe();
 
   if (exePath) {
@@ -746,11 +750,38 @@ app.whenReady().then(async () => {
     mainWindow.setMenu(null);
 
     // ── STEP 4a: 8월 3일 정상 빌드 복원 ──
-    // mainWindow 의 setWindowOpenHandler(deny) + will-navigate 차단 가드는
+    // mainWindow 의 setWindowOpenHandler(deny) + 광범위한 will-navigate 차단 가드는
     // 제거했다. 이 가드들은 구글 OAuth 팝업/리다이렉트 창을 차단해 로그인
     // 흐름을 끊었다(06e1c87 도입). 백업은 mainWindow 에 창 가드를 두지 않았고,
     // 팝업 억제는 브라우저 뷰 단위의 setWindowOpenHandler(TabManager.createTab)로만
     // 수행했다. 에이전트의 외부 창 생성은 백엔드(browser_routes.py)에서 차단한다.
+
+    // ── STEP 4a-2: mainWindow 보호 가드 (에이전트가 메인 윈도우를 외부 URL로
+    //   바꾸는 것을 방지) ──
+    // mainWindow(UI)는 반드시 로컬 UI(127.0.0.1 / localhost / file://)만 표시한다.
+    // 에이전트(browser_*)는 CDP로 WebContentsView(내부 공유 브라우저)만 제어하므로
+    // mainWindow 가 외부 URL로 navigate 되는 일은 절대 없어야 한다.
+    // 구글 OAuth 로그인은 내부 브라우저 뷰(WebContentsView)에서 일어나므로 이
+    // 가드는 로그인 흐름과 무관하다 — 로컬 UI 호스트만 허용해 OAuth를 건드리지
+    // 않는다(06e1c87 처럼 광범위하게 막지 않음).
+    try {
+      mainWindow.webContents.on('will-navigate', (event, url) => {
+        let host = '';
+        let proto = '';
+        try {
+          const u = new URL(url);
+          host = u.hostname;
+          proto = u.protocol;
+        } catch (_) { }
+        const isLocalUi = proto === 'file:' || host === '127.0.0.1' || host === 'localhost' || host === '::1';
+        if (!isLocalUi) {
+          event.preventDefault();
+          console.log(`[Guard] Blocked mainWindow navigate to external URL: ${url}`);
+        }
+      });
+    } catch (e) {
+      console.warn('[Guard] mainWindow will-navigate guard setup failed:', e && e.message);
+    }
 
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
     let _balloonShownOnce = false;

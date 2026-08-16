@@ -158,8 +158,10 @@ def _browser_worker_loop():
 
         try:
             # Connect to DAON 전용 Chrome / 내부 WebContentsView remote debugging port
-            _logger.info("Attempting CDP connection to DAON browser at localhost:9222")
-            browser = pw.chromium.connect_over_cdp("http://localhost:9222")
+            # 127.0.0.1 명시: Windows가 localhost를 IPv6(::1)로 우선 해석해 CDP
+            # 리스너(IPv4)와 불일치하면 ECONNREFUSED ::1:9222 로 연결이 실패한다.
+            _logger.info("Attempting CDP connection to DAON browser at 127.0.0.1:9222")
+            browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
 
             # Find a usable browser page.
             # DAON 내부 공유 브라우저(WebContentsView, 파티션 persist:daon-shared-browser)
@@ -183,6 +185,12 @@ def _browser_worker_loop():
                     _logger.debug("CDP page: %s", url)
                     if url.startswith("http://127.0.0.1"):
                         continue  # skip main UI
+                    if url.startswith("devtools://") or url.startswith("chrome://") or url.startswith("devtools:"):
+                        # Electron/Chromium 내부 DevTools 페이지는 절대 공유 페이지로
+                        # 선택하지 않는다(F12로 연 devtools:// 타깃이 target_page 로
+                        # 잡히면 에이전트가 DevTools 화면을 제어하는 오동작 발생).
+                        _logger.debug("Skipping internal DevTools page: %s", url)
+                        continue
                     if url == "about:blank" or url == "":
                         fallback_page = fallback_page or p
                         continue  # remember but don't stop — keep looking for a real URL
