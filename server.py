@@ -761,6 +761,15 @@ def main():
         except Exception as e:
             print(f"[Whisper] Warmup trigger failed: {e}", flush=True)
 
+        # Sync DAON_PLUGIN_SKILL_DIRS so Hermes skill tooling sees globally enabled
+        # plugin skills right after server restart (idempotent; no-op when unchanged).
+        try:
+            from api.plugin_gateway import sync_plugin_skill_env
+            sync_plugin_skill_env()
+            print("[Plugins] Skill env synced on startup.", flush=True)
+        except Exception as e:
+            print(f"[Plugins] Startup skill env sync failed: {e}", flush=True)
+
     threading.Thread(target=_background_init, name="daon-bg-init", daemon=True).start()
 
     # ── Heartbeat logger (every 30s) ──

@@ -234,7 +234,29 @@ def start_harness_job(body: dict) -> str:
     planning_mode = body.get('planning_mode', False)
     session_id = body.get('session_id')
     allowed_providers = body.get('allowedProviders')
-    forced_skills = body.get('skills') or []  # 사용자가 명시적으로 지정한 스킬 목록
+    forced_skills = list(body.get('skills') or [])  # 사용자가 명시적으로 지정한 스킬 목록
+
+    # ── 세션에서 ON 된 플러그인의 스킬을 forced_skills 에 자동 병합 ──
+    # active_plugin_skills 가 반환하는 qualified 스킬 이름("plugin:skill")을
+    # CEO planner 의 MANDATORY DIRECTIVE 로 주입한다. 실제 컨텐츠는
+    # skill_registry 가 플러그인 스킬을 "plugin" 소스로 인덱싱하므로
+    # compiler 의 load_skills() 경로를 통해 각 에이전트 시스템 프롬프트에
+    # 자동 주입된다. (플러그인 OFF 시 세션 상태에서 빠지므로 즉시 제거.)
+    if session_id:
+        try:
+            from api.plugin_gateway import active_plugin_skills
+            _p_qualified, _p_blocks = active_plugin_skills(session_id)
+            for _q in _p_qualified:
+                if _q not in forced_skills:
+                    forced_skills.append(_q)
+            if _p_qualified:
+                print(
+                    f"[dynamic] Merged {len(_p_qualified)} plugin skill(s) "
+                    f"into forced_skills for session {session_id}: {_p_qualified}",
+                    flush=True,
+                )
+        except Exception as _p_err:
+            print(f"[dynamic] WARNING: plugin skill merge failed: {_p_err}", flush=True)
 
     init_job(run_id, session_id=session_id)
 

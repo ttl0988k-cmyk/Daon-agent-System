@@ -235,10 +235,25 @@ def handle_post_chat_sync(handler, body) -> bool:
                     _base_url = rt_base_url
             except Exception as _e:
                 print(f"[webui] WARNING: resolve_runtime_provider failed: {_e}", flush=True)
+            # 세션에서 ON 된 플러그인의 스킬 컨텐츠를 ephemeral 시스템 프롬프트로 주입
+            _plugin_prompt = None
+            try:
+                from api.plugin_gateway import active_plugin_skills
+                _p_qualified, _p_blocks = active_plugin_skills(s.session_id)
+                if _p_blocks:
+                    _plugin_prompt = (
+                        "[Active Plugins: You have the following plugin skills enabled for this session. "
+                        "Use them directly to complete the user's task when relevant. You may also invoke "
+                        "them via the skill_view tool using their qualified names.]\n\n"
+                        + "\n\n".join(_p_blocks)
+                    )
+            except Exception:
+                _plugin_prompt = None
             agent = AIAgent(
                 model=_model, provider=_provider, base_url=_base_url,
                 api_key=_api_key, platform='webui', quiet_mode=True,
                 enabled_toolsets=CLI_TOOLSETS, session_id=s.session_id,
+                ephemeral_system_prompt=_plugin_prompt,
             )
             workspace_ctx = f"[Workspace: {s.workspace}]\n"
             workspace_system_msg = (

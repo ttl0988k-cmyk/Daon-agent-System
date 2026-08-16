@@ -1070,6 +1070,28 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception:
               pass
 
+          # ── Inject active plugin skills for this session ──
+          # 세션에서 ON 된 플러그인의 SKILL.md 컨텐츠를 ephemeral 시스템
+          # 프롬프트에 주입한다. ephemeral이므로 세션 DB 시스템 프롬프트
+          # 캐시를 오염시키지 않아 플러그인 ON/OFF 가 매 턴 즉시 반영된다.
+          try:
+              from api.plugin_gateway import active_plugin_skills
+              _p_qualified, _p_blocks = active_plugin_skills(session_id)
+              if _p_blocks:
+                  _plugin_block = (
+                      "[Active Plugins: You have the following plugin skills enabled for this session. "
+                      "Use them directly to complete the user's task when relevant. You may also invoke "
+                      "them via the skill_view tool using their qualified names.]\n\n"
+                      + "\n\n".join(_p_blocks)
+                  )
+                  _ephemeral_prompt = (
+                      (_ephemeral_prompt + "\n\n" + _plugin_block)
+                      if _ephemeral_prompt
+                      else _plugin_block
+                  )
+          except Exception as _p_err:
+              print(f"[webui] WARNING: plugin skill injection failed: {_p_err}", flush=True)
+
           # Install the Electron/CDP browser bridge before creating the agent.
           # This prevents initialization paths from starting standalone
           # agent-browser Chromium before the bridge is installed.

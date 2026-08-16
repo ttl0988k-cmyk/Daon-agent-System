@@ -160,6 +160,20 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
                 except Exception:
                     pass
 
+            # 세션에서 ON 된 플러그인의 스킬 컨텐츠를 ephemeral 시스템 프롬프트로 주입
+            _plugin_prompt = None
+            try:
+                from api.plugin_gateway import active_plugin_skills
+                _p_qualified, _p_blocks = active_plugin_skills(session_id)
+                if _p_blocks:
+                    _plugin_prompt = (
+                        "[Active Plugins: You have the following plugin skills enabled for this session. "
+                        "Use them directly to complete the user's task when relevant. You may also invoke "
+                        "them via the skill_view tool using their qualified names.]\n\n"
+                        + "\n\n".join(_p_blocks)
+                    )
+            except Exception:
+                _plugin_prompt = None
             agent = AIAgent(
                 model=resolved_model,
                 provider=resolved_provider,
@@ -171,6 +185,7 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
                 session_db=session_db,
                 stream_delta_callback=on_token,
                 tool_progress_callback=on_tool,
+                ephemeral_system_prompt=_plugin_prompt,
             )
 
             # Workspace context message prefixes

@@ -1507,10 +1507,27 @@ from api.routes.mobile_routes import (
 
 )
 
+from api.routes.plugin_routes import (
+
+    handle_get_plugins,
+
+    handle_get_plugins_state,
+
+    handle_post_plugin_disable,
+
+    handle_post_plugin_enable,
+
+    handle_post_plugin_remove,
+
+    handle_post_plugin_session,
+
+    handle_post_plugins_import,
+
+)
+
 
 
 def handle_get(handler, parsed) -> bool:
-
     """Handle all GET routes. Returns True if handled, False for 404."""
 
 
@@ -3008,6 +3025,13 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == '/api/mobile/conversations':
         return handle_get_mobile_conversations(handler, parsed)
+
+    # ── Plugins API (GET) ──
+    if parsed.path == '/api/plugins':
+        return handle_get_plugins(handler, parsed)
+
+    if parsed.path == '/api/plugins/state':
+        return handle_get_plugins_state(handler, parsed)
 
     _logger.debug("No GET route matched for: %s", parsed.path)
     return False  # 404
@@ -5491,6 +5515,24 @@ def handle_post(handler, parsed) -> bool:
 
 
 
+
+    # ── Plugins API (POST) ──
+    if parsed.path == '/api/plugins/import':
+        return handle_post_plugins_import(handler, body)
+
+    if parsed.path.startswith('/api/plugins/'):
+        rest = parsed.path[len('/api/plugins/'):]
+        parts = rest.split('/')
+        if len(parts) == 2:
+            plugin_name, action = parts
+            if action == 'enable':
+                return handle_post_plugin_enable(handler, body, plugin_name)
+            if action == 'disable':
+                return handle_post_plugin_disable(handler, body, plugin_name)
+            if action == 'session':
+                return handle_post_plugin_session(handler, body, plugin_name)
+            if action == 'remove':
+                return handle_post_plugin_remove(handler, body, plugin_name)
 
     return False  # 404
 

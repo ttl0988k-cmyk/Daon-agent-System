@@ -187,6 +187,29 @@ class SkillRegistry:
         if engine_dir.exists():
             self._scan_directory(engine_dir, source="bundled")
 
+        # 5. Plugin skills (DAON plugins/) — qualified as "plugin:skill".
+        #    세션에서 ON 된 플러그인의 SKILL.md 를 소스 "plugin" 으로 인덱싱하여
+        #    Dynamic Harness 컴파일러(load_skills)와 CEO 카탈로그가 인식하게 한다.
+        #    (plugin_gateway 는 plugin_state 만 의존하므로 순환 import 없음.)
+        try:
+            from api.plugin_gateway import list_installed_plugins
+            for _plugin in list_installed_plugins():
+                for _s in (_plugin.get("skills") or []):
+                    _skill_path = Path(_s.get("path") or "")
+                    if not _skill_path.exists():
+                        continue
+                    try:
+                        self._load_skill_entry(
+                            _skill_path, _s.get("qualified") or _s["name"],
+                            "plugin", None,
+                        )
+                    except Exception:
+                        _logger.warning(
+                            "Failed to index plugin skill %s", _s.get("qualified"), exc_info=True
+                        )
+        except Exception:
+            _logger.warning("Failed to scan plugin skills for skill registry", exc_info=True)
+
         # Build version-aware indexing
         # Group entries by normalized name
         from collections import defaultdict
@@ -309,7 +332,9 @@ class SkillRegistry:
                 return  # Skip disabled skills entirely
 
             # Determine lifecycle status
-            if source in ("curated", "bundled"):
+            # Plugin skills are explicitly installed via DAON plugins/, so they
+            # are treated as approved (available) like curated/bundled skills.
+            if source in ("curated", "bundled", "plugin"):
                 lifecycle = SKILL_APPROVED
             elif manifest and name in manifest:
                 lifecycle = manifest[name].get("status", SKILL_DRAFT)
@@ -327,8 +352,13 @@ class SkillRegistry:
             if category and category != "general":
                 category = category[0].upper() + category[1:]
 
+            # Plugin skills are indexed under their qualified "plugin:skill" name
+            # so forced_skills/load_skills lookups resolve deterministically
+            # regardless of the SKILL.md frontmatter's own name field.
+            entry_name = name if source == "plugin" else meta.get("name", name)
+
             entry = SkillEntry(
-                name=meta.get("name", name),
+                name=entry_name,
                 label=meta.get("label", ""),
                 path=md_file,
                 title=title,
@@ -595,6 +625,7 @@ class SkillRegistry:
         lines = ["AVAILABLE SKILLS CATALOG:"]
         curated = [s for s in self._skills.values() if s.source == "curated"]
         bundled = [s for s in self._skills.values() if s.source == "bundled"]
+        plugin = [s for s in self._skills.values() if s.source == "plugin"]
         approved_auto = [s for s in self._skills.values() if s.source == "auto" and s.lifecycle == SKILL_APPROVED]
         draft_auto = [s for s in self._skills.values() if s.source == "auto" and s.lifecycle == SKILL_DRAFT]
 
@@ -604,6 +635,9 @@ class SkillRegistry:
         if bundled:
             lines.append("[Bundled Skills - Engine & User Installed]")
             lines.extend(s.to_catalog_line() for s in bundled)
+        if plugin:
+            lines.append("[Plugin Skills - DAON Plugins]")
+            lines.extend(s.to_catalog_line() for s in plugin)
         if approved_auto:
             lines.append("[Approved Auto-Skills - Verified & Available]")
             lines.extend(s.to_catalog_line() for s in approved_auto)

@@ -171,6 +171,38 @@ def _normalize_string_set(values) -> Set[str]:
 # ── External skills directories ──────────────────────────────────────────
 
 
+def _daon_plugin_skill_dirs() -> List[Path]:
+    """Return DAON plugin skill dirs from the ``DAON_PLUGIN_SKILL_DIRS`` env var.
+
+    DAON (the host desktop app) sets this to the root directories of plugins
+    whose skills should be visible to Hermes' skill tooling (``skills_list``,
+    ``skill_view`` and the system-prompt skill index).  Values are
+    ``os.pathsep``-separated, ``~``/``${VAR}`` expanded, deduplicated, and
+    validated to exist.  This lets the host app expose plugin skills without
+    mutating the user's ``config.yaml``.
+    """
+    raw = os.environ.get("DAON_PLUGIN_SKILL_DIRS", "").strip()
+    if not raw:
+        return []
+    local_skills = get_skills_dir().resolve()
+    seen: Set[Path] = set()
+    result: List[Path] = []
+    for entry in raw.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        expanded = os.path.expanduser(os.path.expandvars(entry))
+        p = Path(expanded).resolve()
+        if p == local_skills or p in seen:
+            continue
+        if p.is_dir():
+            seen.add(p)
+            result.append(p)
+        else:
+            logger.debug("DAON plugin skill dir does not exist, skipping: %s", p)
+    return result
+
+
 def get_external_skills_dirs() -> List[Path]:
     """Read ``skills.external_dirs`` from config.yaml and return validated paths.
 
@@ -220,6 +252,14 @@ def get_external_skills_dirs() -> List[Path]:
             result.append(p)
         else:
             logger.debug("External skills dir does not exist, skipping: %s", p)
+
+    # DAON host app may expose plugin skill directories without touching the
+    # user's config.yaml.  Append them (deduplicated against config entries).
+    for p in _daon_plugin_skill_dirs():
+        if p in seen:
+            continue
+        seen.add(p)
+        result.append(p)
 
     return result
 
