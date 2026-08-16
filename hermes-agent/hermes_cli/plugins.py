@@ -37,6 +37,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+import os
 import sys
 import types
 from dataclasses import dataclass, field
@@ -111,21 +112,32 @@ def _get_enabled_plugins() -> Optional[set]:
       break on upgrade.
     * ``set()`` — an empty list was explicitly set; nothing loads.
     * ``set(...)`` — the concrete allow-list.
+
+    DAON bridge: when ``DAON_PLUGIN_ENABLED`` is set (a comma-separated
+    list of plugin names from the DAON global ON state), it is merged
+    with the config.yaml allow-list so DAON can activate plugins without
+    touching config.yaml (non-invasive).
     """
+    daon_raw = os.environ.get("DAON_PLUGIN_ENABLED", "")
+    daon_set: Optional[set] = None
+    if daon_raw.strip():
+        daon_set = {n.strip() for n in daon_raw.split(",") if n.strip()}
     try:
         from hermes_cli.config import load_config
         config = load_config()
         plugins_cfg = config.get("plugins")
-        if not isinstance(plugins_cfg, dict):
-            return None
-        if "enabled" not in plugins_cfg:
-            return None
-        enabled = plugins_cfg.get("enabled")
-        if not isinstance(enabled, list):
-            return None
-        return set(enabled)
+        cfg_enabled: Optional[set] = None
+        if isinstance(plugins_cfg, dict) and "enabled" in plugins_cfg:
+            enabled = plugins_cfg.get("enabled")
+            if isinstance(enabled, list):
+                cfg_enabled = set(enabled)
+        if daon_set is None:
+            return cfg_enabled
+        if cfg_enabled is None:
+            return daon_set
+        return cfg_enabled | daon_set
     except Exception:
-        return None
+        return daon_set
 
 
 # ---------------------------------------------------------------------------
@@ -455,10 +467,18 @@ class PluginManager:
     # Public
     # -----------------------------------------------------------------------
 
-    def discover_and_load(self) -> None:
-        """Scan all plugin sources and load each plugin found."""
-        if self._discovered:
+    def discover_and_load(self, force: bool = False) -> None:
+        """Scan all plugin sources and load each plugin found.
+
+        *force* — when True and discovery already ran, all previously
+        registered plugin state (tools, hooks, commands, skills) is torn
+        down first and discovery re-runs from scratch. The DAON bridge uses
+        this to reflect a runtime global ON/OFF change without a restart.
+        """
+        if self._discovered and not force:
             return
+        if force and self._discovered:
+            self._unload_plugins()
         self._discovered = True
 
         manifests: List[PluginManifest] = []
@@ -489,6 +509,21 @@ class PluginManager:
 
         # 4. Pip / entry-point plugins
         manifests.extend(self._scan_entry_points())
+
+        # 5. DAON bridge: DAON_PLUGIN_DIRS — directories that hold DAON
+        #    plugins (e.g. the DAON project plugins dir). Each directory
+        #    is scanned as a "user"-source plugin folder so Hermes
+        #    PluginManager can load tool-providing plugins that live
+        #    outside the standard ~/.hermes/plugins location.  These
+        #    still pass through the normal opt-in gate (plugins.enabled /
+        #    DAON_PLUGIN_ENABLED) so only globally-enabled plugins load.
+        daon_dirs_raw = os.environ.get("DAON_PLUGIN_DIRS", "")
+        if daon_dirs_raw.strip():
+            for _d in daon_dirs_raw.split(os.pathsep):
+                _dir = _d.strip()
+                if not _dir:
+                    continue
+                manifests.extend(self._scan_directory(Path(_dir), source="user"))
 
         # Load each manifest (skip user-disabled plugins).
         # Later sources override earlier ones on name collision — user plugins
@@ -531,6 +566,37 @@ class PluginManager:
                 len(self._plugins),
                 sum(1 for p in self._plugins.values() if p.enabled),
             )
+
+    def _unload_plugins(self) -> None:
+        """Tear down all previously registered plugin state.
+
+        Used by ``force`` re-discovery so a runtime global ON/OFF change in
+        DAON is reflected without a process restart.  Registered plugin
+        tools are removed from the shared ``tools.registry`` (via
+        ``registry.deregister``), and hooks / commands / skills / context
+        engine are reset so the next discovery run starts clean.
+        """
+        try:
+            from tools.registry import registry
+            for tool_name in sorted(self._plugin_tool_names):
+                try:
+                    registry.deregister(tool_name)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to deregister plugin tool '%s': %s",
+                        tool_name,
+                        exc,
+                    )
+        except Exception as exc:
+            logger.debug("Plugin tool deregistration skipped: %s", exc)
+
+        self._plugins.clear()
+        self._hooks.clear()
+        self._plugin_tool_names.clear()
+        self._cli_commands.clear()
+        self._context_engine = None
+        self._plugin_commands.clear()
+        self._plugin_skills.clear()
 
     # -----------------------------------------------------------------------
     # Directory scanning
@@ -820,9 +886,15 @@ def get_plugin_manager() -> PluginManager:
     return _plugin_manager
 
 
-def discover_plugins() -> None:
-    """Discover and load all plugins (idempotent)."""
-    get_plugin_manager().discover_and_load()
+def discover_plugins(force: bool = False) -> None:
+    """Discover and load all plugins (idempotent).
+
+    *force* — re-run discovery from scratch, tearing down previously
+    registered plugin tools / hooks / commands / skills first.  Used by
+    the DAON bridge to reflect a runtime global ON/OFF change without a
+    process restart.
+    """
+    get_plugin_manager().discover_and_load(force=force)
 
 
 def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:

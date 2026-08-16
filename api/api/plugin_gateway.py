@@ -257,12 +257,178 @@ def _invalidate_hermes_skills_cache() -> None:
         _logger.debug("hermes skills cache invalidation skipped: %s", exc)
 
 
+def _refresh_hermes_plugins() -> None:
+    """Hermes PluginManager 를 force 재디스커버한다 (툴/훅/명령 재로드).
+
+    ``discover_plugins(force=True)`` 는 이전에 등록된 플러그인 툴을
+    ``tools.registry.deregister`` 로 정리한 뒤 다시 로드하므로, 전역
+    ON/OFF 토글 변경이 이후 새 에이전트 세션의 도구 표면에 반영된다.
+    """
+    try:
+        from hermes_cli.plugins import discover_plugins
+        discover_plugins(force=True)
+    except Exception as exc:
+        _logger.warning("hermes plugin re-discovery failed: %s", exc)
+
+
+def _sync_plugin_tool_env() -> None:
+    """전역 활성 플러그인을 Hermes PluginManager 툴 레지스트리에 노출한다.
+
+    - ``DAON_PLUGIN_DIRS``: 전역 ON 플러그인들의 *부모* 디렉토리
+      (os.pathsep 결합). Hermes ``_scan_directory`` 는 각 디렉토리의
+      직계 자식 중 plugin.yaml 을 가진 폴더를 스캔하므로 부모 경로를
+      노출해야 한다.
+    - ``DAON_PLUGIN_ENABLED``: 전역 ON 플러그인 이름 (쉼표 결합).
+      Hermes ``_get_enabled_plugins`` 는 이 값을 config.yaml
+      ``plugins.enabled`` allow-list 와 병합해 opt-in 게이트로 사용한다.
+
+    환경 변수 값이 실제로 바뀐 경우에만 ``_refresh_hermes_plugins`` 로
+    force 재디스커버를 트리거한다 (불필요한 재로드 방지).
+    """
+    try:
+        enabled = [p for p in list_installed_plugins() if p.get("enabled")]
+
+        parent_dirs: list[str] = []
+        names: list[str] = []
+        for p in enabled:
+            pname = str(p.get("name") or "").strip()
+            p_path = str(p.get("path") or "").strip()
+            if pname:
+                names.append(pname)
+            if p_path:
+                parent = str(Path(p_path).resolve().parent)
+                if parent not in parent_dirs:
+                    parent_dirs.append(parent)
+
+        new_dirs = os.pathsep.join(parent_dirs) if parent_dirs else ""
+        new_enabled = ",".join(names) if names else ""
+
+        old_dirs = os.environ.get("DAON_PLUGIN_DIRS", "")
+        old_enabled = os.environ.get("DAON_PLUGIN_ENABLED", "")
+        changed = (new_dirs != old_dirs) or (new_enabled != old_enabled)
+
+        if new_dirs:
+            os.environ["DAON_PLUGIN_DIRS"] = new_dirs
+        else:
+            os.environ.pop("DAON_PLUGIN_DIRS", None)
+        if new_enabled:
+            os.environ["DAON_PLUGIN_ENABLED"] = new_enabled
+        else:
+            os.environ.pop("DAON_PLUGIN_ENABLED", None)
+
+        if changed:
+            _logger.info(
+                "DAON_PLUGIN_DIRS/DAON_PLUGIN_ENABLED updated: dirs=%s enabled=%s",
+                new_dirs or "(none)",
+                new_enabled or "(none)",
+            )
+            _refresh_hermes_plugins()
+    except Exception as exc:
+        _logger.warning("sync plugin tool env failed: %s", exc)
+
+
 def sync_plugin_skill_env() -> None:
-    """DAON(주체)에서 호출하는 진입점 — 전역 활성 플러그인을 외부 스킬로 노출."""
+    """DAON(주체)에서 호출하는 진입점 — 전역 활성 플러그인을 런타임에 동기화.
+
+    - ``_sync_plugin_skill_env``: 외부 스킬(``DAON_PLUGIN_SKILL_DIRS``) 노출
+    - ``_sync_plugin_tool_env``: 플러그인 툴/훅/명령을 Hermes 툴 레지스트리에
+      노출 (``DAON_PLUGIN_DIRS`` / ``DAON_PLUGIN_ENABLED`` + force 재디스커버)
+    - ``_sync_plugin_mcp_servers``: 플러그인 MCP 서버를 기존 MCP 매니저에 연결
+    """
     try:
         _sync_plugin_skill_env()
     except Exception as exc:
         _logger.warning("sync_plugin_skill_env failed: %s", exc)
+    # 스킬 env 가 변하지 않아도 MCP 연결 상태는 독립적으로 동기화해야 한다
+    # (예: 서버 재시작 후 MCP 매니저가 비어 있는데 env var 는 이미 설정된 경우).
+    _sync_plugin_tool_env()
+    _sync_plugin_mcp_servers()
+
+
+# ---------------------------------------------------------------------------
+# 플러그인 MCP 서버 → 기존 MCP 매니저 동기화
+# ---------------------------------------------------------------------------
+
+def _plugin_mcp_server_id(plugin_name: str, mcp_id: str) -> str:
+    """플러그인 MCP 서버의 네임스페이스 id — 일반 MCP 서버와 충돌 방지."""
+    return f"plugin_{plugin_name}__{mcp_id}"
+
+
+def _sync_plugin_mcp_servers() -> None:
+    """전역 활성 플러그인의 ``mcp`` 항목을 기존 MCP 매니저에 등록/연결한다.
+
+    세션 컨텍스트 연결은 streaming.py 의 기존 MCP 도구 주입 경로(세션당)가
+    담당한다.  여기서는 '전역 ON 플러그인의 MCP 서버가 MCP 매니저에 연결되어
+    있어야' 그 도구들이 세션에서 Hermes registry 로 노출될 수 있도록 보장한다.
+
+    - 서버 id 는 ``plugin_<name>__<mcp_id>`` 로 네임스페이스 충돌을 방지한다.
+    - ``_save=False``: 플러그인 매니페스트(plugin.yaml)가 source of truth 이므로
+      MCP config.json 에 영구 저장하지 않는다 (비침습적).
+    - 더 이상 활성화되지 않은 플러그인 MCP 서버(``plugin_*`` 접두)는 연결 해제.
+    """
+    try:
+        from api.mcp_client import get_mcp_manager
+        manager = get_mcp_manager()
+
+        enabled = [p for p in list_installed_plugins() if p.get("enabled")]
+        wanted: Dict[str, dict] = {}
+        for plugin in enabled:
+            pname = plugin.get("name", "")
+            for m in plugin.get("mcp", []) or []:
+                if not isinstance(m, dict):
+                    continue
+                mid = str(m.get("id") or "").strip()
+                if not mid:
+                    continue
+                server_id = _plugin_mcp_server_id(pname, mid)
+                wanted[server_id] = {
+                    "command": str(m.get("command") or "").strip(),
+                    "args": [str(a) for a in (m.get("args") or [])],
+                    "env": m.get("env") if isinstance(m.get("env"), dict) else None,
+                    "cwd": str(m.get("cwd") or "").strip() or None,
+                    "label": str(m.get("label") or f"{pname}:{mid}"),
+                    "transport": str(m.get("transport") or "stdio").strip() or "stdio",
+                    "url": str(m.get("url") or "").strip(),
+                    "auth_token": str(m.get("auth_token") or "").strip(),
+                }
+
+        # 더 이상 활성화되지 않은 플러그인 MCP 서버 정리
+        for server_id in list(manager._connections.keys()):
+            if server_id.startswith("plugin_") and server_id not in wanted:
+                try:
+                    manager.remove_server(server_id)
+                except Exception as exc:
+                    _logger.warning(
+                        "Failed to remove stale plugin MCP server %s: %s",
+                        server_id, exc,
+                    )
+
+        # 원하는 서버 등록/연결 (이미 존재하면 스킵)
+        for server_id, spec in wanted.items():
+            if server_id in manager._connections:
+                continue
+            if not spec["command"] and not spec["url"]:
+                continue
+            try:
+                manager.add_server(
+                    server_id=server_id,
+                    command=spec["command"],
+                    args=spec["args"],
+                    env=spec["env"],
+                    cwd=spec["cwd"],
+                    label=spec["label"],
+                    transport=spec["transport"],
+                    url=spec["url"],
+                    auth_token=spec["auth_token"],
+                    auto_connect=True,
+                    _save=False,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "Failed to add plugin MCP server %s: %s", server_id, exc
+                )
+    except Exception as exc:
+        _logger.warning("sync plugin MCP servers failed: %s", exc)
 
 
 def plugin_skill_catalog_text(plugin_name: str) -> str:
