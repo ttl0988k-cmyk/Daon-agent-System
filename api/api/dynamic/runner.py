@@ -383,12 +383,14 @@ def _run_node_with_retries(
                             continue
                         
                         # OpenAI-format schema for agent.tools
+                        # NOTE: 빈 inputSchema는 모델 API의 "function parameters is empty" 400을
+                        # 유발하므로 반드시 정규화(properties 보장)해서 전달한다.
                         _api_schema = {
                             "type": "function",
                             "function": {
                                 "name": _mcp_fn,
                                 "description": _t.get('description', f"MCP tool {_oname} from {_sid}"),
-                                "parameters": _t.get('inputSchema', {"type": "object", "properties": {}})
+                                "parameters": _normalize_input_schema(_t.get('inputSchema'))
                             }
                         }
                         agent.tools.append(_api_schema)

@@ -1537,19 +1537,9 @@ from api.routes.plugin_routes import (
 
 def handle_get(handler, parsed) -> bool:
     """Handle all GET routes. Returns True if handled, False for 404."""
-
-
-
-
-
-    import sys
-
-
-
-
-
-    print(f"[DEBUG handle_get] path={repr(parsed.path)}", file=sys.stderr, flush=True)
-
+    # NOTE: 이전 버전에는 모든 GET 요청마다 [DEBUG handle_get] print가 있어
+    # 폴링 트래픽(트레이 10초 간격 + watchdog 30초 간격 + UI 폴링)에서 로그 I/O 폭주를 일으켰다.
+    # 서버 기아(요청 타임아웃)의 한 원인이므로 제거한다.
 
 
 

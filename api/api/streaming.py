@@ -1224,12 +1224,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   toolset_name = f"mcp-{safe_srv}"
                   
                   # 1) OpenAI-format schema for agent.tools (model visibility)
+                  # NOTE: inputSchema가 비어 있거나 properties가 빠져 있으면 일부 모델 API가
+                  # "invalid params, function parameters is empty" 400을 반환하므로 반드시 정규화한다.
                   api_schema = {
                       "type": "function",
                       "function": {
                           "name": mcp_func_name,
                           "description": t.get('description', f"MCP tool {orig_name} from {server_id}"),
-                          "parameters": t.get('inputSchema', {"type": "object", "properties": {}})
+                          "parameters": _normalize_input_schema(t.get('inputSchema'))
                       }
                   }
                   agent.tools.append(api_schema)
