@@ -1092,6 +1092,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _p_err:
               print(f"[webui] WARNING: plugin skill injection failed: {_p_err}", flush=True)
 
+          # 세션 스코프 플러그인 credentials 를 이 실행 스레드의 ContextVar 값
+          # 레지스트리에 바인딩한다 (os.environ 전역 주입 없음 → 세션 간 누출 방지).
+          # 샌드박스 env 빌더(_make_run_env / child_env / docker init)가 이
+          # 레지스트리를 읽어 해당 세션의 실행 env 에만 병합한다.
+          try:
+              from api.plugin_gateway import session_plugin_credentials
+              from tools.env_passthrough import set_plugin_credential_env
+              set_plugin_credential_env(session_plugin_credentials(session_id))
+          except Exception as _p_cred_err:
+              print(f"[webui] WARNING: plugin credential env binding failed: {_p_cred_err}", flush=True)
+
           # Install the Electron/CDP browser bridge before creating the agent.
           # This prevents initialization paths from starting standalone
           # agent-browser Chromium before the bridge is installed.

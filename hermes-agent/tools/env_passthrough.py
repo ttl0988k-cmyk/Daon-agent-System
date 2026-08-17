@@ -29,6 +29,39 @@ logger = logging.getLogger(__name__)
 # Backed by ContextVar to prevent cross-session data bleed in the gateway pipeline.
 _allowed_env_vars_var: ContextVar[set[str]] = ContextVar("_allowed_env_vars")
 
+# Session-scoped registry of *plugin credential values* (var name → value).
+# This is intentionally NOT written to ``os.environ`` (which is process-global
+# and would leak a Session A credential into Session B).  Instead the session
+# execution thread binds its plugin secrets here, and the sandbox env builders
+# (local._make_run_env / code_execution child_env / docker init) read from this
+# registry so the value only ever reaches THAT session's spawned processes.
+_credential_env_var: ContextVar[dict[str, str]] = ContextVar(
+    "_plugin_credential_env"
+)
+
+
+def set_plugin_credential_env(values: dict[str, str]) -> None:
+    """Bind plugin credential values for the *current session execution context*.
+
+    Call this inside the session's agent thread before running tools.  The
+    binding is task/thread-local: sibling sessions never see it, and it is
+    never written into ``os.environ``.
+    """
+    _credential_env_var.set(dict(values or {}))
+
+
+def get_plugin_credential_env() -> dict[str, str]:
+    """Return a copy of the current session's plugin credential values."""
+    try:
+        return dict(_credential_env_var.get())
+    except LookupError:
+        return {}
+
+
+def clear_plugin_credential_env() -> None:
+    """Clear the plugin credential registry for the current session context."""
+    _credential_env_var.set({})
+
 
 def _get_allowed() -> set[str]:
     """Get or create the allowed env vars set for the current context/session."""

@@ -200,6 +200,14 @@ def _make_run_env(env: dict) -> dict:
             run_env[real_key] = v
         elif k not in _HERMES_PROVIDER_ENV_BLOCKLIST or _is_passthrough(k):
             run_env[k] = v
+    # Session-scoped plugin credentials (bound per-session execution thread via
+    # tools.env_passthrough.set_plugin_credential_env). These are NOT in
+    # os.environ (process-global), so they can't leak into sibling sessions.
+    try:
+        from tools.env_passthrough import get_plugin_credential_env
+        run_env.update(get_plugin_credential_env())
+    except Exception:
+        pass
     existing_path = run_env.get("PATH", "")
     if "/usr/bin" not in existing_path.split(":"):
         run_env["PATH"] = f"{existing_path}:{_SANE_PATH}" if existing_path else _SANE_PATH

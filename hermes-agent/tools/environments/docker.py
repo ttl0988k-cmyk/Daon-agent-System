@@ -480,6 +480,16 @@ class DockerEnvironment(BaseEnvironment):
             if value is not None:
                 exec_env[key] = value
 
+        # Session-scoped plugin credentials (bound per-session execution thread
+        # via tools.env_passthrough.set_plugin_credential_env).  These live in
+        # the ContextVar registry, NOT os.environ, so they only reach THIS
+        # session's container and never leak into sibling sessions.
+        try:
+            from tools.env_passthrough import get_plugin_credential_env
+            exec_env.update(get_plugin_credential_env())
+        except Exception:
+            pass
+
         args = []
         for key in sorted(exec_env):
             args.extend(["-e", f"{key}={exec_env[key]}"])

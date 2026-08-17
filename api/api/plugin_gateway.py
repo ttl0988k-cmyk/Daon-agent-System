@@ -354,8 +354,11 @@ def sync_plugin_skill_env() -> None:
     - ``_sync_plugin_tool_env``: 플러그인 툴/훅/명령을 Hermes 툴 레지스트리에
       노출 (``DAON_PLUGIN_DIRS`` / ``DAON_PLUGIN_ENABLED`` + force 재디스커버)
     - ``_sync_plugin_mcp_servers``: 플러그인 MCP 서버를 기존 MCP 매니저에 연결
-    - ``_sync_plugin_credentials_env``: 플러그인 자격증명 → 환경변수/샌드박스
-      passthrough 주입
+
+    플러그인 credentials 는 더 이상 여기서 전역 ``os.environ`` 에 주입하지
+    않는다 (세션 간 누출 방지).  대신 각 세션 실행 스레드가
+    :func:`session_plugin_credentials` 로 로드해 해당 세션의 샌드박스 실행
+    env 에만 주입한다.
     """
     try:
         _sync_plugin_skill_env()
@@ -365,7 +368,6 @@ def sync_plugin_skill_env() -> None:
     # (예: 서버 재시작 후 MCP 매니저가 비어 있는데 env var 는 이미 설정된 경우).
     _sync_plugin_tool_env()
     _sync_plugin_mcp_servers()
-    _sync_plugin_credentials_env()
 
 
 # ---------------------------------------------------------------------------
@@ -627,37 +629,32 @@ def _plugin_secret_keys(plugin: dict) -> list[str]:
     return [str(s.get("name") or "").strip() for s in (plugin.get("secrets") or []) if s]
 
 
-def _sync_plugin_credentials_env() -> None:
-    """전역 활성 플러그인의 secrets 를 환경변수/샌드박스 passthrough 에 주입한다.
+def session_plugin_credentials(session_id: str) -> dict[str, str]:
+    """세션에서 활성화된 플러그인의 설정된 secrets 를 {var_name: value} 로 반환.
 
-    - 각 secret 키를 ``os.environ`` 에 세팅한다 (값이 설정된 경우만).
-    - ``tools.env_passthrough.register_env_passthrough`` 로 샌드박스(코드 실행/
-      터미널)에 전달되도록 등록한다.  이미 등록된 키는 중복 등록되지 않는다.
-
-    값이 이미 환경변수에 있는 키는 덮어쓰지 않는다 (우선순위: 사용자 env).
+    - ``get_session_plugins(session_id)`` 로 세션 스코프 활성 플러그인을 판정한다
+      (전역 OFF 제외).
+    - 값은 절대 ``os.environ``(프로세스 전역) 에 넣지 않는다.  세션 실행 스레드가
+      ``tools.env_passthrough.set_plugin_credential_env`` 로 바인딩해 해당 세션의
+      샌드박스 실행 env 에만 주입한다 (세션 간 누출 방지).
     """
+    values: dict[str, str] = {}
     try:
         from api.plugin_credentials import get_credential
 
-        enabled = [p for p in list_installed_plugins() if p.get("enabled")]
-        var_names: list[str] = []
-        for p in enabled:
-            for key in _plugin_secret_keys(p):
+        for plugin_name in get_session_plugins(session_id):
+            plugin = get_plugin(plugin_name)
+            if not plugin:
+                continue
+            for key in _plugin_secret_keys(plugin):
                 if not key:
                     continue
-                value = get_credential(str(p.get("name") or ""), key)
+                value = get_credential(plugin_name, key)
                 if value:
-                    os.environ.setdefault(key, value)
-                    var_names.append(key)
-
-        if var_names:
-            try:
-                from tools.env_passthrough import register_env_passthrough
-                register_env_passthrough(var_names)
-            except Exception as exc:
-                _logger.debug("env_passthrough registration skipped: %s", exc)
+                    values[key] = value
     except Exception as exc:
-        _logger.warning("sync plugin credentials env failed: %s", exc)
+        _logger.warning("session plugin credentials load failed: %s", exc)
+    return values
 
 
 def get_plugin_credential_status(plugin_name: str) -> dict:

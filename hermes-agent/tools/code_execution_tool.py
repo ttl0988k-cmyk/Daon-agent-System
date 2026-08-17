@@ -1020,6 +1020,14 @@ def execute_code(
             # Allow vars with known safe prefixes.
             if any(k.startswith(p) for p in _SAFE_ENV_PREFIXES):
                 child_env[k] = v
+        # Session-scoped plugin credentials (bound per-session execution thread).
+        # These live in the ContextVar registry, NOT os.environ, so they are
+        # safe to pass and never leak into sibling sessions.
+        try:
+            from tools.env_passthrough import get_plugin_credential_env
+            child_env.update(get_plugin_credential_env())
+        except Exception:
+            pass
         child_env["HERMES_RPC_SOCKET"] = sock_path
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Ensure the hermes-agent root is importable in the sandbox so
