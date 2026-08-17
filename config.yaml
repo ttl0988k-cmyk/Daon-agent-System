@@ -96,6 +96,7 @@ toolsets:
     - "image_gen"
     - "video_gen"
     - "memory"
+    - "plugin"
     - "session_search"
     - "skills"
     - "terminal"
