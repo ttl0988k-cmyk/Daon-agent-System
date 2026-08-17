@@ -120,6 +120,7 @@ def delegate_team(task: str, spawn_reason: str, acceptance_criteria: Optional[li
             get_current_delegation,
             check_delegation_guard,
             try_consume_spawn_budget,
+            get_delegation_log_callback,
         )
     except Exception as exc:
         return _refusal(f"Delegation subsystem unavailable: {exc}")
@@ -203,12 +204,27 @@ def delegate_team(task: str, spawn_reason: str, acceptance_criteria: Optional[li
             return tool_error(f"Failed to import HermesDynamicRunner: {exc}")
 
     # ── 7) 자식 실행 동기 수행 ──
+    # 갭 D-3: 부모 실행이 등록한 로그 콜백을 중계 레지스트리에서 조회한다.
+    # 자식 로그가 부모 잡의 로그 스트림으로 전달되어야 UI에 서브팀 카드가 생긴다.
+    parent_log_cb = None
+    try:
+        parent_log_cb = get_delegation_log_callback(parent_run_id)
+    except Exception:
+        parent_log_cb = None
+
     def log_callback(agent_name: str, content: str, status: str = "running"):
         try:
             print(f"[DelegateTeam:{child_run_id}] [{agent_name}] ({status}): "
                   f"{str(content).strip()}", flush=True)
         except Exception:
             pass
+        # 갭 D-3: 부모 스트림으로 중계 (서브팀 배지 접두어 부착).
+        # 전달 실패해도 자식 실행은 계속된다 (fail-open).
+        if parent_log_cb is not None:
+            try:
+                parent_log_cb(f"서브팀·{agent_name}", content, status)
+            except Exception:
+                pass
 
     try:
         print(f"[DelegateTeam] Spawning sub-team (run_id={child_run_id}, depth={depth + 1}, "

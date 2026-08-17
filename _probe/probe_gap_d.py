@@ -6,7 +6,8 @@
 3. 스폰 예산 카운터: 원자적 소비 / 고갈 / 리셋 / 스레드 로컬 격리
 4. dynamic_jobs.py 혈통 레지스트리 + 부모 취소의 서브트리 연쇄 취소
 5. delegate_team 도구: 스키마 / 거부 경로 / 자식 실행 해피패스 / 실패 폴백
-6. orchestrator / runner / compiler 소스 배선 확인
+6. 갭 D-3: 위임 로그 중계 레지스트리 시맨틱
+7. orchestrator / runner / compiler / 상태 API / 프론트 소스 배선 확인
 """
 import shutil
 import sys
@@ -185,6 +186,12 @@ delegation.set_current_delegation({
     "depth": 0,
     "run_dir": tmp_root,
 })
+# 갭 D-3: 부모 실행(probe_parent)의 중계 콜백을 등록해 두고,
+# 자식 실행의 로그가 "서브팀·" 접두어로 부모 스트림에 전달되는지 검증한다.
+parent_forwarded = []
+delegation.register_delegation_log_callback(
+    "probe_parent",
+    lambda agent, content, status="running": parent_forwarded.append((agent, content, status)))
 res = dtt.delegate_team("서브태스크 본문", "혼자 하기엔 규모가 큰 독립 분기 작업",
                         acceptance_criteria=["조건A가 충족되어야 한다"])
 assert res.get("delegated") is True, res
@@ -207,6 +214,15 @@ child_dir = captured_run.get("run_dir") or ""
 assert "delegated" in child_dir and Path(child_dir).is_dir(), child_dir
 assert dj.get_lineage(child_id) is None, "종료 후 혈통 기록이 정리되어야 한다"
 assert delegation.count_spawns("probe_root_happy") == 1
+# 갭 D-3: 자식 러너가 받은 log_callback을 호출하면 부모 중계 콜백이
+# "서브팀·" 접두어 agent_id로 로그를 받아야 한다 (UI 서브팀 카드 생성 재료).
+child_log_cb = captured_run.get("log_callback")
+assert callable(child_log_cb), "자식 실행은 log_callback을 받아야 한다"
+child_log_cb("Sherlock", "서브 로그 한 줄")
+assert parent_forwarded, "자식 로그가 부모 스트림으로 전달되어야 한다"
+assert parent_forwarded[-1][0] == "서브팀·Sherlock", parent_forwarded[-1]
+assert parent_forwarded[-1][1] == "서브 로그 한 줄"
+assert parent_forwarded[-1][2] == "running"
 
 # (g) 자식 실행 예외 → tool_error + 직접 처리 안내 (fail-open)
 class _BoomRunner:
@@ -219,6 +235,9 @@ res = dtt.delegate_team("서브태스크", "이유 있음")
 assert "error" in res and "Handle the subtask yourself" in res["error"], res
 delegation.clear_current_delegation()
 delegation.reset_spawn_budget("probe_root_happy")
+delegation.unregister_delegation_log_callback("probe_parent")
+assert delegation.get_delegation_log_callback("probe_parent") is None, \
+    "해제 후 중계 레지스트리에서 콜백이 제거되어야 한다"
 shutil.rmtree(tmp_root, ignore_errors=True)
 
 # (h) registry 핸들러 배선 + check_fn
@@ -243,7 +262,20 @@ assert captured_args.get("acceptance_criteria") == ["C1"]
 assert dtt.check_delegate_team_requirements() is True
 print("5. delegate_team tool OK")
 
-# ── 6. 소스 배선 확인 (orchestrator / runner / compiler) ──
+# ── 6. 위임 로그 중계 레지스트리 시맨틱 (갭 D-3) ──
+delegation.register_delegation_log_callback("probe_reg", lambda a, c, s="running": None)
+assert delegation.get_delegation_log_callback("probe_reg") is not None
+delegation.unregister_delegation_log_callback("probe_reg")
+assert delegation.get_delegation_log_callback("probe_reg") is None, "해제 후 조회되면 안 된다"
+assert delegation.get_delegation_log_callback("nonexistent_run") is None
+delegation.register_delegation_log_callback("", lambda a, c: None)
+assert delegation.get_delegation_log_callback("") is None, "빈 run_id 등록은 무시되어야 한다"
+delegation.register_delegation_log_callback("probe_reg2", "not_callable")
+assert delegation.get_delegation_log_callback("probe_reg2") is None, "callable이 아니면 무시"
+delegation.unregister_delegation_log_callback("")  # 예외 없이 통과해야 한다
+print("6. delegation log relay registry OK")
+
+# ── 7. 소스 배선 확인 (orchestrator / runner / compiler / 상태 API / 프론트) ──
 root = Path(__file__).resolve().parent.parent
 compiler_src = (root / "api" / "api" / "dynamic" / "compiler.py").read_text(encoding="utf-8")
 assert compiler_src.count('enabled_toolsets.append("delegation")') >= 2, \
@@ -255,6 +287,21 @@ orch_src = (root / "api" / "api" / "dynamic" / "orchestrator.py").read_text(enco
 assert "delegation_context" in orch_src
 assert 'mission_tracker["delegation"]' in orch_src
 assert "reset_spawn_budget" in orch_src
-print("6. orchestrator/runner/compiler wiring OK")
+# 갭 D-3 배선: orchestrator 등록/해제 + 도구 중계 + 상태 API 위임 트리 + 프론트 배너
+assert "register_delegation_log_callback" in orch_src, "orchestrator가 중계 콜백을 등록해야 한다"
+assert "unregister_delegation_log_callback" in orch_src, "orchestrator가 finally에서 해제해야 한다"
+dtt_src = (root / "hermes-agent" / "tools" / "delegate_team_tool.py").read_text(encoding="utf-8")
+assert "get_delegation_log_callback" in dtt_src, "도구가 부모 콜백을 조회해야 한다"
+assert "서브팀·" in dtt_src, "자식 로그에 서브팀 배지 접두어가 붙어야 한다"
+routes_src = (root / "api" / "api" / "routes" / "dynamic_routes.py").read_text(encoding="utf-8")
+assert "delegation_tree" in routes_src and "get_descendants" in routes_src, \
+    "상태 API가 delegation_tree를 구성해야 한다"
+harness_src = (root / "static" / "modules" / "harness.js").read_text(encoding="utf-8")
+assert "delegation_tree" in harness_src and "harnessDelegationBanner" in harness_src, \
+    "프론트가 위임 트리 배너를 렌더해야 한다"
+assert "서브팀·" in harness_src, "프론트가 서브팀 카드를 구분해야 한다"
+css_src = (root / "static" / "styles.css").read_text(encoding="utf-8")
+assert "harness-delegation-banner" in css_src and ".harness-agent-card.subteam" in css_src
+print("7. orchestrator/runner/compiler/status/frontend wiring OK")
 
 print("ALL GAP-D PROBES PASSED")

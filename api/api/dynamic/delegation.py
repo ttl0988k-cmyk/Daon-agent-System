@@ -115,3 +115,36 @@ def check_delegation_guard(ctx: dict | None, limits: dict, spawn_reason: str) ->
             "before delegating. Handle the subtask yourself or provide a reason."
         )
     return True, "ok"
+
+
+# ── 위임 로그 중계 레지스트리 (갭 D-3) ──
+# 각 실행(루트/자식)은 시작 시 자기 log_callback을 run_id 키로 등록한다.
+# delegate_team 도구는 부모 실행의 콜백을 여기서 조회해 자식 실행의 로그를
+# 부모 잡의 로그 스트림으로 전달한다. 그러면 UI(하네스 콘솔)에 서브팀
+# 에이전트들이 독립 카드로 표시된다. 실행 종료 시 반드시 해제한다.
+_LOG_CALLBACKS: dict = {}
+_LOG_CALLBACK_LOCK = threading.Lock()
+
+
+def register_delegation_log_callback(run_id: str, callback) -> None:
+    """실행의 로그 콜백을 중계 레지스트리에 등록한다 (run_id 키)."""
+    if not run_id or not callable(callback):
+        return
+    with _LOG_CALLBACK_LOCK:
+        _LOG_CALLBACKS[run_id] = callback
+
+
+def unregister_delegation_log_callback(run_id: str) -> None:
+    """실행 종료 시 중계 레지스트리에서 콜백을 제거한다 (메모리 잔존 방지)."""
+    if not run_id:
+        return
+    with _LOG_CALLBACK_LOCK:
+        _LOG_CALLBACKS.pop(run_id, None)
+
+
+def get_delegation_log_callback(run_id: str):
+    """run_id에 등록된 로그 콜백을 반환한다. 없으면 None (fail-open)."""
+    if not run_id:
+        return None
+    with _LOG_CALLBACK_LOCK:
+        return _LOG_CALLBACKS.get(run_id)

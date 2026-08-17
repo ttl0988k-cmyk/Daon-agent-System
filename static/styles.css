@@ -1906,6 +1906,54 @@
       text-transform: none;
     }
 
+    /* ── 갭 D-3: 서브팀(위임 자식) 카드 + 위임 트리 배너 ──
+       서브팀 카드는 🤝 배지·들여쓰기·점선 테두리로 부모 조직과 구분한다. */
+    .harness-agent-card.subteam {
+      margin-left: 18px;
+      border-left-style: dashed;
+    }
+
+    .agent-label.subteam {
+      color: var(--warning);
+    }
+
+    .subteam-badge {
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .harness-delegation-banner {
+      margin: 6px 0;
+      padding: 8px 10px;
+      border: 1px solid var(--warning);
+      border-left: 3px solid var(--warning);
+      border-radius: 6px;
+      background: rgba(245, 158, 11, .07);
+    }
+
+    .delegation-banner-title {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--warning);
+      letter-spacing: .3px;
+    }
+
+    .delegation-banner-reasons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    .delegation-reason-chip {
+      font-size: 10.5px;
+      color: var(--text2);
+      background: rgba(255, 255, 255, .06);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2px 8px;
+    }
+
     .harness-agent-card-body {
       padding: 8px 10px;
       font-size: 12px;

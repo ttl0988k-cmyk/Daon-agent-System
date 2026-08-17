@@ -1,7 +1,7 @@
 # 계획: DAON 비전 — 자기 구성·자기 치유 다이나믹 하네스 완성
 
 **작성일:** 2026-08-17
-**상태:** ✅ 갭 B → C → A 전부 시공·검증 완료 (세부 기록은 8절) / ✅ 갭 D-1 시공·검증 완료 (세부 기록은 9절)
+**상태:** ✅ 갭 B → C → A 전부 시공·검증 완료 (세부 기록은 8절) / ✅ 갭 D-1 시공·검증 완료 (세부 기록은 9절) / ✅ 갭 D-3 시공·검증 완료 (세부 기록은 10절)
 **세션 인계용 문서** — 이전 세션에서 비전 토론 + 코드 검증 완료, 새 세션에서 이 문서로 이어간다.
 
 ---
@@ -114,7 +114,7 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
    — **B가 시공돼 있어야 "새 MCP 투입"도 가능** (B → C 순서의 이유)
 4. 무한 루프 방지: 최대 재시도 횟수(예: 2회) + 재시도마다 개선 증거 요구
 
-### 갭 D — 재귀적 위임 (하위 에이전트가 다시 하위 에이전트를 호출) ✅ D-1 시공 완료
+### 갭 D — 재귀적 위임 (하위 에이전트가 다시 하위 에이전트를 호출) ✅ D-1·D-3 시공 완료
 
 대표님 비전: CEO → Agent A → A가 자기 서브팀(A-1/A-2)을 다시 구성하는 트리형 조직.
 권한 위임이 핵심 개념이며, 갭 B의 자원 축이 아래로 전달되고 갭 C 검증 게이트가
@@ -135,7 +135,8 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
   `delegation.max_depth` 값을 읽으므로, 실사용 중 깊이 2가 꼭 필요한 사례가
   나오면 설정값만 1 → 2로 올리면 된다 (재시공 불필요).
   남은 D-2 가치 중 깊이와 무관한 부분: 자원 축(token/time 예산)의 하위 배분.
-- **D-3 (향후)**: UI에서 위임 트리 관측성 (혈통 시각화)
+- **D-3 (완료)**: UI에서 위임 트리 관측성 — 자식 실행 로그를 부모 잡 스트림으로 중계해
+  서브팀 에이전트가 독립 카드로 표시되고, 콘솔 상단에 위임 트리 배너가 뜬다 (10절 참조)
 
 ---
 
@@ -210,6 +211,7 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 - [x] 갭 C 시공: clarifier 수용 기준 추출 → 검증 에이전트 → 재계획 루프
 - [x] 갭 A: 챗 경로 수용 기준 배선 (시공 완료 — 8절 참조)
 - [x] 갭 D-1: 재귀적 위임 통치 구조 시공 (시공 완료 — 9절 참조)
+- [x] 갭 D-3: 위임 트리 관측성 — 로그 중계 + 위임 트리 배너 (시공 완료 — 10절 참조)
 - [ ] MiniMax 수정 실사용 검증: 앱 실행 후 `%APPDATA%\daon-agent-system\server.log`에서
       `[webui-debug] fallback_resolved ... api_key=set` 확인, 400/401 소멸 확인
 - [ ] 재빌드: git push 후 `_sync_build.py` + PyInstaller + electron-builder 실행,
@@ -285,3 +287,38 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 - `_probe/probe_gap_d.py` — ALL GAP-D PROBES PASSED
   (limits 블록 / 가드 시맨틱 / 예산 카운터+스레드 격리 / 혈통+취소 연쇄 /
    도구 거부·해피패스·실패 폴백 / 소스 배선 확인)
+
+---
+
+## 10. 갭 D-3 시공 완료 기록 (2026-08-17)
+
+위임 트리 관측성: 자식 실행이 부모 잡의 로그 스트림으로 중계되어, 하네스 콘솔에
+서브팀 에이전트들이 독립 카드로 뜨고 콘솔 상단에 위임 트리 배너가 표시된다.
+
+### 시공 내용
+1. `api/api/dynamic/delegation.py`: 위임 로그 중계 레지스트리 추가
+   (`register/unregister/get_delegation_log_callback` — run_id 키, 스레드 안전,
+   실행 종료 시 해제해 메모리 잔존 방지)
+2. `api/api/dynamic/orchestrator.py`: 실행 시작 시 자기 `log_callback`을 레지스트리에
+   등록 (루트·위임 자식 모두), finally에서 해제
+3. `hermes-agent/tools/delegate_team_tool.py`: 자식 실행 전 부모의 중계 콜백을 조회,
+   자식 로그를 `서브팀·{agent_name}` 접두어로 부모 스트림에 전달 (fail-open).
+   와이어 형식은 cp949 콘솔 안전을 위해 이모지 없이 한글 중간점 사용
+4. `api/api/routes/dynamic_routes.py`: 상태 응답에 `delegation_tree` 추가
+   (`get_descendants` + `get_lineage` — 자식 실행은 부모 노드 스레드에서 동기 수행되므로
+   혈통 등록 존재 자체가 "실행 중" 의미, 종료 시 finally에서 정리되어 자동 소멸)
+5. `static/modules/harness.js`:
+   - 전달된 로그가 `[서브팀·X] content` 형식이므로 기존 `routeLogToCard`가 자동으로
+     서브팀 카드를 생성 (카드 생성 코드 변경 불필요)
+   - `getAgentClass`/`getAgentLabel`이 `서브팀·` 접두어를 인식, 카드에 🤝 배지 부착
+   - `_renderDelegationBanner`: 폴링마다 `delegation_tree`로 콘솔 상단 배너 갱신
+     (활성 서브팀 수 + spawn_reason 칩, `esc()`로 이스케이프), 트리 소멸 시 배너 제거
+   - `cleanupHarnessState`에서 배너 제거
+6. `static/styles.css`: `.harness-agent-card.subteam` (들여쓰기·점선 테두리·경고색 라벨)
+   + `.harness-delegation-banner` (경고색 배너 + 사유 칩)
+
+### 검증
+- 4개 백엔드 파일 py_compile 통과
+- `_probe/probe_gap_d.py` 확장 — ALL GAP-D PROBES PASSED
+  (중계 레지스트리 시맨틱 / 해피패스에서 자식 로그가 `서브팀·` 접두어로 부모 콜백에
+   전달되는지 / orchestrator·도구·상태 API·프론트 소스 배선 확인)

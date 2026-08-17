@@ -481,6 +481,16 @@ class HermesDynamicRunner:
         delegation_context["run_dir"] = str(run_dir)
         mission_tracker["delegation"] = delegation_context
 
+        # ── 갭 D-3: 위임 로그 중계 등록 ──
+        # 자식 실행(delegate_team)이 부모의 로그 스트림으로 로그를 전달할 수 있도록
+        # 이 실행의 log_callback을 run_id 키로 레지스트리에 등록한다. 종료 시 finally에서 해제.
+        if callable(log_callback):
+            try:
+                from api.dynamic.delegation import register_delegation_log_callback
+                register_delegation_log_callback(run_id, log_callback)
+            except Exception:
+                pass
+
         _log.info("Starting dynamic compilation run (ID: %s) for task: '%s'", run_id, task)
 
         final_output = ""
@@ -950,6 +960,13 @@ class HermesDynamicRunner:
                     reset_spawn_budget(run_id)
                 except Exception:
                     pass
+
+            # 갭 D-3: 위임 로그 중계 레지스트리 해제 (메모리 잔존 방지).
+            try:
+                from api.dynamic.delegation import unregister_delegation_log_callback
+                unregister_delegation_log_callback(run_id)
+            except Exception:
+                pass
 
             # Save output physically to workspace
             try:

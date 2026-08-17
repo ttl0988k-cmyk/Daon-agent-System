@@ -160,6 +160,8 @@ function switchMode(mode) {
 }
 
 function getAgentClass(agentId) {
+  // 갭 D-3: "서브팀·" 접두어 에이전트는 위임 자식(서브팀) 카드로 구분한다.
+  if (agentId.startsWith('서브팀·')) return 'subteam';
   const idLower = agentId.toLowerCase();
   if (idLower.includes('ceo')) return 'ceo';
   if (idLower.includes('planner')) return 'planner';
@@ -172,6 +174,13 @@ function getAgentClass(agentId) {
 }
 
 function getAgentLabel(agentId) {
+  // 갭 D-3: 서브팀 에이전트 ID는 "서브팀·AgentName" 형식 — 정규식이 중간점 '·'에서
+  // 멈추므로, 접두어를 유지하면서 실제 에이전트 이름까지 함께 보여준다.
+  if (agentId.startsWith('서브팀·')) {
+    const rest = agentId.slice('서브팀·'.length);
+    const sub = rest.match(/^([A-Za-z0-9_가-힣ㄱ-ㅎㅏ-ㅣ]+)/);
+    return '서브팀·' + (sub ? sub[1].toUpperCase() : rest);
+  }
   const match = agentId.match(/^([A-Za-z0-9_가-힣ㄱ-ㅎㅏ-ㅣ]+)/);
   return match ? match[1].toUpperCase() : agentId;
 }
@@ -189,10 +198,13 @@ function getOrCreateAgentCard(agentId) {
   const consoleEl = $('harnessConsole');
   if (!consoleEl) return null;
   cardEl = document.createElement('div');
-  cardEl.className = 'harness-agent-card status-running';
+  // 갭 D-3: 서브팀 카드는 'subteam' 클래스로 구분 (들여쓰기/점선 테두리/🤝 배지).
+  const isSubteam = agentId.startsWith('서브팀·');
+  cardEl.className = 'harness-agent-card status-running' + (isSubteam ? ' subteam' : '');
   cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const modelTag = getAgentModel(agentId) ? `<span class="agent-model-tag">${getAgentModel(agentId)}</span>` : '';
-  cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}"><span class="status-dot"></span>${getAgentLabel(agentId)}${modelTag}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body"></div>`;
+  const subteamBadge = isSubteam ? '<span class="subteam-badge">🤝</span>' : '';
+  cardEl.innerHTML = `<div class="harness-agent-card-header" onclick="toggleAgentCard(this)"><span class="agent-label ${getAgentClass(agentId)}"><span class="status-dot"></span>${subteamBadge}${getAgentLabel(agentId)}${modelTag}</span><span class="toggle-icon">▼</span></div><div class="harness-agent-card-body"></div>`;
   consoleEl.appendChild(cardEl);
   State.harnessAgentCards[agentId] = cardEl;
   scrollToHarnessBottom();
@@ -245,6 +257,34 @@ function routeLogToCard(msg, type) {
 function toggleAgentCard(headerEl) {
   const card = headerEl.closest('.harness-agent-card');
   if (card) card.classList.toggle('collapsed');
+}
+
+// ── 갭 D-3: 위임 트리 배너 ──
+// 상태 API의 delegation_tree(활성 서브트리)를 콘솔 상단 배너로 표시한다.
+// 자식 실행은 부모 노드 안에서 동기 수행되므로, 트리가 비면(종료/미위임) 배너를 제거한다.
+function _renderDelegationBanner(tree) {
+  const consoleEl = $('harnessConsole');
+  if (!consoleEl) return;
+  let bannerEl = document.getElementById('harnessDelegationBanner');
+  const nodes = Array.isArray(tree) ? tree : [];
+  if (nodes.length === 0) {
+    if (bannerEl) bannerEl.remove();
+    return;
+  }
+  if (!bannerEl) {
+    bannerEl = document.createElement('div');
+    bannerEl.id = 'harnessDelegationBanner';
+    bannerEl.className = 'harness-delegation-banner';
+    consoleEl.insertBefore(bannerEl, consoleEl.firstChild);
+  }
+  const reasons = nodes
+    .map((n) => (n && n.spawn_reason) || '')
+    .filter((r, idx, arr) => r && arr.indexOf(r) === idx);
+  const reasonHtml = reasons.length > 0
+    ? `<div class="delegation-banner-reasons">${reasons.map((r) => `<span class="delegation-reason-chip">${esc(r)}</span>`).join('')}</div>`
+    : '';
+  bannerEl.innerHTML =
+    `<div class="delegation-banner-title">🤝 위임 트리 활성 — 서브팀 ${nodes.length}개 실행 중</div>${reasonHtml}`;
 }
 
 function scrollToHarnessBottom() {
@@ -347,6 +387,9 @@ async function pollHarnessStatus(runId) {
           updateCardStatus(agentId, card.log_status || 'running');
         });
       }
+
+      // ── 갭 D-3: 위임 트리 배너 (활성 서브팀 요약) ──
+      _renderDelegationBanner(res.delegation_tree || []);
 
       // ── [E] 자동 승인 감지: awaiting_approval 상태였는데 사용자 클릭 없이
       // 풀렸으면 백엔드가 45초 무응답 후 자동 승인한 것이다. 대화형 카드를
@@ -566,6 +609,11 @@ function cleanupHarnessState() {
     });
   }
   State.harnessAgentCards = {};
+  // 갭 D-3: 위임 트리 배너 제거.
+  try {
+    const bannerEl = document.getElementById('harnessDelegationBanner');
+    if (bannerEl) bannerEl.remove();
+  } catch (e) { }
   if (State.harnessPollInterval) {
     clearInterval(State.harnessPollInterval);
     State.harnessPollInterval = null;

@@ -124,6 +124,26 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
         "agent_cards": agent_cards,
     }
 
+    # ── 갭 D-3: 위임 트리 (활성 서브트리) ──
+    # 자식 실행은 별도 잡이 아니라 부모 노드 스레드 안에서 동기 실행되므로
+    # 혈통 등록 존재 자체가 "실행 중"을 의미한다 (종료 시 finally에서 정리됨).
+    delegation_tree = []
+    try:
+        from api.dynamic_jobs import get_descendants, get_lineage
+        for desc_id in get_descendants(run_id):
+            lin = get_lineage(desc_id) or {}
+            delegation_tree.append({
+                "run_id": desc_id,
+                "parent_run_id": lin.get("parent_run_id", ""),
+                "depth": lin.get("depth", 0),
+                "spawn_reason": lin.get("spawn_reason", ""),
+                "status": "running",
+            })
+    except Exception:
+        delegation_tree = []
+    if delegation_tree:
+        resp["delegation_tree"] = delegation_tree
+
     if frontend_status == "completed":
         resp["result"] = job.get("result", "")
     elif frontend_status == "failed":
