@@ -1509,9 +1509,17 @@ from api.routes.mobile_routes import (
 
 from api.routes.plugin_routes import (
 
+    handle_get_plugin_credentials,
+
+    handle_get_plugin_credentials_pending,
+
     handle_get_plugins,
 
     handle_get_plugins_state,
+
+    handle_post_plugin_credentials_remove,
+
+    handle_post_plugin_credentials_set,
 
     handle_post_plugin_disable,
 
@@ -3032,6 +3040,18 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == '/api/plugins/state':
         return handle_get_plugins_state(handler, parsed)
+
+    # /api/plugins/credentials/pending 은 /api/plugins/{name} 패턴보다 먼저 매칭되어야 한다.
+    if parsed.path == '/api/plugins/credentials/pending':
+        return handle_get_plugin_credentials_pending(handler, parsed)
+
+    # GET /api/plugins/{name}/credentials — 자격증명 설정 상태
+    if parsed.path.startswith('/api/plugins/'):
+        rest = parsed.path[len('/api/plugins/'):]
+        parts = rest.split('/')
+        if len(parts) == 2 and parts[1] == 'credentials':
+            plugin_name = parts[0]
+            return handle_get_plugin_credentials(handler, parsed, plugin_name)
 
     _logger.debug("No GET route matched for: %s", parsed.path)
     return False  # 404
@@ -5533,6 +5553,11 @@ def handle_post(handler, parsed) -> bool:
                 return handle_post_plugin_session(handler, body, plugin_name)
             if action == 'remove':
                 return handle_post_plugin_remove(handler, body, plugin_name)
+            if action == 'credentials':
+                return handle_post_plugin_credentials_set(handler, body, plugin_name)
+        if len(parts) == 3 and parts[1] == 'credentials' and parts[2] == 'remove':
+            # POST /api/plugins/{name}/credentials/remove
+            return handle_post_plugin_credentials_remove(handler, body, parts[0])
 
     return False  # 404
 

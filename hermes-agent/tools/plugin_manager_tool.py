@@ -12,6 +12,10 @@ Allows the DAON agent to manage external plugins at runtime:
   plugin_create  -- Scaffold a brand-new plugin (plugin.yaml + SKILL.md template)
                     and register it immediately, so the agent can grow its own
                     plugin ecosystem straight from a conversation.
+  plugin_set_secret -- Inspect / request / remove a plugin API credential. The
+                    agent NEVER receives or stores the secret value itself; it
+                    only registers a pending request that the UI secure input
+                    fulfils, so the user keeps full control over the key value.
 
 Plugins are the agent's composable capability packs: each one can carry
 skills (procedural knowledge), MCP servers, extra tools, and hooks.  The
@@ -197,11 +201,17 @@ def _plugin_create(
     skill_name: Optional[str] = None,
     skill_description: Optional[str] = None,
     skill_content: Optional[str] = None,
+    secrets: Optional[list] = None,
 ) -> dict:
     """Scaffold a brand-new plugin (plugin.yaml + SKILL.md) and register it.
 
     todo-15 path: the agent authors its own plugin from a conversation and
     it becomes usable immediately (globally ON, skills/tools/MCP synced).
+
+    ``secrets`` optionally declares the API keys this plugin needs as a list of
+    strings ('GITHUB_TOKEN') or dicts ({'name': ..., 'description': ...}). The
+    agent never stores their values — the user enters them via the UI secure
+    input once the plugin is used.
     """
     name = (name or "").strip()
     err = _validate_name(name)
@@ -219,6 +229,22 @@ def _plugin_create(
     author_clean = (author or "").replace("\n", " ").strip()
     ver = (version or "0.1.0").strip()
 
+    # secrets → plugin.yaml 'secrets:' 블록 (문자열 또는 {name, description} dict)
+    secrets_lines: list[str] = []
+    for s in (secrets or []):
+        if isinstance(s, dict):
+            s_name = str(s.get("name") or "").strip()
+            s_desc = str(s.get("description") or "").strip()
+        else:
+            s_name = str(s or "").strip()
+            s_desc = ""
+        if not s_name:
+            continue
+        secrets_lines.append(f"  - name: {s_name}")
+        if s_desc:
+            secrets_lines.append(f"    description: {s_desc}")
+    secrets_block = ("secrets:\n" + "\n".join(secrets_lines) + "\n") if secrets_lines else ""
+
     plugin_yaml = (
         "name: {name}\n"
         "version: {version}\n"
@@ -227,12 +253,14 @@ def _plugin_create(
         "skills:\n"
         "  - name: {skill_name}\n"
         "    path: skills/{skill_name}\n"
+        "{secrets_block}"
     ).format(
         name=name,
         version=ver,
         description=desc,
         author=author_clean,
         skill_name=skill_name,
+        secrets_block=secrets_block,
     )
 
     skill_desc = (
@@ -276,6 +304,75 @@ def _plugin_create(
         return result
     except Exception as exc:
         return {"error": f"Failed to scaffold plugin '{name}': {exc}"}
+
+
+def _plugin_set_secret(
+    plugin: str,
+    action: str = "status",
+    key: str = "",
+    session_id: str = "",
+) -> dict:
+    """Inspect / request / remove a plugin API credential.
+
+    Security model (role separation): the agent only manages *which* credential
+    is needed — it never receives or stores the secret value. ``request``
+    registers a pending credential request that the user fulfils through the UI
+    secure input; ``status`` reports set/unset state only (values never leave
+    the Credential Store); ``remove`` deletes a stored key.
+    """
+    plugin = (plugin or "").strip()
+    if not plugin:
+        return {"error": "plugin is required."}
+    action = (action or "status").strip().lower()
+    if action not in ("status", "request", "remove"):
+        return {
+            "error": f"Invalid action {action!r}. Use one of: status, request, remove."
+        }
+
+    pg = _gateway_required()
+    try:
+        if action == "status":
+            info = pg.get_plugin_credential_status(plugin)
+            return {
+                "ok": True,
+                "plugin": plugin,
+                "authenticated": bool(info.get("authenticated")),
+                "secrets": info.get("secrets", []),
+                "note": "Values are never returned. Only the set/unset state is reported.",
+            }
+
+        if action == "request":
+            key = (key or "").strip()
+            if not key:
+                return {"error": "key is required for action='request'."}
+            result = pg.request_plugin_credential(
+                plugin, key, session_id=(session_id or "")
+            )
+            return {
+                "ok": True,
+                "plugin": plugin,
+                "key": key,
+                "requested": True,
+                "message": (
+                    "A credential request has been registered. Ask the user to "
+                    "enter the value in the UI secure input — do NOT ask them to "
+                    "paste the value here, and never accept it in chat."
+                ),
+                "detail": result,
+            }
+
+        # action == "remove"
+        key = (key or "").strip()
+        if not key:
+            return {"error": "key is required for action='remove'."}
+        removed = pg.delete_plugin_credential(plugin, key)
+        if not removed:
+            return {
+                "error": f"No stored credential '{key}' found for plugin '{plugin}'."
+            }
+        return {"ok": True, "plugin": plugin, "key": key, "removed": True}
+    except Exception as exc:
+        return {"error": f"plugin_set_secret failed: {exc}"}
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +477,52 @@ PLUGIN_CREATE_SCHEMA = {
                 "otherwise). Edit it later via the skill_manage tool."
             ),
         },
+        "secrets": {
+            "type": "array",
+            "description": (
+                "Optional API-key declarations written to the plugin.yaml 'secrets' "
+                "block. Each entry is a string ('GITHUB_TOKEN') or an object "
+                "{'name': ..., 'description': ...}. Values are entered by the user "
+                "via the UI secure input; the agent never receives them."
+            ),
+            "items": {"type": ["string", "object"]},
+        },
     },
     "required": ["name"],
+}
+
+PLUGIN_SET_SECRET_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "plugin": {
+            "type": "string",
+            "description": "Plugin name (from plugin_list).",
+        },
+        "action": {
+            "type": "string",
+            "enum": ["status", "request", "remove"],
+            "description": (
+                "'status' reports which secret keys are set (default; never returns values). "
+                "'request' registers a pending request so the user enters the value via the "
+                "UI secure input — the agent never receives the value. "
+                "'remove' deletes a stored key."
+            ),
+        },
+        "key": {
+            "type": "string",
+            "description": (
+                "Secret key name declared in the plugin's plugin.yaml 'secrets' block "
+                "(e.g. GITHUB_TOKEN). Required for action='request' and action='remove'."
+            ),
+        },
+        "session_id": {
+            "type": "string",
+            "description": (
+                "Optional session/tab id to associate with a pending credential request."
+            ),
+        },
+    },
+    "required": ["plugin", "action"],
 }
 
 
@@ -442,7 +583,26 @@ registry.register(
         author=args.get("author", ""),
         skill_name=args.get("skill_name"),
         skill_description=args.get("skill_description"),
-        skill_content=args.get("skill_content"))),
+        skill_content=args.get("skill_content"),
+        secrets=args.get("secrets"))),
     emoji="🔌",
     description="Scaffold a brand-new plugin (plugin.yaml + SKILL.md) and register it immediately.",
+)
+
+registry.register(
+    name="plugin_set_secret",
+    toolset="plugin",
+    schema=PLUGIN_SET_SECRET_SCHEMA,
+    handler=lambda args, **kw: _result(_plugin_set_secret(
+        plugin=args.get("plugin", ""),
+        action=args.get("action", "status"),
+        key=args.get("key", ""),
+        session_id=args.get("session_id", ""))),
+    emoji="🔑",
+    description=(
+        "Inspect, request, or remove a plugin API credential. The agent never "
+        "receives or stores secret values: 'request' asks the user to enter the "
+        "value in the UI secure input, 'status' reports set/unset state only, "
+        "'remove' deletes a stored key."
+    ),
 )

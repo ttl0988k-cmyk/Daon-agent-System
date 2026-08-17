@@ -155,6 +155,25 @@ def normalize_plugin_manifest(manifest: dict, plugin_dir: Path) -> dict:
 
     hooks = [str(h) for h in (manifest.get("hooks", []) or []) if str(h).strip()]
 
+    # secrets: 플러그인이 필요로 하는 자격증명 키 목록.
+    #   secrets:
+    #     - name: GITHUB_TOKEN
+    #       description: GitHub 개인 액세스 토큰
+    #     - name: OPENAI_API_KEY
+    #       description: OpenAI API 키
+    # 값은 절대 이 매니페스트에 저장하지 않는다 — 별도 Credential Store 사용.
+    secrets = []
+    for s in manifest.get("secrets", []) or []:
+        if isinstance(s, dict):
+            sname = str(s.get("name") or "").strip()
+            if sname:
+                secrets.append({
+                    "name": sname,
+                    "description": str(s.get("description") or "").strip(),
+                })
+        elif isinstance(s, str) and s.strip():
+            secrets.append({"name": s.strip(), "description": ""})
+
     return {
         "name": name,
         "version": str(manifest.get("version", "")),
@@ -164,6 +183,7 @@ def normalize_plugin_manifest(manifest: dict, plugin_dir: Path) -> dict:
         "mcp": mcp,
         "tools": tools,
         "hooks": hooks,
+        "secrets": secrets,
         "path": str(plugin_dir.resolve()),
     }
 
@@ -334,6 +354,8 @@ def sync_plugin_skill_env() -> None:
     - ``_sync_plugin_tool_env``: 플러그인 툴/훅/명령을 Hermes 툴 레지스트리에
       노출 (``DAON_PLUGIN_DIRS`` / ``DAON_PLUGIN_ENABLED`` + force 재디스커버)
     - ``_sync_plugin_mcp_servers``: 플러그인 MCP 서버를 기존 MCP 매니저에 연결
+    - ``_sync_plugin_credentials_env``: 플러그인 자격증명 → 환경변수/샌드박스
+      passthrough 주입
     """
     try:
         _sync_plugin_skill_env()
@@ -343,6 +365,7 @@ def sync_plugin_skill_env() -> None:
     # (예: 서버 재시작 후 MCP 매니저가 비어 있는데 env var 는 이미 설정된 경우).
     _sync_plugin_tool_env()
     _sync_plugin_mcp_servers()
+    _sync_plugin_credentials_env()
 
 
 # ---------------------------------------------------------------------------
@@ -579,9 +602,162 @@ def remove_plugin(plugin_name: str) -> bool:
         state["sessions"][sid] = [p for p in state["sessions"].get(sid, []) if p != plugin_name]
     from api.plugin_state import _save_state
     _save_state(state)
+    # 자격증명 정리 (저장된 API 키 등도 함께 삭제)
+    try:
+        from api.plugin_credentials import delete_plugin_credentials
+        delete_plugin_credentials(plugin_name)
+    except Exception as exc:
+        _logger.debug("credential cleanup skipped for %s: %s", plugin_name, exc)
     # 외부 스킬 노출 동기화 (삭제된 플러그인 제거)
     sync_plugin_skill_env()
     return True
+
+
+# ---------------------------------------------------------------------------
+# 플러그인 자격증명 (secrets) — Credential Store 연동
+#
+# 역할 분리: 사용자가 UI secure input 으로 값을 저장하고, 에이전트는
+# '어떤 키가 필요한지'만 요청/조회한다.  값은 절대 로그/HTTP 응답/프롬프트에
+# 노출되지 않는다.
+# ---------------------------------------------------------------------------
+
+
+def _plugin_secret_keys(plugin: dict) -> list[str]:
+    """정규화된 플러그인 매니페스트에서 secrets 키 이름 목록을 추출한다."""
+    return [str(s.get("name") or "").strip() for s in (plugin.get("secrets") or []) if s]
+
+
+def _sync_plugin_credentials_env() -> None:
+    """전역 활성 플러그인의 secrets 를 환경변수/샌드박스 passthrough 에 주입한다.
+
+    - 각 secret 키를 ``os.environ`` 에 세팅한다 (값이 설정된 경우만).
+    - ``tools.env_passthrough.register_env_passthrough`` 로 샌드박스(코드 실행/
+      터미널)에 전달되도록 등록한다.  이미 등록된 키는 중복 등록되지 않는다.
+
+    값이 이미 환경변수에 있는 키는 덮어쓰지 않는다 (우선순위: 사용자 env).
+    """
+    try:
+        from api.plugin_credentials import get_credential
+
+        enabled = [p for p in list_installed_plugins() if p.get("enabled")]
+        var_names: list[str] = []
+        for p in enabled:
+            for key in _plugin_secret_keys(p):
+                if not key:
+                    continue
+                value = get_credential(str(p.get("name") or ""), key)
+                if value:
+                    os.environ.setdefault(key, value)
+                    var_names.append(key)
+
+        if var_names:
+            try:
+                from tools.env_passthrough import register_env_passthrough
+                register_env_passthrough(var_names)
+            except Exception as exc:
+                _logger.debug("env_passthrough registration skipped: %s", exc)
+    except Exception as exc:
+        _logger.warning("sync plugin credentials env failed: %s", exc)
+
+
+def get_plugin_credential_status(plugin_name: str) -> dict:
+    """플러그인 secrets 의 설정 여부 목록 (값 자체는 반환하지 않는다).
+
+    반환:
+        {
+          "authenticated": bool,          # 모든 필수 키 설정됨
+          "secrets": [                    # manifest 의 secrets
+             {"name": "...", "description": "...", "set": bool}
+          ]
+        }
+    """
+    plugin = get_plugin(plugin_name)
+    if plugin is None:
+        return {"authenticated": False, "secrets": [], "error": "not_found"}
+    keys = _plugin_secret_keys(plugin)
+    status = {}
+    if keys:
+        try:
+            from api.plugin_credentials import get_credential_status
+            status = get_credential_status(plugin_name, keys)
+        except Exception as exc:
+            _logger.warning("credential status lookup failed: %s", exc)
+    secrets = [
+        {
+            "name": s.get("name"),
+            "description": s.get("description", ""),
+            "set": bool(status.get(s.get("name"), False)),
+        }
+        for s in (plugin.get("secrets") or [])
+    ]
+    authenticated = bool(keys) and all(status.get(k, False) for k in keys)
+    return {"authenticated": authenticated, "secrets": secrets}
+
+
+def list_pending_credentials() -> list[dict]:
+    """미해결 자격증명 요청 목록 (plugin/key/session_id 만, 값 없음)."""
+    try:
+        from api.plugin_credentials import list_pending
+        return list_pending()
+    except Exception as exc:
+        _logger.warning("list pending credentials failed: %s", exc)
+        return []
+
+
+def request_plugin_credential(
+    plugin_name: str, key: str, session_id: str = ""
+) -> dict:
+    """Agent 가 '이 키가 필요하다'고 요청을 등록한다 (값은 받지 않는다).
+
+    UI 는 이 요청을 감지해 secure input 을 띄우고, 사용자가 입력하면
+    pending 이 해소된다.
+    """
+    plugin = get_plugin(plugin_name)
+    if plugin is None:
+        return {"ok": False, "error": f"Plugin '{plugin_name}' not found"}
+    if not key or not _plugin_secret_keys(plugin):
+        return {
+            "ok": False,
+            "error": (
+                f"Plugin '{plugin_name}' declares no secrets in plugin.yaml. "
+                "No credential is required."
+            ),
+        }
+    if key not in _plugin_secret_keys(plugin):
+        return {
+            "ok": False,
+            "error": (
+                f"'{key}' is not a declared secret of plugin '{plugin_name}'. "
+                f"Declared: {_plugin_secret_keys(plugin)}"
+            ),
+        }
+    try:
+        from api.plugin_credentials import add_pending
+        added = add_pending(plugin_name, key, session_id or "")
+        return {
+            "ok": True,
+            "name": plugin_name,
+            "key": key,
+            "registered": added,
+            "message": (
+                "사용자에게 인증정보 입력을 요청했습니다. UI의 인증정보 관리에서 "
+                "입력하면 즉시 활성화됩니다."
+                if added else
+                "해당 키는 이미 입력 대기 중이거나 설정되어 있습니다."
+            ),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"Failed to register request: {exc}"}
+
+
+def delete_plugin_credential(plugin_name: str, key: str) -> bool:
+    """저장된 자격증명 하나를 삭제한다 (UI/툴에서 호출)."""
+    try:
+        from api.plugin_credentials import delete_credential
+        return delete_credential(plugin_name, key)
+    except Exception as exc:
+        _logger.warning("delete credential failed: %s", exc)
+        return False
 
 
 def _invalidate_cache() -> None:
