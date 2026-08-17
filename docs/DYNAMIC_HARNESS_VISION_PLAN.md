@@ -1,7 +1,7 @@
 # 계획: DAON 비전 — 자기 구성·자기 치유 다이나믹 하네스 완성
 
 **작성일:** 2026-08-17
-**상태:** 대표님 승인 대기 (B → C 순서 시공 제안)
+**상태:** ✅ 갭 B → C → A 전부 시공·검증 완료 (세부 기록은 8절)
 **세션 인계용 문서** — 이전 세션에서 비전 토론 + 코드 검증 완료, 새 세션에서 이 문서로 이어간다.
 
 ---
@@ -68,7 +68,7 @@ DAON은 겁나지 않는 도구를 목표로 한다.
 
 ## 3. 남은 갭 (검증 후 확정)
 
-### 갭 A — 챗 경로 도구가 구조화된 clarifier를 거치지 않음 (작은 배선 작업)
+### 갭 A — 챗 경로 도구가 구조화된 clarifier를 거치지 않음 (작은 배선 작업) ✅ 시공 완료
 
 - `dynamic_harness_tool.py:145`의 `runner.run(task=..., forced_skills=...)` 호출에
   run_id/clarification 파라미터가 없음.
@@ -77,8 +77,11 @@ DAON은 겁나지 않는 도구를 목표로 한다.
 - 시공 시: 도구 경로에 clarifier 옵션을 걸거나, 에이전트 시스템 프롬프트에
   "하네스 호출 전 확인해야 할 체크리스트"를 명시화.
 - **우선순위 낮음. B·C가 먼저.**
+- ✅ **시공 완료**: 도구 스키마에 `acceptance_criteria` 파라미터 + 사전 점검 체크리스트 추가,
+  `_ensure_acceptance_criteria()`가 챗 경로에서도 수용 기준 섹션을 보장해 갭 C 검증 루프가 동작한다.
+  `_probe/probe_gap_a.py`로 검증 (ALL GAP-A PROBES PASSED).
 
-### 갭 B — CEO의 선택지에 MCP/Plugin/실행환경 축이 없음 ★시공 1순위
+### 갭 B — CEO의 선택지에 MCP/Plugin/실행환경 축이 없음 ★시공 1순위 ✅ 시공 완료
 
 현재 `HermesPlanner`가 고르는 것은 **Skill / Role(노드) / Model** 3축뿐.
 MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**되는 구조라,
@@ -92,7 +95,7 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 3. 노드 컴파일(`compiler.py` AgentCompiler JIT) 시 선택된 MCP만 해당 노드에 바인딩
 4. 실행환경 선택은 최소한 "로컬 워크스페이스 / 격리 임시 디렉터리" 2단계부터 시작
 
-### 갭 C — 자기 치유 대루프 미완성 ★시공 2순위
+### 갭 C — 자기 치유 대루프 미완성 ★시공 2순위 ✅ 시공 완료
 
 현재 수렴 장치는 두 개뿐:
 - `_run_recovery_plan` (orchestrator.py:45) — **실패한 노드만** 재계획 (노드 수준)
@@ -178,10 +181,44 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 
 ## 7. 다음 세션 시작 체크리스트
 
-- [ ] 이 문서 3·4절(갭 B·C) 대표님 승인 확인
-- [ ] 갭 B 시공: `api/api/dynamic/planner.py` 플랜 스키마 + CEO 프롬프트에 MCP 카탈로그 편입
-- [ ] 갭 B 시공: `compiler.py` 노드별 MCP 바인딩
-- [ ] 갭 C 시공: clarifier 수용 기준 추출 → 검증 에이전트 → 재계획 루프
-- [ ] (선택) 갭 A: 챗 경로 clarifier 배선 여부 대표님 결정
+- [x] 이 문서 3·4절(갭 B·C) 대표님 승인 확인
+- [x] 갭 B 시공: `api/api/dynamic/planner.py` 플랜 스키마 + CEO 프롬프트에 MCP 카탈로그 편입
+- [x] 갭 B 시공: `compiler.py` 노드별 MCP 바인딩
+- [x] 갭 C 시공: clarifier 수용 기준 추출 → 검증 에이전트 → 재계획 루프
+- [x] 갭 A: 챗 경로 수용 기준 배선 (시공 완료 — 8절 참조)
 - [ ] MiniMax 수정 실사용 검증: 앱 실행 후 `%APPDATA%\daon-agent-system\server.log`에서
       `[webui-debug] fallback_resolved ... api_key=set` 확인, 400/401 소멸 확인
+- [ ] 재빌드: git push 후 `_sync_build.py` + PyInstaller + electron-builder 실행,
+      `dist\win-unpacked\DAON Agent System.cmd` 존재 확인 (5.2절 함정 주의)
+- [ ] 갭 B/C/A 실사용 검증: 재빌드 후 앱에서 하네스 실행, 수용 기준 검증 로그 확인
+
+---
+
+## 8. 갭 B/C/A 시공 완료 기록 (2026-08-17)
+
+### 갭 B (커밋 c6a3174)
+1. `plan_validator.py`: 노드별 `mcp_servers`/`plugins`/`environment` 필드 스키마 검증
+2. `planner.py`: CEO 프롬프트에 MCP 카탈로그 + 플러그인 카탈로그 + 실행환경(local/sandbox) 옵션 주입
+3. `compiler.py`: 노드별 MCP 바인딩(`_inject_mcp_tools`) + 플러그인 해석(`_resolve_plugin_skills`)
+4. `runner.py`: 노드별 MCP 툴 필터링 + 실행환경 적용
+- 검증: `_probe/probe_gap_b.py` — ALL GAP-B PROBES PASSED
+
+### 갭 C (커밋 c6a3174)
+1. `clarifier.py`: 수용 기준 추출/부착/파싱 (`ensure_acceptance_criteria` 다단계 폴백:
+   이미 부착 → precomputed → LLM 추출 → 일반 폴백)
+2. `dynamic_jobs.py`: 인터뷰/타임아웃/미사용 전 경로에서 마커 섹션 보장
+3. `orchestrator.py`: `_verify_acceptance()` 검증 에이전트 (병합 산출물 + 디스크 파일 증거 기반
+   pass/fail 판정, 오류 시 fail-open으로 파이프라인 비차단)
+4. `orchestrator.py`: `_run_acceptance_replan()` 결핍 능력 피드백 재계획 + 3중 루프 탈출
+   (pass / 재시도 상한 `max_acceptance_retries: 2` / 개선 증거: 미충족 집합 감소 요구)
+- 검증: `_probe/probe_gap_c.py` — ALL GAP-C PROBES PASSED
+
+### 갭 A
+1. `hermes-agent/tools/dynamic_harness_tool.py`: 스키마에 `acceptance_criteria` 파라미터 +
+   도구 설명에 사전 점검 체크리스트(PRE-FLIGHT CHECKLIST) 명시
+2. `_ensure_acceptance_criteria()`: 챗 경로에서도 수용 기준 섹션 보장 → 갭 C 검증 루프 활성화
+   (실패 시 원본 task 반환, fail-open)
+- 검증: `_probe/probe_gap_a.py` — ALL GAP-A PROBES PASSED
+
+### 남은 일
+- 재빌드 + 서버 재시작 후 실사용 검증 (MiniMax 수정 + 갭 B/C/A 엔드투엔드)

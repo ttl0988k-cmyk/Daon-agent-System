@@ -18,7 +18,11 @@ DYNAMIC_HARNESS_SCHEMA = {
         "Execute the Hermes Dynamic Harness engine (multi-agent JIT compiler DAG) "
         "for complex multi-agent tasks (e.g. planning, detailed research, software design, "
         "writing detailed reports, code generation/review, and complex orchestration). "
-        "Runs a pool of specialized agents in a topological DAG to complete the requested task."
+        "Runs a pool of specialized agents in a topological DAG to complete the requested task. "
+        "PRE-FLIGHT CHECKLIST (gap A): before calling, make sure you have (1) confirmed the "
+        "user's goal/scope when it is ambiguous, (2) identified the expected deliverable, and "
+        "(3) collected completion conditions as acceptance_criteria when the task is vague. "
+        "The harness verifies the final output against these criteria and self-heals until they are met."
     ),
     "parameters": {
         "type": "object",
@@ -39,12 +43,39 @@ DYNAMIC_HARNESS_SCHEMA = {
                     "Injected as a MANDATORY directive into the planner prompt (same as the HTTP API 'skills' field)."
                 ),
             },
+            "acceptance_criteria": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of acceptance criteria (completion conditions) gathered during the conversation. "
+                    "Each criterion must be specific and verifiable. The harness verification agent judges the "
+                    "final output against them and triggers self-healing re-plans when unmet. "
+                    "If omitted, the harness extracts criteria automatically."
+                ),
+            },
         },
         "required": ["task"],
     },
 }
 
-def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, forced_skills: Optional[list] = None) -> str:
+def _ensure_acceptance_criteria(task: str, preferred_model: Optional[str], acceptance_criteria: Optional[list]) -> str:
+    """갭 A: 챗 경로에서도 수용 기준 마커 섹션을 보장한다.
+
+    갭 C 검증 에이전트(orchestrator._verify_acceptance)는 task에서 수용 기준을
+    파싱하므로, 챗 경로도 섹션을 부착해야 자기 치유 루프가 동작한다.
+    실패 시 원본 task를 반환해 파이프라인을 막지 않는다(fail-open).
+    """
+    try:
+        from api.dynamic.clarifier import ensure_acceptance_criteria
+        criteria = [str(c).strip() for c in (acceptance_criteria or []) if str(c).strip()]
+        return ensure_acceptance_criteria(task, preferred_model, precomputed=criteria)
+    except Exception as exc:
+        print(f"[DynamicHarnessTool] Warning: acceptance criteria attach failed: {exc}", flush=True)
+        return task
+
+
+def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, forced_skills: Optional[list] = None,
+                            acceptance_criteria: Optional[list] = None) -> str:
     """
     Run the Hermes Dynamic Harness on the requested task.
     """
@@ -142,7 +173,10 @@ def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, fo
         
         # Execute the dynamic compiler run with log callback
         # forced_skills: 사용자가 명시적으로 지정한 스킬 목록 (HTTP API 경로의 'skills' 필드와 동일)
-        res = runner.run(task=task, preferred_model=preferred_model, log_callback=log_callback, forced_skills=forced_skills)
+        # 갭 A: 챗 경로에서도 수용 기준 섹션을 보장한다 (갭 C 검증 에이전트의 판정 근거).
+        # 표시용으로는 원본 task를 유지하고, enriched task를 runner에 전달한다.
+        run_task = _ensure_acceptance_criteria(task, preferred_model, acceptance_criteria)
+        res = runner.run(task=run_task, preferred_model=preferred_model, log_callback=log_callback, forced_skills=forced_skills)
         
         # Process and format results
         final_output = res.get("final_output", "")
@@ -220,7 +254,8 @@ registry.register(
     handler=lambda args, **kw: execute_dynamic_harness(
         task=args.get("task", ""),
         preferred_model=args.get("preferred_model"),
-        forced_skills=args.get("skills") or None
+        forced_skills=args.get("skills") or None,
+        acceptance_criteria=args.get("acceptance_criteria") or None
     ),
     check_fn=check_dynamic_harness_requirements,
     emoji="🎯",
