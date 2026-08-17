@@ -22,6 +22,11 @@ def _load_harness_limits() -> dict:
         "plan": {"max_attempts": 5},
         "mission": {"max_total_wall_time_seconds": 10800, "max_total_tokens": 2000000, "max_recovery_attempts": 5, "max_acceptance_retries": 2},
         "scoring": {"pass_threshold": 80, "max_score": 100},
+        # 갭 D: 재귀적 위임(recursive delegation) 예산
+        #   max_depth: 위임 트리의 최대 깊이 (루트=0, 위임 1회 허용 시 1)
+        #   max_children_per_spawn: 1회 delegate_team 호출로 만들 수 있는 하위 DAG 최대 노드 수
+        #   max_total_spawns: 루트 미션 전체의 총 위임 횟수 상한 (Agent 폭발 방지의 핵심)
+        "delegation": {"max_depth": 1, "max_children_per_spawn": 4, "max_total_spawns": 6},
     }
     try:
         config_path = Path(__file__).resolve().parent.parent.parent.parent / "config" / "harness_limits.yaml"

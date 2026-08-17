@@ -134,6 +134,10 @@ class AgentCompiler:
                 #  스키마에서 자동으로 제외하므로 안전하다.)
                 if "browser" not in enabled_toolsets:
                     enabled_toolsets.append("browser")
+                # 갭 D: 위임은 모든 노드에 부여되는 일반 능력이다.
+                # Agent 폭발 방지는 delegate_team 도구의 깊이/예산/사유 가드가 담당한다.
+                if "delegation" not in enabled_toolsets:
+                    enabled_toolsets.append("delegation")
                 # Inject MCP tools (갭 B: 노드별 선택 바인딩)
                 enabled_toolsets = AgentCompiler._inject_mcp_tools(
                     enabled_toolsets, resolved.get("mcp_servers")
@@ -175,6 +179,8 @@ class AgentCompiler:
             enabled_toolsets.append("media-generation")
             # 내장(공유) 브라우저도 모든 노드의 일반 능력으로 부여.
             enabled_toolsets.append("browser")
+            # 갭 D: 레거시 경로에도 위임 toolset 부여 (가드가 깊이/예산 강제).
+            enabled_toolsets.append("delegation")
             enabled_toolsets = AgentCompiler._inject_mcp_tools(
                 enabled_toolsets, n.get("mcp_servers")
             )

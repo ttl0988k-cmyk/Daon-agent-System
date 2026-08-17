@@ -1,7 +1,7 @@
 # 계획: DAON 비전 — 자기 구성·자기 치유 다이나믹 하네스 완성
 
 **작성일:** 2026-08-17
-**상태:** ✅ 갭 B → C → A 전부 시공·검증 완료 (세부 기록은 8절)
+**상태:** ✅ 갭 B → C → A 전부 시공·검증 완료 (세부 기록은 8절) / ✅ 갭 D-1 시공·검증 완료 (세부 기록은 9절)
 **세션 인계용 문서** — 이전 세션에서 비전 토론 + 코드 검증 완료, 새 세션에서 이 문서로 이어간다.
 
 ---
@@ -114,6 +114,22 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
    — **B가 시공돼 있어야 "새 MCP 투입"도 가능** (B → C 순서의 이유)
 4. 무한 루프 방지: 최대 재시도 횟수(예: 2회) + 재시도마다 개선 증거 요구
 
+### 갭 D — 재귀적 위임 (하위 에이전트가 다시 하위 에이전트를 호출) ✅ D-1 시공 완료
+
+대표님 비전: CEO → Agent A → A가 자기 서브팀(A-1/A-2)을 다시 구성하는 트리형 조직.
+권한 위임이 핵심 개념이며, 갭 B의 자원 축이 아래로 전달되고 갭 C 검증 게이트가
+모든 깊이에서 프랙탈로 작동해야 한다. 통제 없이 스폰하면 "Agent 폭발"이 일어나므로
+통치 계층(깊이/예산/사유 기록)이 필수다.
+
+설계 원칙: **"위임은 도구 호출이다"** — 러너 코어를 고치지 않고, 노드가
+`delegate_team` 도구를 호출하면 그 안에서 자식 하네스 실행이 동기 수행된다.
+거부는 절대 노드를 죽이지 않고 "직접 처리하라"는 구조화 JSON을 반환한다(fail-open).
+
+단계 분할:
+- **D-1 (완료)**: 깊이 1 고정 + `delegate_team` 도구 + 가드(깊이/예산/사유) + 혈통/취소 연쇄
+- **D-2 (향후)**: 깊이 > 1 허용, 자원에어 축(token/time 예산)의 실제 하위 배분
+- **D-3 (향후)**: UI에서 위임 트리 관측성 (혈통 시각화)
+
 ---
 
 ## 4. 시공 순서 제안
@@ -186,6 +202,7 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 - [x] 갭 B 시공: `compiler.py` 노드별 MCP 바인딩
 - [x] 갭 C 시공: clarifier 수용 기준 추출 → 검증 에이전트 → 재계획 루프
 - [x] 갭 A: 챗 경로 수용 기준 배선 (시공 완료 — 8절 참조)
+- [x] 갭 D-1: 재귀적 위임 통치 구조 시공 (시공 완료 — 9절 참조)
 - [ ] MiniMax 수정 실사용 검증: 앱 실행 후 `%APPDATA%\daon-agent-system\server.log`에서
       `[webui-debug] fallback_resolved ... api_key=set` 확인, 400/401 소멸 확인
 - [ ] 재빌드: git push 후 `_sync_build.py` + PyInstaller + electron-builder 실행,
@@ -222,3 +239,42 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 
 ### 남은 일
 - 재빌드 + 서버 재시작 후 실사용 검증 (MiniMax 수정 + 갭 B/C/A 엔드투엔드)
+
+---
+
+## 9. 갭 D-1 시공 완료 기록 (2026-08-17)
+
+### 시공 내용
+1. `api/api/dynamic/delegation.py` (신규): 통치 계층 코어
+   - 스레드 로컬 위임 컨텍스트 (`set/get/clear_current_delegation`)
+   - 스폰 예산 카운터 (`try_consume_spawn_budget` 원자적 소비, `reset_spawn_budget`)
+   - 순수 가드 함수 `check_delegation_guard`: 컨텍스트 존재 / 깊이 여유 / spawn_reason 필수
+2. `api/api/dynamic/limits.py`: `delegation` 예산 블록 추가
+   (`max_depth: 1`, `max_children_per_spawn: 4`, `max_total_spawns: 6`, yaml 오버레이 지원)
+3. `api/api/dynamic_jobs.py`: 혈통 레지스트리 (`register_lineage` / `get_descendants` BFS /
+   `unregister_lineage_subtree`) + `cancel_job`이 서브트리 전체에 취소 연쇄 전파
+   (자식 실행은 동기 실행이라 `_DYNAMIC_JOBS`에 없으므로 `_CANCELLED_JOBS`에 직접 표시 + interrupt)
+4. `hermes-agent/tools/delegate_team_tool.py` (신규): `delegate_team` 도구
+   - 스키마: task + spawn_reason 필수, acceptance_criteria/preferred_model/skills 선택
+   - 흐름: 가드 판정 → 예산 차감 → 혈통 등록 → 자식 run_dir 생성 → 위임 지시문 주입
+     (사유/서브팀 규모 상한/재위임 금지) → 수용 기준 부착(갭 C 프랙탈) →
+     `HermesDynamicRunner().run(delegation_context=...)` 동기 수행 → tool_result
+   - 거부/실패 시 전부 fail-open: "직접 처리하라" 구조화 JSON
+5. `api/api/dynamic/orchestrator.py`: `run()`에 `delegation_context` 파라미터 추가,
+   루트 실행은 자동 컨텍스트 구성 후 `mission_tracker["delegation"]`으로 노출,
+   루트 실행 종료 시에만 `reset_spawn_budget` (finally)
+6. `api/api/dynamic/runner.py`: 노드 워커 스레드에 위임 컨텍스트를 thread-local으로 주입
+   (`_run_node_with_retries` 전후 set/clear — 도구 호출이 같은 스레드에서 실행되는 점 이용)
+7. `api/api/dynamic/compiler.py`: 템플릿/레거시 두 경로 모두 `"delegation"` toolset 주입
+   (Agent 폭발 방지는 도구의 가드가 담당)
+
+### D-1의 알려진 한계 (D-2에서 해소)
+- 깊이는 1로 고정 (자식 실행 안에서는 delegate_team 가드가 무조건 거부)
+- `max_children_per_spawn`은 자식 플래너에 대한 지시문(텍스트) 수준에서만 강제
+- 자식 실행은 orchestrator finally의 부수효과(bridge 메시지 등)를 그대로 수행 (표면적 문제)
+
+### 검증
+- 7개 파일 py_compile 통과
+- `_probe/probe_gap_d.py` — ALL GAP-D PROBES PASSED
+  (limits 블록 / 가드 시맨틱 / 예산 카운터+스레드 격리 / 혈통+취소 연쇄 /
+   도구 거부·해피패스·실패 폴백 / 소스 배선 확인)

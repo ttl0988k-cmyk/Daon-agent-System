@@ -34,6 +34,74 @@ _RUNNING_AGENTS_LOCK = threading.Lock()
 # ('clarifying'), 승인 대기 ('awaiting_approval')에서도 취소가 먹혀야 한다.
 _CANCELLABLE_STATUSES = ('running', 'clarifying', 'awaiting_approval')
 
+# ── 갭 D: 위임 혈통(lineage) 레지스트리 ──
+# run_id → {"parent_run_id", "root_run_id", "depth", "spawn_reason", "created_at"}
+# delegate_team 도구가 자식 실행을 만들 때 등록한다.
+# 부모 취소 시 get_descendants()로 서브트리를 찾아 연쇄 취소한다.
+_LINEAGE: dict = {}
+_LINEAGE_LOCK = threading.Lock()
+
+
+def register_lineage(run_id: str, parent_run_id: str, root_run_id: str,
+                     depth: int, spawn_reason: str = "") -> None:
+    """위임으로 생성된 자식 실행의 혈통을 등록한다."""
+    if not run_id:
+        return
+    with _LINEAGE_LOCK:
+        _LINEAGE[run_id] = {
+            "parent_run_id": parent_run_id,
+            "root_run_id": root_run_id,
+            "depth": int(depth),
+            "spawn_reason": str(spawn_reason or ""),
+            "created_at": time.time(),
+        }
+
+
+def get_lineage(run_id: str) -> dict | None:
+    """run_id의 혈통 정보를 반환한다. 없으면 None."""
+    with _LINEAGE_LOCK:
+        entry = _LINEAGE.get(run_id)
+        return dict(entry) if entry else None
+
+
+def get_descendants(run_id: str) -> list:
+    """run_id의 모든 후손 run_id를 BFS로 수집한다 (자기 자신 제외)."""
+    with _LINEAGE_LOCK:
+        children_map: dict = {}
+        for rid, info in _LINEAGE.items():
+            pid = info.get("parent_run_id")
+            if pid:
+                children_map.setdefault(pid, []).append(rid)
+        result = []
+        queue = [run_id]
+        while queue:
+            current = queue.pop(0)
+            for child in children_map.get(current, []):
+                if child not in result:
+                    result.append(child)
+                    queue.append(child)
+        return result
+
+
+def unregister_lineage_subtree(run_id: str) -> None:
+    """run_id와 그 서브트리의 혈통 기록을 제거한다 (실행 종료 후 정리)."""
+    with _LINEAGE_LOCK:
+        to_remove = [run_id]
+        children_map: dict = {}
+        for rid, info in _LINEAGE.items():
+            pid = info.get("parent_run_id")
+            if pid:
+                children_map.setdefault(pid, []).append(rid)
+        queue = [run_id]
+        while queue:
+            current = queue.pop(0)
+            for child in children_map.get(current, []):
+                if child not in to_remove:
+                    to_remove.append(child)
+                    queue.append(child)
+        for rid in to_remove:
+            _LINEAGE.pop(rid, None)
+
 
 def register_running_agent(run_id: str, agent) -> None:
     """실행 중인 노드의 AIAgent를 등록해 취소 시 interrupt()를 걸 수 있게 한다."""
@@ -75,6 +143,8 @@ def cancel_job(run_id: str) -> bool:
     'running'뿐 아니라 'clarifying'(의도 확인 대기), 'awaiting_approval'(승인 대기)
     상태에서도 취소를 허용한다. 취소 즉시 상태를 'cancelled'로 전환하고, 실행 중인
     AIAgent를 interrupt()하며, clarification 답변 대기를 해제한다.
+
+    갭 D: 위임으로 생성된 후손 실행(서브트리)에도 취소를 연쇄 전파한다.
     """
     with _DYNAMIC_JOBS_LOCK:
         job = _DYNAMIC_JOBS.get(run_id)
@@ -95,6 +165,26 @@ def cancel_job(run_id: str) -> bool:
         abort_clarification(run_id)
     except Exception:
         pass
+
+    # 3) 갭 D: 위임 서브트리 연쇄 취소. 자식 실행은 delegate_team 도구 안에서
+    #    동기 실행되므로 _DYNAMIC_JOBS에 없다 — _CANCELLED_JOBS에 직접 표시하고
+    #    (러너의 is_job_cancelled 폴링이 감지) 해당 AIAgent를 interrupt한다.
+    try:
+        _descendants = get_descendants(run_id)
+    except Exception:
+        _descendants = []
+    for _child_id in _descendants:
+        try:
+            with _DYNAMIC_JOBS_LOCK:
+                _CANCELLED_JOBS.add(_child_id)
+            _interrupt_running_agents(_child_id)
+            try:
+                from api.dynamic.clarifier import abort_clarification
+                abort_clarification(_child_id)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     return True
 

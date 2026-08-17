@@ -412,9 +412,15 @@ class HermesDynamicRunner:
         merged_plan = {"first_run_plan": plan, "acceptance_replan": replan}
         return new_final, merged_results, merged_plan, compiled_agents + recompiled
 
-    def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None) -> dict:
+    def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None, delegation_context: dict = None) -> dict:
         from api.dynamic.model_selector import set_allowed_providers
         set_allowed_providers(allowed_providers)
+
+        # 갭 D: 위임된 자식 실행 여부 (루트 실행 종료 시에만 생성 예산을 반납한다)
+        try:
+            _is_delegated_child = bool(delegation_context) and int((delegation_context or {}).get("depth", 0) or 0) > 0
+        except (TypeError, ValueError):
+            _is_delegated_child = bool(delegation_context)
         
         limits = _load_harness_limits()
         mission_start = time.time()
@@ -459,6 +465,21 @@ class HermesDynamicRunner:
         else:
             run_dir = Path(run_dir)
         run_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── 갭 D: 위임 컨텍스트 구성 ──
+        # 루트 실행이면 depth 0 컨텍스트를 새로 만들고, 위임된 실행이면
+        # delegate_team 도구가 전달한 컨텍스트를 사용한다. mission_tracker에
+        # 실어 ParallelRunner가 각 노드 워커 스레드(thread-local)에 전달하게 한다.
+        if delegation_context is None:
+            delegation_context = {
+                "run_id": run_id,
+                "root_run_id": run_id,
+                "parent_run_id": None,
+                "depth": 0,
+            }
+        delegation_context.setdefault("root_run_id", run_id)
+        delegation_context["run_dir"] = str(run_dir)
+        mission_tracker["delegation"] = delegation_context
 
         _log.info("Starting dynamic compilation run (ID: %s) for task: '%s'", run_id, task)
 
@@ -921,6 +942,14 @@ class HermesDynamicRunner:
                 _log.warning("Failed to record DAG run in ExperienceDB: %s", _exp_err)
 
             cleanup_harness_artifacts(run_id)
+
+            # 갭 D: 루트 실행 종료 시 생성 예산 카운터 반납 (메모리 잔존 방지).
+            if not _is_delegated_child:
+                try:
+                    from api.dynamic.delegation import reset_spawn_budget
+                    reset_spawn_budget(run_id)
+                except Exception:
+                    pass
 
             # Save output physically to workspace
             try:

@@ -693,6 +693,14 @@ class ParallelRunner:
         from api.dynamic.model_selector import get_allowed_providers, set_allowed_providers
         current_allowed = get_allowed_providers()
 
+        # 갭 D: 노드 워커 스레드에 전달할 위임 컨텍스트 (delegate_team 가드 판정 근거)
+        _delegation_ctx = (mission_tracker or {}).get("delegation")
+        try:
+            from api.dynamic.delegation import set_current_delegation, clear_current_delegation
+        except Exception:
+            set_current_delegation = None
+            clear_current_delegation = None
+
         def _run_single_node(agent_name: str) -> dict:
             """Thin closure: resolve context then delegate to module-level runner."""
             set_allowed_providers(current_allowed)
@@ -735,21 +743,31 @@ class ParallelRunner:
                     log_callback(_start_key, "작업 시작...", "running")
                 except Exception:
                     pass
-            return _run_node_with_retries(
-                agent_name,
-                node,
-                agent_query,
-                node_parents,
-                model_configs,
-                limits,
-                generation,
-                state_manager,
-                mission_tracker,
-                results,
-                AIAgent,
-                log_callback,
-                run_id,
-            )
+            # 갭 D: 위임 컨텍스트를 thread-local으로 노출한다. 노드 에이전트의
+            # 도구 호출(delegate_team)은 모두 이 워커 스레드에서 실행된다.
+            if _delegation_ctx and set_current_delegation:
+                _node_delegation = dict(_delegation_ctx)
+                _node_delegation["node_name"] = agent_name
+                set_current_delegation(_node_delegation)
+            try:
+                return _run_node_with_retries(
+                    agent_name,
+                    node,
+                    agent_query,
+                    node_parents,
+                    model_configs,
+                    limits,
+                    generation,
+                    state_manager,
+                    mission_tracker,
+                    results,
+                    AIAgent,
+                    log_callback,
+                    run_id,
+                )
+            finally:
+                if clear_current_delegation:
+                    clear_current_delegation()
 
         max_workers = max(len(b) for b in batches) if batches else 1
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
