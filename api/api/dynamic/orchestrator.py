@@ -260,6 +260,158 @@ class HermesDynamicRunner:
             _log.warning("CodeReviewer skipped due to error: %s", review_err)
         return final_output
 
+    # ─── 갭 C: 수용 기준 검증 에이전트 + 능력 결핍 피드백 재계획 ───
+
+    _ACCEPTANCE_VERIFY_SYSTEM = (
+        "당신은 DAON 시스템의 수용 기준 검증 에이전트(Validation Agent)입니다.\n"
+        "병합된 최종 산출물이 각 수용 기준을 충족하는지 증거에 기반해 판정합니다.\n"
+        "산출물이나 디스크 파일에서 구체적인 증거를 확인할 수 있을 때만 충족으로 판정하세요.\n"
+        "반드시 한국어로, 아래 JSON 형식으로만 응답하세요:\n"
+        "{\n"
+        '  "verdict": "pass" 또는 "fail",\n'
+        '  "unmet_criteria": ["충족되지 않은 기준1", ...],\n'
+        '  "missing_capabilities": ["부족한 기능/능력1", ...],\n'
+        '  "reasoning": "판정 근거"\n'
+        "}\n"
+        "verdict는 unmet_criteria가 비어 있을 때만 pass입니다."
+    )
+
+    def _verify_acceptance(self, final_output: str, task: str, check_timeout,
+                           preferred_model: str = None, run_dir=None,
+                           log_callback=None, start_time: float = 0.0) -> dict:
+        """갭 C 검증 에이전트: 병합 산출물을 수용 기준에 비춰 판정한다.
+
+        반환: {"verdict": "pass"|"fail", "unmet_criteria": [...],
+               "missing_capabilities": [...], "reasoning": str}
+        오류 시 파이프라인을 막지 않도록 fail-open(pass) 처리한다.
+        """
+        try:
+            from api.dynamic.clarifier import parse_acceptance_criteria
+            criteria = parse_acceptance_criteria(task)
+        except Exception:
+            criteria = []
+        if not criteria:
+            _log.info("No acceptance criteria found in task - acceptance verification skipped.")
+            return {"verdict": "pass", "unmet_criteria": [], "missing_capabilities": [],
+                    "reasoning": "no acceptance criteria"}
+
+        if log_callback:
+            log_callback("Verifier", f"🔍 수용 기준 {len(criteria)}개 검증 중...", "running")
+
+        # 증거 수집: 병합 산출물 + 디스크에 실제로 쓰인 파일
+        evidence = f"### 병합 산출물 (final_output)\n{str(final_output)[:12000]}"
+        try:
+            written = self._collect_written_files(run_dir, start_time, max_files=15, max_bytes=8000) if run_dir else []
+        except Exception:
+            written = []
+        if written:
+            evidence += "\n\n### 디스크에 실제로 쓰인 파일\n" + "\n\n".join(
+                f"===== FILE: {rel} =====\n{content}" for rel, content in written
+            )
+
+        criteria_text = "\n".join(f"{i}. {c}" for i, c in enumerate(criteria, 1))
+        prompt = (
+            f"## 원본 작업\n{str(task)[:4000]}\n\n"
+            f"## 수용 기준\n{criteria_text}\n\n"
+            f"## 증거 (산출물)\n{evidence}\n\n"
+            "각 수용 기준이 충족되었는지 판정하고 JSON 형식으로 응답하세요."
+        )
+
+        try:
+            check_timeout()
+            from api.dynamic.clarifier import _parse_json_response
+            raw = _call_direct(prompt, self._ACCEPTANCE_VERIFY_SYSTEM, preferred_model=preferred_model)
+            data = _parse_json_response(raw)
+            verdict = str(data.get("verdict", "")).strip().lower()
+            unmet = [str(c).strip() for c in (data.get("unmet_criteria") or []) if str(c).strip()]
+            caps = [str(c).strip() for c in (data.get("missing_capabilities") or []) if str(c).strip()]
+            if verdict not in ("pass", "fail"):
+                verdict = "fail" if unmet else "pass"
+            if verdict == "pass":
+                unmet = []
+            result = {"verdict": verdict, "unmet_criteria": unmet,
+                      "missing_capabilities": caps, "reasoning": str(data.get("reasoning", ""))}
+            _log.info("Acceptance verification: verdict=%s unmet=%d caps=%s",
+                      verdict, len(unmet), caps)
+            if log_callback:
+                if verdict == "pass":
+                    log_callback("Verifier", "✅ 수용 기준 충족 확인", "success")
+                else:
+                    log_callback("Verifier", f"❌ 미충족 기준 {len(unmet)}개: {'; '.join(unmet[:3])}", "warning")
+            return result
+        except Exception as e:
+            _log.warning("Acceptance verification failed (fail-open): %s", e)
+            return {"verdict": "pass", "unmet_criteria": [], "missing_capabilities": [],
+                    "reasoning": f"verification error: {e}"}
+
+    def _run_acceptance_replan(self, unmet: list, missing_caps: list, final_output: str,
+                               task: str, state_manager, mission_tracker: dict,
+                               plan: dict, runner_results: list, compiled_agents: list,
+                               check_timeout, preferred_model: str = None,
+                               log_callback=None, run_dir=None,
+                               session_id: str = None, run_id: str = None,
+                               generation: int = 2) -> tuple:
+        """갭 C 재계획: 미충족 기준/결핍 능력을 플래너에 피드백해 보충 DAG를 만들고 재병합한다.
+
+        반환: (new_final_output, merged_runner_results, merged_plan, merged_agents)
+        """
+        caps_line = (
+            f"검증 에이전트가 식별한 결핍 능력(missing capabilities): {', '.join(missing_caps)}\n\n"
+            if missing_caps else ""
+        )
+        replan_prompt = (
+            f"다음 작업을 해결하기 위한 멀티 에이전트 시스템입니다: {task}\n\n"
+            f"지금까지 생성된 산출물(병합 출력):\n\"\"\"\n{str(final_output)[:8000]}\n\"\"\"\n\n"
+            "그러나 수용 기준 검증 에이전트가 다음 기준을 미충족으로 판정했습니다:\n"
+            + "\n".join(f"- {c}" for c in unmet) + "\n\n"
+            + caps_line
+            + "부족한 능력만 보완하여 완전한 최종 산출물을 만드는 새로운 EXECUTABLE DAG를 생성하세요. "
+            "처음부터 다시 만들지 말고 기존 산출물/디스크 파일을 기반으로 보완해야 합니다.\n"
+            "표준 Nodes and Edges 스키마에 맞는 유효한 JSON을 반환하세요."
+        )
+        _log.info("Acceptance re-planning for %d unmet criteria...", len(unmet))
+        if log_callback:
+            log_callback("CEO", f"🔁 미충족 기준 {len(unmet)}개 보완을 위한 재계획 수립 중...", "running")
+        check_timeout()
+        replan = self.planner.plan(replan_prompt, mission_tracker=mission_tracker,
+                                   preferred_model=preferred_model)
+
+        initial_outputs = [
+            {
+                "output_key": r["output_key"],
+                "name": r["name"],
+                "role": r["role"],
+                "content": r["output"],
+                "generation": r.get("generation", 0),
+                "parents": r.get("parents", []),
+            }
+            for r in runner_results
+            if r.get("status") == "success"
+        ]
+        recompiled = self.compiler.compile(replan)
+        _log.info("Compiled %d agents for acceptance re-plan.", len(recompiled))
+        check_timeout()
+        extra_results = self.runner.run(
+            recompiled,
+            replan.get("edges", []),
+            task,
+            initial_outputs=initial_outputs,
+            state_manager=state_manager,
+            generation=generation,
+            mission_tracker=mission_tracker,
+            log_callback=log_callback,
+            run_dir=str(run_dir) if run_dir else None,
+            session_id=session_id, run_id=run_id)
+
+        merged_results = [r for r in runner_results if r.get("status") == "success"] + extra_results
+        if log_callback:
+            log_callback("Merger", "수용 기준 재계획 결과 재병합 중...", "running")
+        check_timeout()
+        new_final = self.merger.merge(merged_results, task, mission_tracker=mission_tracker,
+                                       preferred_model=preferred_model, log_callback=log_callback)
+        merged_plan = {"first_run_plan": plan, "acceptance_replan": replan}
+        return new_final, merged_results, merged_plan, compiled_agents + recompiled
+
     def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None) -> dict:
         from api.dynamic.model_selector import set_allowed_providers
         set_allowed_providers(allowed_providers)
@@ -637,7 +789,44 @@ class HermesDynamicRunner:
             if log_callback:
                 log_callback("Merger", "Merged results. Generation complete.", "running")
 
-            # 6. CodeReviewer pass (디스크 실파일 검증 + 병합 문서 리뷰)
+            # 6. 갭 C: 수용 기준 검증 + 능력 결핍 피드백 재계획 루프
+            #    - 검증 에이전트가 병합 산출물을 수용 기준에 비춰 판정
+            #    - fail 시 결핍 능력을 플래너에 피드백해 재계획 → 재실행 → 재병합
+            #    - 무한 루프 방지: max_acceptance_retries(2) + 개선 증거(미충족 집합 감소) 요구
+            max_acceptance = limits.get("mission", {}).get("max_acceptance_retries", 2)
+            acceptance_attempt = 0
+            prev_unmet = None
+            while True:
+                verdict = self._verify_acceptance(
+                    final_output, task, check_timeout, preferred_model=preferred_model,
+                    run_dir=run_dir, log_callback=log_callback, start_time=mission_start)
+                unmet = verdict.get("unmet_criteria", [])
+                if verdict.get("verdict") == "pass" or not unmet:
+                    break
+                if acceptance_attempt >= max_acceptance:
+                    _log.warning("Acceptance re-plan retries exhausted (%d). Unmet criteria remain: %s",
+                                 max_acceptance, unmet)
+                    if log_callback:
+                        log_callback("Verifier", f"⚠️ 재시도 한도 도달 — 미충족 기준 {len(unmet)}개 남음", "warning")
+                    break
+                cur_unmet = set(unmet)
+                if prev_unmet is not None and cur_unmet >= prev_unmet:
+                    _log.warning("No improvement evidence (unmet set not shrunk). Stopping acceptance loop.")
+                    if log_callback:
+                        log_callback("Verifier", "⚠️ 재시도에도 개선 증거 없음 — 수용 기준 루프 중단", "warning")
+                    break
+                prev_unmet = cur_unmet
+                acceptance_attempt += 1
+                _log.info("Acceptance re-plan attempt %d/%d for %d unmet criteria",
+                          acceptance_attempt, max_acceptance, len(unmet))
+                final_output, runner_results, plan, compiled_agents = self._run_acceptance_replan(
+                    unmet, verdict.get("missing_capabilities", []), final_output, task,
+                    state_manager, mission_tracker, plan, runner_results, compiled_agents,
+                    check_timeout, preferred_model=preferred_model, log_callback=log_callback,
+                    run_dir=run_dir, session_id=session_id, run_id=run_id,
+                    generation=1 + acceptance_attempt)
+
+            # 7. CodeReviewer pass (디스크 실파일 검증 + 병합 문서 리뷰)
             final_output = self._run_code_reviewer(
                 final_output, check_timeout, preferred_model=preferred_model,
                 run_dir=run_dir, log_callback=log_callback, start_time=mission_start)

@@ -26,6 +26,94 @@ from api.dynamic.logging_utils import get_logger
 _log = get_logger(__name__)
 
 
+# ── 갭 B: CEO 선택지 확장 — MCP / Plugin / 실행환경 카탈로그 빌더 ──
+# 플래너가 계획 단계에서 "이 노드에는 어떤 MCP가 필요한가", "이 노드는 격리
+# 환경에서 돌려야 하는가"를 선택할 수 있도록 CEO 프롬프트에 주입하는 블록들.
+# 스킬 카탈로그 주입 패턴(get_catalog_text)을 차용했다.
+
+def _build_mcp_catalog_block() -> str:
+    """등록된 MCP 서버 목록을 CEO 프롬프트용 텍스트 블록으로 구성한다.
+
+    각 서버의 ID/라벨/연결 상태/도구 이름을 나열해, CEO가 노드별
+    'mcp_servers' 필드로 선택적 바인딩을 할 수 있게 한다.
+    """
+    try:
+        from api.mcp_client import get_mcp_manager
+        servers = get_mcp_manager().list_servers()
+    except Exception as e:
+        _log.info("MCP catalog unavailable: %s", e)
+        return ""
+    if not servers:
+        return ""
+    lines: list[str] = []
+    for srv in servers:
+        sid = srv.get("server_id", "")
+        label = srv.get("label", sid)
+        status = "CONNECTED" if srv.get("connected") else "NOT CONNECTED"
+        tool_names = [t.get("name", "") for t in (srv.get("tools") or []) if t.get("name")]
+        if tool_names:
+            tools_str = ", ".join(tool_names[:12])
+            if len(tool_names) > 12:
+                tools_str += f", ... (+{len(tool_names) - 12} more)"
+        else:
+            tools_str = "(no tools discovered)"
+        lines.append(f"  - '{sid}' [{status}] {label} — tools: {tools_str}")
+    return (
+        "\n[AVAILABLE MCP SERVERS — Per-Node Binding Catalog]\n"
+        "MCP (Model Context Protocol) servers provide external tools (file ops, search, browser, etc.) to agents.\n"
+        "For each node you MAY set the optional 'mcp_servers' field to control which servers are bound:\n"
+        "- mcp_servers omitted or null → ALL connected MCP servers are injected (default).\n"
+        "- mcp_servers: [] → NO MCP tools for this node.\n"
+        '- mcp_servers: ["id1", "id2"] → ONLY those servers\' tools are available to the node.\n'
+        "Prefer SELECTIVE binding: give each node only the MCP servers its subtask actually needs — "
+        "fewer tools means less confusion and lower token cost. Only CONNECTED servers are injected at runtime.\n"
+        + "\n".join(lines) + "\n"
+        "[End MCP Server Catalog]\n"
+    )
+
+
+def _build_plugin_catalog_block() -> str:
+    """설치된 플러그인 목록을 CEO 프롬프트용 텍스트 블록으로 구성한다."""
+    try:
+        from api.plugin_gateway import list_installed_plugins
+        plugins = list_installed_plugins()
+    except Exception as e:
+        _log.info("Plugin catalog unavailable: %s", e)
+        return ""
+    if not plugins:
+        return ""
+    lines: list[str] = []
+    for p in plugins:
+        pname = p.get("name", "")
+        desc = p.get("description", "") or ""
+        if pname:
+            lines.append(f"  - '{pname}' — {desc}")
+    if not lines:
+        return ""
+    return (
+        "\n[INSTALLED PLUGINS — Per-Node Injection Catalog]\n"
+        "Plugins provide additional skills/tools. For each node you MAY set the optional 'plugins' field "
+        "to inject specific plugins' skills into that node only:\n"
+        "- plugins omitted or null → no extra plugin skills (session-active plugins are still merged automatically).\n"
+        '- plugins: ["name"] → that plugin\'s skills are injected into the node\'s system prompt.\n'
+        + "\n".join(lines) + "\n"
+        "[End Plugin Catalog]\n"
+    )
+
+
+def _build_environment_options_block() -> str:
+    """노드별 실행환경(local/sandbox) 선택지를 CEO 프롬프트에 주입하는 블록."""
+    return (
+        "\n[EXECUTION ENVIRONMENT OPTIONS — Per-Node]\n"
+        "Each node runs in an execution environment. You MAY set the optional 'environment' field per node:\n"
+        '- "local" (default): the agent works in the SHARED workspace directory. Files it writes are part of the final deliverable.\n'
+        '- "sandbox": the agent works in an ISOLATED temporary directory. Use this for experimental or risky operations '
+        "(running untrusted scripts, throwaway prototypes, test installs) so they cannot pollute the real workspace. "
+        "Sandbox files are NOT part of the deliverable unless the agent reports their content in its output.\n"
+        "[End Environment Options]\n"
+    )
+
+
 class HermesPlanner:
     """Master Orchestrator that analyzes a task and generates a valid DAG plan."""
 
@@ -158,7 +246,10 @@ class HermesPlanner:
             '      "input": "input_key_from_dependency (null if none)",\n'
             '      "output": "output_key_for_this_agent",\n'
             '      "model": "Assign the optimal model. MUST match one in AVAILABLE MODELS.",\n'
-            '      "system_prompt": "(OPTIONAL) extra instructions beyond the template default, keep SHORT 1-3 lines"\n'
+            '      "system_prompt": "(OPTIONAL) extra instructions beyond the template default, keep SHORT 1-3 lines",\n'
+            '      "mcp_servers": "(OPTIONAL) list of MCP server IDs to bind to this node — see AVAILABLE MCP SERVERS catalog. Omit/null = ALL connected servers, [] = none",\n'
+            '      "plugins": "(OPTIONAL) list of plugin names to inject into this node — see INSTALLED PLUGINS catalog. Omit/null = none",\n'
+            '      "environment": "(OPTIONAL) \'local\' (default: shared workspace) or \'sandbox\' (isolated temp dir) — see EXECUTION ENVIRONMENT OPTIONS"\n'
             "    }\n"
             "  ],\n"
             '  "edges": [\n'
@@ -179,7 +270,8 @@ class HermesPlanner:
             "4. What is the optimal model for each agent based on task difficulty?\n"
             "5. What is the concrete Success Criteria for the task?\n"
             "6. You MUST include a Reviewer/QA agent to verify correctness.\n"
-            "7. Does this task involve API routes, response formats, or message structures? If YES, follow the SHARED SCHEMA CONTRACT rules below.\n\n"
+            "7. Does this task involve API routes, response formats, or message structures? If YES, follow the SHARED SCHEMA CONTRACT rules below.\n"
+            "8. Does any node need external tools (MCP servers), plugin skills, or an isolated execution environment? If YES, set that node's optional 'mcp_servers' / 'plugins' / 'environment' fields per the catalogs below.\n\n"
             "[TEMPLATE SELECTION RULES]\n"
             "- You MUST select template_id from the AGENT TEMPLATE CATALOG above. Do NOT invent template IDs.\n"
             "- Each template already includes: system_prompt, tools, skills, and model preferences.\n"
@@ -201,6 +293,9 @@ class HermesPlanner:
             + f"{skill_catalog}\n\n"
             + skill_graph_block + "\n"
             + forced_skills_block
+            + _build_mcp_catalog_block()
+            + _build_plugin_catalog_block()
+            + _build_environment_options_block()
             + "[SHARED SCHEMA CONTRACT — MANDATORY FOR ALL AGENTS]\n"
             "- ALL agents MUST follow the shared Schema contract defined in shared/schema.py and shared/schema.js.\n"
             "- Do NOT invent API routes, response fields, or message formats.\n"

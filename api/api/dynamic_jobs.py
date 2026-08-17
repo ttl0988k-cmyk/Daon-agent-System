@@ -316,6 +316,7 @@ def start_harness_job(body: dict) -> str:
                 from api.dynamic.clarifier import (
                     init_clarification, wait_for_answers, evaluate_answers,
                     build_enriched_task, get_clarification_status,
+                    ensure_acceptance_criteria,
                     MAX_CLARIFICATION_TURNS, _clear_state
                 )
                 state = init_clarification(run_id, task, preferred_model)
@@ -345,9 +346,14 @@ def start_harness_job(body: dict) -> str:
                         evaluation = evaluate_answers(task, state["qa_history"], state["turn"], preferred_model)
 
                         if not evaluation.get("needs_clarification") or state["turn"] >= MAX_CLARIFICATION_TURNS:
+                            # 갭 C: 인터뷰에서 추출한 수용 기준을 캡처한다
+                            _criteria = [str(c).strip() for c in (evaluation.get("acceptance_criteria") or []) if str(c).strip()]
                             enriched = evaluation.get("enriched_task", "")
                             if not enriched:
-                                enriched = build_enriched_task(task, state["qa_history"])
+                                enriched = build_enriched_task(task, state["qa_history"], acceptance_criteria=_criteria)
+                            else:
+                                # LLM이 만든 enriched에 수용 기준 섹션이 없으면 인터뷰 기준을 부착한다
+                                enriched = ensure_acceptance_criteria(enriched, preferred_model, precomputed=_criteria)
                             enriched_task = enriched
                             state["status"] = "done"
                             log_callback("CEO", "✅ 의도 파악 완료 — 작업을 시작합니다", "success")
@@ -365,6 +371,14 @@ def start_harness_job(body: dict) -> str:
 
                 # Transition back to running
                 set_job_running(run_id)
+
+            # ── 갭 C: 수용 기준 섹션 보장 (검증 에이전트의 판정 근거) ──
+            # 인터뷰 미사용/타임아웃/폴백 경로에서도 마커 섹션이 존재하도록 한다.
+            try:
+                from api.dynamic.clarifier import ensure_acceptance_criteria as _ensure_criteria
+                enriched_task = _ensure_criteria(enriched_task, preferred_model)
+            except Exception:
+                traceback.print_exc()
 
             # ── Main Harness Execution ──
             run_dir = Path(workspace)

@@ -20,7 +20,7 @@ def _load_harness_limits() -> dict:
     default_limits = {
         "node": {"max_retries": 3, "max_wall_time_seconds": 3600},
         "plan": {"max_attempts": 5},
-        "mission": {"max_total_wall_time_seconds": 10800, "max_total_tokens": 2000000, "max_recovery_attempts": 5},
+        "mission": {"max_total_wall_time_seconds": 10800, "max_total_tokens": 2000000, "max_recovery_attempts": 5, "max_acceptance_retries": 2},
         "scoring": {"pass_threshold": 80, "max_score": 100},
     }
     try:

@@ -12,6 +12,7 @@ User answers via POST /api/dynamic/answer/{run_id}.
 """
 
 import json
+import re
 import threading
 from typing import Optional
 
@@ -78,6 +79,8 @@ _EVALUATE_SYSTEM = """\
 - 정보가 충분하면 "ENOUGH"로 판단하고 enriched_task를 작성합니다.
 - 아직 부족하면 추가 질문을 생성합니다 (최대 3개).
 - enriched_task는 원본 작업 + Q&A에서 얻은 맥락을 합친 상세 작업 설명입니다.
+- acceptance_criteria: 작업 완료 여부를 판정할 수 있는 구체적이고 검증 가능한 기준 3~7개.
+  추상적 표현("잘 동작할 것") 대신 관찰 가능한 조건을 씁니다. (needs_clarification=false일 때 필수)
 - 한국어로 응답합니다.
 
 응답 형식 (반드시 JSON):
@@ -85,6 +88,7 @@ _EVALUATE_SYSTEM = """\
   "needs_clarification": true/false,
   "questions": ["추가 질문1", ...],
   "enriched_task": "Q&A 맥락이 포함된 상세 작업 설명 (needs_clarification=false일 때 필수)",
+  "acceptance_criteria": ["검증 가능한 완료 기준1", "기준2", ...],
   "reasoning": "판단 근거 한 줄"
 }}
 """
@@ -164,17 +168,116 @@ def evaluate_answers(task: str, qa_history: list[dict], current_turn: int,
         return result
     except Exception as e:
         _log.warning("Clarification evaluate failed: %s — proceeding", e)
-        return {"needs_clarification": False, "questions": [], "enriched_task": task, "reasoning": str(e)}
+        return {"needs_clarification": False, "questions": [], "enriched_task": task,
+                "acceptance_criteria": [], "reasoning": str(e)}
 
 
-def build_enriched_task(task: str, qa_history: list[dict]) -> str:
-    """Fallback: build enriched task from Q&A without LLM (if evaluate didn't return one)."""
+def build_enriched_task(task: str, qa_history: list[dict], acceptance_criteria: list = None) -> str:
+    """Fallback: build enriched task from Q&A without LLM (if evaluate didn't return one).
+
+    갭 C: acceptance_criteria가 주어지면 출력 끝에 수용 기준 섹션을 부착한다.
+    """
     parts = [f"## 원본 요청\n{task}\n"]
     for i, turn in enumerate(qa_history, 1):
         parts.append(f"## 추가 확인 {i}")
         for q, a in zip(turn.get("questions", []), turn.get("answers", [])):
             parts.append(f"- **{q}**\n  → {a}")
-    return "\n\n".join(parts)
+    enriched = "\n\n".join(parts)
+    criteria = [str(c).strip() for c in (acceptance_criteria or []) if str(c).strip()]
+    if criteria:
+        enriched = attach_acceptance_criteria(enriched, criteria)
+    return enriched
+
+
+# ─── 갭 C: 수용 기준(Acceptance Criteria) 추출 / 부착 / 파싱 ───
+# 인터뷰 단계에서 추출한 수용 기준을 enriched_task 안에 마커와 함께 보관한다.
+# enriched_task 문자열이 그대로 orchestrator.run()의 task로 흘러가므로,
+# 검증 에이전트는 마커 섹션을 파싱해 판정 근거로 사용한다.
+
+ACCEPTANCE_MARKER_START = "<!-- ACCEPTANCE_CRITERIA_START -->"
+ACCEPTANCE_MARKER_END = "<!-- ACCEPTANCE_CRITERIA_END -->"
+
+_EXTRACT_CRITERIA_SYSTEM = """\
+당신은 DAON 시스템의 요구사항 분석가입니다.
+주어진 작업 설명을 읽고, 작업 완료 여부를 판정할 수 있는 '수용 기준(acceptance criteria)' 목록을 추출합니다.
+
+규칙:
+- 기준은 3~7개, 각각 검증 가능하고 구체적이어야 합니다.
+- 추상적 표현("잘 동작할 것") 대신 관찰 가능한 조건을 씁니다.
+- 한국어로 작성합니다.
+
+응답 형식 (반드시 JSON):
+{
+  "acceptance_criteria": ["기준1", "기준2", ...]
+}
+"""
+
+
+def extract_acceptance_criteria(task_text: str, preferred_model: str = None) -> list:
+    """작업 설명에서 수용 기준을 LLM으로 추출한다. 실패 시 빈 리스트를 반환한다."""
+    if not task_text or not str(task_text).strip():
+        return []
+    try:
+        raw = _call_direct(
+            f"다음 작업 설명에서 수용 기준을 추출하세요.\n\"\"\"\n{str(task_text)[:6000]}\n\"\"\"",
+            _EXTRACT_CRITERIA_SYSTEM,
+            preferred_model=preferred_model,
+        )
+        data = _parse_json_response(raw)
+        criteria = data.get("acceptance_criteria") or []
+        return [str(c).strip() for c in criteria if str(c).strip()][:7]
+    except Exception as e:
+        _log.warning("Acceptance criteria extraction failed: %s", e)
+        return []
+
+
+def attach_acceptance_criteria(enriched_task: str, criteria: list) -> str:
+    """enriched_task 끝에 수용 기준 섹션을 마커와 함께 부착한다."""
+    base = (enriched_task or "").rstrip()
+    lines = [f"{i}. {c}" for i, c in enumerate(criteria, 1)]
+    section = (
+        "\n\n## 수용 기준 (Acceptance Criteria)\n"
+        f"{ACCEPTANCE_MARKER_START}\n"
+        + "\n".join(lines)
+        + f"\n{ACCEPTANCE_MARKER_END}\n"
+    )
+    return base + section
+
+
+def parse_acceptance_criteria(text: str) -> list:
+    """enriched_task에서 수용 기준 마커 섹션을 파싱한다. 없으면 빈 리스트."""
+    if not text:
+        return []
+    m = re.search(
+        re.escape(ACCEPTANCE_MARKER_START) + r"(.*?)" + re.escape(ACCEPTANCE_MARKER_END),
+        text, re.DOTALL)
+    if not m:
+        return []
+    criteria = []
+    for line in m.group(1).splitlines():
+        item = re.sub(r"^(?:\d+[\.\)]|[-*])\s*", "", line.strip()).strip()
+        if item:
+            criteria.append(item)
+    return criteria
+
+
+def ensure_acceptance_criteria(enriched_task: str, preferred_model: str = None,
+                               precomputed: list = None) -> str:
+    """갭 C: enriched_task에 수용 기준 섹션이 보장되도록 한다.
+
+    우선순위: 이미 부착됨 → precomputed(인터뷰에서 추출) → LLM 추출 → 일반 폴백.
+    어떤 경로에서도 빈 enriched_task가 아닌 한 수용 기준 섹션을 보장한다.
+    """
+    if not enriched_task:
+        return enriched_task
+    if parse_acceptance_criteria(enriched_task):
+        return enriched_task
+    criteria = [str(c).strip() for c in (precomputed or []) if str(c).strip()]
+    if not criteria:
+        criteria = extract_acceptance_criteria(enriched_task, preferred_model)
+    if not criteria:
+        criteria = ["원본 요청이 산출물에 완전히 구현되어 있어야 한다."]
+    return attach_acceptance_criteria(enriched_task, criteria)
 
 
 # ─── Job-level clarification orchestration ───

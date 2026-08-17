@@ -13,6 +13,49 @@ from api.dynamic.logging_utils import get_logger
 _log = get_logger(__name__)
 
 
+# 갭 B: 노드별 능력 축 필드 — MCP 서버 / 플러그인 / 실행환경.
+# CEO가 계획 단계에서 "이 노드에는 어떤 MCP가 필요한가", "이 노드는 격리 환경에서
+# 돌려야 하는가"를 선택할 수 있게 하는 스키마 필드다. 전부 OPTIONAL이며
+# 미지정 시 기존 동작(연결된 MCP 전체 주입, 로컬 워크스페이스)이 유지된다.
+ALLOWED_NODE_ENVIRONMENTS = {"local", "sandbox"}
+
+
+def _validate_node_capability_fields(node: dict, idx: int, label: str) -> list[str]:
+    """Validate optional per-node capability fields: mcp_servers / plugins / environment.
+
+    - mcp_servers: null | list[str] — CEO가 이 노드에 바인딩할 MCP 서버 ID 목록.
+      null/미지정 = 기존 동작(연결된 모든 MCP 주입), [] = MCP 주입 없음.
+    - plugins: null | list[str] — 노드에 주입할 플러그인 식별자 목록 (확장용).
+    - environment: null | "local" | "sandbox" — 실행환경 선택.
+      "local" = 공유 run_dir 사용(기본), "sandbox" = 노드별 격리 임시 디렉터리.
+    """
+    errors: list[str] = []
+
+    for list_key in ("mcp_servers", "plugins"):
+        if list_key not in node or node[list_key] is None:
+            continue
+        value = node[list_key]
+        if not isinstance(value, list):
+            errors.append(f"Node at index {idx} ({label}) key '{list_key}' must be a list of strings or null.")
+            continue
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                errors.append(
+                    f"Node at index {idx} ({label}) key '{list_key}' entries must be non-empty strings."
+                )
+                break
+
+    if "environment" in node and node["environment"] is not None:
+        env_value = node["environment"]
+        if not isinstance(env_value, str) or env_value.strip().lower() not in ALLOWED_NODE_ENVIRONMENTS:
+            errors.append(
+                f"Node at index {idx} ({label}) key 'environment' must be one of "
+                f"{sorted(ALLOWED_NODE_ENVIRONMENTS)} (got {env_value!r})."
+            )
+
+    return errors
+
+
 def _validate_plan_nodes(nodes: list) -> list[str]:
     """Validate the nodes list: required fields and string-type constraints.
     
@@ -25,7 +68,7 @@ def _validate_plan_nodes(nodes: list) -> list[str]:
         return ["'nodes' must be a list."]
     legacy_required_keys = ["name", "type", "role", "system_prompt", "subtask"]
     template_required_keys = ["name", "template_id", "subtask"]
-    string_keys = ["name", "type", "role", "system_prompt", "subtask", "input", "output", "template_id"]
+    string_keys = ["name", "type", "role", "system_prompt", "subtask", "input", "output", "template_id", "environment"]
     for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
             errors.append(f"Node at index {idx} is not an object.")
@@ -44,6 +87,8 @@ def _validate_plan_nodes(nodes: list) -> list[str]:
             for k in string_keys
             if k in node and node[k] is not None and not isinstance(node[k], str)
         )
+        # 갭 B: 노드별 능력 축 필드 검증 (mcp_servers / plugins / environment)
+        errors.extend(_validate_node_capability_fields(node, idx, label))
     return errors
 
 

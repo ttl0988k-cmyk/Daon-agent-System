@@ -74,8 +74,32 @@ def _build_node_context(
     elif _is_bash:
         query += "- Bash is available: heredoc (<<), Unix commands (ls, find, grep, cat, etc.) are supported. Use POSIX path style when possible.\n"
     query += "\n"
-    if run_dir:
-        query += f"\n[CRITICAL DIRECTIVE] Your Current Workspace Directory is: '{run_dir}'. ALL FILE OPERATIONS MUST be done inside this directory. NEVER use relative paths. ALWAYS use absolute paths starting with '{run_dir}'.\n\n"
+
+    # ── 갭 B-4: 실행환경 선택 ──
+    # environment == "sandbox" 노드는 공유 워크스페이스(run_dir) 대신
+    # 노드 전용 격리 임시 디렉터리에서 파일 작업을 수행한다.
+    node_env = str(node.get("environment") or "local").strip().lower()
+    effective_dir = run_dir
+    sandbox_note = ""
+    if node_env == "sandbox":
+        import tempfile as _tempfile_mod
+        try:
+            effective_dir = _tempfile_mod.mkdtemp(prefix=f"daon_sandbox_{agent_name}_")
+            sandbox_note = (
+                "\n[SANDBOX ENVIRONMENT] This node runs in an ISOLATED sandbox directory, NOT the shared workspace. "
+                "Files you create here are experimental and are NOT part of the final deliverable. "
+                "If downstream agents need the content of any file you produce, include that content "
+                "verbatim in your final output.\n"
+            )
+            _log.info("Node '%s' runs in sandbox environment: %s", agent_name, effective_dir)
+        except Exception as _sb_e:
+            _log.warning("Failed to create sandbox dir for node '%s', falling back to local: %s", agent_name, _sb_e)
+            effective_dir = run_dir
+
+    if effective_dir:
+        query += f"\n[CRITICAL DIRECTIVE] Your Current Workspace Directory is: '{effective_dir}'. ALL FILE OPERATIONS MUST be done inside this directory. NEVER use relative paths. ALWAYS use absolute paths starting with '{effective_dir}'.\n\n"
+    if sandbox_note:
+        query += sandbox_note
     query += f"Your specific subtask is: {node['subtask']}\n"
     if context_data:
         query += f"Here is the dependency input data you must utilize:\n{context_data}\n"
@@ -357,6 +381,22 @@ def _run_node_with_retries(
                     
                     _mcp_mgr = get_mcp_manager()
                     _mcp_tools = _mcp_mgr.get_all_tools()
+
+                    # ── 갭 B-4: 노드별 MCP 선택 바인딩 ──
+                    # node["mcp_servers"] 시맨틱:
+                    #   None(생략/null) → 연결된 모든 서버 주입 (기본, 하위 호환)
+                    #   []             → MCP 도구 없음
+                    #   ["id1", ...]   → 나열된 서버의 도구만 주입
+                    _node_mcp_sel = node.get("mcp_servers")
+                    if _node_mcp_sel is not None:
+                        _allowed_mcp = {str(s).strip() for s in _node_mcp_sel if str(s).strip()}
+                        if not _allowed_mcp:
+                            _mcp_tools = []
+                        else:
+                            _mcp_tools = [
+                                t for t in _mcp_tools
+                                if t.get("_mcp_server") in _allowed_mcp
+                            ]
                     
                     def _safe_name(raw: str) -> str:
                         return _mcp_re.sub(r'[^A-Za-z0-9_]', '_', str(raw or ''))

@@ -105,6 +105,12 @@ class AgentCompiler:
                     if s not in node_skills:
                         node_skills.append(s)
 
+                # ── 갭 B: 노드별 플러그인 주입 — CEO가 이 노드에 선택한
+                # 플러그인의 qualified 스킬("plugin:skill")을 node_skills에 병합.
+                for s in AgentCompiler._resolve_plugin_skills(resolved.get("plugins")):
+                    if s not in node_skills:
+                        node_skills.append(s)
+
                 # Load skill content from registry
                 skill_content = skill_registry.load_skills(node_skills)
 
@@ -128,8 +134,10 @@ class AgentCompiler:
                 #  스키마에서 자동으로 제외하므로 안전하다.)
                 if "browser" not in enabled_toolsets:
                     enabled_toolsets.append("browser")
-                # Inject MCP tools
-                enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
+                # Inject MCP tools (갭 B: 노드별 선택 바인딩)
+                enabled_toolsets = AgentCompiler._inject_mcp_tools(
+                    enabled_toolsets, resolved.get("mcp_servers")
+                )
 
                 if node_skills:
                     _log.info("Injected skills into '%s' (template: %s): %s",
@@ -146,6 +154,8 @@ class AgentCompiler:
                     "output": resolved.get("output") or (name + "_output"),
                     "model": resolved.get("model") or "",
                     "skills": node_skills,
+                    "mcp_servers": resolved.get("mcp_servers"),
+                    "environment": str(resolved.get("environment") or "local").strip().lower(),
                     "template_id": resolved.get("template_id"),
                     "_display_name": resolved.get("_display_name", ""),
                     "_model_prefs": resolved.get("_model_prefs", {}),
@@ -165,7 +175,9 @@ class AgentCompiler:
             enabled_toolsets.append("media-generation")
             # 내장(공유) 브라우저도 모든 노드의 일반 능력으로 부여.
             enabled_toolsets.append("browser")
-            enabled_toolsets = AgentCompiler._inject_mcp_tools(enabled_toolsets)
+            enabled_toolsets = AgentCompiler._inject_mcp_tools(
+                enabled_toolsets, n.get("mcp_servers")
+            )
 
             if "web_search" in node_type:
                 enabled_toolsets.append("web_search")
@@ -175,6 +187,11 @@ class AgentCompiler:
             # Merge plan-level skills with node-level skills (deduplicated)
             node_skills = list(plan_level_skills)
             for s in (n.get("skills") or []):
+                if s not in node_skills:
+                    node_skills.append(s)
+
+            # ── 갭 B: 노드별 플러그인 주입 (레거시 경로) ──
+            for s in AgentCompiler._resolve_plugin_skills(n.get("plugins")):
                 if s not in node_skills:
                     node_skills.append(s)
 
@@ -207,6 +224,8 @@ class AgentCompiler:
                 "output": n.get("output") or (name + "_output"),
                 "model": n.get("model") or "",
                 "skills": node_skills,
+                "mcp_servers": n.get("mcp_servers"),
+                "environment": str(n.get("environment") or "local").strip().lower(),
             })
         return compiled_nodes
 
@@ -273,16 +292,61 @@ class AgentCompiler:
         )
 
     @staticmethod
-    def _inject_mcp_tools(toolsets: list[str]) -> list[str]:
-        """Inject connected MCP server tool IDs into the toolset list."""
+    def _inject_mcp_tools(toolsets: list[str], mcp_servers: list[str] | None = None) -> list[str]:
+        """Inject connected MCP server tool IDs into the toolset list.
+
+        갭 B 노드별 바인딩 시맨틱:
+        - mcp_servers None (필드 생략/null): 연결된 모든 서버 주입 (기본, 하위 호환).
+        - mcp_servers []: 아무것도 주입하지 않음.
+        - mcp_servers ["id1", ...]: 나열된 서버만 주입 (연결된 경우에만).
+        """
         try:
             from api.mcp_client import get_mcp_manager
             _mgr = get_mcp_manager()
+            allowed: set[str] | None = None
+            if mcp_servers is not None:
+                allowed = {str(s).strip() for s in mcp_servers if str(s).strip()}
             for _srv_id, _conn in _mgr._connections.items():
-                if _conn.connected:
-                    mcp_id = f"mcp-{_srv_id}"
-                    if mcp_id not in toolsets:
-                        toolsets.append(mcp_id)
+                if not _conn.connected:
+                    continue
+                if allowed is not None and _srv_id not in allowed:
+                    continue
+                mcp_id = f"mcp-{_srv_id}"
+                if mcp_id not in toolsets:
+                    toolsets.append(mcp_id)
         except Exception:
             pass
         return toolsets
+
+    @staticmethod
+    def _resolve_plugin_skills(plugin_names) -> list[str]:
+        """노드에 선택된 플러그인(갭 B)을 qualified 스킬 이름으로 해석한다.
+
+        'plugin:skill' 형태의 qualified 이름을 반환하며, 이 이름은 스킬 레지스트리
+        (load_skills)에서 결정적으로 해석된다. 미설치 플러그인이나 스킬이 없는
+        플러그인은 경고 로그와 함께 건너뛴다.
+        """
+        qualified: list[str] = []
+        if not plugin_names:
+            return qualified
+        try:
+            from api.plugin_gateway import get_plugin
+        except Exception:
+            return qualified
+        for pname in plugin_names:
+            pname = str(pname).strip()
+            if not pname:
+                continue
+            try:
+                plugin = get_plugin(pname)
+            except Exception as exc:
+                _log.warning("Failed to resolve plugin '%s' for node injection: %s", pname, exc)
+                continue
+            if not plugin:
+                _log.warning("Plugin '%s' requested by plan node is not installed; skipping", pname)
+                continue
+            for s in plugin.get("skills") or []:
+                q = s.get("qualified")
+                if q and q not in qualified:
+                    qualified.append(q)
+        return qualified
