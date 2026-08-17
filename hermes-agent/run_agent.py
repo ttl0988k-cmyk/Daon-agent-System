@@ -693,6 +693,37 @@ def _sanitize_tools_non_ascii(tools: list) -> bool:
     return _sanitize_structure_non_ascii(tools)
 
 
+def _normalize_tool_schemas_for_api(tools: list) -> list:
+    """Ensure every function tool carries a non-empty ``parameters`` schema.
+
+    Several providers (MiniMax, Qwen, and a few others) reject tool
+    definitions whose ``parameters`` object is missing or empty with an
+    HTTP 400 — "invalid params, function parameters is empty".  This is a
+    final safety net applied right before the payload is sent, so it covers
+    tools from ANY source (built-in, MCP, plugins, injected) regardless of
+    whether their registration path normalized the schema.
+
+    The normalization is idempotent and mutates the tool dicts in place;
+    the same list object is returned.
+    """
+    if not isinstance(tools, list):
+        return tools
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function")
+        if not isinstance(fn, dict):
+            continue
+        params = fn.get("parameters")
+        if not params or not isinstance(params, dict):
+            # Missing / empty / non-dict schema → minimal valid object schema.
+            fn["parameters"] = {"type": "object", "properties": {}}
+        elif params.get("type") == "object" and "properties" not in params:
+            # {"type": "object"} without properties → add an empty properties map.
+            params["properties"] = {}
+    return tools
+
+
 def _sanitize_structure_non_ascii(payload: Any) -> bool:
     """Strip non-ASCII characters from nested dict/list payloads in-place."""
     found = False
@@ -5161,7 +5192,10 @@ class AIAgent:
                 "promptId": str(uuid.uuid4()),
             }
         if self.tools:
-            api_kwargs["tools"] = self.tools
+            # Final safety net: some providers (MiniMax, Qwen) reject tool
+            # definitions with missing/empty parameters schemas (HTTP 400
+            # "function parameters is empty"). Normalize right before send.
+            api_kwargs["tools"] = _normalize_tool_schemas_for_api(self.tools)
 
         # ── max_tokens for chat_completions ──────────────────────────────
         # Priority: ephemeral override (error recovery / length-continuation

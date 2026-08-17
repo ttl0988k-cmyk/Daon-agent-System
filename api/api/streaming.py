@@ -944,11 +944,41 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               fb_model = _fallback.get('model', '')
               fb_provider = _fallback.get('provider', '')
               fb_base_url = _fallback.get('base_url')
+              # ── 폴백 API 키 해석 ──
+              # 키가 없으면 hermes fallback.py가 내부 출처(auth.json/env)의
+              # 낡은 키로 해석해 401 "invalid api key"가 발생한다.
+              # 메인 키와 동일한 우선순위(UI 등록 키 → 메인 키 공유 →
+              # runtime provider)로 여기서 해석해 명시적으로 주입한다.
+              fb_api_key = None
+              try:
+                  from api.managers.model_manager import model_manager as _mm_fb
+                  if fb_provider:
+                      fb_api_key = _mm_fb._get_api_key(fb_provider) or None
+                  if not fb_base_url and fb_provider:
+                      _fb_url = _mm_fb._get_base_url(fb_provider)
+                      if _fb_url:
+                          fb_base_url = str(_fb_url).rstrip('/')
+              except Exception as _fb_e:
+                  print(f"[webui] WARNING: fallback key/base_url lookup failed: {_fb_e}", flush=True)
+              if not fb_api_key and fb_provider and fb_provider == resolved_provider:
+                  # 메인 프로바이더와 동일하면 이미 해석된 키를 재사용한다.
+                  fb_api_key = resolved_api_key
+              if not fb_api_key and fb_provider:
+                  try:
+                      from hermes_cli.runtime_provider import resolve_runtime_provider as _rrp_fb
+                      _rt_fb = _rrp_fb(requested=fb_provider)
+                      fb_api_key = _rt_fb.get("api_key") or None
+                      if not fb_base_url:
+                          fb_base_url = (_rt_fb.get("base_url") or '').rstrip('/') or None
+                  except Exception as _rt_fb_e:
+                      print(f"[webui] WARNING: fallback runtime_provider lookup failed: {_rt_fb_e}", flush=True)
               _fallback_resolved = {
                   'model': fb_model,
                   'provider': fb_provider,
                   'base_url': fb_base_url,
+                  'api_key': fb_api_key,
               }
+              print(f"[webui-debug] fallback_resolved model={fb_model} provider={fb_provider} base_url={fb_base_url} api_key={'set' if fb_api_key else 'MISSING'}", flush=True)
           else:
               _fallback_resolved = None
 
