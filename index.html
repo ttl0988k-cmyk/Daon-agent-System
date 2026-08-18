@@ -1140,6 +1140,9 @@
         <!-- Chat Mode Content -->
         <div id="chatModeContent">
           <div id="chatMessages"></div>
+          <!-- [G] 전용 승인 슬롯: chatMessages 밖에 있어 renderMessages() 초기화에 사라지지 않음.
+               모든 승인(파일 변경/위험 명령/계획/스킬 저장)은 이 심플 박스 하나로 통일. -->
+          <div id="approvalSlot" style="display:none;"></div>
           <div id="debateMessages" style="display:none;"></div>
           <button id="cancelStreamBtn">■ 취소</button>
           <div class="chat-input-area" id="chatInputArea">
@@ -1207,6 +1210,12 @@
                   <input type="checkbox" id="planningModeToggle" checked style="cursor:pointer;">
                   <span style="user-select:none;">플래닝 모드 🧠</span>
                 </label>
+
+                <!-- [H] 실행 방식 토글: 🛡️ 일반 실행(위험 작업마다 확인) / 🤖 자율 실행(승인 자동 통과) -->
+                <button id="approvalModeToggle" onclick="toggleApprovalMode()"
+                  title="일반 실행 모드: 위험 작업마다 확인합니다. 클릭하면 자율 실행으로 전환."
+                  style="margin-left:8px; background:var(--bg3); border:1px solid var(--border2); color:var(--text2); border-radius:5px; padding:3px 8px; font-size:11px; cursor:pointer;">🛡️
+                  일반 실행</button>
 
                 <button class="icon-btn mic-btn" id="voiceMicBtn" title="음성 입력 (Web Speech API)" style="display:none">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1535,7 +1544,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
   <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
   <script src="/static/modules/core.js?v=5"></script>
-  <script src="/static/modules/chat.js?v=10"></script>
+  <script src="/static/modules/chat.js?v=12"></script>
   <script src="/static/modules/explorer.js"></script>
   <script src="/static/modules/editor.js"></script>
   <script src="/static/modules/panels.js"></script>
@@ -1550,9 +1559,9 @@
   <script src="/static/modules/docs.js"></script>
   <script src="/static/modules/integrations.js"></script>
   <script src="/static/modules/modes.js"></script>
-  <script src="/static/modules/diff_preview.js"></script>
+  <script src="/static/modules/diff_preview.js?v=2"></script>
   <script src="/static/modules/skills_hub.js"></script>
-  <script src="/static/modules/approval.js?v=3"></script>
+  <script src="/static/modules/approval.js?v=5"></script>
   <script src="/static/modules/mcp.js"></script>
   <script src="/static/modules/plugins.js"></script>
   <script src="/static/modules/harness.js"></script>

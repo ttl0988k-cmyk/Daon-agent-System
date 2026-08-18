@@ -63,8 +63,13 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
         except Exception as e:
             _log.info("DynamicModelSelector unavailable, using static chain: %s", e)
 
-    # --- Fallback: dynamic chain from custom_providers.json (no hardcoded models) ---
-    # Accept ANY model the CEO assigned — user-registered providers are valid.
+    # --- Fallback: SAME-PROVIDER chain only (no cross-provider billing) ---
+    #
+    # 이전 구현은 custom_providers.json 의 "전체" 프로바이더 모델을 폴백 체인에
+    # 순서대로 쏟아부었다. 그 결과 세션 요약 같은 백그라운드 호출이 사용자가
+    # 선택하지 않은 유료 프로바이더(예: openrouter/luna)까지 순회하며 크레딧을
+    # 소진했다. 이제는 "기준(선호) 모델과 같은 프로바이더" 안에서만 폴백한다.
+    # 선호 모델이 없으면 "제일 먼저 키가 확인된 프로바이더 그룹 하나"만 사용한다.
     chain_configs: list[dict] = []
     seen_models: set[str] = set()
 
@@ -88,17 +93,23 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             key = os.getenv(f'{p.upper()}_API_KEY')
         return {"model": m, "provider": p, "base_url": b, "api_key": key}
 
-    # 1. Preferred model (if any)
+    # 1. Preferred model (if any) — this also pins the anchor provider.
+    anchor_provider: str | None = None
     if preferred_model and preferred_model not in seen_models:
         cfg = build_config(preferred_model)
         if cfg['api_key'] or cfg['provider'] == 'custom':
             chain_configs.append(cfg)
             seen_models.add(preferred_model)
+        anchor_provider = cfg['provider']
 
-    # 2. All registered models (dynamic — from custom_providers.json)
+    # 2. Other models, but ONLY from the anchor provider's group.
     try:
         from api.managers import model_manager as _mm
         for group in _mm.get_available_models():
+            gprov = group.get('provider_key') or group.get('provider')
+            # 기준 프로바이더가 정해졌으면 그 프로바이더 그룹만 본다.
+            if anchor_provider and gprov != anchor_provider:
+                continue
             for m in group.get('models', []):
                 mid = m.get('id') if isinstance(m, dict) else str(m)
                 if not mid or mid in seen_models:
@@ -107,6 +118,13 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
                 if cfg['api_key'] or cfg['provider'] == 'custom':
                     chain_configs.append(cfg)
                     seen_models.add(mid)
+            if anchor_provider:
+                # 기준 프로바이더 그룹을 처리했으면 다른 그룹은 보지 않는다.
+                break
+            if chain_configs:
+                # 선호 모델이 없으면, 모델이 확인된 첫 프로바이더를 기준으로 고정.
+                anchor_provider = gprov
+                break
     except Exception as e:
         _log.info("Dynamic fallback chain resolution failed: %s", e)
 

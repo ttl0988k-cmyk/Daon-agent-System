@@ -20,20 +20,9 @@ var _diffPanelHTML = [
     '<!-- Diff Preview Panel -->',
     '<div id="diffPreviewPanel" style="display:none;">',
     '',
-    '  <!-- Active Preview Bar -->',
-    '  <div id="diffActiveBar" style="display:none; background:var(--bg2); border:1px solid var(--accent); border-radius:6px; padding:6px 10px; margin-bottom:6px;">',
-    '    <div style="display:flex; align-items:center; gap:8px; justify-content:space-between;">',
-    '      <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--accent);">',
-    '        <span>📄</span>',
-    '        <span id="diffPreviewLabel">Changes pending…</span>',
-    '      </div>',
-    '      <div style="display:flex; gap:4px;">',
-    '        <button class="diff-btn diff-btn-apply" id="diffApplyBtn" title="Apply all changes">✓ 적용</button>',
-    '        <button class="diff-btn diff-btn-reject" id="diffRejectBtn" title="Reject all changes">✕ 거절</button>',
-    '        <button class="diff-btn diff-btn-view" id="diffViewBtn" title="View in Monaco Diff">👁 상세 보기</button>',
-    '      </div>',
-    '    </div>',
-    '  </div>',
+    '  <!-- [REMOVED] Active Preview Bar(diffActiveBar): 상단 ✓적용/✕거절/👁상세보기 승인바 영구 제거. -->',
+    '  <!-- 모든 승인(파일 변경/위험 명령/계획/스킬 저장)은 채팅 아래 심플 승인 박스 -->',
+    '  <!-- (#approvalSlot 인라인 카드, approval.js) 하나로 통일한다. -->',
     '',
     '  <!-- File-by-File Change List -->',
     '  <div id="diffFileList" style="display:none; max-height:200px; overflow-y:auto; background:var(--bg2); border-radius:6px; padding:4px; margin-bottom:6px;">',
@@ -124,11 +113,8 @@ async function loadDiffPreview(sessionId, filePath, diffText, sourceAgent) {
             // Add to workflow log
             _addWorkflowStep(sourceAgent || 'unknown', filePath, res.line_changes);
 
-            // Update UI
-            _renderActivePreviewBar(res);
-            _updateFileChangeList();
-            _refreshChangeHistory();
-            _showDiffPanel();
+            // [REMOVED] 상단 diff 바/패널 자동 표시 제거 — 미리보기 데이터만 등록.
+            // 승인 UI는 approval.js의 심플 인라인 카드(#approvalSlot)로 통일.
 
             return res.preview_id;
         } else {
@@ -171,19 +157,12 @@ function _hideDiffPanel() {
 }
 
 function _renderActivePreviewBar(preview) {
+    // [REMOVED] 상단 승인바(diffActiveBar)는 영구 제거됨.
+    // 어떤 경로(registerDiffPreview/loadDiffPreview/_setCurrentPreview)에서도
+    // 상단 Apply/Reject/Details 바를 다시 표시하지 않는다.
+    // 잔존 DOM이 있더라도 강제로 숨김 처리한다.
     var bar = document.getElementById('diffActiveBar');
-    var label = document.getElementById('diffPreviewLabel');
-    if (!bar || !label) return;
-
-    bar.style.display = 'block';
-
-    var lc = preview.line_changes || {};
-    var file = preview.path || 'unknown';
-    var added = lc.added || 0;
-    var removed = lc.removed || 0;
-
-    var agentIcon = _agentIcon(preview.source_agent || 'unknown');
-    label.textContent = file + '  ' + agentIcon + ' +' + added + ' -' + removed;
+    if (bar) bar.style.display = 'none';
 }
 
 function _updateFileChangeList() {
@@ -767,10 +746,9 @@ function registerDiffPreview(data) {
         _addWorkflowStep(preview.source_agent, preview.path, preview.line_changes);
     }
 
-    _renderActivePreviewBar(preview);
-    _updateFileChangeList();
-    _refreshChangeHistory();
-    _showDiffPanel();
+    // [REMOVED] 상단 diff 바/패널 표시 제거. 이 registerDiffPreview 호출 체인이
+    // 화려한 글로우의 상단 승인바를 부활시키던 원인이었다.
+    // 데이터만 등록(apply-preview API는 서버 측 preview_id로 동작)하고 UI는 띄우지 않는다.
 
     return pid;
 }
@@ -795,27 +773,11 @@ function _showApprovalBanner(data) {
     // currentPreviewId null so every click hit `if (!pid) return;`.
     _diffPreviewState._approvalData = data;
 
-    // Make sure the preview is registered client-side so the buttons always
-    // have a preview_id, even if the 'diff_preview' SSE event was missed.
-    if (data.preview_id) {
-        registerDiffPreview({
-            preview_id: data.preview_id,
-            session_id: data.session_id || State.activeSessionId,
-            path: data.path,
-            line_changes: data.line_changes,
-            source_agent: data.source_agent || 'architect',
-            approval_required: true
-        });
-    }
-
-    var panel = document.getElementById('diffPreviewPanel');
-    var bar = document.getElementById('diffActiveBar');
-    if (!panel || !bar) return; // DOM not ready yet; state saved, init re-applies
-
-    panel.style.display = 'block';
-    bar.style.display = 'block';
-    bar.style.borderColor = 'var(--warning-orange, #e67e22)';
-    bar.style.boxShadow = '0 0 8px rgba(230, 126, 34, .3)';
+    // [REMOVED] 승인 이벤트로 registerDiffPreview를 호출해 상단 바를 띄우던 로직 제거.
+    // [REMOVED] 상단 diff 패널/승인바 표시 영구 제거 — 모든 승인은 approval.js의
+    // 심플 인라인 카드(#approvalSlot)로 통일. 이 원본 함수는 approval.js가
+    // 오버라이드하므로 정상 흐름에서 호출되지 않는 안전장치일 뿐이다.
+    return;
 
     var label = document.getElementById('diffPreviewLabel');
     if (!label) return;

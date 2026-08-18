@@ -3438,20 +3438,11 @@
       background: var(--bg);
     }
 
+    /* [G] 상단 승인바(diffActiveBar) 글로우 애니메이션 영구 제거.
+       상단 Apply/Reject/Details 바는 diff_preview.js에서 완전히 제거되었으며,
+       모든 승인은 채팅 아래 심플 승인 박스(#approvalSlot)로 통일됨. */
     #diffActiveBar {
-      animation: diff-bar-glow 1.8s ease-in-out infinite alternate;
-    }
-
-    @keyframes diff-bar-glow {
-      from {
-        border-color: var(--accent);
-        box-shadow: 0 0 4px rgba(0, 161, 213, .15);
-      }
-
-      to {
-        border-color: var(--accent2);
-        box-shadow: 0 0 8px rgba(160, 100, 255, .25);
-      }
+      display: none !important;
     }
 
     .diff-btn {

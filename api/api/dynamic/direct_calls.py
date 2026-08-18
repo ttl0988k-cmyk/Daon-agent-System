@@ -179,6 +179,23 @@ def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None,
     raise last_error
 
 
+def _is_permanent_provider_error(e: Exception) -> bool:
+    """401/402/403 및 크레딧/인증 오류는 "영구 실패"로 판정한다.
+
+    이런 오류는 같은 프로바이더의 다른 모델을 때려도 해결되지 않으므로,
+    3회 재시도나 폴백으로 크레딧을 더 태우지 말고 즉시 중단(circuit-open)해야 한다.
+    """
+    status = getattr(e, "status_code", None)
+    if status in (401, 402, 403):
+        return True
+    msg = str(e).lower()
+    for marker in ("http 401", "http 402", "http 403", "insufficient", "credits",
+                   "invalid api key", "unauthorized", "authentication", "payment required"):
+        if marker in msg:
+            return True
+    return False
+
+
 def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None) -> str:
     """Wrapper that dynamically routes meta-agents (Planner/Merger) using AIAgent with robust fallback retry logic."""
     agent_path = str(Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent")
@@ -220,6 +237,15 @@ def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferre
                 return _extract_assistant_content(res.get("messages", []))
             except Exception as e:
                 last_error = e
+                # 영구 실패(401/402/403, 크레딧 부족)는 재시도/폴백 없이 즉시 중단.
+                if _is_permanent_provider_error(e):
+                    _log.info(
+                        "Permanent provider error for '%s' (provider=%s) — circuit-open, no retry/fallback: %s",
+                        model_name, provider, e
+                    )
+                    raise RuntimeError(
+                        f"Permanent provider error for '{model_name}' (provider={provider}): {e}"
+                    )
                 _log.info(
                     "Direct call failed with '%s' (Attempt %d/%d): %s",
                     model_name, attempt + 1, max_retries, e

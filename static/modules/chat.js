@@ -175,6 +175,9 @@ async function selectSession(sid) {
     // Load session mode
     loadSessionMode();
 
+    // [H] 세션 전환 시 실행 방식(approvalMode) 토글 UI를 해당 세션 플래그에 동기화
+    if (typeof syncApprovalModeUI === 'function') { try { syncApprovalModeUI(); } catch (_) { } }
+
     // Clear tabs & reload file tree
     State.openTabs = [];
     State.activeTabIndex = -1;
@@ -515,6 +518,16 @@ async function sendPrompt() {
     try { await applyAutoModeForSend(displayText); } catch (_) { }
   }
 
+  // ── [H] 자율 실행 키워드 감지: "이번 작업은 끝까지 알아서 해" 류의 요청이면 ──
+  // 이 세션의 실행 방식을 autonomous 로 전환한다. (승인 요청 발생 시 자동 once 응답)
+  if (typeof setApprovalMode === 'function' && displayText) {
+    try {
+      if (/알아서|끝까지|혼자서?|골\s*명령어|자율\s*실행|승인\s*없이|확인\s*없이|그냥\s*다\s*해|알아서\s*해/.test(displayText)) {
+        setApprovalMode('autonomous');
+      }
+    } catch (_) { }
+  }
+
   // Execute agent stream with the (possibly auto-switched) active mode.
   await _executeAgentStream(displayText, uploaded);
 }
@@ -540,6 +553,9 @@ async function _executeAgentStream(displayText, uploaded) {
   setChatStatus('thinking', '에이전트 작업 시작 중...');
   $('sendPromptBtn').disabled = true;
   $('cancelStreamBtn').style.display = 'block';
+  // [I] 취소 버튼이 높이를 차지해 chatMessages 가시 영역이 줄어든다.
+  // 방금 보낸 메시지의 마지막 줄이 버튼 뒤로 숨지 않도록 즉시 재스크롤.
+  scrollToChatBottom();
 
   // Create stream target assistant bubble
   const box = $('chatMessages');
@@ -556,6 +572,7 @@ async function _executeAgentStream(displayText, uploaded) {
   agentStatusBubble.className = 'agent-status-bubble thinking';
   agentStatusBubble.textContent = '⏳ 에이전트 작업 시작 중...';
   box.insertBefore(agentStatusBubble, asstBubble);
+  scrollToChatBottom();
 
   function setStreamStatus(status, text) {
     setChatStatus(status, text);
@@ -1764,6 +1781,9 @@ function cleanupStreamState() {
     const cancelBtn = $('cancelStreamBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
   } catch (err) { console.warn('[SSE-DIAG] cancel button reset failed:', err); }
+  // [I] 취소 버튼이 사라지며 가시 영역이 다시 늘어나면 마지막 메시지가
+  // 완전히 보이도록 재스크롤.
+  try { scrollToChatBottom(); } catch (err) { }
 }
 
 function setChatStatus(status, text) {

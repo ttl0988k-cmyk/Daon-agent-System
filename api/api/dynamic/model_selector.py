@@ -737,16 +737,29 @@ class DynamicModelSelector:
         allowed = get_allowed_providers()
         # Collect known providers dynamically from the single source of truth
         # (custom_providers.json via model_manager) — no hardcoded provider list.
+        # 모델이 0개인 프로바이더(빈 preset, 차단된 프로바이더)는 "존재"로
+        # 인정하지 않는다. 그렇지 않으면 싱글턴 캐시에 남은 옛 프로필이
+        # 체인에 들어가 무단 과금 폴백이 발생한다.
         _known_providers = set()
+        _registered_models: dict[str, set[str]] = {}
         try:
             from api.managers.model_manager import model_manager as _mm
             for _g in _mm.get_available_models():
                 _pk = _g.get('provider_key') or _g.get('provider')
+                _mids = set()
+                for _m in _g.get('models', []):
+                    _mid = _m.get('id') if isinstance(_m, dict) else str(_m)
+                    if _mid:
+                        _mids.add(_mid)
+                if not _mids:
+                    continue
                 if _pk:
                     _known_providers.add(_pk)
+                    _registered_models.setdefault(_pk, set()).update(_mids)
         except Exception:
             # Fallback: trust the providers of already-loaded profiles
             _known_providers = {p.provider for p in self._profiles.values() if p.provider}
+            _registered_models = {}
 
         for model_id, profile in self._profiles.items():
             if allowed is not None:
@@ -754,6 +767,12 @@ class DynamicModelSelector:
                     continue
             else:
                 if profile.provider not in _known_providers:
+                    continue
+            # 서버 기동 후 프로바이더가 삭제/차단됐는데 싱글턴 캐시에 남은
+            # 옛 프로필이 과금 체인에 들어가는 것을 막는다: 현재
+            # custom_providers.json 에 실제로 등록된 모델만 허용.
+            if _registered_models and profile.provider in _registered_models:
+                if model_id not in _registered_models[profile.provider]:
                     continue
             
             score, breakdown = self._score_model(
@@ -791,18 +810,27 @@ class DynamicModelSelector:
         
         # Safety net: ONLY when the scored chain is empty (no eligible model
         # matched). Picks the first available profile dynamically — no
-        # hardcoded model fallback.
+        # hardcoded model fallback. 단, 현재 custom_providers.json 에 실제로
+        # 등록된 모델만 허용한다(싱글턴 캐시의 옛 프로필 부활 방지).
         if not chain and self._profiles:
-            first_profile = next(iter(self._profiles.values()))
-            chain.append({
-                "model": first_profile.model_id,
-                "provider": first_profile.provider,
-                "api_key": self._resolve_api_key(first_profile.provider),
-                "base_url": first_profile.base_url,
-                "_selector_score": 0.0,
-                "_breakdown": {},
-                "_cost": first_profile.cost_per_1m_input
-            })
+            first_profile = None
+            for _p in self._profiles.values():
+                if _registered_models:
+                    _reg = _registered_models.get(_p.provider)
+                    if not _reg or _p.model_id not in _reg:
+                        continue
+                first_profile = _p
+                break
+            if first_profile is not None:
+                chain.append({
+                    "model": first_profile.model_id,
+                    "provider": first_profile.provider,
+                    "api_key": self._resolve_api_key(first_profile.provider),
+                    "base_url": first_profile.base_url,
+                    "_selector_score": 0.0,
+                    "_breakdown": {},
+                    "_cost": first_profile.cost_per_1m_input
+                })
         
         context_info = {
             "languages": task_context.get("languages", []),
