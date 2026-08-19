@@ -23,6 +23,12 @@ from api.dynamic.skill_extractor import _extract_and_save_skill
 from api.dynamic.direct_calls import _call_direct
 from api.dynamic.model_selector import get_skill_history, extract_task_context, build_context_keys
 from api.dynamic.logging_utils import get_logger
+from api.dynamic.capability_resolver import (
+    CapabilityResolver,
+    RESOLVED_BY_SKILL,
+    RESOLVED_BY_AGENT,
+    NEEDS_BUILDER,
+)
 
 _log = get_logger(__name__)
 
@@ -41,6 +47,8 @@ class HermesDynamicRunner:
         self.compiler = AgentCompiler()
         self.runner = ParallelRunner()
         self.merger = ResultMerger()
+        # 갭 E-L1: 결핍 능력 결정 사슬 (지연 구성, 주입 가능 — _resolve_missing_capabilities 참조)
+        self.capability_resolver = None
 
     def _run_recovery_plan(
         self,
@@ -344,6 +352,48 @@ class HermesDynamicRunner:
             return {"verdict": "pass", "unmet_criteria": [], "missing_capabilities": [],
                     "reasoning": f"verification error: {e}"}
 
+    def _resolve_missing_capabilities(self, missing_caps, log_callback=None):
+        """갭 E-L1: 결핍 능력 목록에 0A절 결정 사슬을 실행한다.
+
+        결정 사슬(순서 강제, 단축 평가): 기존 스킬 검색 -> 다른 에이전트 배정 -> Builder 요청.
+        반환: (resolutions, builder_queue, guidance_lines)
+        절대 raise 하지 않는다 — 해결 실패 시 빈 결과를 반환하고 재계획은 기존 경로로 진행된다.
+        """
+        if not missing_caps:
+            return [], [], []
+        try:
+            resolver = self.capability_resolver
+            if resolver is None:
+                resolver = CapabilityResolver()
+            resolutions, builder_queue = resolver.resolve(missing_caps)
+        except Exception as e:
+            _log.warning("Capability resolution failed (replan continues without guidance): %s", e)
+            return [], [], []
+        guidance_lines = []
+        for rec in resolutions:
+            cap = rec.get("capability", "")
+            outcome = rec.get("outcome", "")
+            detail = rec.get("detail") or {}
+            if outcome == RESOLVED_BY_SKILL:
+                guidance_lines.append(f"{cap} -> 기존 스킬 '{detail.get('skill', '')}' 사용")
+            elif outcome == RESOLVED_BY_AGENT:
+                guidance_lines.append(f"{cap} -> 전문 에이전트 '{detail.get('agent', '')}' 배정")
+            elif detail.get("builder_request"):
+                guidance_lines.append(
+                    f"{cap} -> 기존 스킬/에이전트 없음. 능력 제작 요청 등록(Builder 핸드오프). "
+                    "현재 계획 범위에서 우회 방안을 반영하라.")
+            else:
+                guidance_lines.append(
+                    f"{cap} -> 해결 불가(제작 단계 없음). 기존 수단으로 대체 방안을 반영하라.")
+        if log_callback:
+            n_skill = sum(1 for r in resolutions if r.get("outcome") == RESOLVED_BY_SKILL)
+            n_agent = sum(1 for r in resolutions if r.get("outcome") == RESOLVED_BY_AGENT)
+            log_callback("Resolver",
+                         f"결핍 능력 판정: 스킬 {n_skill}건, 에이전트 {n_agent}건, "
+                         f"제작 요청 {len(builder_queue)}건 (총 {len(resolutions)}건)",
+                         "running")
+        return resolutions, builder_queue, guidance_lines
+
     def _run_acceptance_replan(self, unmet: list, missing_caps: list, final_output: str,
                                task: str, state_manager, mission_tracker: dict,
                                plan: dict, runner_results: list, compiled_agents: list,
@@ -353,12 +403,30 @@ class HermesDynamicRunner:
                                generation: int = 2) -> tuple:
         """갭 C 재계획: 미충족 기준/결핍 능력을 플래너에 피드백해 보충 DAG를 만들고 재병합한다.
 
+        갭 E-L1: missing_caps가 있으면 능력 결정 사슬(스킬 검색 -> 에이전트 배정 -> Builder)을
+        실행해 능력별 해결 판정을 재계획 프롬프트에 주입하고, 제작 요청을 merged_plan에 남긴다.
+
         반환: (new_final_output, merged_runner_results, merged_plan, merged_agents)
         """
-        caps_line = (
-            f"검증 에이전트가 식별한 결핍 능력(missing capabilities): {', '.join(missing_caps)}\n\n"
-            if missing_caps else ""
-        )
+        # 갭 E-L1: 결핍 능력 결정 사슬 (스킬 검색 -> 에이전트 배정 -> Builder 요청)
+        resolutions, builder_queue, cap_guidance = [], [], []
+        if missing_caps:
+            resolutions, builder_queue, cap_guidance = self._resolve_missing_capabilities(
+                missing_caps, log_callback=log_callback)
+        if cap_guidance:
+            caps_line = (
+                f"검증 에이전트가 식별한 결핍 능력(missing capabilities): {', '.join(missing_caps)}\n"
+                "능력별 해결 판정(스킬 검색 -> 에이전트 배정 -> Builder 순서):\n"
+                + "\n".join(f"- {g}" for g in cap_guidance) + "\n"
+                "위 판정을 계획에 반영하라: 스킬로 해결된 능력은 해당 스킬을 사용하고, "
+                "에이전트가 배정된 능력은 해당 에이전트 노드를 배치하며, "
+                "제작 요청이 등록된 능력은 기존 수단으로 최대한 우회하라.\n\n"
+            )
+        else:
+            caps_line = (
+                f"검증 에이전트가 식별한 결핍 능력(missing capabilities): {', '.join(missing_caps)}\n\n"
+                if missing_caps else ""
+            )
         replan_prompt = (
             f"다음 작업을 해결하기 위한 멀티 에이전트 시스템입니다: {task}\n\n"
             f"지금까지 생성된 산출물(병합 출력):\n\"\"\"\n{str(final_output)[:8000]}\n\"\"\"\n\n"
@@ -410,6 +478,10 @@ class HermesDynamicRunner:
         new_final = self.merger.merge(merged_results, task, mission_tracker=mission_tracker,
                                        preferred_model=preferred_model, log_callback=log_callback)
         merged_plan = {"first_run_plan": plan, "acceptance_replan": replan}
+        if resolutions:
+            merged_plan["capability_resolutions"] = resolutions
+        if builder_queue:
+            merged_plan["builder_queue"] = builder_queue
         return new_final, merged_results, merged_plan, compiled_agents + recompiled
 
     def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None, delegation_context: dict = None) -> dict:

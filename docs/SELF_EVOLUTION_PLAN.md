@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2/E-3 시공 완료, E-4 별도 계획 분리 완료 — 갭 E 본선 완결)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 결핍→제작 분기 시공 완료 — 루프 심장 연결)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -360,6 +360,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 분리 원칙: 고정 일정이 아닌 **조건 기반 시공** — 각 항목의 시공 트리거(선행 갭 완료)를 명시하고, 시공 시 본선과 동일 규율(프로브 → 통과 → commit+push → 문서 갱신) 적용
 - 이로써 갭 E 본선(E-0a → E-4) 6개 항목 전부 완결. 다음 단계는 4.2절 E-L1~E-L4 독립 갭 순차 시공
 
+**E-L1 시공 기록 (2026-08-19):**
+- 신규 [`api/api/dynamic/capability_resolver.py`](../api/api/dynamic/capability_resolver.py) — 0A절 결정 사슬을 주입 가능한 순서 체인으로 구현. `CapabilityResolver.resolve(missing_caps)`가 능력별로 **스킬 검색 → 에이전트 배정 → Builder 요청** 순서를 강제하고 단축 평가(첫 해결 단계가 승리). 결과는 `resolved_by_skill` / `resolved_by_agent` / `needs_builder` 3종(와이어 안정 문자열). 단계 예외는 "해결 불가"로 처리해 체인 계속(fail-safe — 스킬 조회 실패가 작업을 차단하지 않음). `enable_builder=False`는 순수 라우터 모드(최대 깊이 위임 자식 실행용)
+- E-L1은 **분기(라우팅+판정)만** 구현 — Builder 단계는 제작 요청(`builder_request`: capability/source/status=pending)을 기록할 뿐이며, 실제 제작은 E-L2가 소비. 이것이 "DAON이 자기 능력을 만들기 시작하는" 정확한 분기점
+- [`orchestrator.py`](../api/api/dynamic/orchestrator.py) 배선: `_run_acceptance_replan()`에서 `missing_caps`가 비어있지 않으면 `_resolve_missing_capabilities()`가 결정 사슬을 실행해 능력별 판정을 재계획 프롬프트에 주입(스킬 해결=해당 스킬 사용 지시, 에이전트 배정=해당 역할 노드 배치, 제작 요청=우회 방안 반영 지시)하고, `merged_plan`에 `capability_resolutions`/`builder_queue`를 노출. 리졸버는 지연 구성(`self.capability_resolver = None` → 기본 생성)으로 기존 무인자 생성과 호환, 리졸버 예외 시 기존 caps_line 경로로 우아한 폴백(재계획은 절대 차단되지 않음)
+- 설계 결정: 분기만 구현(Builder 실체는 E-L2) / 순서 강제+단축 평가 / 전 단계 주입 가능(프로브 검증) / 단계 예외=해결 불가(fail-safe) / 리졸버 전체 실패=기존 경로 폴백
+- 프로브: `_probe/probe_gap_el1.py` 67체크 전부 통과 — 상수/순서 값, 순서 강제+단축 평가(스킬 해결 시 에이전트/Builder 미호출), 단계 예외 fail-safe, resolve() 정규화(None/str/빈 cap 스킵/비-iterable 거부), builder_queue 수집, 기본 단계 구현(페이크 레지스트리 토큰 매칭/역할 매칭/Builder 요청 형태), 오케스트레이터 배선(프롬프트 주입/merged_plan 노출/리졸러 예외 폴백/빈 caps 경로), 정적 배선 확인
+
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
 E 본선(4.1) 이후 순차 시공. 각 항목은 독립 갭이며, 갭 완료 시마다
@@ -368,7 +375,7 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 
 | 순서 | 갭 | 내용 | 검증 방법 |
 |---|---|---|---|
-| E-L1 | 결핍→제작 분기 (심장) | 0A절 결정 사슬을 `_run_acceptance_replan()`에 연결 | 프로브: `missing_caps` 검출 시 Builder 배정 분기 모의 |
+| E-L1 ✅ | 결핍→제작 분기 (심장) | 0A절 결정 사슬을 `_run_acceptance_replan()`에 연결 | 프로브: `missing_caps` 검출 시 Builder 배정 분기 모의 — `capability_resolver.py` + orchestrator 배선, 프로브 67체크 통과 |
 | E-L2 | Builder Agent 역할화 | `delegate_team`으로 도구 제작 서브팀 스폰 | 프로브: Builder 서브팀 스폰 + 제작 산출물 인도 모의 |
 | E-L3 | 격리 | 워크스페이스 안전 불변식 + git worktree | 프로브: 경로 불변식 위반 차단 확인 |
 | E-L4 | 편입 거버넌스 | 생성→격리→검증→승인→편입→사용 강제 | 프로브: draft→프로브→promote 순서 강제 확인 |
