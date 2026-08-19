@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2/E-3 시공 완료)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2/E-3 시공 완료, E-4 별도 계획 분리 완료 — 갭 E 본선 완결)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -318,7 +318,7 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 | 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e1.py` 40개 체크 통과) |
 | 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | ✅ 완료 (2026-08-19, `_probe/probe_gap_e.py` 89개 체크 통과) |
 | 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | ✅ 완료 (2026-08-19, `_probe/probe_gap_e3.py` 54체크 + `_probe/probe_gap_e3.js` 80체크 통과. 실기기 검증은 빌드 후 별도 수행) |
-| 6 | E-4 장기 항목 | 별도 계획 분리 | 대기 |
+| 6 | E-4 장기 항목 | 별도 계획 분리 | ✅ 완료 (2026-08-19, [`docs/E4_LONG_TERM_ROADMAP.md`](E4_LONG_TERM_ROADMAP.md)로 분리 — E-4a worktree 격리 / E-4b daon CLI / E-4c SQLite 영속화, 조건 기반 시공) |
 
 **E-0a 시공 기록 (2026-08-19):**
 - 신규 [`hermes-agent/tools/mcp_manager_tool.py`](../hermes-agent/tools/mcp_manager_tool.py) — `mcp_manage` 단일 도구, action 기반 7개 액션(list/add/add_preset/remove/connect/disconnect/tools)
@@ -354,6 +354,11 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - [`electron/main.js`](../electron/main.js) 배선: 오케스트레이터 생성·시작(STEP 3e), `selfModifyRestartActive` 플래그로 기존 exit 핸들러 자동재시작과 충돌 방지(오케스트레이터가 respawn 소유), kill 시 워치독 보류 구간 설정, 사이클 완료 후 워치독 카운트 리셋 + UI reload, before-quit에서 `stop()`
 - 설계 결정: 감시자/피감시자 분리 — 재시작 실행 권한은 감시자(일렉트론 메인)만 보유. 서버가 죽어도 감시자는 살아있으므로 롤백 후 회복 가능. STATE_DIR 이중 후보 스캔(dev: 레포/data, packaged: %LOCALAPPDATA%/DAON Agent System/data)
 - 프로브: `_probe/probe_gap_e3.py`(54체크: 요청 모듈 표면/잡 가드/원자 기록/소비/손상 처리 + node 서브프로세스 실행 + main.js 배선 정적 확인) + `_probe/probe_gap_e3.js`(80체크: 해피패스/롤백 회복/롤백 실패/kill 실패/손상 파일/busy 가드/디렉터리 스캔/라이프사이클 등 17시나리오, 페이크 deps) 전부 통과. 프로브 첫 실행에서 오케스트레이터의 배열 payload 미거부 결함 발견 → `Array.isArray` 가드 추가 후 통과(프로브가 실제 결함을 잡은 사례)
+
+**E-4 분리 기록 (2026-08-19):**
+- 3.4절의 장기 항목 3종을 [`docs/E4_LONG_TERM_ROADMAP.md`](E4_LONG_TERM_ROADMAP.md)로 분리: **E-4a** worktree 격리(E-L3 동반 시공, `SelfModifyPipeline` 주입점에 cwd 교체로 격리 워크트리 적용), **E-4b** `daon` CLI 표면(E-L2 이후, 기존 HTTP API의 얇은 래퍼), **E-4c** SQLite 영속 상태(E-3 실기기 검증 완료 후, `STATE_DIR/daon_state.db` 최소 스키마)
+- 분리 원칙: 고정 일정이 아닌 **조건 기반 시공** — 각 항목의 시공 트리거(선행 갭 완료)를 명시하고, 시공 시 본선과 동일 규율(프로브 → 통과 → commit+push → 문서 갱신) 적용
+- 이로써 갭 E 본선(E-0a → E-4) 6개 항목 전부 완결. 다음 단계는 4.2절 E-L1~E-L4 독립 갭 순차 시공
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
