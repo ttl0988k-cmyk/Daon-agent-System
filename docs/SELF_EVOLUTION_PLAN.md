@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 + E-L3 격리(E-4a worktree 동반) 시공 완료 — 자기 수정 격리 경로 개통)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 + E-L3 격리(E-4a worktree 동반) + E-L4 편입 거버넌스 시공 완료 — E-Master Architecture 폐루프 완성)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -381,6 +381,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 설계 결정: SPEC 9.5 불변식은 순수 함수(프로브 직접 검증) / worktree는 레포 루트 밖 관리 디렉터리(`STATE_DIR/worktrees`, 폴백 `.daon_state/worktrees`) / 병합 실패 시 cherry-pick 폴백 후 양쪽 실패만 raise / discard는 어떤 경로에서도 잔여 워크트리·브랜치를 남기지 않음 / SelfModifyPipeline은 현재 프로브에서만 사용되므로 orchestrator 배선 없이 독립 모듈로 시공(E-4b/E-4c와 동일 규율)
 - 프로브: `_probe/probe_gap_el3.py` 81체크 전부 통과 — 키 sanitize(결정적/충돌 저항/빈 값), 경로 포함 불변식(중첩/루트/형제/`..`/절대경로/None), cwd==workspace 검증, WorktreeIsolation 생명주기(페이크 git 러너: create/merge/cherry-pick 폴백/discard/멱등/이중 create 가드/실패 주입), run_isolated_self_modify 통합(성공 시 Invariant 1 재검증·프로브 실패/apply 예외/승인 거부 시 discard·worktree 실패 시 비격리 에러), 정적 표면. 첫 실행에서 전부 통과
 
+**E-L4 시공 기록 (2026-08-19):**
+- 신규 [`api/api/dynamic/incorporation.py`](../api/api/dynamic/incorporation.py) — 불변 순서(생성→격리→검증→승인→편입→사용)의 편입 구간을 강제하는 거버넌스 파이프라인. 4단계: ① 진입 게이트(`check_entry_gate`: draft만 진입, approved/rejected/incorporated 재편입 거부, 이름 누락 거부) ② 검증(`verify_artifact`: probe_paths 누락/빈 목록은 거부 — 거버넌스는 프로브 검증을 필수로 요구, 첫 실패에서 중단, 러너 예외=fail-safe 거부) ③ 승인(`approve_artifact`: **리스크 5 기본 강제 — approver 미등록 시 거부**, approver 예외=거부) ④ 편입(`default_skill_promoter`: 기존 `SkillRegistry.promote_skill` 재활용, 게으른 임포트)
+- `run_incorporation(artifact, probe_runner, approver, promoter)`은 `INCORPORATION_ORDER`(entry→verify→approve→incorporate)를 엄격히 순서 실행하고, 단일 게이트 실패 시 즉시 중단해 **이후 단계 콜러블은 절대 호출되지 않는다**(검증 실패→approver/promoter 미호출, 승인 거부→promoter 미호출). 결과는 dict(`ok`/`status`: incorporated|rejected|error /`name`/`stages`/`reason`), 절대 raise 안 함
+- **순서 강제 증거**: `result["stages"]`는 항상 `INCORPORATION_ORDER`의 **접두사** — 어느 단계에서 파이프라인이 멈췄는지를 증명하는 감사 추적. 프로브는 각 실패 경로에서 후속 콜러블 미호출을 CallRecorder 페이크로 검증
+- 설계 결정: 전 단계 주입 가능(probe_runner/approver/promoter) / 절대 raise 안 함 / stages=감사 추적 / promote_skill 재활용(새 승격 경로 발명 금지) / 수동 UI promote 경로(admin_routes)는 인간 승인 표면이라 의도적으로 미변경 / orchestrator 배선 없음(E-L3와 동일 근거 — 프로덕션 배선은 E-4b/E-4c 관할)
+- 프로브: `_probe/probe_gap_el4.py` 76체크 전부 통과 — 상수+순서 정합성(거버넌스 단계는 불변 순서의 부분 수열), artifact 접근자(이름/lifecycle 추출·정규화), 진입 게이트(draft 허용/재편입 거부/이름 없음), 검증 단계(프로브 없음 거부/단일·다중 통과/첫 실패 중단/예외 fail-safe/bool·단일 문자열 호환), 승인 단계(미등록 거부/튜플 호환/예외 fail-safe), run_incorporation 순서 강제(해피패스/검증 실패→승인·편입 미호출/승인 거부→편입 미호출/미등록 거부/진입 거부→전부 미호출/promoter 실패·예외→error/stages 접두사 성질), default_skill_promoter 안전성, E-L2 핸드오프 정합성(미션의 E-L4 관할 선언+draft 수용 기준). 첫 실행에서 전부 통과
+
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
 E 본선(4.1) 이후 순차 시공. 각 항목은 독립 갭이며, 갭 완료 시마다
@@ -392,7 +399,13 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 | E-L1 ✅ | 결핍→제작 분기 (심장) | 0A절 결정 사슬을 `_run_acceptance_replan()`에 연결 | 프로브: `missing_caps` 검출 시 Builder 배정 분기 모의 — `capability_resolver.py` + orchestrator 배선, 프로브 67체크 통과 |
 | E-L2 ✅ | Builder Agent 역할화 | `delegate_team`으로 도구 제작 서브팀 스폰 | 프로브: Builder 서브팀 스폰 + 제작 산출물 인도 모의 — `builder_agent.py` + orchestrator 배선, 프로브 92체크 통과 |
 | E-L3 ✅ | 격리 | 워크스페이스 안전 불변식 + git worktree | 프로브: 경로 불변식 위반 차단 확인 — `isolation.py`(SPEC 9.5 3조항 + WorktreeIsolation + run_isolated_self_modify, E-4a 동반), 프로브 81체크 통과 |
-| E-L4 | 편입 거버넌스 | 생성→격리→검증→승인→편입→사용 강제 | 프로브: draft→프로브→promote 순서 강제 확인 |
+| E-L4 ✅ | 편입 거버넌스 | 생성→격리→검증→승인→편입→사용 강제 | 프로브: draft→프로브→promote 순서 강제 확인 — `incorporation.py`(거버넌스 4단계 파이프라인, promote_skill 재활용), 프로브 76체크 통과 |
+
+**폐루프 완성 (2026-08-19):** E-L1~E-L4 4개 항목 전부 ✅ — E-Master Architecture의 불변 순서
+생성(E-L1 결핍 감지 → E-L2 Builder 제작) → 격리(E-L3 worktree) → 검증·승인·편입(E-L4 거버넌스) → 사용(기존 SkillRegistry 카탈로그 노출)이
+전부 연결되었다. "어느 순간부터 DAON이 자기 능력을 만들어내기 시작했는지" 정확히 추적 가능하며,
+편입은 오직 E-L4가 강제하는 순서(draft → 프로브 검증 → 승인 → promote)를 통해서만 이루어진다.
+남은 항목: 앱 실사용 검증(대표님 지시 대기).
 
 ---
 
