@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1 시공 완료)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2 시공 완료)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -316,7 +316,7 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 | 1 | E-0a `mcp_manage` 도구 | 프로브: 등록→연결→도구 목록 조회 모의 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0a.py` 전 액션 통과) |
 | 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0c.py` 35개 체크 통과) |
 | 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e1.py` 40개 체크 통과) |
-| 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | 대기 |
+| 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | ✅ 완료 (2026-08-19, `_probe/probe_gap_e.py` 89개 체크 통과) |
 | 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | 대기 |
 | 6 | E-4 장기 항목 | 별도 계획 분리 | 대기 |
 
@@ -340,6 +340,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - [`workspace.py`](../api/api/workspace.py) 워크스페이스 프리셋 추가: `get_workspace_presets()`가 'DAON Repo' 프리셋 노출(server.py/server.exe 마커 확인 시에만), `ensure_workspace_presets()`가 읽기 시점에 멱등 주입(사용자가 삭제해도 복원, 같은 경로 대소문자 무시 중복 방지, 원본 목록 미수정), `load_workspaces()`가 `_load_workspaces_base()`를 래핑
 - 설계 결정: 프리셋은 저장 파일(workspaces.json)을 오염시키지 않고 읽기 시점 주입 — 프로필 간 일관되고 시스템 관리 항목으로서 항상 존재
 - 프로브 `_probe/probe_gap_e1.py`: 스킬 파일 파싱 + 카탈로그 노출(get_skill/get_catalog_text/load_skills) + 프리셋 멱등 주입/원본 불변/실제 load_workspaces — 40개 체크 전부 통과
+
+**E-2 시공 기록 (2026-08-19):**
+- 신규 [`api/api/dynamic/self_modify.py`](../api/api/dynamic/self_modify.py) — `SelfModifyPipeline` 상태 머신(8상태: init→checkpointed→awaiting_approval→applied→verified→committed, 실패 시 reverted/rejected). 자기 수정 실행이 반드시 통과해야 할 순서 강제: git 체크포인트(자동 커밋) → 승인 게이트 → 수정 적용 → 프로브 회귀검사 → 통과 시 커밋 확정 / 실패 시 체크포인트 자동 복귀(`git reset --hard` + `clean -fd`)
+- 설계 결정: 모든 외부 효과(git 실행, 프로브 실행, 수정 적용)를 주입 가능한 러너/콜백으로 분리 — 서버는 실제 구현을, 프로브는 페이크를 배선. `_accepts_cwd()`가 러너 시그니처를 감지해 cwd 전달 여부를 자동 판정
+- 기존 통치 자산 재사용: 승인 게이트(`api.approval`의 set_pending/has_pending/get_history 계약, `approval=None`이면 자동 승인으로 dev/프로브용), 위임 가드(`check_delegation_guard` — delegation_ctx 제공 시 깊이/spawn_reason 검사로 자기 수정도 갭 D 통치 하에 둠)
+- 실패 경로 전부 자동 복귀: 승인 거부/타임아웃, apply_fn 예외, 프로브 회귀 실패 시 체크포인트로 롤백 후 터미널 상태 기록. 순서 위반(단계 건너뛰기, 이중 체크포인트, 완료 후 재실행)은 `SelfModifyError`로 차단
+- 프로브 `_probe/probe_gap_e.py`: 모듈 표면 + 해피패스(git 호출 순서 rev-parse→add→commit→add→commit 검증) + 승인 게이트(승인/거부/타임아웃) + 실패 경로(apply 예외/프로브 실패/git 실패 4종/롤백 실패) + 위임 가드 + 순서 강제 + history 원장 — 89개 체크 전부 통과
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
