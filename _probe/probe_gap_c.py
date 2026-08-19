@@ -133,7 +133,13 @@ assert [r["output_key"] for r in io] == ["k1"], "실패 노드는 initial_output
 assert captured["runner_kwargs"]["generation"] == 2
 assert [r["name"] for r in merged_results] == ["a1", "fixer"], "이전 성공 + 재계획 결과만 병합"
 assert new_final == "MERGED(2)"
-assert set(merged_plan.keys()) == {"first_run_plan", "acceptance_replan"}
+# E-L1/E-L2 시공 이후 merged_plan은 능력 판정/제작 큐/디스패치 키를 추가로 가질 수 있다.
+# 핵심 계약: 원본 계획 + 재계획 키는 항상 존재하고, 추가 키는 E-L1/E-L2 산출물로 한정된다.
+assert {"first_run_plan", "acceptance_replan"} <= set(merged_plan.keys())
+assert set(merged_plan.keys()) <= {
+    "first_run_plan", "acceptance_replan",
+    "capability_resolutions", "builder_queue", "builder_dispatches",
+}, f"예상 밖 merged_plan 키: {set(merged_plan.keys())}"
 assert merged_agents == [{"name": "a1"}, {"name": "fixer", "role": "fixer"}]
 print("4. _run_acceptance_replan OK")
 
