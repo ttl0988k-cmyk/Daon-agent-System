@@ -23,7 +23,7 @@
 
 | # | 항목 | bb 근거 | 이식 가치 | 선행 의존 | 상태 |
 |---|---|---|---|---|---|
-| E-4a | worktree 격리 | 관리형 git worktree (스레드마다 새 브랜치+복사본, 아카이브 시 자동 정리) | ★★★ 자기 적용 시 안전 격리의 핵심 수단 | E-L3의 기반 | 대기 |
+| E-4a | worktree 격리 | 관리형 git worktree (스레드마다 새 브랜치+복사본, 아카이브 시 자동 정리) | ★★★ 자기 적용 시 안전 격리의 핵심 수단 | E-L3의 기반 | **완료** (E-L3 동반 시공, 2026-08-19) |
 | E-4b | 에이전트용 CLI 표면 | CLI/SDK를 에이전트용 1급 표면으로 노출 | ★★ 에이전트가 에이전트를 부르는 통로 | E-L2 이후 | 대기 |
 | E-4c | SQLite 영속 상태 | SQLite 영속 상태 | ★★ 재시작 후에도 스레드 복원 | E-3 완료(됨) | 대기 |
 
@@ -121,3 +121,4 @@ DAON의 파일 기반 STATE_DIR 체계 위에 얹음.
 | 날짜 | 내용 |
 |---|---|
 | 2026-08-19 | SELF_EVOLUTION_PLAN.md 3.4절에서 분리. 본선 E-0a~E-3 완료(커밋 222b9e9/30b1f12/1251ce0/063d2a9/6c628ba)에 따라 분리 조건 충족 |
+| 2026-08-19 | **E-4a 완료** — 시공 트리거 충족(E-L3 착수 = E-4a 착수). `api/api/dynamic/isolation.py` 신규: SPEC 9.5 안전 불변식 3조항 함수 + `WorktreeIsolation`(git worktree 생명주기: create/merge_back/discard, 관리 디렉터리 `STATE_DIR/worktrees`) + `run_isolated_self_modify()`(`SelfModifyPipeline`의 기존 `cwd` 파라미터로 격리 워크트리 주입 — 인터페이스 변경 없음). 프로브 `_probe/probe_gap_el3.py` 81체크 전부 통과 |

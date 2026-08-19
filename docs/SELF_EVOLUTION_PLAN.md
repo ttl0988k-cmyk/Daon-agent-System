@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 시공 완료 — 제작 서브팀 스폰 경로 개통)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 + E-L3 격리(E-4a worktree 동반) 시공 완료 — 자기 수정 격리 경로 개통)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -374,6 +374,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 설계 결정: 승인 게이트 기본 거부(자동 모드는 명시적 opt-in) / 제작 대상은 결정적 휴리스틱(기본=스킬) / 미션에 draft 제약 명시(E-L4 편입 거버넌스와 관할 분리) / delegate_team 래핑으로 갭 D 가드 재사용 / 스폰된 서브팀은 중첩 Dynamic Harness 실행이라 갭 C 수용 기준 검증 프랙탈 상속
 - 프로브: `_probe/probe_gap_el2.py` 92체크 전부 통과 — 상수 값, 제작 대상 분류(키워드/classifier 주입/무효·예외 폴백), 미션 구성(draft/promote 금지 문구/수용 기준 4개), 승인 게이트(미등록 거부/허용/거부/예외 fail-safe), dispatch 큐 소비(spawned/denied/error/게이트 예외/스포너 예외/비-dict 반환/빈 cap 스킵/순서 보존/시그니처 호환/로그 방출/기본 게이트 거부), 오케스트레이터 배선(builder_queue→디스패치→merged_plan 노출/approver 미등록 시 스포너 미호출 확인/스킬 해결 시 키 없음), 정적 배선 확인
 
+**E-L3 시공 기록 (2026-08-19, E-4a 동반):**
+- 신규 [`api/api/dynamic/isolation.py`](../api/api/dynamic/isolation.py) — Symphony SPEC 9.5 안전 불변식 3조항을 함수로 구현 + git worktree 격리. ① Invariant 1(`validate_cwd_is_workspace`: 실행 전 cwd == workspace_path resolve 동등 검증) ② Invariant 2(`is_path_inside_root`/`validate_path_inside_root`: 양쪽 절대경로 정규화 후 prefix 디렉터리 검증, 루트 밖 경로 거부, 절대 raise 안 하는 bool 판정 + raise하는 validate 쌍) ③ Invariant 3(`sanitize_workspace_key`: `[A-Za-z0-9._-]`만 허용·나머지 `_` 교체·교체 발생 시 sha256 64비트 hex 접미사 부착으로 충돌 저항)
+- `WorktreeIsolation` 클래스 — git worktree 생명주기: `create()`(브랜치 `self-modify/<sanitize된 run_id>`, 관리 디렉터리 `STATE_DIR/worktrees` 안에 생성 후 Invariant 2 재검증) → `merge_back()`(검증 통과 시 `git merge --no-edit`, 실패 시 cherry-pick 폴백, 완료 후 worktree 제거+브랜치 `-d`) / `discard()`(실패·거부 시 force remove+브랜치 `-D`, 절대 raise 안 함·멱등). 전 구간 주입 가능 `git_runner`로 프로브는 페이크 사용
+- `run_isolated_self_modify()` — E-4a 통합 실행기. `SelfModifyPipeline`의 **기존 `cwd` 파라미터에 격리 워크트리 경로를 주입**(인터페이스 변경 없음), apply_fn이 1인자면 워크트리 경로를 주입(`_apply_accepts_path` inspect 판정)해 격리 워크트리 안에 파일을 쓰게 함. 파이프라인 결과 ok → merge_back, 아니면 discard. 결과는 dict(`ok`/`isolated`/`merge`/`worktree_path`/`branch`), 절대 raise 안 함
+- 설계 결정: SPEC 9.5 불변식은 순수 함수(프로브 직접 검증) / worktree는 레포 루트 밖 관리 디렉터리(`STATE_DIR/worktrees`, 폴백 `.daon_state/worktrees`) / 병합 실패 시 cherry-pick 폴백 후 양쪽 실패만 raise / discard는 어떤 경로에서도 잔여 워크트리·브랜치를 남기지 않음 / SelfModifyPipeline은 현재 프로브에서만 사용되므로 orchestrator 배선 없이 독립 모듈로 시공(E-4b/E-4c와 동일 규율)
+- 프로브: `_probe/probe_gap_el3.py` 81체크 전부 통과 — 키 sanitize(결정적/충돌 저항/빈 값), 경로 포함 불변식(중첩/루트/형제/`..`/절대경로/None), cwd==workspace 검증, WorktreeIsolation 생명주기(페이크 git 러너: create/merge/cherry-pick 폴백/discard/멱등/이중 create 가드/실패 주입), run_isolated_self_modify 통합(성공 시 Invariant 1 재검증·프로브 실패/apply 예외/승인 거부 시 discard·worktree 실패 시 비격리 에러), 정적 표면. 첫 실행에서 전부 통과
+
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
 E 본선(4.1) 이후 순차 시공. 각 항목은 독립 갭이며, 갭 완료 시마다
@@ -384,7 +391,7 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 |---|---|---|---|
 | E-L1 ✅ | 결핍→제작 분기 (심장) | 0A절 결정 사슬을 `_run_acceptance_replan()`에 연결 | 프로브: `missing_caps` 검출 시 Builder 배정 분기 모의 — `capability_resolver.py` + orchestrator 배선, 프로브 67체크 통과 |
 | E-L2 ✅ | Builder Agent 역할화 | `delegate_team`으로 도구 제작 서브팀 스폰 | 프로브: Builder 서브팀 스폰 + 제작 산출물 인도 모의 — `builder_agent.py` + orchestrator 배선, 프로브 92체크 통과 |
-| E-L3 | 격리 | 워크스페이스 안전 불변식 + git worktree | 프로브: 경로 불변식 위반 차단 확인 |
+| E-L3 ✅ | 격리 | 워크스페이스 안전 불변식 + git worktree | 프로브: 경로 불변식 위반 차단 확인 — `isolation.py`(SPEC 9.5 3조항 + WorktreeIsolation + run_isolated_self_modify, E-4a 동반), 프로브 81체크 통과 |
 | E-L4 | 편입 거버넌스 | 생성→격리→검증→승인→편입→사용 강제 | 프로브: draft→프로브→promote 순서 강제 확인 |
 
 ---
