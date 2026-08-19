@@ -35,6 +35,7 @@
       "useZip": true,
       "differentialPackage": false
     },
+    "afterPack": "scripts/after-pack.js",
     "extraResources": [
       {
         "from": "dist/server.exe",

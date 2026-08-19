@@ -27,16 +27,24 @@ DAON Agent System이 자기 자신을 작업 대상으로 다룰 때 필요한 �
      (dev: `api/api/dynamic_hermes.py` → 번들: `api/dynamic_hermes.py`)
      — 번들 경로 계산 시 이 평탄화를 고려해야 한다
 4. `npx electron-builder` — `dist_new/server.exe`를 `dist/win-unpacked`로 패키징
-5. **`dist\win-unpacked\DAON Agent System.cmd` 존재 확인** → 없으면 재생성 (아래 3절 함정)
+   - afterPack 훅(`scripts/after-pack.js`)이 `.cmd` 런처를 자동 재생성한다 (아래 3절)
+5. **`dist\win-unpacked\DAON Agent System.cmd` 존재 확인** — 훅이 보장하지만
+   빌드 후 존재를 눈으로 확인한다 (없으면 3절 수동 절차로 재생성)
 6. `release/_build_zip.ps1` — 포터블 zip 생성
 
-## 3. electron-builder .cmd 삭제 함정
+## 3. electron-builder .cmd 삭제 함정 (항구 대책 시공 완료)
 
 `npx electron-builder` 실행 후 `dist\win-unpacked\DAON Agent System.cmd`가
 삭제되는 함정이 반복적으로 발생했다. 바탕화면/시작 메뉴 바로가기 전부
 `.cmd`를 대상으로 하므로 없으면 앱 실행이 깨진다.
 
-매 빌드 후 존재를 확인하고, 없으면 아래 내용으로 재생성한다:
+**항구 대책 (2026-08-19 시공)**: `scripts/after-pack.js` afterPack 훅.
+`package.json`의 `build.afterPack`에 등록되어 electron-builder가 앱 디렉터리
+(win-unpacked) 구성 직후, NSIS 설치본 빌드 직전에 실행된다. 훅이 `.cmd`를
+재생성하므로 win-unpacked은 물론 설치본에도 포함된다. win32에서만 동작하며
+`productFilename` 기반으로 경로를 계산한다.
+
+훅이 쓰는 내용(수동 재생성 시에도 동일):
 
 ```bat
 @echo off
@@ -44,6 +52,9 @@ rem DAON Agent System launcher
 set "ELECTRON_RUN_AS_NODE="
 start "" "%~dp0DAON Agent System.exe"
 ```
+
+수동 재생성(훅 미동작 시 비상 절차): 위 내용을
+`dist\win-unpacked\DAON Agent System.cmd`로 저장한다.
 
 ## 4. 프로브 실행법
 
