@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
@@ -148,7 +149,69 @@ def _migrate_global_workspaces() -> list:
         return []
 
 
+# ── Workspace presets (갭 E-1: DAON 대상 결속) ──────────────────────────────
+
+def _resolve_daon_repo_root():
+    """DAON 레포 루트를 해석한다.
+
+    dev 환경에서는 이 파일이 속한 프로젝트 루트(api/api/workspace.py → 루트),
+    PyInstaller 번들에서는 실행 파일이 위치한 앱 디렉터리를 반환한다.
+    """
+    try:
+        if getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS'):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent.parent
+    except Exception:
+        return None
+
+
+def get_workspace_presets() -> list:
+    """시스템 내장 워크스페이스 프리셋 목록.
+
+    갭 E-1 대상 결속: DAON 레포 자체를 하네스 워크스페이스로 항상 사용할 수
+    있게 'DAON Repo' 프리셋을 제공한다. 서버 파일이 확인될 때만 노출한다.
+    """
+    presets = []
+    root = _resolve_daon_repo_root()
+    if root is not None:
+        try:
+            if root.is_dir() and ((root / 'server.py').exists() or (root / 'server.exe').exists()):
+                presets.append({'path': str(root), 'name': 'DAON Repo'})
+        except Exception:
+            pass
+    return presets
+
+
+def ensure_workspace_presets(workspaces: list) -> list:
+    """워크스페이스 목록에 프리셋 항목을 멱등 주입한다.
+
+    프리셋은 시스템 관리 항목이라 항상 목록에 존재하며, 사용자가 삭제해도
+    다음 로드에서 복원된다. 같은 경로(대소문자 무시)의 항목은 중복 추가하지
+    않는다. 원본 목록은 수정하지 않는다.
+    """
+    result = list(workspaces or [])
+    existing = set()
+    for w in result:
+        try:
+            existing.add(str(Path(w.get('path', '')).resolve()).lower())
+        except Exception:
+            continue
+    for preset in get_workspace_presets():
+        try:
+            key = str(Path(preset['path']).resolve()).lower()
+        except Exception:
+            continue
+        if key not in existing:
+            result.append(dict(preset))
+            existing.add(key)
+    return result
+
+
 def load_workspaces() -> list:
+    return ensure_workspace_presets(_load_workspaces_base())
+
+
+def _load_workspaces_base() -> list:
     ws_file = _workspaces_file()
     if ws_file.exists():
         try:

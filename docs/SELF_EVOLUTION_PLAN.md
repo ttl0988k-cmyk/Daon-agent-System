@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-18 (E-Master Architecture 기록 + 갭 E 승인)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1 시공 완료)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -315,7 +315,7 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 |---|---|---|---|
 | 1 | E-0a `mcp_manage` 도구 | 프로브: 등록→연결→도구 목록 조회 모의 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0a.py` 전 액션 통과) |
 | 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0c.py` 35개 체크 통과) |
-| 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | 대기 |
+| 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e1.py` 40개 체크 통과) |
 | 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | 대기 |
 | 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | 대기 |
 | 6 | E-4 장기 항목 | 별도 계획 분리 | 대기 |
@@ -333,6 +333,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - `tool_template` 지정 + `skill_name` 미지정 시 도구 전용 플러그인(SKILL.md 없음)으로 스캐폴드 — 기존 스킬 전용 경로는 무변경
 - 툴셋은 `plugin-{name}`으로 네임스페이스화해 충돌 방지
 - 프로브 `_probe/probe_gap_e0c.py`: 도구 전용/병행/레거시 스캐폴드 + 생성 `__init__.py` 실제 임포트 후 `register(ctx)` 계약 검증 + 입력 검증 + 스키마/registry 배선 — 35개 체크 전부 통과
+
+**E-1 시공 기록 (2026-08-19):**
+- 신규 [`skills/System/daon-self-knowledge/`](../skills/System/daon-self-knowledge/SKILL.md) — DAON 자체 지식을 스킬 1장으로 주입: 레포 구조, 빌드 파이프라인 순서(push → `_sync_build.py` → PyInstaller `daon-server.spec` → electron-builder → `.cmd` 확인 → zip), electron-builder `.cmd` 삭제 함정 + 재생성 bat, 프로브 실행법, 운영 정책, 자기 수정 불변식
+- `SkillRegistry._scan()`이 curated `skills/`를 `rglob("SKILL.md")`로 자동 발견하므로 등록 코드 불필요 — 라이프사이클은 `approved`, CEO 카탈로그의 Curated 섹션에 노출됨
+- [`workspace.py`](../api/api/workspace.py) 워크스페이스 프리셋 추가: `get_workspace_presets()`가 'DAON Repo' 프리셋 노출(server.py/server.exe 마커 확인 시에만), `ensure_workspace_presets()`가 읽기 시점에 멱등 주입(사용자가 삭제해도 복원, 같은 경로 대소문자 무시 중복 방지, 원본 목록 미수정), `load_workspaces()`가 `_load_workspaces_base()`를 래핑
+- 설계 결정: 프리셋은 저장 파일(workspaces.json)을 오염시키지 않고 읽기 시점 주입 — 프로필 간 일관되고 시스템 관리 항목으로서 항상 존재
+- 프로브 `_probe/probe_gap_e1.py`: 스킬 파일 파싱 + 카탈로그 노출(get_skill/get_catalog_text/load_skills) + 프리셋 멱등 주입/원본 불변/실제 load_workspaces — 40개 체크 전부 통과
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
