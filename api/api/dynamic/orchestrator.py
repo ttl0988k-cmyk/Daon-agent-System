@@ -29,6 +29,12 @@ from api.dynamic.capability_resolver import (
     RESOLVED_BY_AGENT,
     NEEDS_BUILDER,
 )
+from api.dynamic.builder_agent import (
+    dispatch_builder_requests,
+    DISPATCH_SPAWNED,
+    DISPATCH_DENIED,
+    DISPATCH_ERROR,
+)
 
 _log = get_logger(__name__)
 
@@ -49,6 +55,9 @@ class HermesDynamicRunner:
         self.merger = ResultMerger()
         # 갭 E-L1: 결핍 능력 결정 사슬 (지연 구성, 주입 가능 — _resolve_missing_capabilities 참조)
         self.capability_resolver = None
+        # 갭 E-L2: Builder 승인 게이트/스포너 (기본 None = 게이트 거부 — 리스크 5 안전 기본값)
+        self.builder_approver = None
+        self.builder_spawner = None
 
     def _run_recovery_plan(
         self,
@@ -394,6 +403,37 @@ class HermesDynamicRunner:
                          "running")
         return resolutions, builder_queue, guidance_lines
 
+    def _dispatch_builder_queue(self, builder_queue, log_callback=None,
+                                preferred_model: str = None):
+        """갭 E-L2: E-L1이 남긴 builder_queue를 소비해 Builder 서브팀 스폰을 디스패치한다.
+
+        승인 게이트(self.builder_approver) 통과 시에만 delegate_team 서브팀이 스폰된다.
+        approver 미등록 시 게이트는 기본 거부(리스크 5 안전 기본값).
+        반환: 디스패치 레코드 목록. 절대 raise 하지 않는다.
+        """
+        if not builder_queue:
+            return []
+        try:
+            records = dispatch_builder_requests(
+                builder_queue,
+                spawner=self.builder_spawner,
+                approver=self.builder_approver,
+                preferred_model=preferred_model,
+                log_callback=log_callback,
+            )
+        except Exception as e:
+            _log.warning("Builder dispatch failed (replan continues): %s", e)
+            return []
+        if log_callback and records:
+            n_spawn = sum(1 for r in records if r.get("status") == DISPATCH_SPAWNED)
+            n_deny = sum(1 for r in records if r.get("status") == DISPATCH_DENIED)
+            n_err = sum(1 for r in records if r.get("status") == DISPATCH_ERROR)
+            log_callback("Builder",
+                         f"제작 요청 디스패치: 스폰 {n_spawn}건, 게이트 거부 {n_deny}건, "
+                         f"오류 {n_err}건 (총 {len(records)}건)",
+                         "running")
+        return records or []
+
     def _run_acceptance_replan(self, unmet: list, missing_caps: list, final_output: str,
                                task: str, state_manager, mission_tracker: dict,
                                plan: dict, runner_results: list, compiled_agents: list,
@@ -482,6 +522,12 @@ class HermesDynamicRunner:
             merged_plan["capability_resolutions"] = resolutions
         if builder_queue:
             merged_plan["builder_queue"] = builder_queue
+            # 갭 E-L2: 제작 요청 큐 소비 — 승인 게이트 통과 시 Builder 서브팀 스폰
+            dispatches = self._dispatch_builder_queue(
+                builder_queue, log_callback=log_callback,
+                preferred_model=preferred_model)
+            if dispatches:
+                merged_plan["builder_dispatches"] = dispatches
         return new_final, merged_results, merged_plan, compiled_agents + recompiled
 
     def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None, delegation_context: dict = None) -> dict:

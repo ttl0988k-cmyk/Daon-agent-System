@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 결핍→제작 분기 시공 완료 — 루프 심장 연결)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 시공 완료 — 제작 서브팀 스폰 경로 개통)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -367,6 +367,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 설계 결정: 분기만 구현(Builder 실체는 E-L2) / 순서 강제+단축 평가 / 전 단계 주입 가능(프로브 검증) / 단계 예외=해결 불가(fail-safe) / 리졸버 전체 실패=기존 경로 폴백
 - 프로브: `_probe/probe_gap_el1.py` 67체크 전부 통과 — 상수/순서 값, 순서 강제+단축 평가(스킬 해결 시 에이전트/Builder 미호출), 단계 예외 fail-safe, resolve() 정규화(None/str/빈 cap 스킵/비-iterable 거부), builder_queue 수집, 기본 단계 구현(페이크 레지스트리 토큰 매칭/역할 매칭/Builder 요청 형태), 오케스트레이터 배선(프롬프트 주입/merged_plan 노출/리졸러 예외 폴백/빈 caps 경로), 정적 배선 확인
 
+**E-L2 시공 기록 (2026-08-19):**
+- 신규 [`api/api/dynamic/builder_agent.py`](../api/api/dynamic/builder_agent.py) — E-L1이 남긴 `builder_queue`를 소비하는 Builder 역할 모듈. 파이프라인: ① 제작 대상 분류(`classify_build_target`: mcp/plugin 키워드 휴리스틱, 기본=스킬(가장 가벼운 산출물), classifier 주입 가능) ② 승인 게이트(`default_builder_gate`: **리스크 5 기본 강제 — approver 미등록 시 스폰 불가**, approver 예외=거부 fail-safe) ③ Builder 미션 구성(`build_builder_task`: draft 전용·자체 promote 금지(E-L4 관할)·워크스페이스 경로 한정·프로브 필수·산출물 경로+사용법 포함, 수용 기준 4개) ④ 스폰(`default_builder_spawner`: `delegate_team` 래핑 — 갭 D 위임 가드/예산/혈통을 그대로 통과, 절대 raise 안 함)
+- `dispatch_builder_requests(builder_queue, ...)`가 큐를 입력 순서대로 소비해 디스패치 레코드(`capability`/`build_target`/`status`: spawned|denied|error /`child_run_id`/`final_output`/`spawn_reason`)를 반환. 게이트/스포너 시그니처 유연성(`_accepts_approver`/`_accepts_model` inspect 헬퍼), 전 단계 주입 가능, 절대 raise 안 함(실패=error 레코드, 큐는 계속)
+- [`orchestrator.py`](../api/api/dynamic/orchestrator.py) 배선: `_run_acceptance_replan()`에서 `builder_queue`가 비어있으면 `_dispatch_builder_queue()`가 승인 게이트(`self.builder_approver`) 통과 건만 스폰하고, 결과를 `merged_plan["builder_dispatches"]`로 노출. `builder_approver`/`builder_spawner`는 지연 구성(기본 None = 게이트 거부 — 리스크 5 안전 기본값). 디스패치 요약 로그 방출, 재계획 경로는 절대 차단되지 않음
+- 설계 결정: 승인 게이트 기본 거부(자동 모드는 명시적 opt-in) / 제작 대상은 결정적 휴리스틱(기본=스킬) / 미션에 draft 제약 명시(E-L4 편입 거버넌스와 관할 분리) / delegate_team 래핑으로 갭 D 가드 재사용 / 스폰된 서브팀은 중첩 Dynamic Harness 실행이라 갭 C 수용 기준 검증 프랙탈 상속
+- 프로브: `_probe/probe_gap_el2.py` 92체크 전부 통과 — 상수 값, 제작 대상 분류(키워드/classifier 주입/무효·예외 폴백), 미션 구성(draft/promote 금지 문구/수용 기준 4개), 승인 게이트(미등록 거부/허용/거부/예외 fail-safe), dispatch 큐 소비(spawned/denied/error/게이트 예외/스포너 예외/비-dict 반환/빈 cap 스킵/순서 보존/시그니처 호환/로그 방출/기본 게이트 거부), 오케스트레이터 배선(builder_queue→디스패치→merged_plan 노출/approver 미등록 시 스포너 미호출 확인/스킬 해결 시 키 없음), 정적 배선 확인
+
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
 E 본선(4.1) 이후 순차 시공. 각 항목은 독립 갭이며, 갭 완료 시마다
@@ -376,7 +383,7 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 | 순서 | 갭 | 내용 | 검증 방법 |
 |---|---|---|---|
 | E-L1 ✅ | 결핍→제작 분기 (심장) | 0A절 결정 사슬을 `_run_acceptance_replan()`에 연결 | 프로브: `missing_caps` 검출 시 Builder 배정 분기 모의 — `capability_resolver.py` + orchestrator 배선, 프로브 67체크 통과 |
-| E-L2 | Builder Agent 역할화 | `delegate_team`으로 도구 제작 서브팀 스폰 | 프로브: Builder 서브팀 스폰 + 제작 산출물 인도 모의 |
+| E-L2 ✅ | Builder Agent 역할화 | `delegate_team`으로 도구 제작 서브팀 스폰 | 프로브: Builder 서브팀 스폰 + 제작 산출물 인도 모의 — `builder_agent.py` + orchestrator 배선, 프로브 92체크 통과 |
 | E-L3 | 격리 | 워크스페이스 안전 불변식 + git worktree | 프로브: 경로 불변식 위반 차단 확인 |
 | E-L4 | 편입 거버넌스 | 생성→격리→검증→승인→편입→사용 강제 | 프로브: draft→프로브→promote 순서 강제 확인 |
 
