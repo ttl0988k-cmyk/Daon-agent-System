@@ -311,14 +311,21 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 
 ### 4.1 갭 E 본선
 
-| 순서 | 항목 | 검증 방법 |
-|---|---|---|
-| 1 | E-0a `mcp_manage` 도구 | 프로브: 등록→연결→도구 목록 조회 모의 |
-| 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 |
-| 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 |
-| 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) |
-| 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) |
-| 6 | E-4 장기 항목 | 별도 계획 분리 |
+| 순서 | 항목 | 검증 방법 | 상태 |
+|---|---|---|---|
+| 1 | E-0a `mcp_manage` 도구 | 프로브: 등록→연결→도구 목록 조회 모의 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0a.py` 전 액션 통과) |
+| 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | 대기 |
+| 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | 대기 |
+| 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | 대기 |
+| 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | 대기 |
+| 6 | E-4 장기 항목 | 별도 계획 분리 | 대기 |
+
+**E-0a 시공 기록 (2026-08-19):**
+- 신규 [`hermes-agent/tools/mcp_manager_tool.py`](../hermes-agent/tools/mcp_manager_tool.py) — `mcp_manage` 단일 도구, action 기반 7개 액션(list/add/add_preset/remove/connect/disconnect/tools)
+- 기존 MCP 매니저 싱글톤(`api.mcp_client.get_mcp_manager()`)을 지연 임포트로 재호출 → UI 패널과 상태 일관
+- 시크릿 정책: `auth_token`은 결과에서 마스킹(`_sanitize`) — 에이전트가 토큰 값을 되받아 로그에 남기지 않음
+- `discover_builtin_tools()`가 `tools/*.py`를 자동 스캔하므로 파일 생성만으로 등록됨 (check_fn으로 DAON 런타임 여부 판정)
+- 프로브 `_probe/probe_gap_e0a.py`: 전 액션 라우팅 + 입력 검증 + sanitize + 스키마 무결성 + registry 등록 확인 — 전부 통과
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
