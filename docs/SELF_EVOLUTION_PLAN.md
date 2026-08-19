@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2 시공 완료)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E-0a/E-0c/E-1/E-2/E-3 시공 완료)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -317,7 +317,7 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 | 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0c.py` 35개 체크 통과) |
 | 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e1.py` 40개 체크 통과) |
 | 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | ✅ 완료 (2026-08-19, `_probe/probe_gap_e.py` 89개 체크 통과) |
-| 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | 대기 |
+| 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | ✅ 완료 (2026-08-19, `_probe/probe_gap_e3.py` 54체크 + `_probe/probe_gap_e3.js` 80체크 통과. 실기기 검증은 빌드 후 별도 수행) |
 | 6 | E-4 장기 항목 | 별도 계획 분리 | 대기 |
 
 **E-0a 시공 기록 (2026-08-19):**
@@ -347,6 +347,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 기존 통치 자산 재사용: 승인 게이트(`api.approval`의 set_pending/has_pending/get_history 계약, `approval=None`이면 자동 승인으로 dev/프로브용), 위임 가드(`check_delegation_guard` — delegation_ctx 제공 시 깊이/spawn_reason 검사로 자기 수정도 갭 D 통치 하에 둠)
 - 실패 경로 전부 자동 복귀: 승인 거부/타임아웃, apply_fn 예외, 프로브 회귀 실패 시 체크포인트로 롤백 후 터미널 상태 기록. 순서 위반(단계 건너뛰기, 이중 체크포인트, 완료 후 재실행)은 `SelfModifyError`로 차단
 - 프로브 `_probe/probe_gap_e.py`: 모듈 표면 + 해피패스(git 호출 순서 rev-parse→add→commit→add→commit 검증) + 승인 게이트(승인/거부/타임아웃) + 실패 경로(apply 예외/프로브 실패/git 실패 4종/롤백 실패) + 위임 가드 + 순서 강제 + history 원장 — 89개 체크 전부 통과
+
+**E-3 시공 기록 (2026-08-19):**
+- 신규 [`api/api/dynamic/restart_request.py`](../api/api/dynamic/restart_request.py) — 서버 측(피감시자) 와이어 프로토콜. 서버는 절대 자기 재시작을 수행하지 않고 `STATE_DIR/restart-request.json` 요청 파일만 원자 기록(tmp + `os.replace`). 진행 중 잡 가드(리스크 3): `running`/`clarifying`/`awaiting_approval` 상태 잡이 있으면 `RestartRequestError`로 거부. payload = type/version/reason/checkpoint_ref/requested_at/server_pid
+- 신규 [`electron/restart_orchestrator.js`](../electron/restart_orchestrator.js) — 일렉트론 측(감시자) 오케스트레이션. 요청 파일 폴링(5초) → 서버 kill → 재기동 → 헬스체크 → 실패 시 체크포인트 git 롤백(`reset --hard` + `clean -fd`) → 재-kill → 재기동 → 재헬스체크(최대 2회 시도). 손상/비객체 요청 파일은 삭제 후 무시(차단 방지). 모든 외부 효과(fs/kill/spawn/health/git/sleep) 주입 가능 설계
+- [`electron/main.js`](../electron/main.js) 배선: 오케스트레이터 생성·시작(STEP 3e), `selfModifyRestartActive` 플래그로 기존 exit 핸들러 자동재시작과 충돌 방지(오케스트레이터가 respawn 소유), kill 시 워치독 보류 구간 설정, 사이클 완료 후 워치독 카운트 리셋 + UI reload, before-quit에서 `stop()`
+- 설계 결정: 감시자/피감시자 분리 — 재시작 실행 권한은 감시자(일렉트론 메인)만 보유. 서버가 죽어도 감시자는 살아있으므로 롤백 후 회복 가능. STATE_DIR 이중 후보 스캔(dev: 레포/data, packaged: %LOCALAPPDATA%/DAON Agent System/data)
+- 프로브: `_probe/probe_gap_e3.py`(54체크: 요청 모듈 표면/잡 가드/원자 기록/소비/손상 처리 + node 서브프로세스 실행 + main.js 배선 정적 확인) + `_probe/probe_gap_e3.js`(80체크: 해피패스/롤백 회복/롤백 실패/kill 실패/손상 파일/busy 가드/디렉터리 스캔/라이프사이클 등 17시나리오, 페이크 deps) 전부 통과. 프로브 첫 실행에서 오케스트레이터의 배열 payload 미거부 결함 발견 → `Array.isArray` 가드 추가 후 통과(프로브가 실제 결함을 잡은 사례)
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 

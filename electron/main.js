@@ -9,6 +9,10 @@ const http = require('http');
 const net = require('net');
 if (net.setDefaultAutoSelectFamily) { net.setDefaultAutoSelectFamily(false); }
 const os = require('os');
+// ── Gap E-3: 자기 수정 부트스트랩 (서버 재시작 오케스트레이션) ──
+// 서버는 재시작 요청 파일만 기록하고(restart_request.py), 실제 kill/재시작/
+// 헬스체크/롤백은 감시자인 일렉트론 메인 측 오케스트레이터가 수행한다.
+const { createRestartOrchestrator } = require('./restart_orchestrator');
 
 // ── Electron main 로그 파일화 (서버 사망 원인 추적용) ──
 // 기존엔 main process의 console.log/console.error가 어떤 파일에도 저장되지 않아,
@@ -131,6 +135,8 @@ let ttsPort = 9091;
 let watchdogTimer = null;
 let watchdogSuppressUntil = 0;  // F5 reload 후 일시적으로 watchdog 실패 감지 보류
 let isQuitting = false;
+let selfModifyRestartActive = false;  // E-3: 오케스트레이션 재시작 진행 중 (exit/watchdog 자동재시작 억제)
+let restartOrchestrator = null;
 let tray = null;
 let trayStatusTimer = null;
 let splashWindow = null;
@@ -442,12 +448,17 @@ function startPythonProcess(port) {
     console.warn(msg);
     pythonProcess = null;
     if (!isQuitting) {
-      console.log('[Electron] Server exit detected — Auto-restarting Python server in 2s...');
-      setTimeout(() => {
-        if (!isQuitting && !pythonProcess) {
-          startPythonProcess(port);
-        }
-      }, 2000);
+      if (selfModifyRestartActive) {
+        // E-3: 오케스트레이터가 재시작을 직접 관리 — 이중 스폰 방지
+        console.log('[Electron] Server exit during self-modify restart — orchestrator owns respawn.');
+      } else {
+        console.log('[Electron] Server exit detected — Auto-restarting Python server in 2s...');
+        setTimeout(() => {
+          if (!isQuitting && !pythonProcess) {
+            startPythonProcess(port);
+          }
+        }, 2000);
+      }
     }
   });
 
@@ -731,6 +742,53 @@ app.whenReady().then(async () => {
 
     // ── STEP 3d: Start Watchdog ──
     startWatchdog(serverPort);
+
+    // ── STEP 3e (Gap E-3): self-modify restart orchestrator ──
+    // 서버가 STATE_DIR/restart-request.json 을 기록하면 여기서 감지해
+    // kill -> 재시작 -> 헬스체크 -> 실패 시 git 롤백 후 재기동한다.
+    const repoRoot = path.join(__dirname, '..');
+    restartOrchestrator = createRestartOrchestrator({
+      repoRoot,
+      log: mlog,
+      pollMs: 5000,
+      settleMs: 800,
+      killServer: async () => {
+        selfModifyRestartActive = true;
+        // 재시작 구간 전체를 watchdog 오탐에서 제외
+        watchdogSuppressUntil = Date.now() + 4 * WATCHDOG_INTERVAL;
+        if (pythonProcess && pythonProcess.pid) {
+          killProcessTree(pythonProcess.pid);
+          pythonProcess = null;
+        }
+      },
+      spawnServer: async () => {
+        startPythonProcess(serverPort);
+      },
+      healthCheck: async () => {
+        const h = await probeServerHealthStable(serverPort);
+        return !!(h && h.healthy);
+      },
+      gitRollback: async (ref) => {
+        try {
+          execSync(`git reset --hard ${ref}`, { cwd: repoRoot, windowsHide: true, timeout: 30000 });
+          execSync('git clean -fd', { cwd: repoRoot, windowsHide: true, timeout: 30000 });
+          return true;
+        } catch (e) {
+          merr('[RestartOrch] git rollback error: ' + (e && e.message));
+          return false;
+        }
+      },
+      afterCycle: async (result) => {
+        selfModifyRestartActive = false;
+        watchdogRestartCount = 0;
+        watchdogSuppressUntil = Date.now() + 3 * WATCHDOG_INTERVAL;
+        mlog('[RestartOrch] cycle done: ' + JSON.stringify(result));
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          try { mainWindow.webContents.reload(); } catch (_) { }
+        }
+      },
+    });
+    restartOrchestrator.start();
 
     console.log(`[Electron] All services ready — Launching UI...`);
 
@@ -1073,6 +1131,10 @@ ipcMain.on('install-update', (event, installerPath) => {
 app.on('before-quit', () => {
   isQuitting = true;
   stopWatchdog();
+  // Gap E-3: 앱 종료 시 재시작 오케스트레이터 폴링 중단
+  if (restartOrchestrator) {
+    try { restartOrchestrator.stop(); } catch (_) { }
+  }
   if (pythonProcess && pythonProcess.pid) {
     killProcessTree(pythonProcess.pid);
     pythonProcess = null;
