@@ -314,7 +314,7 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 | 순서 | 항목 | 검증 방법 | 상태 |
 |---|---|---|---|
 | 1 | E-0a `mcp_manage` 도구 | 프로브: 등록→연결→도구 목록 조회 모의 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0a.py` 전 액션 통과) |
-| 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | 대기 |
+| 2 | E-0c `plugin_create` 도구 템플릿 | 프로브: 스캐폴드 생성→import 성공 확인 | ✅ 완료 (2026-08-19, `_probe/probe_gap_e0c.py` 35개 체크 통과) |
 | 3 | E-1 대상 결속 + `daon-self-knowledge` 스킬 | 스킬 카탈로그 노출 확인 | 대기 |
 | 4 | E-2 안전 통치 | `probe_gap_e.py` (체크포인트→승인→프로브→복귀 전 구간 모의) | 대기 |
 | 5 | E-3 부트스트랩 | 일렉트론 측 재시작 오케스트레이션 + 헬스체크 (실기기 검증 필요) | 대기 |
@@ -326,6 +326,13 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 시크릿 정책: `auth_token`은 결과에서 마스킹(`_sanitize`) — 에이전트가 토큰 값을 되받아 로그에 남기지 않음
 - `discover_builtin_tools()`가 `tools/*.py`를 자동 스캔하므로 파일 생성만으로 등록됨 (check_fn으로 DAON 런타임 여부 판정)
 - 프로브 `_probe/probe_gap_e0a.py`: 전 액션 라우팅 + 입력 검증 + sanitize + 스키마 무결성 + registry 등록 확인 — 전부 통과
+
+**E-0c 시공 기록 (2026-08-19):**
+- [`plugin_create`](../hermes-agent/tools/plugin_manager_tool.py)에 `tool_template`/`tool_description` 옵션 추가 — 지정 시 `__init__.py`(`register(ctx)` + `ctx.register_tool` 최소 구현: schema/handler/check_fn 플레이스홀더)를 스캐폴드하고 plugin.yaml `tools:` 목록에 선언
+- 격차의 본질: 기존 스캐폴드는 `__init__.py`를 만들지 않아 생성 플러그인이 도구를 노출할 수 없었음. `PluginManager._load_directory_module`가 `__init__.py`를 임포트하고 `_load_plugin`이 `register(ctx)`를 호출하는 계약에 맞춤
+- `tool_template` 지정 + `skill_name` 미지정 시 도구 전용 플러그인(SKILL.md 없음)으로 스캐폴드 — 기존 스킬 전용 경로는 무변경
+- 툴셋은 `plugin-{name}`으로 네임스페이스화해 충돌 방지
+- 프로브 `_probe/probe_gap_e0c.py`: 도구 전용/병행/레거시 스캐폴드 + 생성 `__init__.py` 실제 임포트 후 `register(ctx)` 계약 검증 + 입력 검증 + 스키마/registry 배선 — 35개 체크 전부 통과
 
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 

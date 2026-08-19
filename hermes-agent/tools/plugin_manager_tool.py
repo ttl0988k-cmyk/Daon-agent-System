@@ -193,6 +193,52 @@ def _plugin_remove(name: str) -> dict:
         return {"error": f"Failed to remove plugin '{name}': {exc}"}
 
 
+_TOOL_INIT_TEMPLATE = '''"""__PLUGIN_NAME__ plugin tool module (scaffolded by plugin_create).
+
+The PluginManager imports this file and calls register(ctx) once.
+ctx.register_tool() delegates to tools.registry.register, so the tool
+appears in the agent tool surface after plugin (re-)discovery.
+"""
+
+from __future__ import annotations
+
+TOOL_NAME = "__TOOL_NAME__"
+
+TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "input": {
+            "type": "string",
+            "description": "Placeholder argument - replace with real parameters.",
+        },
+    },
+    "required": [],
+}
+
+
+def _check_requirements() -> bool:
+    """Return True when the tool is usable in the current environment."""
+    return True
+
+
+def _handle(args: dict, **kwargs) -> str:
+    """Tool handler entry point. Replace this body with real logic."""
+    return "__TOOL_NAME__ (plugin __PLUGIN_NAME__) received: " + repr(args)
+
+
+def register(ctx) -> None:
+    """Called once by the PluginManager when this plugin is loaded."""
+    ctx.register_tool(
+        name=TOOL_NAME,
+        toolset="__TOOLSET__",
+        schema=TOOL_SCHEMA,
+        handler=_handle,
+        check_fn=_check_requirements,
+        description="__TOOL_DESCRIPTION__",
+    )
+'''
+
+
 def _plugin_create(
     name: str,
     description: str = "",
@@ -202,6 +248,8 @@ def _plugin_create(
     skill_description: Optional[str] = None,
     skill_content: Optional[str] = None,
     secrets: Optional[list] = None,
+    tool_template: Optional[str] = None,
+    tool_description: Optional[str] = None,
 ) -> dict:
     """Scaffold a brand-new plugin (plugin.yaml + SKILL.md) and register it.
 
@@ -212,16 +260,37 @@ def _plugin_create(
     strings ('GITHUB_TOKEN') or dicts ({'name': ..., 'description': ...}). The
     agent never stores their values — the user enters them via the UI secure
     input once the plugin is used.
+
+    ``tool_template`` optionally names a tool to scaffold (E-0c): an
+    ``__init__.py`` with a minimal ``register(ctx)`` + ``ctx.register_tool``
+    implementation (schema/handler/check_fn placeholders) is generated and the
+    tool is declared in the plugin.yaml ``tools`` list. When set without an
+    explicit ``skill_name``, the plugin is tool-only (no SKILL.md).
     """
     name = (name or "").strip()
     err = _validate_name(name)
     if err:
         return {"error": err}
 
-    skill_name = (skill_name or name).strip()
-    err = _validate_name(skill_name)
-    if err:
-        return {"error": f"Invalid skill_name: {err}"}
+    tool_name = (tool_template or "").strip()
+    if tool_name:
+        err = _validate_name(tool_name)
+        if err:
+            return {"error": f"Invalid tool_template: {err}"}
+
+    # A skill is scaffolded unless the caller asks for a tool-only plugin
+    # (tool_template set without an explicit skill_name).
+    scaffold_skill = skill_name is not None or not tool_name
+    if scaffold_skill:
+        skill_name = (skill_name or name).strip()
+        err = _validate_name(skill_name)
+        if err:
+            return {"error": f"Invalid skill_name: {err}"}
+
+    tool_desc_clean = (
+        (tool_description or "").replace("\n", " ").replace('"', "'").strip()
+        or f"Tool provided by the {name} plugin."
+    )
 
     pg = _gateway_required()
 
@@ -245,62 +314,93 @@ def _plugin_create(
             secrets_lines.append(f"    description: {s_desc}")
     secrets_block = ("secrets:\n" + "\n".join(secrets_lines) + "\n") if secrets_lines else ""
 
+    skills_block = ""
+    if scaffold_skill:
+        skills_block = (
+            "skills:\n"
+            f"  - name: {skill_name}\n"
+            f"    path: skills/{skill_name}\n"
+        )
+
+    tools_block = f"tools:\n  - {tool_name}\n" if tool_name else ""
+
     plugin_yaml = (
         "name: {name}\n"
         "version: {version}\n"
         "description: {description}\n"
         "author: {author}\n"
-        "skills:\n"
-        "  - name: {skill_name}\n"
-        "    path: skills/{skill_name}\n"
+        "{skills_block}"
+        "{tools_block}"
         "{secrets_block}"
     ).format(
         name=name,
         version=ver,
         description=desc,
         author=author_clean,
-        skill_name=skill_name,
+        skills_block=skills_block,
+        tools_block=tools_block,
         secrets_block=secrets_block,
     )
 
-    skill_desc = (
-        (skill_description or "").replace("\n", " ").strip()
-        or f"Skill provided by the {name} plugin."
-    )
-    skill_body = (skill_content or "").strip() or (
-        f"# {skill_name}\n\n"
-        f"A skill from the {name} plugin. Replace this content by editing the "
-        f"skill via the skill_manage tool, or add more files under this directory."
-    )
-    skill_md = (
-        "---\n"
-        "name: {skill_name}\n"
-        "description: {skill_description}\n"
-        "---\n\n"
-        "{skill_body}\n"
-    ).format(
-        skill_name=skill_name,
-        skill_description=skill_desc,
-        skill_body=skill_body,
-    )
+    skill_md = ""
+    if scaffold_skill:
+        skill_desc = (
+            (skill_description or "").replace("\n", " ").strip()
+            or f"Skill provided by the {name} plugin."
+        )
+        skill_body = (skill_content or "").strip() or (
+            f"# {skill_name}\n\n"
+            f"A skill from the {name} plugin. Replace this content by editing the "
+            f"skill via the skill_manage tool, or add more files under this directory."
+        )
+        skill_md = (
+            "---\n"
+            "name: {skill_name}\n"
+            "description: {skill_description}\n"
+            "---\n\n"
+            "{skill_body}\n"
+        ).format(
+            skill_name=skill_name,
+            skill_description=skill_desc,
+            skill_body=skill_body,
+        )
 
     # Write the scaffold into a temp dir, then hand it to import_plugin(folder).
     # import_plugin copies it into the user plugins dir and enables it globally.
     try:
         with tempfile.TemporaryDirectory() as tmp:
             plugin_dir = Path(tmp) / name
-            (plugin_dir / "skills" / skill_name).mkdir(parents=True, exist_ok=True)
+            plugin_dir.mkdir(parents=True, exist_ok=True)
             (plugin_dir / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
-            (plugin_dir / "skills" / skill_name / "SKILL.md").write_text(
-                skill_md, encoding="utf-8"
-            )
+            if scaffold_skill:
+                (plugin_dir / "skills" / skill_name).mkdir(parents=True, exist_ok=True)
+                (plugin_dir / "skills" / skill_name / "SKILL.md").write_text(
+                    skill_md, encoding="utf-8"
+                )
+            if tool_name:
+                init_src = _TOOL_INIT_TEMPLATE
+                for _ph, _val in (
+                    ("__TOOL_NAME__", tool_name),
+                    ("__PLUGIN_NAME__", name),
+                    ("__TOOLSET__", f"plugin-{name}"),
+                    ("__TOOL_DESCRIPTION__", tool_desc_clean),
+                ):
+                    init_src = init_src.replace(_ph, _val)
+                (plugin_dir / "__init__.py").write_text(init_src, encoding="utf-8")
             result = pg.import_plugin(str(plugin_dir), source_type="folder", force=False)
         result = dict(result)
         result["scaffolded"] = True
-        result["skill"] = {
-            "name": skill_name,
-            "path": f"skills/{skill_name}/SKILL.md",
-        }
+        if scaffold_skill:
+            result["skill"] = {
+                "name": skill_name,
+                "path": f"skills/{skill_name}/SKILL.md",
+            }
+        if tool_name:
+            result["tool"] = {
+                "name": tool_name,
+                "path": "__init__.py",
+                "toolset": f"plugin-{name}",
+            }
         return result
     except Exception as exc:
         return {"error": f"Failed to scaffold plugin '{name}': {exc}"}
@@ -487,6 +587,21 @@ PLUGIN_CREATE_SCHEMA = {
             ),
             "items": {"type": ["string", "object"]},
         },
+        "tool_template": {
+            "type": "string",
+            "description": (
+                "Optional tool name to scaffold inside the plugin (e.g. 'my_lookup'). "
+                "When set, an __init__.py with a minimal register(ctx) + "
+                "ctx.register_tool implementation (schema + handler + check_fn "
+                "placeholders) is generated and the tool is declared in the "
+                "plugin.yaml 'tools' list. Must match [a-zA-Z0-9_-] (1-64 chars). "
+                "If skill_name is not given, the plugin is tool-only (no SKILL.md)."
+            ),
+        },
+        "tool_description": {
+            "type": "string",
+            "description": "Optional description for the scaffolded tool.",
+        },
     },
     "required": ["name"],
 }
@@ -584,9 +699,11 @@ registry.register(
         skill_name=args.get("skill_name"),
         skill_description=args.get("skill_description"),
         skill_content=args.get("skill_content"),
-        secrets=args.get("secrets"))),
+        secrets=args.get("secrets"),
+        tool_template=args.get("tool_template"),
+        tool_description=args.get("tool_description"))),
     emoji="🔌",
-    description="Scaffold a brand-new plugin (plugin.yaml + SKILL.md) and register it immediately.",
+    description="Scaffold a brand-new plugin (plugin.yaml + SKILL.md, optionally a tool via tool_template) and register it immediately.",
 )
 
 registry.register(
