@@ -1,6 +1,6 @@
 # 계획: 갭 E — 자기 적용(Ouroboros)과 자율 개발 생태계
 
-**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 + E-L3 격리(E-4a worktree 동반) + E-L4 편입 거버넌스 시공 완료 — E-Master Architecture 폐루프 완성)
+**작성일:** 2026-08-17 (야간 세션) / **갱신:** 2026-08-19 (E 본선 완결 + E-L1 심장 연결 + E-L2 Builder Agent 역할화 + E-L3 격리(E-4a worktree 동반) + E-L4 편입 거버넌스 시공 완료 — E-Master Architecture 폐루프 완성 + 커밋 예산(리스크 1 후반) 시공 완료)
 **상태:** ✅ **Gap E — Self-Application / Ouroboros 승인 (대표님, 2026-08-18)** / E-Master Architecture를 상위 설계로 기록 / 기존 E-0a부터 순차 시공
 **선행 문서:** [DYNAMIC_HARNESS_VISION_PLAN.md](DYNAMIC_HARNESS_VISION_PLAN.md) (갭 A·B·C·D 전부 시공 완료)
 **조사 출처:**
@@ -388,6 +388,11 @@ DAON 적용안: 기존 일렉트론 메인 프로세스가 서버를 감시하�
 - 설계 결정: 전 단계 주입 가능(probe_runner/approver/promoter) / 절대 raise 안 함 / stages=감사 추적 / promote_skill 재활용(새 승격 경로 발명 금지) / 수동 UI promote 경로(admin_routes)는 인간 승인 표면이라 의도적으로 미변경 / orchestrator 배선 없음(E-L3와 동일 근거 — 프로덕션 배선은 E-4b/E-4c 관할)
 - 프로브: `_probe/probe_gap_el4.py` 76체크 전부 통과 — 상수+순서 정합성(거버넌스 단계는 불변 순서의 부분 수열), artifact 접근자(이름/lifecycle 추출·정규화), 진입 게이트(draft 허용/재편입 거부/이름 없음), 검증 단계(프로브 없음 거부/단일·다중 통과/첫 실패 중단/예외 fail-safe/bool·단일 문자열 호환), 승인 단계(미등록 거부/튜플 호환/예외 fail-safe), run_incorporation 순서 강제(해피패스/검증 실패→승인·편입 미호출/승인 거부→편입 미호출/미등록 거부/진입 거부→전부 미호출/promoter 실패·예외→error/stages 접두사 성질), default_skill_promoter 안전성, E-L2 핸드오프 정합성(미션의 E-L4 관할 선언+draft 수용 기준). 첫 실행에서 전부 통과
 
+**커밋 예산 시공 기록 (2026-08-19) — 리스크 1 후반 보강:**
+- 라온(서브 에이전트)이 코드 감사에서 발견: 리스크 1의 전반부(위임 가드 재사용)는 `_guard_check()`로 시공됐으나, 후반부 "자기 수정 전용 예산(1회 실행당 최대 N커밋) 별도 상수"는 미시공 상태였음(의도적 생략 아님)
+- [`api/api/dynamic/self_modify.py`](../api/api/dynamic/self_modify.py) 수정 — `MAX_COMMITS_PER_RUN = 4` 상수 + `try_consume_commit_budget`/`count_commits`/`reset_commit_budget`(원자 카운터, delegation.py 스폰 예산과 동일 규율). `SelfModifyPipeline`은 `_stage_checkpoint`/`_stage_finalize`에서 각 1슬롯을 소비하고, 상한 도달 시 `SelfModifyError`로 해당 커밋 단계를 fail-safe 차단. `commit_budget_key=None` 기본 = 예산 해제(하위 호환) — 프로덕션 배선(E-4b/E-4c)이 공유 키(예: root_run_id)를 주입하면 한 세션의 반복 시도가 예산을 공유해 무한 루프가 차단됨
+- 프로브: `_probe/probe_gap_e.py` Group 6 추가(25체크) — 단위(소비/상한 거부/리셋/빈 키·0·음수 fail-safe), 기본 상한 해피패스(정확히 2슬롯 소비), cap 1이면 finalize 차단(verified에서 정지, finalize git 호출 없음), 공유 예산 루프 차단(2차 시도 checkpoint에서 차단·git 호출 0건), 키 없음 하위 호환. 총 114체크 통과, E-L3 프로브 81체크 회귀 없음
+
 ### 4.2 E-Master Architecture 연결선 (독립 검증 가능 갭)
 
 E 본선(4.1) 이후 순차 시공. 각 항목은 독립 갭이며, 갭 완료 시마다
@@ -413,6 +418,7 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 
 1. **무한 자기 수정 루프** — 자기 적용 실행에도 갭 D의 위임 가드(스폰 예산/깊이 제한)를 그대로 적용하고,
    자기 수정 전용 예산(1회 실행당 최대 N커밋)을 별도 상수로 추가
+   ✅ 시공 완료(2026-08-19): 전반부=`_guard_check()` 위임 가드 재사용, 후반부=`MAX_COMMITS_PER_RUN=4` 커밋 예산(커밋 예산 시공 기록 참조)
 2. **빌드 산출물 오염** — 자기 수정 대상에서 `dist/`, `release/`는 제외 경로로 명시 (path_security 재사용)
 3. **재시작 중 데이터 손실** — E-3 실행 전 진행 중 잡 없음 확인(잡 레지스트리 비어 있을 때만 재시작 허용)
 4. **bb 라이선스/코드 직접 차용 금지** — bb는 참고(교훈)만 하고 코드 복사는 하지 않음. DAON은 자체 아키텍처 유지

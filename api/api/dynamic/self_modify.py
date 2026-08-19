@@ -14,6 +14,7 @@ Design principles:
 - Reuses existing governance assets: approval gate (api.approval) and the
   delegation guard (api.dynamic.delegation).
 """
+import threading
 import time
 
 from api.dynamic.logging_utils import get_logger
@@ -61,6 +62,51 @@ def _default_probe_runner(probe_path, cwd=None):
         return False, str(e)
 
 
+# ── Commit budget (리스크 1: 무한 자기 수정 루프 차단) ──────────────────
+# 1회 셀프모디파이 세션(공유 budget key 단위)당 커밋 총량 상한.
+# SelfModifyPipeline은 checkpoint/finalize에서 각 1커밋을 소비하므로, 같은
+# budget key로 반복 실행되는 루프는 상한 도달 시 fail-safe로 차단된다.
+# 기본 상한 4 = 파이프라인 2회 분량. 위임 스폰 예산(delegation.py)과 동일 규율.
+# 배선: 프로덕션(E-4b/E-4c)이 공유 budget key(예: root_run_id)를 주입한다.
+MAX_COMMITS_PER_RUN = 4
+
+_COMMIT_COUNTER: dict = {}
+_COMMIT_LOCK = threading.Lock()
+
+
+def count_commits(budget_key: str) -> int:
+    """공유 budget key에서 지금까지 소비된 커밋 슬롯 수를 반환한다."""
+    with _COMMIT_LOCK:
+        return _COMMIT_COUNTER.get(budget_key, 0)
+
+
+def try_consume_commit_budget(budget_key: str, max_commits=None) -> tuple:
+    """원자적으로 커밋 슬롯 1개를 소비한다.
+
+    반환: (성공 여부, 소비 후 누적 횟수). 상한 도달/잘못된 입력은 (False, 현재 횟수).
+    max_commits=None이면 MAX_COMMITS_PER_RUN 기본 상한을 쓴다.
+    """
+    limit = MAX_COMMITS_PER_RUN if max_commits is None else max_commits
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit <= 0 or not budget_key:
+        return False, 0
+    with _COMMIT_LOCK:
+        current = _COMMIT_COUNTER.get(budget_key, 0)
+        if current >= limit:
+            return False, current
+        _COMMIT_COUNTER[budget_key] = current + 1
+        return True, current + 1
+
+
+def reset_commit_budget(budget_key: str) -> None:
+    """budget key의 커밋 카운터를 제거한다 (정리/테스트용)."""
+    with _COMMIT_LOCK:
+        _COMMIT_COUNTER.pop(budget_key, None)
+
+
 class SelfModifyPipeline:
     """Coordinates one self-modification attempt through the safety pipeline.
 
@@ -74,10 +120,16 @@ class SelfModifyPipeline:
                 delegation guard (check_delegation_guard) gates the run.
       limits: limits dict passed to the delegation guard.
       cwd: working directory for git/probe commands.
+      commit_budget_key: optional shared key for the commit budget (리스크 1).
+                 None disables budget enforcement for this instance (default).
+                 Production wiring supplies a stable key (e.g. root_run_id) so
+                 repeated self-modify attempts in one session share the budget.
+      max_commits: per-key commit cap. None uses MAX_COMMITS_PER_RUN.
     """
 
     def __init__(self, git_runner=None, probe_runner=None, approval=None,
-                 session_id=None, delegation_ctx=None, limits=None, cwd=None):
+                 session_id=None, delegation_ctx=None, limits=None, cwd=None,
+                 commit_budget_key=None, max_commits=None):
         self.git = git_runner or _default_git_runner
         self.probe_runner = probe_runner or _default_probe_runner
         self.approval = approval
@@ -85,6 +137,8 @@ class SelfModifyPipeline:
         self.delegation_ctx = delegation_ctx
         self.limits = limits or {}
         self.cwd = cwd
+        self.commit_budget_key = commit_budget_key
+        self.max_commits = max_commits
         self.state = STATE_INIT
         self.history = []
         self.checkpoint_ref = None
@@ -117,6 +171,24 @@ class SelfModifyPipeline:
         if not ok:
             raise SelfModifyError(f"Delegation guard rejected self-modify: {reason}")
 
+    def _consume_commit_budget(self):
+        """커밋 슬롯 1개를 소비한다. budget key 미설정 시 무동작(기본 해제).
+
+        상한 도달 시 SelfModifyError로 해당 커밋 단계를 fail-safe 차단한다
+        (리스크 1: 무한 자기 수정 루프 방지).
+        """
+        if not self.commit_budget_key:
+            return None
+        ok, used = try_consume_commit_budget(self.commit_budget_key, self.max_commits)
+        if not ok:
+            limit = self.max_commits if self.max_commits else MAX_COMMITS_PER_RUN
+            raise SelfModifyError(
+                f"Commit budget exhausted for '{self.commit_budget_key}': "
+                f"{used}/{limit} commits used. Self-modification blocked "
+                f"to prevent an infinite loop (risk 1)."
+            )
+        return used
+
     def _rollback_to_checkpoint(self):
         if not self.checkpoint_ref:
             return False
@@ -142,6 +214,7 @@ class SelfModifyPipeline:
 
     def _stage_checkpoint(self, description):
         self._require_state(STATE_INIT)
+        self._consume_commit_budget()
         code, ref = self._git(["rev-parse", "HEAD"])
         if code != 0:
             raise SelfModifyError(f"git rev-parse failed: {ref}")
@@ -206,6 +279,7 @@ class SelfModifyPipeline:
 
     def _stage_finalize(self, description):
         self._require_state(STATE_VERIFIED)
+        self._consume_commit_budget()
         code, out = self._git(["add", "-A"])
         if code != 0:
             raise SelfModifyError(f"git add failed: {out}")

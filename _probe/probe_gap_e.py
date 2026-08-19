@@ -29,6 +29,10 @@ from api.dynamic.self_modify import (  # noqa: E402
     STATE_COMMITTED,
     STATE_REVERTED,
     STATE_REJECTED,
+    MAX_COMMITS_PER_RUN,
+    try_consume_commit_budget,
+    count_commits,
+    reset_commit_budget,
     _accepts_cwd,
     _default_git_runner,
     _default_probe_runner,
@@ -373,5 +377,74 @@ r2 = p.run("second", lambda: None, [])
 check(r2["ok"] is False and "Order violation" in r2.get("error", ""),
       "second run rejected")
 check(len(git.calls) == 5, "second run performed no git calls")
+
+# ── Group 6: commit budget (리스크 1: 무한 자기 수정 루프 차단) ─────────
+print("[6] commit budget (risk 1)")
+
+check(MAX_COMMITS_PER_RUN == 4, "MAX_COMMITS_PER_RUN default is 4")
+check(callable(try_consume_commit_budget), "budget consumer exists")
+check(callable(count_commits), "budget counter reader exists")
+check(callable(reset_commit_budget), "budget reset exists")
+
+# 6a. unit: consume up to the cap, then fail-safe refuse
+reset_commit_budget("k-unit")
+ok1, n1 = try_consume_commit_budget("k-unit", max_commits=2)
+ok2, n2 = try_consume_commit_budget("k-unit", max_commits=2)
+ok3, n3 = try_consume_commit_budget("k-unit", max_commits=2)
+check(ok1 is True and n1 == 1, "first slot consumed")
+check(ok2 is True and n2 == 2, "second slot consumed")
+check(ok3 is False and n3 == 2, "third slot refused at cap")
+check(count_commits("k-unit") == 2, "count_commits reflects usage")
+reset_commit_budget("k-unit")
+check(count_commits("k-unit") == 0, "reset clears the counter")
+
+# 6b. unit: invalid inputs are fail-safe
+okE, nE = try_consume_commit_budget("", max_commits=2)
+check(okE is False and nE == 0, "empty key refused")
+okZ, nZ = try_consume_commit_budget("k-zero", max_commits=0)
+check(okZ is False and nZ == 0, "zero cap refused")
+okN, nN = try_consume_commit_budget("k-neg", max_commits=-3)
+check(okN is False and nN == 0, "negative cap refused")
+
+# 6c. pipeline: default cap (4) allows a full happy path (2 commits)
+reset_commit_budget("k-happy")
+git = FakeGitRunner()
+p = make_pipeline(git=git, commit_budget_key="k-happy")
+res = p.run("budget happy path", lambda: None, [])
+check(res["ok"] is True and res["state"] == STATE_COMMITTED,
+      "default cap allows happy path")
+check(count_commits("k-happy") == 2, "happy path consumed exactly 2 slots")
+
+# 6d. pipeline: cap 1 blocks the finalize commit (fail-safe at verified)
+reset_commit_budget("k-tight")
+git = FakeGitRunner()
+p = make_pipeline(git=git, commit_budget_key="k-tight", max_commits=1)
+res = p.run("tight budget", lambda: None, [])
+check(res["ok"] is False and res["state"] == STATE_VERIFIED, "cap 1 stops at verified")
+check("Commit budget exhausted" in res["error"], "budget error surfaced")
+check("k-tight" in res["error"], "budget key named in error")
+check(len(git.calls) == 3, "no finalize git calls after budget refusal")
+
+# 6e. pipeline: shared budget across repeated runs blocks the loop
+reset_commit_budget("k-loop")
+git1 = FakeGitRunner()
+p1 = make_pipeline(git=git1, commit_budget_key="k-loop", max_commits=2)
+r1 = p1.run("first attempt", lambda: None, [])
+check(r1["ok"] is True, "first attempt passes with shared budget")
+git2 = FakeGitRunner()
+p2 = make_pipeline(git=git2, commit_budget_key="k-loop", max_commits=2)
+r2 = p2.run("second attempt", lambda: None, [])
+check(r2["ok"] is False and r2["state"] == STATE_INIT,
+      "second attempt blocked at checkpoint")
+check("Commit budget exhausted" in r2["error"], "loop blocked with budget error")
+check(git2.calls == [], "blocked run performs no git calls")
+check(count_commits("k-loop") == 2, "shared counter stayed at cap")
+
+# 6f. pipeline: no key = budget disabled (backward compatible)
+git = FakeGitRunner()
+p = make_pipeline(git=git)
+res = p.run("no budget key", lambda: None, [])
+check(res["ok"] is True, "budget disabled without key")
+check(p.commit_budget_key is None, "default key stays None")
 
 print(f"ALL GAP-E (E-2) PROBES PASSED ({CHECKS} checks)")
