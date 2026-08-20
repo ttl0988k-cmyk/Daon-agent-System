@@ -610,10 +610,15 @@ app.whenReady().then(async () => {
   _mainLogInit();
   mlog('[BUILD] electron main ready');
 
-  // ── Always-on: 로그인 시 자동 시작 등록 (Windows) ──
+  // ── Always-on: 로그인 자동 시작은 사용하지 않는다 (대표님 지시) ──
+  // 과거엔 openAtLogin:true 로 앱이 켜질 때마다 레지스트리 Run 키를 재등록했다.
+  // 그 결과 작업관리자에서 시작프로그램을 지워도 부활하고, 부팅 시 중복 인스턴스가
+  // 뜨며 "연결 프로그램 선택" 팝업/유령 트레이가 발생했다.
+  // 이제는 (1) 자동 시작을 등록하지 않고, (2) 남아있던 등록도 명시적으로 해제한다.
+  // 실행은 바탕화면 바로가기 하나로만 한다. 트레이 상주/창닫기 최소화는 그대로 유지.
   try {
-    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false });
-    console.log('[AlwaysOn] Login item registered (openAtLogin=true).');
+    app.setLoginItemSettings({ openAtLogin: false, openAsHidden: false });
+    console.log('[AlwaysOn] Login item unregistered (openAtLogin=false) — manual launch only.');
   } catch (e) {
     console.warn('[AlwaysOn] setLoginItemSettings failed (non-fatal):', e.message);
   }
