@@ -27,6 +27,14 @@ def _load_harness_limits() -> dict:
         #   max_children_per_spawn: 1회 delegate_team 호출로 만들 수 있는 하위 DAG 최대 노드 수
         #   max_total_spawns: 루트 미션 전체의 총 위임 횟수 상한 (Agent 폭발 방지의 핵심)
         "delegation": {"max_depth": 1, "max_children_per_spawn": 4, "max_total_spawns": 6},
+        # 시나리오 D: DiscoveryBoard (수동적 인지 계층) 예산
+        #   enabled: false면 보드 생성/주입/도구가 전부 비활성 (회귀 안전 기본 경로)
+        #   max_publish_per_agent: 에이전트 1개의 publish 상한 (노이즈 방지 핵심)
+        #   max_total: 보드 전체 발견 상한 (초과 시 오래된 LOW부터 퇴거)
+        #   digest_max_items: 노드 컨텍스트 주입 digest의 최대 항목 수
+        #   max_summary_chars / max_evidence_chars: 항목별 길이 상한
+        "discovery": {"enabled": True, "max_publish_per_agent": 5, "max_total": 40,
+                      "digest_max_items": 8, "max_summary_chars": 400, "max_evidence_chars": 600},
     }
     try:
         config_path = Path(__file__).resolve().parent.parent.parent.parent / "config" / "harness_limits.yaml"

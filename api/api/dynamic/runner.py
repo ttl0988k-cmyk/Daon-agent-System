@@ -484,7 +484,44 @@ def _run_node_with_retries(
                 except Exception as _mcp_e:
                     _log.debug("[DynamicHermes] MCP injection skipped for node '%s': %s", agent_name, _mcp_e)
                 # ========================================================
-                
+
+                # === 시나리오 D: DiscoveryBoard 도구 노출 (broadcast/check) ===
+                # 오케스트레이터가 보드를 생성해 mission_tracker에 실은 경우에만
+                # broadcast_discovery / check_team_discoveries 도구를 노출한다.
+                # 보드가 없거나 비활성이면 통째로 건너뛰어 기본 경로를 보존한다.
+                # (registry 등록은 멱등, agent.tools 주입은 MCP 패턴 재사용)
+                try:
+                    _d_board = (mission_tracker or {}).get("discovery_board") if isinstance(mission_tracker, dict) else None
+                    if _d_board is not None and getattr(_d_board, "enabled", False):
+                        from tools.registry import registry as _disc_registry
+                        from api.dynamic.discovery_board import (
+                            register_discovery_tools as _disc_register,
+                            BROADCAST_SCHEMA as _DISC_BROADCAST_SCHEMA,
+                            CHECK_SCHEMA as _DISC_CHECK_SCHEMA,
+                            TOOL_BROADCAST_DISCOVERY as _DISC_BROADCAST_NAME,
+                            TOOL_CHECK_TEAM_DISCOVERIES as _DISC_CHECK_NAME,
+                        )
+                        _disc_register(_disc_registry)
+                        _disc_existing = {t.get("function", {}).get("name", "") for t in agent.tools}
+                        for _disc_name, _disc_schema in (
+                            (_DISC_BROADCAST_NAME, _DISC_BROADCAST_SCHEMA),
+                            (_DISC_CHECK_NAME, _DISC_CHECK_SCHEMA),
+                        ):
+                            if _disc_name in _disc_existing:
+                                continue
+                            agent.tools.append({
+                                "type": "function",
+                                "function": {
+                                    "name": _disc_name,
+                                    "description": _disc_schema["description"],
+                                    "parameters": _disc_schema["parameters"],
+                                },
+                            })
+                            agent.valid_tool_names.add(_disc_name)
+                        _log.info("[DiscoveryBoard] Tools exposed for node '%s'.", agent_name)
+                except Exception as _disc_e:
+                    _log.debug("[DiscoveryBoard] tool exposure skipped for '%s': %s", agent_name, _disc_e)
+
                 buffer = StreamLogBuffer(f"{agent_name} ({model_name})", log_callback)
                 def stream_cb(chunk):
                     buffer.write(chunk)
@@ -701,6 +738,16 @@ class ParallelRunner:
             set_current_delegation = None
             clear_current_delegation = None
 
+        # ── 시나리오 D: DiscoveryBoard (수동적 인지 계층) ──
+        # 오케스트레이터가 mission_tracker["discovery_board"]에 실어 보낸 보드를
+        # 읽어 노드 워커 스레드에 thread-local로 노출한다. None이면(비활성/미생성)
+        # 모든 배선이 안전하게 건너뛰어진다 (회귀 안전 기본 경로).
+        _discovery_board = None
+        try:
+            _discovery_board = (mission_tracker or {}).get("discovery_board")
+        except Exception:
+            _discovery_board = None
+
         def _run_single_node(agent_name: str) -> dict:
             """Thin closure: resolve context then delegate to module-level runner."""
             set_allowed_providers(current_allowed)
@@ -717,6 +764,17 @@ class ParallelRunner:
                 return {"status": "failed", "error": "Node definition not found"}
             _log.info("Executing Node: %s (Type: %s, Role: %s)", agent_name, node['type'], node['role'])
             agent_query, node_parents = _build_node_context(node, agent_name, state_manager, parent_list, main_task, run_dir)
+            # 시나리오 D: 노드 시작 시점에 팀 발견 digest를 컨텍스트에 주입한다.
+            # 에이전트가 check 도구를 호출하기 전에도 "팀이 이미 발견한 것"을 인지한다.
+            if _discovery_board is not None:
+                try:
+                    _digest = _discovery_board.compress(
+                        agent_name=agent_name, subtask=node.get("subtask") or "")
+                    if _digest:
+                        agent_query = agent_query + "\n\n" + _digest
+                        _log.info("[DiscoveryBoard] Digest injected for node '%s'.", agent_name)
+                except Exception as _digest_e:
+                    _log.debug("[DiscoveryBoard] digest injection skipped for '%s': %s", agent_name, _digest_e)
             _node_role = node.get("role", "")
             _node_type = node.get("type", "llm")
             _node_strength = "code"
@@ -749,6 +807,14 @@ class ParallelRunner:
                 _node_delegation = dict(_delegation_ctx)
                 _node_delegation["node_name"] = agent_name
                 set_current_delegation(_node_delegation)
+            # 시나리오 D: 보드 + 호출자 이름을 thread-local으로 노출한다.
+            # broadcast/check 도구 핸들러가 이 워커 스레드에서 실행되며 읽는다.
+            if _discovery_board is not None:
+                try:
+                    from api.dynamic.discovery_board import set_current_board
+                    set_current_board(_discovery_board, agent_name)
+                except Exception:
+                    pass
             try:
                 return _run_node_with_retries(
                     agent_name,
@@ -768,6 +834,12 @@ class ParallelRunner:
             finally:
                 if clear_current_delegation:
                     clear_current_delegation()
+                if _discovery_board is not None:
+                    try:
+                        from api.dynamic.discovery_board import clear_current_board
+                        clear_current_board()
+                    except Exception:
+                        pass
 
         max_workers = max(len(b) for b in batches) if batches else 1
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

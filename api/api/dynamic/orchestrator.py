@@ -94,11 +94,22 @@ class HermesDynamicRunner:
             if r["status"] == "success"
         ]
         failed_info = "\n".join([f"- Node '{f['name']}': {f.get('output', 'Unknown error')}" for f in failed_nodes])
+        # 시나리오 D: DiscoveryBoard의 HIGH 발견을 재계획 프롬프트에 주입한다.
+        # 블록커/잘못된 가정 같은 팀의 긴급 발견을 플래너가 재계획 시점에 인지한다.
+        _disc_digest = ""
+        try:
+            _d_board = (mission_tracker or {}).get("discovery_board")
+            if _d_board is not None:
+                from api.dynamic.discovery_board import IMPORTANCE_HIGH
+                _disc_digest = _d_board.compress(min_importance=IMPORTANCE_HIGH) or ""
+        except Exception:
+            _disc_digest = ""
         replan_prompt = (
             f"We are executing a multi-agent system to solve this task: {task}\n\n"
             "We have already successfully executed several nodes and generated the following outputs:\n"
             f"{json.dumps(successful_outputs, ensure_ascii=False, indent=2)}\n\n"
             f"However, during execution, the following nodes failed:\n{failed_info}\n\n"
+            + ((_disc_digest + "\n\n") if _disc_digest else "") +
             "Please generate a new EXECUTABLE DAG of agents to complete the REMAINING parts of the task, focusing on fixing the reported failures.\n"
             "You MUST use the already successfully generated outputs as input keys where appropriate.\n"
             "Return a valid JSON object matching the standard Nodes and Edges schema."
@@ -469,12 +480,22 @@ class HermesDynamicRunner:
                 f"검증 에이전트가 식별한 결핍 능력(missing capabilities): {', '.join(missing_caps)}\n\n"
                 if missing_caps else ""
             )
+        # 시나리오 D: DiscoveryBoard의 HIGH 발견을 재계획 프롬프트에 주입한다.
+        _disc_digest = ""
+        try:
+            _d_board = (mission_tracker or {}).get("discovery_board")
+            if _d_board is not None:
+                from api.dynamic.discovery_board import IMPORTANCE_HIGH
+                _disc_digest = _d_board.compress(min_importance=IMPORTANCE_HIGH) or ""
+        except Exception:
+            _disc_digest = ""
         replan_prompt = (
             f"다음 작업을 해결하기 위한 멀티 에이전트 시스템입니다: {task}\n\n"
             f"지금까지 생성된 산출물(병합 출력):\n\"\"\"\n{str(final_output)[:8000]}\n\"\"\"\n\n"
             "그러나 수용 기준 검증 에이전트가 다음 기준을 미충족으로 판정했습니다:\n"
             + "\n".join(f"- {c}" for c in unmet) + "\n\n"
             + caps_line
+            + ((_disc_digest + "\n\n") if _disc_digest else "")
             + "부족한 능력만 보완하여 완전한 최종 산출물을 만드는 새로운 EXECUTABLE DAG를 생성하세요. "
             "처음부터 다시 만들지 말고 기존 산출물/디스크 파일을 기반으로 보완해야 합니다.\n"
             "표준 Nodes and Edges 스키마에 맞는 유효한 JSON을 반환하세요."
@@ -615,6 +636,21 @@ class HermesDynamicRunner:
         delegation_context.setdefault("root_run_id", run_id)
         delegation_context["run_dir"] = str(run_dir)
         mission_tracker["delegation"] = delegation_context
+
+        # ── 시나리오 D: DiscoveryBoard 생성 (수동적 인지 계층) ──
+        # 미션당 보드 1개. mission_tracker["discovery_board"]에 실어 ParallelRunner가
+        # 노드 워커 스레드에 노출하게 한다. limits의 discovery.enabled가 false면
+        # 생성 자체를 건너뛰어 기본 경로를 보존한다 (회귀 안전).
+        try:
+            _disc_limits = limits.get("discovery") or {}
+            if _disc_limits.get("enabled", False):
+                from api.dynamic.discovery_board import DiscoveryBoard
+                # DiscoveryBoard.__init__은 전체 limits dict에서 limits["discovery"]를
+                # 읽으므로 하위 dict가 아닌 전체 limits를 전달한다.
+                mission_tracker["discovery_board"] = DiscoveryBoard(run_id, limits)
+                _log.info("[DiscoveryBoard] Board created for run '%s'.", run_id)
+        except Exception as _disc_init_e:
+            _log.warning("[DiscoveryBoard] Board creation skipped: %s", _disc_init_e)
 
         # ── 갭 D-3: 위임 로그 중계 등록 ──
         # 자식 실행(delegate_team)이 부모의 로그 스트림으로 로그를 전달할 수 있도록
