@@ -58,6 +58,8 @@ class HermesDynamicRunner:
         # 갭 E-L2: Builder 승인 게이트/스포너 (기본 None = 게이트 거부 — 리스크 5 안전 기본값)
         self.builder_approver = None
         self.builder_spawner = None
+        # 갭 E-L4: Builder 제작 초안의 편입 승인자 (기본 None = 편입 거부 — 리스크 5 안전 기본값)
+        self.builder_incorporation_approver = None
 
     def _run_recovery_plan(
         self,
@@ -528,6 +530,21 @@ class HermesDynamicRunner:
                 preferred_model=preferred_model)
             if dispatches:
                 merged_plan["builder_dispatches"] = dispatches
+                # 갭 E-L4: 스폰된 스킬 초안을 거버넌스 파이프라인(진입 -> 프로브 검증 ->
+                # 승인 -> 편입)으로 편입 시도한다. 편입 승인자 미등록(None)이면 편입
+                # 거부된다 (리스크 5 안전 기본값).
+                try:
+                    from api.dynamic.builder_pipeline import incorporate_builder_dispatches
+                    incorporations = incorporate_builder_dispatches(
+                        dispatches, session_id=session_id,
+                        workspace=str(run_dir) if run_dir else None,
+                        approver=self.builder_incorporation_approver,
+                        log_callback=log_callback)
+                except Exception as e:
+                    _log.warning("builder incorporation wiring failed: %s", e)
+                    incorporations = []
+                if incorporations:
+                    merged_plan["builder_incorporations"] = incorporations
         return new_final, merged_results, merged_plan, compiled_agents + recompiled
 
     def run(self, task: str, preferred_model: str = None, log_callback=None, run_dir=None, planning_mode: bool = False, session_id: str = None, run_id: str = None, allowed_providers: list = None, forced_skills: list = None, delegation_context: dict = None) -> dict:

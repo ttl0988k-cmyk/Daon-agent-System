@@ -473,6 +473,23 @@ def start_harness_job(body: dict) -> str:
             # ── Main Harness Execution ──
             run_dir = Path(workspace)
             runner = HermesDynamicRunner()
+            # 갭 E-L2/E-L4 프로덕션 배선: 세션 기반 승인자 주입.
+            # E-L2 스폰 게이트와 E-L4 편입 승인 모두 기존 승인 인프라(set_pending)를
+            # 재사용하므로, 자율 실행 토글이 켜져 있으면 자동 승인된다.
+            # 실패 시 안전 기본값(None 유지 = 게이트/편입 거부).
+            try:
+                from api.dynamic.builder_approval import (
+                    make_session_approver,
+                    APPROVAL_KIND_BUILDER_SPAWN, APPROVAL_KIND_INCORPORATION,
+                )
+                runner.builder_approver = make_session_approver(
+                    session_id, kind=APPROVAL_KIND_BUILDER_SPAWN,
+                    run_id=run_id, log_callback=log_callback)
+                runner.builder_incorporation_approver = make_session_approver(
+                    session_id, kind=APPROVAL_KIND_INCORPORATION,
+                    run_id=run_id, log_callback=log_callback)
+            except Exception:
+                traceback.print_exc()
             res = runner.run(enriched_task, preferred_model=preferred_model, log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode, session_id=session_id, run_id=run_id, allowed_providers=allowed_providers, forced_skills=forced_skills)
             final_output = res.get('final_output', '') if isinstance(res, dict) else str(res)
             # ── 결과 보고 보장: final_output이 비어 있으면 디스크의 final_output.md로 폴백 ──
