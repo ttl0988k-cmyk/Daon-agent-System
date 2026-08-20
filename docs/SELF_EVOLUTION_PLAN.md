@@ -410,7 +410,13 @@ py_compile/프로브 통과 → git commit+push → 이 문서 상태 갱신.
 생성(E-L1 결핍 감지 → E-L2 Builder 제작) → 격리(E-L3 worktree) → 검증·승인·편입(E-L4 거버넌스) → 사용(기존 SkillRegistry 카탈로그 노출)이
 전부 연결되었다. "어느 순간부터 DAON이 자기 능력을 만들어내기 시작했는지" 정확히 추적 가능하며,
 편입은 오직 E-L4가 강제하는 순서(draft → 프로브 검증 → 승인 → promote)를 통해서만 이루어진다.
-남은 항목: 앱 실사용 검증(대표님 지시 대기).
+
+**앱 실사용 검증 (2026-08-20) — 폐루프 실증 완료 ✅:**
+프로브(모의)가 아닌 실제 앱 서버(포트 9090)에서 `POST /api/dynamic/run`으로 작업을 투입해 실관찰했다. 오류 0건.
+- 시나리오 B (기본 동적 하네스, run_id=2556ff371cb9491c, 201.9초): 갭 C 수용 기준 자동 추출(4기준) → 2노드 DAG 계획 → 컴파일 → 실행 → 검증 → 병합 → Verifier 수용 기준 통과 → CodeReviewer 보고서. `hello.html` 실제 생성 검증(264B 유효 HTML5). DynamicModelSelector 역할 기반 모델 재선정 실관찰(계획=qwen3.6-flash, 실행=qwen3.8-max)
+- 시나리오 A (E-L1→E-L2 하프루프, run_id=06731dc58b074f3a, 1230초): 수행 불가 능력(전화 걸기) + 수용 기준 3개 투입 → Verifier fail(미충족 2개) → Resolver "결핍 능력 판정: 스킬 0건, 에이전트 0건, 제작 요청 4건"(한국어 능력명 전부 Builder 큐 낙하) → 재계획 루프(env_recon/telephony_attempt/doc_writer 우회 시도) → Builder "제작 요청 디스패치: 스폰 0건, 게이트 거부 4건"(리스크 5 기본 거부 실동작) → 2차 검증 fail 시 "개선 증거 없음" 탈출 조건 작동(무한 루프 방지) → CodeReviewer 완료
+- 영속 기록 검증: metadata.json의 plan에 `first_run_plan`/`acceptance_replan`/`capability_resolutions`(4건 needs_builder)/`builder_queue`(4건 pending)/`builder_dispatches`(4건 denied, 제작 대상 자동 분류 skill×3+mcp×1) 전부 기록 확인
+- 실증 산출물: `_tmp_demo_b/`(시나리오 B), `_tmp_demo_a/`(시나리오 A) — 미추적 유지
 
 ---
 
