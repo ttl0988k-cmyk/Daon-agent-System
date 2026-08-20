@@ -45,6 +45,7 @@ dist_old_*/
 _*.py
 _*.txt
 _*.bak
+_tmp_*
 
 # Release artifacts — ignore large binaries, keep scripts/README tracked
 release/*.exe
