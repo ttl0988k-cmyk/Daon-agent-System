@@ -521,6 +521,21 @@ let watchdogRestartCount = 0;
 const WATCHDOG_INTERVAL = 30_000;
 const MAX_RESTARTS = 3;
 
+// ── Renderer recovery guards: crash→reload→crash 무한 루프 방지 ──
+// render-process-gone / did-fail-load 자동 복구는 횟수 제한 + 시간창 +
+// "이미 복구 중" 플래그로 보호한다. 성공 로드(did-finish-load) 시 리셋.
+let _rendererRecoveryCount = 0;
+let _rendererRecoveryWindowStart = 0;
+let _rendererRecovering = false;
+const MAX_RENDERER_RECOVERY = 3;
+const RENDERER_RECOVERY_WINDOW_MS = 60000;
+let _failLoadRetryCount = 0;
+let _failLoadWindowStart = 0;
+const MAX_FAILLOAD_RETRY = 3;
+const FAILLOAD_WINDOW_MS = 60000;
+// watchdog 재시작 후 reload 중복 방지 (연속 failure 시 여러 reload가 겹치지 않게)
+let _watchdogReloadPending = false;
+
 async function handleWatchdogFailure(port) {
   // F5 reload 직후 보류 구간: 일시적 과부하로 오탐할 수 있으므로 카운트하지 않음
   if (Date.now() < watchdogSuppressUntil) {
@@ -548,12 +563,19 @@ async function handleWatchdogFailure(port) {
   startPythonProcess(port);
   // After server restart, reload mainWindow once server is healthy again.
   // Without this, mainWindow stays white (old dead page) after watchdog restart.
+  // NOTE: this runs ONLY on the confirmed-dead path (3 consecutive failures +
+  // secondary probe). Normal/intentional restarts go through
+  // restartOrchestrator.afterCycle which does its own reload — so this does
+  // NOT blow away the UI on every routine restart.
+  if (_watchdogReloadPending) return;
+  _watchdogReloadPending = true;
   checkServerHealth(port, 30, 2000).then(() => {
+    _watchdogReloadPending = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
       try { mainWindow.webContents.reload(); } catch (_) { }
       mlog('[Watchdog] mainWindow reloaded after server restart.');
     }
-  }).catch(() => { });
+  }).catch(() => { _watchdogReloadPending = false; });
 }
 
 function startWatchdog(port) {
@@ -860,19 +882,57 @@ app.whenReady().then(async () => {
     try {
       mainWindow.webContents.on('render-process-gone', (event, details) => {
         merr(`[RendererCrash] render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
-        // Auto-reload to recover from renderer crash (white screen)
+        // Auto-reload with loop protection: max N recoveries per time window,
+        // and never start a second recovery while one is in flight.
+        const now = Date.now();
+        if (now - _rendererRecoveryWindowStart > RENDERER_RECOVERY_WINDOW_MS) {
+          _rendererRecoveryCount = 0;
+          _rendererRecoveryWindowStart = now;
+        }
+        if (_rendererRecovering) {
+          merr('[RendererCrash] recovery already in flight, skipping reload.');
+          return;
+        }
+        if (_rendererRecoveryCount >= MAX_RENDERER_RECOVERY) {
+          merr(`[RendererCrash] recovery limit reached (${MAX_RENDERER_RECOVERY} per ${RENDERER_RECOVERY_WINDOW_MS / 1000}s) — NOT reloading to avoid crash loop.`);
+          return;
+        }
+        _rendererRecoveryCount++;
+        _rendererRecovering = true;
+        mlog(`[RendererCrash] auto-reload attempt ${_rendererRecoveryCount}/${MAX_RENDERER_RECOVERY}`);
         try { mainWindow.webContents.reload(); } catch (_) { }
+        setTimeout(() => { _rendererRecovering = false; }, 5000);
       });
       mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame) return; // ignore subframe failures
         merr(`[RendererFail] did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
-        // Retry loading the UI after a short delay (server may be restarting)
+        // Retry loading the UI after a short delay (server may be restarting),
+        // with a retry limit to avoid infinite fail→retry loops.
+        const now = Date.now();
+        if (now - _failLoadWindowStart > FAILLOAD_WINDOW_MS) {
+          _failLoadRetryCount = 0;
+          _failLoadWindowStart = now;
+        }
+        if (_failLoadRetryCount >= MAX_FAILLOAD_RETRY) {
+          merr(`[RendererFail] retry limit reached (${MAX_FAILLOAD_RETRY} per ${FAILLOAD_WINDOW_MS / 1000}s) — giving up.`);
+          return;
+        }
+        _failLoadRetryCount++;
+        mlog(`[RendererFail] retry loadURL attempt ${_failLoadRetryCount}/${MAX_FAILLOAD_RETRY}`);
         setTimeout(() => {
           try { mainWindow.loadURL(`http://127.0.0.1:${serverPort}`); } catch (_) { }
         }, 3000);
       });
       mainWindow.webContents.on('unresponsive', () => {
         merr('[RendererHang] mainWindow unresponsive detected.');
+      });
+      // Successful load resets all recovery counters (page is alive again).
+      mainWindow.webContents.on('did-finish-load', () => {
+        _rendererRecoveryCount = 0;
+        _rendererRecoveryWindowStart = 0;
+        _rendererRecovering = false;
+        _failLoadRetryCount = 0;
+        _failLoadWindowStart = 0;
       });
       mainWindow.webContents.on('responsive', () => {
         mlog('[RendererHang] mainWindow responsive again.');
