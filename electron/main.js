@@ -546,6 +546,14 @@ async function handleWatchdogFailure(port) {
     pythonProcess = null;
   }
   startPythonProcess(port);
+  // After server restart, reload mainWindow once server is healthy again.
+  // Without this, mainWindow stays white (old dead page) after watchdog restart.
+  checkServerHealth(port, 30, 2000).then(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.reload(); } catch (_) { }
+      mlog('[Watchdog] mainWindow reloaded after server restart.');
+    }
+  }).catch(() => { });
 }
 
 function startWatchdog(port) {
@@ -844,6 +852,41 @@ app.whenReady().then(async () => {
       });
     } catch (e) {
       console.warn('[Guard] mainWindow will-navigate guard setup failed:', e && e.message);
+    }
+
+    // ── STEP 4a-3: Renderer crash/failure detection & auto-recovery ──
+    // Without these handlers, a renderer crash or load failure leaves
+    // mainWindow as a permanent white screen with no log evidence.
+    try {
+      mainWindow.webContents.on('render-process-gone', (event, details) => {
+        merr(`[RendererCrash] render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
+        // Auto-reload to recover from renderer crash (white screen)
+        try { mainWindow.webContents.reload(); } catch (_) { }
+      });
+      mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return; // ignore subframe failures
+        merr(`[RendererFail] did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+        // Retry loading the UI after a short delay (server may be restarting)
+        setTimeout(() => {
+          try { mainWindow.loadURL(`http://127.0.0.1:${serverPort}`); } catch (_) { }
+        }, 3000);
+      });
+      mainWindow.webContents.on('unresponsive', () => {
+        merr('[RendererHang] mainWindow unresponsive detected.');
+      });
+      mainWindow.webContents.on('responsive', () => {
+        mlog('[RendererHang] mainWindow responsive again.');
+      });
+      // Forward renderer console errors to daon-main.log for post-mortem analysis
+      mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        try {
+          if (level >= 2) { // error=2, fatal=3
+            merr(`[RendererConsole] [L${level}] ${message} (${sourceId}:${line})`);
+          }
+        } catch (_) { }
+      });
+    } catch (e) {
+      console.warn('[RendererGuard] crash detection setup failed:', e && e.message);
     }
 
     // ── Always-on: 창 X 버튼 → 종료 대신 트레이로 최소화 (서버 백그라운드 유지) ──
