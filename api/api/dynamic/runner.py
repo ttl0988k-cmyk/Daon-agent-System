@@ -60,16 +60,37 @@ def _build_node_context(
     _is_windows = _platform == "win32"
     _os_name = "Windows" if _is_windows else ("macOS" if _platform == "darwin" else "Linux")
 
-    # Detect actual shell (bash may run on Windows via Git Bash / MSYS2)
+    # Detect the shell the terminal tool will ACTUALLY use.
+    # On Windows the terminal tool runs commands through Git Bash
+    # (tools/environments/local.py _find_bash), NOT cmd.exe. Detecting via
+    # COMSPEC misleads the agent into writing backslash paths that bash eats
+    # as escapes (C:\dir\file -> C:dirfile), breaking every cd/ls.
+    _terminal_is_bash = False
+    if _is_windows:
+        try:
+            from tools.environments.local import _find_bash as _fb
+            _terminal_is_bash = bool(_fb())
+        except Exception:
+            _terminal_is_bash = False
+    else:
+        _terminal_is_bash = True
+
     _shell = _os.environ.get('SHELL', '') or _os.environ.get('COMSPEC', '')
-    _is_bash = 'bash' in _shell.lower()
-    _shell_label = _shell if _shell else ('cmd.exe' if _is_windows else '/bin/bash')
+    _is_bash = _terminal_is_bash or ('bash' in _shell.lower())
+    if _is_windows and _terminal_is_bash:
+        _shell_label = "bash (Git Bash on Windows)"
+    else:
+        _shell_label = _shell if _shell else ('cmd.exe' if _is_windows else '/bin/bash')
 
     query = f"We are solving this main task: {main_task}\n"
     query += f"\n[SYSTEM ENVIRONMENT]\n"
     query += f"- Operating System: {_os_name} ({_platform})\n"
     query += f"- Shell: {_shell_label}\n"
-    if _is_windows and not _is_bash:
+    if _is_windows and _terminal_is_bash:
+        query += ("- Shell WARNING: terminal commands run in Git Bash, NOT cmd.exe. "
+                  "Backslashes in Windows paths (C:\\dir\\file) are eaten by bash as escapes. "
+                  "ALWAYS use forward slashes (C:/dir/file) in terminal commands.\n")
+    elif _is_windows and not _is_bash:
         query += "- Shell WARNING: cmd.exe does NOT support heredoc (<<), sudo, or Unix commands. Use write_file tool instead of cat/echo heredoc. Use PowerShell for advanced scripting.\n"
     elif _is_bash:
         query += "- Bash is available: heredoc (<<), Unix commands (ls, find, grep, cat, etc.) are supported. Use POSIX path style when possible.\n"
@@ -97,7 +118,11 @@ def _build_node_context(
             effective_dir = run_dir
 
     if effective_dir:
-        query += f"\n[CRITICAL DIRECTIVE] Your Current Workspace Directory is: '{effective_dir}'. ALL FILE OPERATIONS MUST be done inside this directory. NEVER use relative paths. ALWAYS use absolute paths starting with '{effective_dir}'.\n\n"
+        # On Windows+Git Bash, present the workspace with forward slashes so it
+        # is directly usable in terminal commands (backslashes would be eaten
+        # as escapes). Forward slashes also work in all file tools on Windows.
+        _dir_label = effective_dir.replace("\\", "/") if (_is_windows and _terminal_is_bash) else effective_dir
+        query += f"\n[CRITICAL DIRECTIVE] Your Current Workspace Directory is: '{_dir_label}'. ALL FILE OPERATIONS MUST be done inside this directory. NEVER use relative paths. ALWAYS use absolute paths starting with '{_dir_label}'.\n\n"
     if sandbox_note:
         query += sandbox_note
     query += f"Your specific subtask is: {node['subtask']}\n"
@@ -490,6 +515,10 @@ def _run_node_with_retries(
                 # broadcast_discovery / check_team_discoveries 도구를 노출한다.
                 # 보드가 없거나 비활성이면 통째로 건너뛰어 기본 경로를 보존한다.
                 # (registry 등록은 멱등, agent.tools 주입은 MCP 패턴 재사용)
+                # 실증 라운드 2 교훈: 도구 노출만으로는 자발적 방송 0건.
+                # 도구 노출 시 DISCOVERY_NUDGE_PROMPT를 시스템 프롬프트에 주입해
+                # "병렬 형제는 내 출력을 못 본다"는 유인을 부여한다.
+                _disc_nudge_active = False
                 try:
                     _d_board = (mission_tracker or {}).get("discovery_board") if isinstance(mission_tracker, dict) else None
                     if _d_board is not None and getattr(_d_board, "enabled", False):
@@ -518,6 +547,7 @@ def _run_node_with_retries(
                                 },
                             })
                             agent.valid_tool_names.add(_disc_name)
+                        _disc_nudge_active = True
                         _log.info("[DiscoveryBoard] Tools exposed for node '%s'.", agent_name)
                 except Exception as _disc_e:
                     _log.debug("[DiscoveryBoard] tool exposure skipped for '%s': %s", agent_name, _disc_e)
@@ -536,6 +566,16 @@ def _run_node_with_retries(
                         _log.info("[DynamicHermes] Injected inbox for node '%s'.", agent_name)
                 except Exception as _inbox_e:
                     _log.debug("[DynamicHermes] inbox injection skipped for '%s': %s", agent_name, _inbox_e)
+
+                # ── 시나리오 D: DiscoveryBoard 프롬프트 유도(nudge) 주입 ──
+                # 도구가 노출된 노드에만 주입. 절대 raise하지 않는다.
+                if _disc_nudge_active:
+                    try:
+                        from api.dynamic.discovery_board import DISCOVERY_NUDGE_PROMPT as _disc_nudge
+                        _sys_prompt = (_sys_prompt or "") + "\n\n" + _disc_nudge
+                        _log.info("[DiscoveryBoard] Nudge prompt injected for node '%s'.", agent_name)
+                    except Exception as _nudge_e:
+                        _log.debug("[DiscoveryBoard] nudge injection skipped for '%s': %s", agent_name, _nudge_e)
 
                 res = agent.run_conversation(
                     user_message=agent_query,

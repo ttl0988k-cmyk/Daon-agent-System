@@ -48,6 +48,28 @@ DEFAULT_DISCOVERY_LIMITS = {
     "max_evidence_chars": 600,
 }
 
+# ── 프롬프트 유도(nudge): 노드에 도구 노출 시 시스템 프롬프트에 주입되는 텍스트 ──
+# 실증 라운드 2 결과: 도구는 노출됐지만 자발적 방송 0건. DAG 데이터 흐름이
+# 이미 정보를 전달하므로 에이전트 입장에서 방송할 유인이 없었음.
+# "병렬 형제는 내 출력을 못 본다"는 사실을 명시해 방송 유인을 부여한다.
+# ASCII only (cp949 와이어 정책).
+DISCOVERY_NUDGE_PROMPT = (
+    "[TEAM DISCOVERY BOARD]\n"
+    "A shared team discovery board is active for this run. Two extra tools are available:\n"
+    "- broadcast_discovery: publish an important finding so teammates become aware of it.\n"
+    "- check_team_discoveries: read findings teammates have already published.\n"
+    "\n"
+    "MANDATORY BROADCAST RULE: If you discover something that changes how teammates should work "
+    "(a discrepancy between files, e.g. a config says X but the code actually does Y; a wrong "
+    "assumption in the task; a hidden constraint; a corrected fact), you MUST call "
+    "broadcast_discovery immediately with a short summary and evidence. Do NOT keep the finding "
+    "only in your final output: parallel teammates cannot see your output until the DAG merges, "
+    "and the board is the only channel that reaches them in real time.\n"
+    "\n"
+    "Before starting your main work, call check_team_discoveries once to pick up findings that "
+    "may affect your subtask."
+)
+
 
 @dataclass
 class Discovery:
