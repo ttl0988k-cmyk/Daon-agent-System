@@ -161,6 +161,7 @@ def _persist_node_result(
             "parents": node_parents,
             "model_used": model_configs[0]["model"] if model_configs else "",
             "duration_seconds": time.time() - node_start_time,
+            "attempts": attempts_count,
         }
         state_manager.add(
             key=node["output"],

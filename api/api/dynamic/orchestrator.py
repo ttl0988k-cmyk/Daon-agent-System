@@ -1042,12 +1042,15 @@ class HermesDynamicRunner:
                     _model_used = r.get("model_used", "")
                     _status = r.get("status", "failed")
                     _latency = r.get("duration_seconds", 0) * 1000
+                    # Phase 2: retries = attempts - 1 (first try is not a retry)
+                    _retries = max(0, int(r.get("attempts", 1) or 1) - 1)
                     if _node_role and _model_used:
                         _selector.record_result(
                             role=_node_role,
                             model_id=_model_used,
                             success=(_status == "success"),
                             latency_ms=_latency,
+                            retries=_retries,
                         )
                 _log.info("Recorded %d node results in ModelSelector history", len(runner_results))
             except Exception as e:

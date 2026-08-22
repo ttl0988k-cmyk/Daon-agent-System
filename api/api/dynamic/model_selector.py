@@ -231,7 +231,8 @@ class ModelHistory:
         role_dict = self._data.setdefault(role, {})
         model_dict = role_dict.setdefault(model_id, {})
         ctx_dict = model_dict.setdefault(context_key, {
-            "success": 0, "fail": 0, "total_latency_ms": 0, "count": 0
+            "success": 0, "fail": 0, "total_latency_ms": 0, "count": 0,
+            "total_retries": 0,
         })
         return ctx_dict
     
@@ -239,7 +240,10 @@ class ModelHistory:
         """Get success/failure stats for a (role, model, context) pair."""
         role_dict = self._data.get(role, {})
         model_dict = role_dict.get(model_id, {})
-        return model_dict.get(context_key, {"success": 0, "fail": 0, "total_latency_ms": 0, "count": 0})
+        return model_dict.get(context_key, {
+            "success": 0, "fail": 0, "total_latency_ms": 0, "count": 0,
+            "total_retries": 0,
+        })
     
     def get_best_context_stats(self, role: str, model_id: str, context_keys: list[str]) -> dict:
         """Get the most specific available stats for given context keys.
@@ -252,10 +256,11 @@ class ModelHistory:
             if stats.get("count", 0) > 0:
                 return {"context_key": key, **stats}
         # Nothing found — return empty overall
-        return {"context_key": "overall", "success": 0, "fail": 0, "total_latency_ms": 0, "count": 0}
+        return {"context_key": "overall", "success": 0, "fail": 0,
+                "total_latency_ms": 0, "count": 0, "total_retries": 0}
     
     def record_success(self, role: str, model_id: str, latency_ms: float = 0,
-                       context_keys: list[str] = None):
+                       context_keys: list[str] = None, retries: int = 0):
         """Record a successful execution into ALL matching context slots."""
         ctx_keys = context_keys or ["overall"]
         for key in ctx_keys:
@@ -263,16 +268,19 @@ class ModelHistory:
             entry["success"] += 1
             entry["total_latency_ms"] += latency_ms
             entry["count"] += 1
+            entry["total_retries"] = entry.get("total_retries", 0) + max(0, int(retries))
         # Also record to "overall"
         if "overall" not in ctx_keys:
             entry = self._ensure_path(role, model_id, "overall")
             entry["success"] += 1
             entry["total_latency_ms"] += latency_ms
             entry["count"] += 1
+            entry["total_retries"] = entry.get("total_retries", 0) + max(0, int(retries))
         self._save()
     
     def record_failure(self, role: str, model_id: str, latency_ms: float = 0,
-                       context_keys: list[str] = None, error_type: str = "Unknown"):
+                       context_keys: list[str] = None, error_type: str = "Unknown",
+                       retries: int = 0):
         """Record a failed execution into ALL matching context slots."""
         ctx_keys = context_keys or ["overall"]
         for key in ctx_keys:
@@ -280,12 +288,28 @@ class ModelHistory:
             entry["fail"] += 1
             entry["total_latency_ms"] += latency_ms
             entry["count"] += 1
+            entry["total_retries"] = entry.get("total_retries", 0) + max(0, int(retries))
         if "overall" not in ctx_keys:
             entry = self._ensure_path(role, model_id, "overall")
             entry["fail"] += 1
             entry["total_latency_ms"] += latency_ms
             entry["count"] += 1
+            entry["total_retries"] = entry.get("total_retries", 0) + max(0, int(retries))
         self._save()
+    
+    def get_avg_retries(self, role: str, model_id: str,
+                        context_keys: list[str] = None) -> float:
+        """Get context-aware average retries per execution. 0.0 for unknown."""
+        ctx_keys = context_keys or ["overall"]
+        best = self.get_best_context_stats(role, model_id, ctx_keys)
+        count = best.get("count", 0)
+        if count == 0:
+            if best.get("context_key", "") != "overall":
+                overall = self.get_stats(role, model_id, "overall")
+                if overall.get("count", 0) > 0:
+                    return overall.get("total_retries", 0) / overall["count"]
+            return 0.0
+        return best.get("total_retries", 0) / count
     
     def get_success_rate(self, role: str, model_id: str,
                          context_keys: list[str] = None) -> float:
@@ -476,6 +500,10 @@ class DynamicModelSelector:
     def __init__(self, profiles: list[ModelProfile] = None):
         self._profiles: dict[str, ModelProfile] = {}
         self._history = ModelHistory()
+        # Phase 2: in-memory selection log (ring buffer) so the CEO can
+        # observe what the selector chose and why, then tune blend weights.
+        self._selection_log: list[dict] = []
+        self._selection_log_max = 200
         
         for p in (profiles or _DEFAULT_PROFILES):
             self._profiles[p.model_id] = p
@@ -703,6 +731,13 @@ class DynamicModelSelector:
         # 6. JSON Reliability
         # Use base reliability, adjusted by history if available
         scores["reliability"] = profile.base_json_reliability
+        # Phase 2: retry evidence — models that need many retries to succeed
+        # are less reliable. avg_retries 0 = no penalty; >= 3 = heavy penalty.
+        _avg_retries = self._history.get_avg_retries(role, profile.model_id, ctx_keys)
+        if _avg_retries > 0:
+            _retry_penalty = min(0.5, _avg_retries / 6.0)
+            scores["reliability"] = max(0.0, scores["reliability"] - _retry_penalty)
+        scores["_avg_retries"] = round(_avg_retries, 2)
         
         # 7. Status / API Health
         now = time.time()
@@ -867,7 +902,34 @@ class DynamicModelSelector:
             "context_keys": context_keys,
         }
         
+        # Phase 2: record the selection (chain + per-model evidence) into the
+        # in-memory ring buffer so the CEO can observe and tune blend weights.
+        try:
+            self._selection_log.append({
+                "ts": time.time(),
+                "role": role,
+                "required_strength": required_strength,
+                "context_keys": list(context_keys),
+                "chain": [
+                    {
+                        "model": c.get("model"),
+                        "provider": c.get("provider"),
+                        "score": round(float(c.get("_selector_score", 0.0)), 4),
+                        "breakdown": c.get("_breakdown") or {},
+                    }
+                    for c in chain
+                ],
+            })
+            if len(self._selection_log) > self._selection_log_max:
+                self._selection_log = self._selection_log[-self._selection_log_max:]
+        except Exception:
+            pass  # logging must never break selection
+        
         return chain, context_info
+    
+    def get_selection_log(self, limit: int = 50) -> list[dict]:
+        """Return the most recent selection log entries (newest first)."""
+        return list(reversed(self._selection_log[-limit:]))
     
     def _resolve_api_key(self, provider: str) -> str:
         """Resolve API key for ANY provider using the unified auth resolution:
@@ -926,15 +988,17 @@ class DynamicModelSelector:
     
     def record_result(self, role: str, model_id: str,
                       success: bool, latency_ms: float = 0,
-                      task: str = ""):
+                      task: str = "", retries: int = 0):
         """Record an execution result with auto-extracted context."""
         task_context = extract_task_context(task) if task else {}
         context_keys = build_context_keys(task_context)
         
         if success:
-            self._history.record_success(role, model_id, latency_ms, context_keys)
+            self._history.record_success(role, model_id, latency_ms, context_keys,
+                                         retries=retries)
         else:
-            self._history.record_failure(role, model_id, latency_ms, context_keys)
+            self._history.record_failure(role, model_id, latency_ms, context_keys,
+                                         retries=retries)
     
     @property
     def history(self) -> ModelHistory:

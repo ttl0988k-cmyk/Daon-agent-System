@@ -411,6 +411,42 @@ class HermesPlanner:
                     + "\n".join(_intel_cards) + "\n"
                     "\n[End Model Intelligence Cards]\n"
                 )
+
+            # --- Phase 2: recent selection log (observation view) ---
+            # Lets the CEO see what the selector chose for each role and why,
+            # so blend weights can be tuned from real behaviour.
+            try:
+                _sel_log = _selector.get_selection_log(limit=10)
+                if _sel_log:
+                    _log_lines = []
+                    for _entry in _sel_log:
+                        _role = _entry.get("role", "?")
+                        _strength = _entry.get("required_strength", "?")
+                        _top = (_entry.get("chain") or [{}])[0]
+                        _top_model = _top.get("model", "?")
+                        _top_score = _top.get("score", 0.0)
+                        _bd = _top.get("breakdown") or {}
+                        _intel_ev = _bd.get("_intel") or {}
+                        _intel_n = int(_intel_ev.get("daon_samples", 0) or 0)
+                        _intel_flag = _intel_ev.get("flag")
+                        _flag_txt = ""
+                        if _intel_flag == "high_potential_unverified":
+                            _flag_txt = " [high potential / field-unverified]"
+                        elif _intel_flag == "lineage_estimate":
+                            _flag_txt = " [lineage estimate]"
+                        _log_lines.append(
+                            f"  - role={_role} strength={_strength} -> {_top_model} "
+                            f"(score {round(_top_score, 3)}, intel DAON {_intel_n}){_flag_txt}"
+                        )
+                    _model_rec_block += (
+                        "\n[Model Selection Log — recent choices]\n"
+                        "These are the selector's most recent picks per role. If a choice looks wrong,\n"
+                        "the blend weights (strength/success/cost/latency) or the intel DB are the levers.\n"
+                        + "\n".join(_log_lines) + "\n"
+                        "\n[End Model Selection Log]\n"
+                    )
+            except Exception:
+                pass  # observation view must never break planning
         except Exception as e:
             import traceback
             _log.warning(f"Failed to compute model recommendations: {e}\\n{traceback.format_exc()}")
