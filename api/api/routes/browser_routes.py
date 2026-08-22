@@ -57,6 +57,25 @@ _PENDING_TTL = 15.0
 _CDP_RETRY_COOLDOWN = 5.0
 _last_cdp_attempt = 0.0  # worker 전용, _ensure_browser 내에서만 접근
 
+# CDP 연결 하드 타임아웃(ms). connect_over_cdp를 타임아웃 없이 호출하면
+# 드라이버/엔드포인트가 비정상일 때 Playwright _sync() 루프가 GIL을 쥔 채
+# 무한 spin하며 서버 전체를 마비시킨다(py-spy 스택 덤프로 확인).
+_CDP_CONNECT_TIMEOUT_MS = 10000
+# CDP 연결이 연속으로 이 횟수만큼 실패하면 Playwright 드라이버 자체가
+# 망가진 것으로 보고 폐기 후 재생성한다(좀비 드라이버 재발 방지).
+_CDP_MAX_CONSECUTIVE_FAILURES = 3
+_cdp_fail_streak = 0  # worker 전용, _ensure_browser 내에서만 접근
+
+# ── status 폴링 적체 방지 ──
+# 워커가 정체됐을 때 /api/browser/status 폴링(프론트 5초 주기)이 큐에 쌓여
+# 서버 스레드마다 35초씩 블로킹되는 것을 막는다. 워커가 바쁘거나 이미
+# status 태스크가 대기 중이면 큐에 넣지 않고 캐시 상태를 즉시 반환한다.
+_status_gate_lock = threading.Lock()
+_pending_status_tasks = 0
+_worker_task_start_ts = 0.0    # 워커가 현재 처리 중인 태스크 시작 시각(0=유휴)
+_WORKER_STUCK_THRESHOLD = 5.0  # 한 태스크가 이보다 오래 걸리면 워커 정체로 판정
+_STATUS_WAIT_TIMEOUT = 6.0     # status 폴링은 워커 결과를 최대 이만큼만 기다림
+
 
 def _set_pending(url: str) -> None:
     """AI가 요청한 navigate URL을 기록해 프론트 폴링이 브라우저 뷰를 자동으로 열게 한다."""
@@ -85,7 +104,7 @@ def _clear_pending() -> None:
 
 def _browser_worker_loop():
     """Dedicated thread: runs all Playwright operations sequentially."""
-    global _last_url, _browser_active, _pending_url
+    global _last_url, _browser_active, _pending_url, _worker_task_start_ts
 
     browser = None
     browser_page = None
@@ -118,6 +137,20 @@ def _browser_worker_loop():
             pass
         return None, None
 
+    def _cdp_endpoint_ready() -> bool:
+        """CDP HTTP 엔드포인트를 raw HTTP로 신속 점검(3초).
+
+        Playwright를 건드리기 전에 9222가 응답하는지 확인한다. 무응답이면
+        connect_over_cdp 자체를 건너뛰어 드라이버/엔드포인트 비정상이
+        워커를 hang 시키는 것을 차단한다.
+        """
+        import urllib.request
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=3) as resp:
+                return 200 <= int(resp.status) < 300
+        except Exception:
+            return False
+
     def _ensure_browser():
         """Connect to Electron's WebContentsView via CDP.
 
@@ -128,7 +161,7 @@ def _browser_worker_loop():
         응답하고, frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
         """
         nonlocal browser, browser_page, pw
-        global _last_cdp_attempt
+        global _last_cdp_attempt, _cdp_fail_streak
         if browser is not None:
             try:
                 browser_page.title()
@@ -160,8 +193,15 @@ def _browser_worker_loop():
             # Connect to DAON 전용 Chrome / 내부 WebContentsView remote debugging port
             # 127.0.0.1 명시: Windows가 localhost를 IPv6(::1)로 우선 해석해 CDP
             # 리스너(IPv4)와 불일치하면 ECONNREFUSED ::1:9222 로 연결이 실패한다.
+            # 사전 점검: 엔드포인트가 무응답이면 connect 자체를 건너뛰고 실패 처리로
+            # 우회한다(드라이버 비정상 시 hang 방지).
+            if not _cdp_endpoint_ready():
+                raise ConnectionError("CDP endpoint 127.0.0.1:9222 not reachable (pre-check)")
             _logger.info("Attempting CDP connection to DAON browser at 127.0.0.1:9222")
-            browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            # timeout 필수: 없으면 드라이버 비정상 시 _sync()가 GIL을 쥔 채 무한
+            # spin한다(py-spy로 확인). 타임아웃이 있으면 드라이버가 10초 후 예외 반환.
+            browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222", timeout=_CDP_CONNECT_TIMEOUT_MS)
+            _cdp_fail_streak = 0  # 연결 성공 → 연속 실패 카운트 리셋
 
             # Find a usable browser page.
             # DAON 내부 공유 브라우저(WebContentsView, 파티션 persist:daon-shared-browser)
@@ -218,6 +258,26 @@ def _browser_worker_loop():
             _logger.warning("Electron CDP connection failed: %s", str(e))
             # CDP 연결 실패 시각 기록 → 다음 _CDP_RETRY_COOLDOWN 초간 재시도 방지
             _last_cdp_attempt = time.time()
+            _cdp_fail_streak += 1
+            # 반복 실패 시 Playwright 드라이버 자체가 망가진 것으로 의심 →
+            # 폐기 후 재생성한다. (좀비 드라이버에 대한 반복 호출은 다시
+            # 무한 hang에 빠질 수 있으므로 인스턴스 자체를 새로 만든다.)
+            if _cdp_fail_streak >= _CDP_MAX_CONSECUTIVE_FAILURES:
+                _logger.warning("CDP connect failed %d times in a row - recreating Playwright driver", _cdp_fail_streak)
+                _cdp_fail_streak = 0
+                try:
+                    if browser is not None:
+                        browser.close()
+                except Exception:
+                    pass
+                browser = None
+                browser_page = None
+                try:
+                    if pw is not None:
+                        pw.stop()
+                except Exception:
+                    pass
+                pw = None
             # In Electron mode (BROWSER_CDP_URL is set), do NOT fall back to headless —
             # user and AI must share the same WebContentsView page.
             if os.environ.get("BROWSER_CDP_URL"):
@@ -265,6 +325,14 @@ def _browser_worker_loop():
         action = task.get("action", "")
         result_id = task.get("_result_id", -1)
 
+        # 만료된 status 태스크: 요청자가 이미 타임아웃으로 포기하고 떠났으므로
+        # 실행을 건너뛴다. (워커가 일시 정체됐다가 복구된 후, 쌓인 status 폴링을
+        # 뒤늦게 몰아서 실행하는 것을 방지)
+        _task_expires_at = task.get("_expires_at") or 0
+        if action == "status" and _task_expires_at and time.time() > _task_expires_at:
+            continue
+
+        _worker_task_start_ts = time.time()
         try:
             if action == "status":
                 page, err = _ensure_browser()
@@ -787,6 +855,10 @@ def _browser_worker_loop():
                 "error": str(e),
             })
 
+        # 태스크 1건 완료(성공/실패 무관) — busy 마커 해제. 이 마커가 설정된 채
+        # 오래 남아 있으면 status 폴링은 큐에 쌓이지 않고 캐시 상태를 반환한다.
+        _worker_task_start_ts = 0.0
+
     # Cleanup
     if browser_page:
         try:
@@ -810,9 +882,10 @@ def _browser_worker_loop():
 
 def _start_browser_worker():
     """Start the browser worker thread if not already running."""
-    global _browser_worker
+    global _browser_worker, _worker_task_start_ts
     with _browser_worker_lock:
         if _browser_worker is None or not _browser_worker.is_alive():
+            _worker_task_start_ts = 0.0  # 이전 워커가 죽으며 남긴 stale busy 마커 리셋
             _browser_worker = threading.Thread(
                 target=_browser_worker_loop,
                 name="browser-worker",
@@ -822,8 +895,12 @@ def _start_browser_worker():
             _logger.info("Browser worker thread started (PID-like id: %s)", _browser_worker.ident)
 
 
-def _submit_task(action: str, **kwargs) -> dict:
-    """Submit a task to the browser worker and wait for the result."""
+def _submit_task(action: str, wait_timeout: float = 35.0, **kwargs) -> dict:
+    """Submit a task to the browser worker and wait for the result.
+
+    wait_timeout: 결과 대기 최대 초. status 폴링은 짧은 값을 전달해 워커가
+    정체됐을 때 서버 스레드가 35초씩 블로킹되지 않도록 한다.
+    """
     _start_browser_worker()
 
     result_id = int(time.time() * 1000000)  # unique ID
@@ -831,7 +908,7 @@ def _submit_task(action: str, **kwargs) -> dict:
     _browser_task_queue.put(task)
 
     try:
-        result = _browser_result_queue.get(timeout=35)
+        result = _browser_result_queue.get(timeout=wait_timeout)
         # Drain any stale results that don't match our ID
         attempts = 0
         while result.get("_result_id") != result_id and attempts < 20:
@@ -845,14 +922,40 @@ def _submit_task(action: str, **kwargs) -> dict:
             return {"error": "Failed to get matching result from browser worker"}
         return result
     except queue.Empty:
-        return {"error": "Browser operation timed out (35s)"}
+        return {"error": f"Browser operation timed out ({wait_timeout:.0f}s)"}
 
 
 # ── Route Handlers ──
 
 def handle_get_browser_status(handler, parsed):
-    """GET /api/browser/status — return current browser status."""
-    result = _submit_task("status")
+    """GET /api/browser/status — return current browser status.
+
+    적체 방지: 워커가 정체 중(현재 태스크가 _WORKER_STUCK_THRESHOLD 초과)이거나
+    이미 status 태스크가 대기 중이면 큐에 중복 투입하지 않고 캐시 상태를 즉시
+    반환한다. 프론트 5초 폴링이 큐에 쌓여 스레드당 35초씩 블로킹되는 것을 막는다.
+    """
+    global _pending_status_tasks
+    now = time.time()
+    worker_stuck = _worker_task_start_ts > 0 and (now - _worker_task_start_ts) > _WORKER_STUCK_THRESHOLD
+    with _status_gate_lock:
+        if worker_stuck or _pending_status_tasks > 0:
+            return j_ok(handler, {
+                "status": "connected" if _browser_active else "disconnected",
+                "url": _last_url or "",
+                "title": "",
+                "pending_url": _get_pending(),
+                "worker_busy": True,
+            })
+        _pending_status_tasks += 1
+    try:
+        result = _submit_task(
+            "status",
+            wait_timeout=_STATUS_WAIT_TIMEOUT,
+            _expires_at=time.time() + _STATUS_WAIT_TIMEOUT + 2,
+        )
+    finally:
+        with _status_gate_lock:
+            _pending_status_tasks -= 1
     if "error" in result:
         return j_ok(handler, {
             "status": "disconnected",

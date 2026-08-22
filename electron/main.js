@@ -228,7 +228,10 @@ function refreshTrayStatus() {
       tray.setToolTip('DAON — 서버 응답 없음');
     } catch (_) { }
   });
-  req.setTimeout(2000, () => req.destroy());
+  // 4초: 서버의 일시적 지연(예: GIL 경합)에 여유를 준다. 진짜 죽은 서버
+  // (connection refused)는 즉시 실패하므로 감지 속도는 그대로 유지된다.
+  // 기존 2초는 서버가 잠시 느려졌을 뿐인데 '서버 응답 없음'으로 오판했다.
+  req.setTimeout(4000, () => req.destroy());
 }
 
 function startTrayStatusPolling() {
