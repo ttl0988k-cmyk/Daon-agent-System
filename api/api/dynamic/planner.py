@@ -359,11 +359,37 @@ class HermesPlanner:
                     qual = int((bd.get("success_rate", 0) + bd.get("strength", 0)) * 100)
                     spd = int(bd.get("latency", 0) * 10) # 0-10
                     rel = int(bd.get("reliability", 0) * 100)
-                    
-                    _lines.append(f"      {i+1}. {m_id} (Score: {score} | Quality: {qual} | Speed: {spd}/10 | Rel: {rel} | Cost/1M: ${cost})")
+
+                    _intel_info = bd.get("_intel") or {}
+                    _intel_flag = _intel_info.get("flag")
+                    _intel_n = int(_intel_info.get("daon_samples", 0) or 0)
+                    if _intel_flag == "high_potential_unverified":
+                        _intel_tag = " [Intel: high potential / field-unverified]"
+                    elif _intel_flag == "lineage_estimate":
+                        _intel_tag = " [Intel: lineage estimate - performance not inherited]"
+                    elif _intel_info.get("public") is not None or _intel_n > 0:
+                        _conf = "high" if _intel_n >= 15 else ("mid" if _intel_n >= 5 else "low")
+                        _intel_tag = f" [Intel: DAON {_intel_n} samples, confidence {_conf}]"
+                    else:
+                        _intel_tag = ""
+
+                    _lines.append(f"      {i+1}. {m_id} (Score: {score} | Quality: {qual} | Speed: {spd}/10 | Rel: {rel} | Cost/1M: ${cost}){_intel_tag}")
                 
                 if _lines:
                     _role_recommendations.append(f"  - Role '{_role}':\n" + "\n".join(_lines))
+
+            # --- Model Intelligence cards (star-compressed benchmark view) ---
+            _intel_cards: list[str] = []
+            try:
+                from api.dynamic.model_intel import get_model_intel, ModelIntel
+                _intel = get_model_intel()
+                _daon_view = ModelIntel.daon_stats_from_history(_selector._history)
+                for _mid in model_list:
+                    _card = _intel.format_ceo_line(_mid, daon_stats=_daon_view)
+                    if _card:
+                        _intel_cards.append("  " + _card.replace("\n", "\n  "))
+            except Exception as _ie:
+                _log.warning("Model intel cards unavailable: %s", _ie)
 
             _model_rec_block = (
                 "\n[Dynamic Model Selector — 8-Dimensional Role-based Scorecards]\n"
@@ -374,6 +400,17 @@ class HermesPlanner:
                 + "\n".join(_role_recommendations) + "\n"
                 "\n[End Dynamic Model Selector Recommendations]\n"
             ) if _role_recommendations else ""
+
+            if _intel_cards:
+                _model_rec_block += (
+                    "\n[Model Intelligence — Benchmark Capability Cards]\n"
+                    "Star ratings (1-5) per capability, blended from PUBLIC benchmarks and DAON field results via the Evidence layer.\n"
+                    "As DAON sample counts grow, field evidence dominates the blend. A model marked\n"
+                    "'잠재력 높음 / 실전 검증 부족' has strong public benchmarks but no DAON track record yet -\n"
+                    "treat it as a strong candidate, not a proven one.\n"
+                    + "\n".join(_intel_cards) + "\n"
+                    "\n[End Model Intelligence Cards]\n"
+                )
         except Exception as e:
             import traceback
             _log.warning(f"Failed to compute model recommendations: {e}\\n{traceback.format_exc()}")

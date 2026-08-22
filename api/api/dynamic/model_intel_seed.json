@@ -1,0 +1,130 @@
+{
+    "_instructions": [
+        "Model Intelligence DB seed. Fill benchmark scores + source + as_of, then the CEO sees them immediately.",
+        "score: 0..1 or 0..100 both accepted. Every benchmark entry MUST have source and as_of (YYYY-MM).",
+        "benchmarks with score=null are ignored by the loader until filled.",
+        "Runtime overrides live in ~/.hermes/model_intel.json (same schema, entries there win over this seed).",
+        "Lineage rule: a NEW model version (e.g. qwen3.9-max) gets a FRESH entry with parent=qwen3.8-max.",
+        "Never copy DAON stats across versions - ModelHistory is keyed by model_id so this is automatic.",
+        "Capabilities (optional explicit override, 0..1): coding/reasoning/debugging/agentic/tool_use/context."
+    ],
+    "models": {
+        "qwen3.8-max": {
+            "identity": {
+                "provider": "qwen",
+                "family": "qwen",
+                "generation": "3.8",
+                "tier": "max",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.8,
+                "as_of": null,
+                "benchmarks": {
+                    "SWE-bench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "SWE-bench Pro": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Terminal-Bench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "LiveCodeBench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "GPQA": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "MMLU": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "AIME": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Tool use": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Cybersecurity": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Long context": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    }
+                },
+                "capabilities": {}
+            }
+        },
+        "qwen3.7": {
+            "identity": {
+                "provider": "qwen",
+                "family": "qwen",
+                "generation": "3.7",
+                "tier": "base",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.8,
+                "as_of": null,
+                "benchmarks": {
+                    "SWE-bench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Terminal-Bench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "LiveCodeBench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "GPQA": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "MMLU": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Tool use": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "Long context": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    }
+                },
+                "capabilities": {}
+            }
+        }
+    }
+}

@@ -606,6 +606,7 @@ class DynamicModelSelector:
         required_strength: str = "code",
         max_latency_ms: float = 30000,
         context_keys: list[str] = None,
+        daon_stats: dict = None,
     ) -> tuple[float, dict]:
         """Compute an 8-dimensional weighted score for a model."""
         import time
@@ -625,7 +626,24 @@ class DynamicModelSelector:
         ctx_keys = context_keys or ["overall"]
         
         # 1. Strength (Task/Role Fit)
-        if required_strength in profile.strengths:
+        # Model Intelligence first: when a blended FINAL capability score
+        # (public benchmarks + DAON field evidence, weighted by the Evidence
+        # layer) exists for this model+capability, it replaces the binary
+        # name-match so real capability gaps (e.g. 3.8-Max vs 3.7) become
+        # visible. Falls back to legacy name inference when no intel applies.
+        _intel_score = None
+        _intel_ev = {}
+        try:
+            from api.dynamic.model_intel import get_model_intel
+            _intel_score, _intel_ev = get_model_intel().get_final_capability(
+                profile.model_id, required_strength, daon_stats=daon_stats
+            )
+        except Exception:
+            _intel_score, _intel_ev = None, {}
+        scores["_intel"] = _intel_ev or {}
+        if _intel_score is not None:
+            scores["strength"] = _intel_score
+        elif required_strength in profile.strengths:
             scores["strength"] = 1.0
         else:
             related = {
@@ -761,6 +779,16 @@ class DynamicModelSelector:
             _known_providers = {p.provider for p in self._profiles.values() if p.provider}
             _registered_models = {}
 
+        # Model Intelligence: aggregate DAON field stats ONCE per selection
+        # round (pure in-memory arithmetic over ModelHistory) and reuse the
+        # view for every candidate. Failure only disables the intel layer.
+        _daon_stats = {}
+        try:
+            from api.dynamic.model_intel import ModelIntel
+            _daon_stats = ModelIntel.daon_stats_from_history(self._history)
+        except Exception:
+            _daon_stats = {}
+
         for model_id, profile in self._profiles.items():
             if allowed is not None:
                 if profile.provider not in allowed:
@@ -783,6 +811,7 @@ class DynamicModelSelector:
                 required_strength=required_strength,
                 max_latency_ms=max_latency_ms,
                 context_keys=context_keys,
+                daon_stats=_daon_stats,
             )
             
             if preferred_model and model_id == preferred_model:
