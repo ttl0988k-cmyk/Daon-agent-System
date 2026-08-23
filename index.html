@@ -1368,8 +1368,8 @@
               <button class="settings-action-btn" onclick="_addManualProviderModels()"
                 style="white-space:nowrap;padding:6px 10px;">+ 추가</button>
             </div>
-            <div style="font-size:10px;color:var(--muted);margin-top:3px;">자동 감지 없이 모델 ID를 직접 추가할 수 있습니다. Enter 키로도
-              추가됩니다.</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:3px;">모델 ID를 직접 추가합니다 (Enter 키 지원). 이미 목록에 있는 모델을
+              입력하면 자동으로 체크하고 그 위치로 이동합니다.</div>
           </div>
           <div style="display:flex;gap:6px;margin-bottom:8px;">
             <button class="settings-action-btn" id="settingsProviderFetchBtn" onclick="fetchProviderModels()"
@@ -1492,6 +1492,23 @@
   </div>
 
   <!-- Custom Input Modal (replaces native prompt() for Electron WebContentsView compatibility) -->
+  <!-- 프로바이더 삭제 확인용 인페이지 모달 (Electron 네이티브 confirm() 대체 —
+       네이티브 대화상자 닫은 직후 첫 클릭이 포커스 복원으로 소모되는 문제 방지) -->
+  <div class="modal-overlay" id="providerConfirmModal" style="display:none; z-index: 10001;">
+    <div class="modal-panel" style="max-width: 400px; width: 90%;">
+      <div class="modal-header">
+        <span>확인</span>
+      </div>
+      <div class="modal-body" style="padding:16px; display:flex; flex-direction:column; gap:12px;">
+        <div id="providerConfirmMessage" style="font-size:13px; color:var(--text); line-height:1.5;"></div>
+        <div style="display:flex; gap:6px; justify-content:flex-end;">
+          <button class="cron-btn" id="providerConfirmCancel" style="flex:0;">취소</button>
+          <button class="cron-btn run" id="providerConfirmOk" style="flex:0;">삭제</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="inputModal" style="display:none; z-index: 10000;">
     <div class="modal-panel" style="max-width: 480px; width: 90%;">
       <div class="modal-header">

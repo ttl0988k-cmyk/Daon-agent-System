@@ -4774,6 +4774,20 @@ async function loadProviderManagement() {
       presetSel.value = currentVal;
     }
 
+    // 이벤트 위임은 1회만 바인딩 (list 요소 자체는 innerHTML 재렌더링에도 유지됨).
+    // 기존 인라인 onclick="editProvider('이름')" 방식은 이름에 특수문자(' 등)가 들어가면
+    // HTML 디코딩 후 JS 문자열 리터럴이 깨져 클릭이 아예 무효화되는 문제가 있었다.
+    if (!list._providerDelegationBound) {
+      list._providerDelegationBound = true;
+      list.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('button[data-provider-action]') : null;
+        if (!btn) return;
+        var pname = btn.getAttribute('data-provider-name') || '';
+        if (btn.getAttribute('data-provider-action') === 'edit') editProvider(pname);
+        else if (btn.getAttribute('data-provider-action') === 'delete') deleteProvider(pname);
+      });
+    }
+
     const providerKeys = Object.keys(providers);
     if (providerKeys.length === 0) {
       list.innerHTML = '<div style="color:var(--muted);font-size:11px;text-align:center;padding:8px;">No custom providers added yet. Click "+ Add Provider" to add one.</div>';
@@ -4788,8 +4802,8 @@ async function loadProviderManagement() {
           '<span class="provider-models" title="' + esc(modelList) + '">' + esc(modelList) + '</span>' +
           '</div>' +
           '<div class="provider-actions">' +
-          '<button class="provider-btn" onclick="editProvider(\'' + esc(name) + '\')" title="Edit">✎</button>' +
-          '<button class="provider-btn danger" onclick="deleteProvider(\'' + esc(name) + '\')" title="Delete">✕</button>' +
+          '<button class="provider-btn" data-provider-action="edit" data-provider-name="' + esc(name) + '" title="편집">✎</button>' +
+          '<button class="provider-btn danger" data-provider-action="delete" data-provider-name="' + esc(name) + '" title="삭제">✕</button>' +
           '</div>' +
           '</div>';
       }).join('');
@@ -4856,7 +4870,42 @@ async function editProvider(name) {
   }
 }
 
+// 프로바이더 추가/삭제 진행 중 재진입 잠금 (더블클릭·연타로 인한 중복 API 호출 방지)
+let _providerActionBusy = false;
+
+// 네이티브 confirm() 대체용 인페이지 확인 모달.
+// Electron에서 네이티브 대화상자를 닫은 직후 첫 클릭이 윈도우 포커스 복원으로
+// 소모되어 "두 번 세번 눌러야 동작"하는 현상의 주원인이었다.
+function _confirmModalAsync(message) {
+  return new Promise(function (resolve) {
+    var overlay = $('providerConfirmModal');
+    if (!overlay) { resolve(window.confirm(message)); return; }
+    var msgEl = $('providerConfirmMessage');
+    var okBtn = $('providerConfirmOk');
+    var cancelBtn = $('providerConfirmCancel');
+    if (msgEl) msgEl.textContent = message;
+    overlay.style.display = 'flex';
+
+    var settled = false;
+    function finish(val) {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', escHandler, true);
+      overlay.style.display = 'none';
+      resolve(val);
+    }
+    function escHandler(e) {
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    }
+    if (okBtn) okBtn.onclick = function () { finish(true); };
+    if (cancelBtn) cancelBtn.onclick = function () { finish(false); };
+    document.addEventListener('keydown', escHandler, true);
+    setTimeout(function () { if (okBtn) okBtn.focus(); }, 0);
+  });
+}
+
 async function saveProvider() {
+  if (_providerActionBusy) return; // 저장 진행 중 재클릭 무시
   const name = ($('settingsProviderName') || {}).value.trim();
   const key = ($('settingsProviderKey') || {}).value.trim();
   const url = ($('settingsProviderUrl') || {}).value.trim();
@@ -4865,6 +4914,7 @@ async function saveProvider() {
   if (!key) { showToast('API 키가 필요합니다'); return; }
 
   const isEdit = _editingProviderName !== null;
+  _providerActionBusy = true;
 
   try {
     const saveBtn = $('settingsProviderSaveBtn');
@@ -4881,45 +4931,61 @@ async function saveProvider() {
     } else if (_selectedProviderModels && _selectedProviderModels.length > 0) {
       bodyPayload.models = _selectedProviderModels;
     }
+    // 백엔드는 models 미지정 시 /models 자동 감지(urllib 타임아웃 15초)를 수행하므로
+    // 프론트 기본 타임아웃(15초)과 경합하지 않도록 30초로 연장.
     const result = await api('/api/providers/add', {
       method: 'POST',
-      body: bodyPayload
+      body: bodyPayload,
+      timeout: 30000
     });
 
     if (result.success) {
       const models = result.models || [];
-      showToast(isEdit ? '제공자 업데이트됨: ' + name : '제공자 추가됨: ' + name + (models.length ? ' (' + models.length + '개 모델)' : ''));
-      await loadProviderManagement();
-      await refreshAllModelSelects();
+      if (result.merged_into) {
+        // 같은 base_url의 기존 프로바이더에 모델이 병합된 경우 — 중복 항목을 만들지 않는다.
+        showToast('기존 제공자 "' + result.merged_into + '"에 모델 ' + (result.added_count || 0) + '개 추가됨 (중복 등록 방지)');
+      } else {
+        showToast(isEdit ? '제공자 업데이트됨: ' + name : '제공자 추가됨: ' + name + (models.length ? ' (' + models.length + '개 모델)' : ''));
+      }
+      // 직렬 await 대신 병렬 갱신 — 목록 갱신이 늦어 "안 된 것처럼" 보이는 현상 완화
+      await Promise.all([loadProviderManagement(), refreshAllModelSelects()]);
     } else {
       showToast('실패: ' + (result.error || '알 수 없는 오류'));
     }
   } catch (e) {
     showToast('저장 실패: ' + e.message);
   } finally {
+    _providerActionBusy = false;
     const saveBtn = $('settingsProviderSaveBtn');
     if (saveBtn) { saveBtn.textContent = _editingProviderName ? '💾 제공자 업데이트' : '💾 제공자 저장'; saveBtn.disabled = false; }
   }
 }
 
 async function deleteProvider(name) {
-  if (!confirm('제공자 "' + name + '"와 그 모든 모델을 삭제하시겠습니까? 되돌릴 수 없습니다.')) return;
+  if (_providerActionBusy) return; // 삭제 진행 중 재클릭 무시 (더블클릭 시 두 번 DELETE 방지)
+  _providerActionBusy = true;
 
   try {
+    // 네이티브 confirm() 대신 인페이지 모달 사용 — 닫은 직후 첫 클릭이 포커스 복원으로 소모되는 문제 제거
+    var ok = await _confirmModalAsync('제공자 "' + name + '"와 그 모든 모델을 삭제하시겠습니까? 되돌릴 수 없습니다.');
+    if (!ok) return;
+
     const result = await api('/api/providers/delete', {
       method: 'POST',
-      body: { name: name }
+      body: { name: name },
+      timeout: 30000
     });
 
     if (result.success) {
       showToast('제공자 삭제됨: ' + name);
-      await loadProviderManagement();
-      await refreshAllModelSelects();
+      await Promise.all([loadProviderManagement(), refreshAllModelSelects()]);
     } else {
       showToast('삭제 실패: ' + (result.error || '알 수 없는 오류'));
     }
   } catch (e) {
     showToast('삭제 실패: ' + e.message);
+  } finally {
+    _providerActionBusy = false;
   }
 }
 
@@ -5075,6 +5141,9 @@ function _getCheckedProviderModelIds() {
 }
 
 // ── 모델 직접 입력: 자동 감지 없이 모델 ID를 수동 추가 ──────────────────────
+// 이미 목록에 있는 모델을 입력하면 "이미 추가됨" 경고 대신 해당 항목을
+// 자동으로 체크하고 그 행으로 스크롤/하이라이트한다 (자동 감지 목록이 수백 개여도
+// 일일이 찾을 필요 없음).
 function _addManualProviderModels() {
   var inputEl = $('settingsProviderManualModel');
   var typeEl = $('settingsProviderManualType');
@@ -5090,18 +5159,71 @@ function _addManualProviderModels() {
 
   if (!_selectedProviderModels) _selectedProviderModels = [];
   var existing = {};
-  _selectedProviderModels.forEach(function (m) { existing[m.id] = true; });
+  var existingLower = {}; // 대소문자 무시 조회: lower -> 실제 목록의 id
+  _selectedProviderModels.forEach(function (m) {
+    existing[m.id] = true;
+    existingLower[String(m.id || '').toLowerCase()] = m.id;
+  });
   var added = 0;
+  var checkedExisting = []; // 이미 목록에 있어서 체크만 켠 항목들
   ids.forEach(function (id) {
-    if (existing[id]) return;
+    if (existing[id]) {
+      if (prevChecked) prevChecked[id] = true;
+      checkedExisting.push(id);
+      return;
+    }
+    // 대소문자만 다른 입력은 같은 모델로 간주해 기존 항목을 체크한다
+    var actualId = existingLower[id.toLowerCase()];
+    if (actualId) {
+      if (prevChecked) prevChecked[actualId] = true;
+      checkedExisting.push(actualId);
+      return;
+    }
     existing[id] = true;
+    existingLower[id.toLowerCase()] = id;
     _selectedProviderModels.push({ id: id, label: id, type: mtype });
     if (prevChecked) prevChecked[id] = true; // 새 모델은 기본 체크
     added++;
   });
   inputEl.value = '';
-  _renderProviderModelList('📝 모델 ' + _selectedProviderModels.length + '개 (직접 입력 ' + added + '개 추가됨) — 저장할 모델을 선택하세요:', 'var(--accent)', prevChecked);
-  if (added === 0) showToast('이미 추가된 모델입니다');
+  var headerExtra = checkedExisting.length ? (added ? ', 기존 ' + checkedExisting.length + '개 체크' : '기존 ' + checkedExisting.length + '개 체크') : '';
+  _renderProviderModelList('📝 모델 ' + _selectedProviderModels.length + '개 (직접 입력 ' + added + '개 추가됨' + headerExtra + ') — 저장할 모델을 선택하세요:', 'var(--accent)', prevChecked);
+
+  if (checkedExisting.length) {
+    // 기존 항목 체크 + 해당 행으로 스크롤/하이라이트
+    _highlightProviderModels(checkedExisting);
+    showToast('기존 모델 ' + checkedExisting.length + '개에 체크했습니다' + (added ? ' · 신규 ' + added + '개 추가' : ''));
+  } else if (added === 0) {
+    showToast('추가하거나 체크할 모델이 없습니다');
+  }
+}
+
+// 직접 입력한 모델이 이미 목록에 있을 때: 해당 체크박스를 켜고 행을 하이라이트한 뒤 스크롤한다.
+function _highlightProviderModels(ids) {
+  var resultEl = $('settingsProviderFetchResult');
+  if (!resultEl || !_selectedProviderModels) return;
+  var want = {};
+  ids.forEach(function (id) { want[id] = true; });
+  var firstRow = null;
+  resultEl.querySelectorAll('.provider-model-cb').forEach(function (cb) {
+    var idx = parseInt(cb.getAttribute('data-idx'), 10);
+    if (isNaN(idx) || idx < 0 || idx >= _selectedProviderModels.length) return;
+    if (!want[_selectedProviderModels[idx].id]) return;
+    cb.checked = true;
+    var row = cb.closest('div');
+    if (row) {
+      row.style.background = 'rgba(56,189,248,0.22)';
+      row.style.outline = '1px solid var(--accent)';
+      (function (r) {
+        setTimeout(function () { r.style.background = ''; r.style.outline = ''; }, 2500);
+      })(row);
+      if (!firstRow) firstRow = row;
+    }
+  });
+  if (firstRow && firstRow.scrollIntoView) {
+    try { firstRow.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { firstRow.scrollIntoView(); }
+  }
+  _updateProviderModelCount();
 }
 
 async function refreshAllModelSelects() {

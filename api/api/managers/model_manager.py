@@ -142,6 +142,44 @@ class ModelManager:
         data = _load_custom_providers()
         providers = data.get('providers', {})
 
+        def _norm_url(u: str) -> str:
+            return (u or '').strip().rstrip('/').lower()
+
+        # ── 동일 base_url 병합: 같은 URL의 기존 프로바이더가 있으면 새 항목을
+        # 만들지 않고 그 프로바이더에 모델을 합친다. 그렇지 않으면 모델 선택 창에
+        # 같은 프로바이더가 이름만 달라 여러 개 노출된다.
+        if name not in providers:
+            merge_target = None
+            for pname, pcfg in providers.items():
+                if isinstance(pcfg, dict) and _norm_url(pcfg.get('base_url')) == _norm_url(base_url):
+                    merge_target = pname
+                    break
+            if merge_target is not None:
+                target = providers[merge_target]
+                final_key = api_key if api_key else target.get('api_key', '')
+                existing_models = target.get('models', []) or []
+                existing_ids = {}
+                for m in existing_models:
+                    mid = m.get('id') if isinstance(m, dict) else str(m)
+                    if mid:
+                        existing_ids[mid] = m
+                merged = list(existing_models)
+                added_count = 0
+                for m in (models or []):
+                    mid = m.get('id') if isinstance(m, dict) else str(m)
+                    if mid and mid not in existing_ids:
+                        merged.append(m)
+                        existing_ids[mid] = m
+                        added_count += 1
+                target['api_key'] = final_key
+                target['models'] = merged
+                try:
+                    _save_custom_providers(providers)
+                except RuntimeError as e:
+                    raise ValueError(str(e))
+                return {'success': True, 'provider': merge_target, 'merged_into': merge_target,
+                        'added_count': added_count, 'models': merged}
+
         # Preserve existing api_key if empty string sent (update without changing key)
         existing_key = ''
         if name in providers:
