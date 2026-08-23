@@ -1,13 +1,56 @@
 {
     "_instructions": [
-        "Model Intelligence DB seed. Fill benchmark scores + source + as_of, then the CEO sees them immediately.",
-        "score: 0..1 or 0..100 both accepted. Every benchmark entry MUST have source and as_of (YYYY-MM).",
-        "benchmarks with score=null are ignored by the loader until filled.",
-        "Runtime overrides live in ~/.hermes/model_intel.json (same schema, entries there win over this seed).",
-        "Lineage rule: a NEW model version (e.g. qwen3.9-max) gets a FRESH entry with parent=qwen3.8-max.",
-        "Never copy DAON stats across versions - ModelHistory is keyed by model_id so this is automatic.",
-        "Capabilities (optional explicit override, 0..1): coding/reasoning/debugging/agentic/tool_use/context."
+        "Model Intelligence DB seed — covers the WHOLE model universe, independent of",
+        "the DAON Model Registry. Registry = what DAON can call today; this DB = what",
+        "the world knows about every model. New Registry entries look up here first.",
+        "",
+        "Research protocol (2026-08 sweep, verified 2026-08-23): official vendor sources only:",
+        "  1. Vendor's own publication (HF model card, official blog/docs/product page)",
+        "  2. Another vendor's official publication quoting the score (cross-vendor tables)",
+        "  3. Archived copy of the vendor's own page (Wayback snapshot) when the live page",
+        "     blocks bots — flagged in the source URL and entry note.",
+        "SPA pages (qwen.ai) were rendered with a real browser (Playwright); raw HTML fetch",
+        "shows an empty shell there. Scores without a reachable official source stay null.",
+        "Every filled benchmark MUST carry source (URL) and as_of (YYYY-MM of verification).",
+        "'note' is free-form provenance detail (benchmark version, harness); the loader",
+        "ignores it but humans reading this file need it.",
+        "",
+        "Benchmark-name normalization to the loader's capability map keys:",
+        "  - SWE-bench Verified / SWE-bench Pro / Terminal-Bench / LiveCodeBench / GPQA /",
+        "    AIME / Long context are mapped keys; version detail goes into 'note'.",
+        "  - MMLU-Pro, MRCR variants, HLE, OSWorld, DeepSWE, BrowseComp, MCP-*, FrontierMath,",
+        "    Toolathlon, AutomationBench etc. have NO map key -> kept verbatim (evidence line",
+        "    only, they do not feed a capability axis).",
+        "  - Elo/composite indices (GDPval, AA Intelligence Index, Code Arena) are omitted:",
+        "    not 0..100 accuracy scales.",
+        "",
+        "Runtime overrides live in ~/.hermes/model_intel.json (same schema, entries there win).",
+        "Lineage rule: a NEW model version gets a FRESH entry with parent=<previous version>.",
+        "Never copy DAON stats across versions - ModelHistory is keyed by model_id so this is automatic."
     ],
+    "_research_sweep": {
+        "as_of": "2026-08-23",
+        "sources_probed": [
+            "https://qwen.ai/blog?id=qwen3.7 (JS-rendered via Playwright)",
+            "https://openai.com/index/gpt-5-6/ (via web.archive.org snapshot 20260821143611)",
+            "https://platform.openai.com/docs/models",
+            "https://deepmind.google/models/gemini/",
+            "https://x.ai/news/grok-4-5",
+            "https://www.minimax.io/",
+            "https://www.minimax.io/blog/minimax-m3",
+            "https://huggingface.co/Qwen/Qwen3.8-27B",
+            "https://huggingface.co/moonshotai/Kimi-K2.6",
+            "https://huggingface.co/zai-org/GLM-5.2",
+            "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+            "https://models.dev/api.json"
+        ],
+        "null_verified": [
+            "qwen3.8-max: preview announced 2026-07-19; no official benchmark table, model",
+            "  card or tech report as of 2026-08-23 (re-checked incl. qwen.ai). Stays null.",
+            "qwen3.7 (base tier): qwen.ai/blog?id=qwen3.7 publishes Max-tier tables only;",
+            "  no separate official table for the base id. Siblings qwen3.7-max / qwen3.7-plus are filled."
+        ]
+    },
     "models": {
         "qwen3.8-max": {
             "identity": {
@@ -19,7 +62,8 @@
             },
             "public": {
                 "source_confidence": 0.8,
-                "as_of": null,
+                "as_of": "2026-08",
+                "note": "Preview (2026-07-19). No official benchmark table / model card / tech report as of 2026-08-23. Nulls are verified-absent, never guessed.",
                 "benchmarks": {
                     "SWE-bench": {
                         "score": null,
@@ -61,11 +105,6 @@
                         "source": null,
                         "as_of": null
                     },
-                    "Cybersecurity": {
-                        "score": null,
-                        "source": null,
-                        "as_of": null
-                    },
                     "Long context": {
                         "score": null,
                         "source": null,
@@ -73,7 +112,234 @@
                     }
                 },
                 "capabilities": {}
-            }
+            },
+            "as_of": "2026-08"
+        },
+        "qwen3.8-27b": {
+            "identity": {
+                "provider": "qwen",
+                "family": "qwen",
+                "generation": "3.8",
+                "tier": "27b-open-weight",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.9,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 73.0,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1, Terminus harness"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 61.7,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "LiveCodeBench": {
+                        "score": 90.3,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "LCB v6"
+                    },
+                    "GPQA": {
+                        "score": 89.2,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "HLE": {
+                        "score": 30.8,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE 1.1": {
+                        "score": 42.2,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "NL2Repo": {
+                        "score": 42.3,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld-Verified": {
+                        "score": 84.3,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "WebArena-Verified": {
+                        "score": 64.8,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "AndroidWorld": {
+                        "score": 81.9,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "IFBench": {
+                        "score": 79.5,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "CoWorkBench": {
+                        "score": 70.7,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "qwen3.7-max": {
+            "identity": {
+                "provider": "qwen",
+                "family": "qwen",
+                "generation": "3.7",
+                "tier": "max",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "note": "Official Qwen blog 'Qwen3.7: The Agent Frontier' (2026-05-20); table rendered via headless browser (SPA).",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 69.7,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08",
+                        "note": "TB 2.0, Terminus harness"
+                    },
+                    "SWE-bench Verified": {
+                        "score": 80.4,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 60.6,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Multilingual": {
+                        "score": 78.3,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "LiveCodeBench": {
+                        "score": 91.6,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "GPQA": {
+                        "score": 92.4,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MCP-Mark": {
+                        "score": 60.8,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "MCP-Atlas": {
+                        "score": 76.4,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "BFCL-V4": {
+                        "score": 75.0,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "SkillsBench": {
+                        "score": 59.2,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "HLE": {
+                        "score": 41.4,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "HMMT 2026 Feb": {
+                        "score": 97.1,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "IMOAnswerBench": {
+                        "score": 90.0,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "MMLU-Pro": {
+                        "score": 89.6,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    },
+                    "MRCR-v2 128K": {
+                        "score": 90.4,
+                        "source": "https://qwen.ai/blog?id=qwen3.7",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "qwen3.7-plus": {
+            "identity": {
+                "provider": "qwen",
+                "family": "qwen",
+                "generation": "3.7",
+                "tier": "plus",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.85,
+                "as_of": "2026-08",
+                "note": "Comparison column in Qwen's own Qwen3.8-27B model card.",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 64.0,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1, Terminus harness"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 57.6,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "LiveCodeBench": {
+                        "score": 89.6,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "LCB v6"
+                    },
+                    "GPQA": {
+                        "score": 90.3,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "HLE": {
+                        "score": 34.7,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld-Verified": {
+                        "score": 73.3,
+                        "source": "https://huggingface.co/Qwen/Qwen3.8-27B",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
         },
         "qwen3.7": {
             "identity": {
@@ -85,9 +351,15 @@
             },
             "public": {
                 "source_confidence": 0.8,
-                "as_of": null,
+                "as_of": "2026-08",
+                "note": "qwen.ai/blog?id=qwen3.7 publishes Max-tier tables only; no separate official table for the base 'qwen3.7' id. See sibling entries qwen3.7-max / qwen3.7-plus.",
                 "benchmarks": {
                     "SWE-bench": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
+                    "SWE-bench Pro": {
                         "score": null,
                         "source": null,
                         "as_of": null
@@ -112,6 +384,11 @@
                         "source": null,
                         "as_of": null
                     },
+                    "AIME": {
+                        "score": null,
+                        "source": null,
+                        "as_of": null
+                    },
                     "Tool use": {
                         "score": null,
                         "source": null,
@@ -124,7 +401,809 @@
                     }
                 },
                 "capabilities": {}
-            }
+            },
+            "as_of": "2026-08"
+        },
+        "gpt-5.6-sol": {
+            "identity": {
+                "provider": "openai",
+                "family": "gpt-5.6",
+                "generation": "5.6",
+                "tier": "sol",
+                "parent": "gpt-5.5"
+            },
+            "public": {
+                "source_confidence": 0.9,
+                "as_of": "2026-08",
+                "note": "Official OpenAI GPT-5.6 announcement; live page blocks bots so numbers read from the Wayback snapshot of openai.com/index/gpt-5-6/ (2026-08-21).",
+                "benchmarks": {
+                    "SWE-bench Pro": {
+                        "score": 64.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 88.8,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "GPQA": {
+                        "score": 94.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MMMU Pro": {
+                        "score": 83.0,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "no tools"
+                    },
+                    "MMMU Pro (with tools)": {
+                        "score": 84.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierMath Tier 1-3": {
+                        "score": 89.0,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "FrontierMath Tier 4": {
+                        "score": 83.0,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "AutomationBench": {
+                        "score": 18.1,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Toolathlon": {
+                        "score": 58.0,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 72.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld 2.0": {
+                        "score": 62.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "BrowseComp": {
+                        "score": 90.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Agents' Last Exam": {
+                        "score": 52.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Capture-the-Flag Challenges": {
+                        "score": 96.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "gpt-5.6-terra": {
+            "identity": {
+                "provider": "openai",
+                "family": "gpt-5.6",
+                "generation": "5.6",
+                "tier": "terra",
+                "parent": "gpt-5.5"
+            },
+            "public": {
+                "source_confidence": 0.9,
+                "as_of": "2026-08",
+                "note": "Same official table as gpt-5.6-sol (Wayback snapshot of openai.com/index/gpt-5-6/, 2026-08-21).",
+                "benchmarks": {
+                    "SWE-bench Pro": {
+                        "score": 63.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 87.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1; matches Google's independent 87.4"
+                    },
+                    "GPQA": {
+                        "score": 92.9,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MMMU Pro": {
+                        "score": 80.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "no tools"
+                    },
+                    "MMMU Pro (with tools)": {
+                        "score": 82.0,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierMath Tier 1-3": {
+                        "score": 84.9,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "FrontierMath Tier 4": {
+                        "score": 68.3,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "AutomationBench": {
+                        "score": 15.2,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Toolathlon": {
+                        "score": 53.1,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 69.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld 2.0": {
+                        "score": 50.2,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "BrowseComp": {
+                        "score": 87.5,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Agents' Last Exam": {
+                        "score": 50.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Capture-the-Flag Challenges": {
+                        "score": 91.8,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "gpt-5.6-luna": {
+            "identity": {
+                "provider": "openai",
+                "family": "gpt-5.6",
+                "generation": "5.6",
+                "tier": "luna",
+                "parent": "gpt-5.5"
+            },
+            "public": {
+                "source_confidence": 0.9,
+                "as_of": "2026-08",
+                "note": "CEO-flagged miss fixed: Luna HAS official numbers (OpenAI GPT-5.6 page, Luna column). Read from Wayback snapshot 2026-08-21; all CEO-cited values matched exactly.",
+                "benchmarks": {
+                    "SWE-bench Pro": {
+                        "score": 62.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 84.7,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "GPQA": {
+                        "score": 92.3,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MMMU Pro": {
+                        "score": 78.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "no tools"
+                    },
+                    "MMMU Pro (with tools)": {
+                        "score": 79.5,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierMath Tier 1-3": {
+                        "score": 78.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "FrontierMath Tier 4": {
+                        "score": 58.5,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08",
+                        "note": "v2"
+                    },
+                    "AutomationBench": {
+                        "score": 14.9,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Toolathlon": {
+                        "score": 53.4,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 67.2,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld 2.0": {
+                        "score": 45.6,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "BrowseComp": {
+                        "score": 83.3,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Agents' Last Exam": {
+                        "score": 50.3,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    },
+                    "Capture-the-Flag Challenges": {
+                        "score": 85.2,
+                        "source": "http://web.archive.org/web/20260821143611/https://openai.com/index/gpt-5-6/",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "gemini-3.7-flash": {
+            "identity": {
+                "provider": "google",
+                "family": "gemini",
+                "generation": "3.7",
+                "tier": "flash",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 85.8,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "Terminal-Bench 3.0": {
+                        "score": 14.9,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "Long context": {
+                        "score": 97.0,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08",
+                        "note": "GDM-MRCR v2"
+                    },
+                    "HLE-Verified": {
+                        "score": 53.6,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 65.3,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierCode 1.1": {
+                        "score": 43.6,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld 2.0": {
+                        "score": 47.9,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "Agents' Last Exam": {
+                        "score": 26.3,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "AutomationBench": {
+                        "score": 30.4,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "claude-sonnet-5": {
+            "identity": {
+                "provider": "anthropic",
+                "family": "claude",
+                "generation": "5",
+                "tier": "sonnet",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.75,
+                "as_of": "2026-08",
+                "note": "Anthropic's own page embeds the table as images; numbers taken from Google's official Gemini comparison table (same-harness cross-vendor quote).",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 80.4,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "Terminal-Bench 3.0": {
+                        "score": 14.6,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "Long context": {
+                        "score": 81.5,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08",
+                        "note": "GDM-MRCR v2"
+                    },
+                    "HLE-Verified": {
+                        "score": 31.0,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 53.8,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierCode 1.1": {
+                        "score": 42.7,
+                        "source": "https://deepmind.google/models/gemini/",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "claude-opus-4-8": {
+            "identity": {
+                "provider": "anthropic",
+                "family": "claude",
+                "generation": "4.8",
+                "tier": "opus",
+                "parent": "claude-opus-4-7"
+            },
+            "public": {
+                "source_confidence": 0.8,
+                "as_of": "2026-08",
+                "note": "Cross-vendor official quotes: x.ai Grok-4.5 table + z.ai GLM-5.2 model card (Anthropic publishes images, not text tables).",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 78.9,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1; GLM-5.2 card reports 85 on Terminus-2"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 69.2,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "AIME": {
+                        "score": 95.7,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08",
+                        "note": "AIME 2026"
+                    },
+                    "GPQA": {
+                        "score": 93.6,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 59.0,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Marathon": {
+                        "score": 26.0,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08"
+                    },
+                    "ProgramBench": {
+                        "score": 71.9,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierSWE": {
+                        "score": 75.1,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "PostTrainBench": {
+                        "score": 37.2,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "grok-4.5": {
+            "identity": {
+                "provider": "xai",
+                "family": "grok",
+                "generation": "4.5",
+                "tier": "flagship",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 83.3,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "DeepSWE 1.0": {
+                        "score": 62.0,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE v1.1": {
+                        "score": 53.0,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Marathon": {
+                        "score": 29.0,
+                        "source": "https://x.ai/news/grok-4-5",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "glm-5.2": {
+            "identity": {
+                "provider": "zai",
+                "family": "glm",
+                "generation": "5.2",
+                "tier": "flagship",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "AIME": {
+                        "score": 99.2,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08",
+                        "note": "AIME 2026"
+                    },
+                    "GPQA": {
+                        "score": 91.2,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 62.1,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 81.0,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1 Terminus-2; vendor best-reported 82.7"
+                    },
+                    "IMOAnswerBench": {
+                        "score": 91.0,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "DeepSWE": {
+                        "score": 46.2,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "ProgramBench": {
+                        "score": 63.7,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "FrontierSWE": {
+                        "score": 74.4,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "PostTrainBench": {
+                        "score": 34.3,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Marathon": {
+                        "score": 13.0,
+                        "source": "https://huggingface.co/zai-org/GLM-5.2",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "kimi-k2.6": {
+            "identity": {
+                "provider": "moonshotai",
+                "family": "kimi",
+                "generation": "k2.6",
+                "tier": "flagship",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "Terminal-Bench": {
+                        "score": 66.7,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08",
+                        "note": "TB 2.0 Terminus-2"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 58.6,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-bench Verified": {
+                        "score": 80.2,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Multilingual": {
+                        "score": 76.7,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "LiveCodeBench": {
+                        "score": 89.6,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08",
+                        "note": "LCB v6"
+                    },
+                    "AIME": {
+                        "score": 96.4,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08",
+                        "note": "AIME 2026"
+                    },
+                    "GPQA": {
+                        "score": 90.5,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "OJBench (python)": {
+                        "score": 60.6,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "IMOAnswerBench": {
+                        "score": 86.0,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "HLE-Full": {
+                        "score": 34.7,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "OSWorld-Verified": {
+                        "score": 73.1,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    },
+                    "BrowseComp": {
+                        "score": 83.2,
+                        "source": "https://huggingface.co/moonshotai/Kimi-K2.6",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "deepseek-v4-flash": {
+            "identity": {
+                "provider": "deepseek",
+                "family": "deepseek-v4",
+                "generation": "4",
+                "tier": "flash",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "note": "Max-mode scores from the official V4 model card.",
+                "benchmarks": {
+                    "SWE-bench Verified": {
+                        "score": 79.0,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 52.6,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 56.9,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08",
+                        "note": "TB 2.0"
+                    },
+                    "LiveCodeBench": {
+                        "score": 91.6,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "GPQA": {
+                        "score": 88.1,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MMLU-Pro": {
+                        "score": 86.2,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Multilingual": {
+                        "score": 73.3,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "deepseek-v4-pro": {
+            "identity": {
+                "provider": "deepseek",
+                "family": "deepseek-v4",
+                "generation": "4",
+                "tier": "pro",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "note": "Max-mode scores from the official V4 model card.",
+                "benchmarks": {
+                    "SWE-bench Verified": {
+                        "score": 80.6,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-bench Pro": {
+                        "score": 55.4,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 67.9,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08",
+                        "note": "TB 2.0"
+                    },
+                    "LiveCodeBench": {
+                        "score": 93.5,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "GPQA": {
+                        "score": 90.1,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08",
+                        "note": "GPQA Diamond"
+                    },
+                    "MMLU-Pro": {
+                        "score": 87.5,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-Multilingual": {
+                        "score": 76.2,
+                        "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
+        },
+        "minimax-m3": {
+            "identity": {
+                "provider": "minimax",
+                "family": "minimax",
+                "generation": "m3",
+                "tier": "flagship",
+                "parent": null
+            },
+            "public": {
+                "source_confidence": 0.95,
+                "as_of": "2026-08",
+                "benchmarks": {
+                    "SWE-bench Pro": {
+                        "score": 59.0,
+                        "source": "https://www.minimax.io/blog/minimax-m3",
+                        "as_of": "2026-08"
+                    },
+                    "Terminal-Bench": {
+                        "score": 66.0,
+                        "source": "https://www.minimax.io/blog/minimax-m3",
+                        "as_of": "2026-08",
+                        "note": "TB 2.1"
+                    },
+                    "KernelBench Hard": {
+                        "score": 28.8,
+                        "source": "https://www.minimax.io/blog/minimax-m3",
+                        "as_of": "2026-08"
+                    },
+                    "MCP Atlas": {
+                        "score": 74.2,
+                        "source": "https://www.minimax.io/blog/minimax-m3",
+                        "as_of": "2026-08"
+                    },
+                    "SWE-fficiency": {
+                        "score": 34.8,
+                        "source": "https://www.minimax.io/blog/minimax-m3",
+                        "as_of": "2026-08"
+                    }
+                },
+                "capabilities": {}
+            },
+            "as_of": "2026-08"
         }
     }
 }
