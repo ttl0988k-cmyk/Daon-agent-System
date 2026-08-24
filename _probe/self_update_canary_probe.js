@@ -7,6 +7,10 @@
 //   C5 백업 복원 성공/실패
 //   C6 대상/spec 부재 graceful degradation
 //   C7 카나리 kill 보장 (스왑 전 자식 종료 확인)
+//   ── EBUSY 근본 수정(2026-08-24) 검증 ──
+//   C8 카나리 정리가 트리킬(onefile 자식 포함)로 호출되는지
+//   C9 스왑 프리플라이트: 락된 target → 재빌드 전 즉시 실패(fail-fast)
+//   C10 스왑 일시 EBUSY → 재시도 → 성공
 
 'use strict';
 const fs = require('fs');
@@ -32,12 +36,14 @@ function tmpDir() {
 // kill() 은 대응 spawn 호출 기록에 killed=true 를 남긴다(검증용).
 function makeFakeSpawn(script) {
     const calls = [];
+    let nextPid = 4000;
     function spawnFn(cmd, args, opts) {
         const rec = { cmd, args, cwd: opts && opts.cwd, killed: false };
         calls.push(rec);
         const isPyInstaller = args.includes('-m') && args.includes('PyInstaller');
         const listeners = {};
         const child = {
+            pid: ++nextPid,
             exitCode: null, signalCode: undefined,
             stderr: { on() { } },
             on(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); return this; },
@@ -49,6 +55,7 @@ function makeFakeSpawn(script) {
                 setImmediate(() => this._emit('exit', null, this.signalCode));
             },
         };
+        rec.pid = child.pid;
         setImmediate(() => script(isPyInstaller ? 'rebuild' : 'canary', child));
         return child;
     }
@@ -85,6 +92,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
             probeHealth: async (port) => { canaryPortSeen = port; return { healthy: true, pid: 4242 }; },
             findFreePort: async () => 8765,
             canaryPollMs: 1,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
         });
 
         const r = await su.rebuildAndSwap();
@@ -118,6 +126,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
             resolveBuildRoot: () => dir,
             probeHealth: async () => ({ healthy: false, pid: -1 }),
             findFreePort: async () => 8766,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
             canaryStartMs: 40,
             canaryPollMs: 1,
         });
@@ -146,6 +155,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
             resolveBuildRoot: () => dir,
             probeHealth: async () => (++n % 2 === 1 ? { healthy: true, pid: 7 } : null),
             findFreePort: async () => 8767,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
             canaryStartMs: 60,
             canaryPollMs: 1,
         });
@@ -174,6 +184,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
             resolveBuildRoot: () => dir,
             probeHealth: async () => ({ healthy: true, pid: 9 }),
             findFreePort: async () => 8768,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
             canaryPollMs: 1,
         });
         const r = await su.rebuildAndSwap();
@@ -243,6 +254,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
             resolveBuildRoot: () => dir,
             probeHealth: async () => ({ healthy: true, pid: 555 }),
             findFreePort: async () => 8770,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
             canaryPollMs: 1,
         });
         const r = await su.rebuildAndSwap();
@@ -250,6 +262,113 @@ const nap = (ms) => new Promise((r) => setTimeout(r, Math.min(ms || 5, 10)));
         check('swap succeeded after canary cleanup', r.swapped === true);
         check('canary was killed before swap', canaryRec && canaryRec.killed === true);
         check('canary fully exited (signal set)', canaryRec && canaryRec._exited !== false);
+    }
+
+    console.log('=== C8: canary cleanup uses tree-kill (onefile child included) ===');
+    {
+        const dir = tmpDir();
+        const targetExe = path.join(dir, 'server.exe');
+        const builtExe = path.join(dir, 'dist', 'server.exe');
+        fs.mkdirSync(path.dirname(builtExe), { recursive: true });
+        fs.writeFileSync(targetExe, 'OLD');
+        fs.writeFileSync(builtExe, 'NEW');
+
+        const killTreeCalls = [];
+        const { spawnFn, calls } = makeFakeSpawn((kind, child) => {
+            if (kind === 'rebuild') { child.exitCode = 0; child._emit('exit', 0); }
+            // canary: 살아있음 — 파이프라인이 트리킬해야 함
+        });
+        const su = createSelfUpdate({
+            fs, spawnFn,
+            log: () => { }, errLog: () => { },
+            sleep: nap,
+            findTargetExe: () => targetExe,
+            resolveBuildRoot: () => dir,
+            probeHealth: async () => ({ healthy: true, pid: 888 }),
+            findFreePort: async () => 8771,
+            canaryPollMs: 1,
+            killTree: (pid) => killTreeCalls.push(pid),
+        });
+        const r = await su.rebuildAndSwap();
+        const canaryRec = calls.find(c => !c.args.includes('PyInstaller'));
+        check('swapped=true', r.swapped === true);
+        check('tree-kill invoked with canary pid', !!canaryRec && killTreeCalls.includes(canaryRec.pid));
+    }
+
+    console.log('=== C9: swap preflight (locked target) -> fail fast, no rebuild ===');
+    {
+        const dir = tmpDir();
+        const targetExe = path.join(dir, 'server.exe');
+        fs.writeFileSync(targetExe, 'OLD');
+
+        let rebuildSpawned = false;
+        const { spawnFn } = makeFakeSpawn((kind) => { if (kind === 'rebuild') rebuildSpawned = true; });
+        const lockedFs = {
+            existsSync: fs.existsSync,
+            copyFileSync: fs.copyFileSync,
+            openSync: () => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); },
+            closeSync: fs.closeSync,
+        };
+        const su = createSelfUpdate({
+            fs: lockedFs, spawnFn,
+            log: () => { }, errLog: () => { },
+            sleep: nap,
+            findTargetExe: () => targetExe,
+            resolveBuildRoot: () => dir,
+            probeHealth: async () => ({ healthy: true, pid: 1 }),
+            findFreePort: async () => 8772,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
+            swapRetries: 1,
+            swapRetryDelayMs: 1,
+        });
+        const r = await su.rebuildAndSwap();
+        check('swapped=false', r.swapped === false);
+        check('reason mentions preflight', /preflight/.test(r.reason || ''));
+        check('no rebuild attempted (fail fast)', rebuildSpawned === false);
+        check('target untouched', fs.readFileSync(targetExe, 'utf8') === 'OLD');
+    }
+
+    console.log('=== C10: transient EBUSY at swap -> retried -> success ===');
+    {
+        const dir = tmpDir();
+        const targetExe = path.join(dir, 'server.exe');
+        const builtExe = path.join(dir, 'dist', 'server.exe');
+        fs.mkdirSync(path.dirname(builtExe), { recursive: true });
+        fs.writeFileSync(targetExe, 'OLD');
+        fs.writeFileSync(builtExe, 'NEW');
+
+        let swapAttempts = 0;
+        const flakyFs = {
+            existsSync: fs.existsSync,
+            openSync: fs.openSync,
+            closeSync: fs.closeSync,
+            copyFileSync(src, dst) {
+                if (String(dst).endsWith('.bak')) return fs.copyFileSync(src, dst); // 백업은 통과
+                swapAttempts++;
+                if (swapAttempts <= 2) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+                return fs.copyFileSync(src, dst);
+            },
+        };
+        const { spawnFn } = makeFakeSpawn((kind, child) => {
+            if (kind === 'rebuild') { child.exitCode = 0; child._emit('exit', 0); }
+        });
+        const su = createSelfUpdate({
+            fs: flakyFs, spawnFn,
+            log: () => { }, errLog: () => { },
+            sleep: nap,
+            findTargetExe: () => targetExe,
+            resolveBuildRoot: () => dir,
+            probeHealth: async () => ({ healthy: true, pid: 999 }),
+            findFreePort: async () => 8773,
+            killTree: () => { }, // 페이크: 실제 taskkill 방지
+            canaryPollMs: 1,
+            swapRetries: 4,
+            swapRetryDelayMs: 1,
+        });
+        const r = await su.rebuildAndSwap();
+        check('swapped=true after retries', r.swapped === true);
+        check('swap attempted exactly 3 times', swapAttempts === 3);
+        check('target now NEW', fs.readFileSync(targetExe, 'utf8') === 'NEW');
     }
 
     console.log(`RESULT pass=${pass} fail=${fail}`);

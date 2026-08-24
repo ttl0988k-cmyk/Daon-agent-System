@@ -536,6 +536,14 @@ function startTtsProcess(port) {
     console.warn(`[Electron] TTS server exited (code=${code}, signal=${signal})`);
     ttsProcess = null;
     if (!isQuitting) {
+      // [Self-Update 근본 수정 ②] 자가수정 재시작 구간에서는 TTS 자동 재시작 금지.
+      // TTS 는 server.exe 와 동일 바이너리(--tts-mode)라 재빌드 중 리스폰되면
+      // resources\server.exe 이미지 락을 홀드해 스왑 EBUSY 를 유발한다.
+      // afterCycle 에서 오케스트레이터가 TTS 를 되살린다.
+      if (selfModifyRestartActive) {
+        console.log('[Electron] TTS exit during self-modify restart — orchestrator owns respawn.');
+        return;
+      }
       console.log('[Electron] TTS exit detected — Auto-restarting TTS server in 2s...');
       setTimeout(() => {
         if (!isQuitting && !ttsProcess) {
@@ -574,6 +582,13 @@ const FAILLOAD_WINDOW_MS = 60000;
 let _watchdogReloadPending = false;
 
 async function handleWatchdogFailure(port) {
+  // [Self-Update 근본 수정 ①] 자가수정 재시작 구간 전체에서 watchdog 리스폰 금지.
+  // 기존 watchdogSuppressUntil(2분)은 재빌드(실측 7분)보다 짧아, 재빌드 도중
+  // watchdog 이 OLD exe를 리스폰해 resources\server.exe 락을 홀드 → 스왑 EBUSY.
+  // selfModifyRestartActive 플래그는 재빌드 시간과 무관하게 구간 전체를 커버한다.
+  if (selfModifyRestartActive) {
+    return;
+  }
   // F5 reload 직후 보류 구간: 일시적 과부하로 오탐할 수 있으므로 카운트하지 않음
   if (Date.now() < watchdogSuppressUntil) {
     return;
@@ -826,11 +841,18 @@ app.whenReady().then(async () => {
       settleMs: 800,
       killServer: async () => {
         selfModifyRestartActive = true;
-        // 재시작 구간 전체를 watchdog 오탐에서 제외
+        // 재시작 구간 전체를 watchdog 오탐에서 제외 (플래그가 1차 방어,
+        // 타임스탬프는 플래그 유실 대비 2차 방어)
         watchdogSuppressUntil = Date.now() + 4 * WATCHDOG_INTERVAL;
         if (pythonProcess && pythonProcess.pid) {
           killProcessTree(pythonProcess.pid);
           pythonProcess = null;
+        }
+        // [Self-Update 근본 수정 ②] TTS 도 같은 server.exe 바이너리를 실행하므로
+        // 함께 트리킬하지 않으면 exe 이미지 락이 남아 백업/스왑이 EBUSY 로 실패한다.
+        if (ttsProcess && ttsProcess.pid) {
+          killProcessTree(ttsProcess.pid);
+          ttsProcess = null;
         }
       },
       spawnServer: async () => {
@@ -857,6 +879,13 @@ app.whenReady().then(async () => {
         watchdogRestartCount = 0;
         watchdogSuppressUntil = Date.now() + 3 * WATCHDOG_INTERVAL;
         mlog('[RestartOrch] cycle done: ' + JSON.stringify(result));
+        // [Self-Update 근본 수정 ②] killServer 가 TTS 를 정리했으면 여기서 복구.
+        // 새로 스왑된(또는 유지된) exe 로 TTS 를 다시 띄운다.
+        try {
+          if (!ttsProcess) startTtsProcess(ttsPort);
+        } catch (e) {
+          merr('[RestartOrch] TTS respawn failed: ' + (e && e.message));
+        }
         if (mainWindow && !mainWindow.isDestroyed()) {
           try { mainWindow.webContents.reload(); } catch (_) { }
         }
