@@ -19,6 +19,9 @@ var _edgeTtsSupported = true;    // set false after first failure to skip retrie
 var _speakLastTime = 0;          // last speak() call timestamp for client-side cooldown
 var _speakClientCooldown = 2000; // ms — minimum gap between consecutive speaks
 var _speakAbortController = null; // AbortController for cancelling in-flight TTS fetch
+var _speakVolume = 0.8;          // 0.0~1.0 — 에이전트 음성 볼륨 (localStorage 저장)
+var _currentEdgeTtsGain = null;  // 재생 중인 Edge TTS GainNode (실시간 볼륨 반영용)
+var _currentEdgeTtsAudioEl = null; // <audio> 폴백 재생 엘리먼트 (실시간 볼륨 반영용)
 
 /**
  * Initialize voice output. Pre-load SpeechSynthesis voices and set default.
@@ -57,7 +60,14 @@ function initSpeak() {
         }
     } catch (e) { /* ignore */ }
 
-    console.log('[Speak] Initialized. Muted:', _speakMuted, 'EdgeTTS:', _edgeTtsSupported);
+    // [볼륨 조절] 저장된 볼륨 복원 (0.0~1.0)
+    try {
+        const sv = parseFloat(localStorage.getItem('daon_speak_volume'));
+        if (!isNaN(sv)) _speakVolume = Math.max(0, Math.min(1, sv));
+    } catch (e) { /* ignore */ }
+    _updateVolumeSliderUI();
+
+    console.log('[Speak] Initialized. Muted:', _speakMuted, 'Volume:', Math.round(_speakVolume * 100) + '%', 'EdgeTTS:', _edgeTtsSupported);
 }
 
 /**
@@ -215,12 +225,18 @@ function _playAudioBuffer(arrayBuffer, onSuccess, onError) {
 
                     const source = ctx.createBufferSource();
                     source.buffer = audioBuffer;
-                    source.connect(ctx.destination);
+                    // [볼륨 조절] 게인 노드를 사이에 둬 슬라이더 값(실시간 변경 포함)을 반영한다.
+                    const gain = ctx.createGain();
+                    gain.gain.value = _speakVolume;
+                    source.connect(gain);
+                    gain.connect(ctx.destination);
                     source.start(0);
                     _currentEdgeTtsSource = source;
+                    _currentEdgeTtsGain = gain;
 
                     source.onended = () => {
                         _currentEdgeTtsSource = null;
+                        _currentEdgeTtsGain = null;
                         if (onSuccess) onSuccess();
                     };
                 },
@@ -245,6 +261,7 @@ function _stopEdgeTtsAudio() {
         try { _currentEdgeTtsSource.stop(); } catch (e) { /* ignore */ }
         _currentEdgeTtsSource = null;
     }
+    _currentEdgeTtsGain = null;
 }
 
 /**
@@ -255,12 +272,16 @@ function _playAudioViaElement(arrayBuffer, onSuccess, onError) {
         const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        audio.volume = _speakVolume;   // [볼륨 조절]
+        _currentEdgeTtsAudioEl = audio;
         audio.onended = () => {
             URL.revokeObjectURL(url);
+            _currentEdgeTtsAudioEl = null;
             if (onSuccess) onSuccess();
         };
         audio.onerror = () => {
             URL.revokeObjectURL(url);
+            _currentEdgeTtsAudioEl = null;
             if (onError) onError('Audio element playback error');
         };
         audio.play().catch(err => {
@@ -292,7 +313,7 @@ function _speakViaSpeechSynthesis(text) {
         utterance.lang = 'ko-KR';
         utterance.rate = 1.1;
         utterance.pitch = 1.0;
-        utterance.volume = 0.9;
+        utterance.volume = _speakVolume;   // [볼륨 조절]
 
         if (_speakVoice) {
             utterance.voice = _speakVoice;
@@ -347,6 +368,47 @@ function _updateMuteButtonUI() {
         btn.title = '에이전트 음성 출력 끄기';
         btn.style.opacity = '1';
     }
+    // 음소거 중엔 볼륨 슬라이더도 흐리게 (상태 일관성)
+    const slider = document.getElementById('speakVolumeSlider');
+    if (slider) slider.style.opacity = _speakMuted ? '0.4' : '1';
+}
+
+// ── [볼륨 조절] 슬라이더 (0~100) ────────────────────────────────
+
+/**
+ * 에이전트 음성 출력 볼륨 설정. 재생 중인 오디오에도 즉시 반영되며
+ * localStorage 에 저장되어 다음 실행에도 유지된다. (index.html 슬라이더에서 호출)
+ */
+function setSpeakVolume(percent) {
+    let v = parseFloat(percent);
+    if (isNaN(v)) return;
+    v = Math.max(0, Math.min(100, v)) / 100;
+    _speakVolume = v;
+    try {
+        localStorage.setItem('daon_speak_volume', String(v));
+    } catch (e) { /* ignore */ }
+
+    // 재생 중인 오디오에 실시간 반영
+    if (_currentEdgeTtsGain) {
+        try { _currentEdgeTtsGain.gain.value = v; } catch (e) { /* ignore */ }
+    }
+    if (_currentEdgeTtsAudioEl) {
+        try { _currentEdgeTtsAudioEl.volume = v; } catch (e) { /* ignore */ }
+    }
+
+    _updateVolumeSliderUI();
+}
+
+function getSpeakVolume() {
+    return Math.round(_speakVolume * 100);
+}
+
+function _updateVolumeSliderUI() {
+    const slider = document.getElementById('speakVolumeSlider');
+    if (!slider) return;
+    slider.value = String(Math.round(_speakVolume * 100));
+    slider.title = '에이전트 음성 볼륨: ' + Math.round(_speakVolume * 100) + '%';
+    slider.style.opacity = _speakMuted ? '0.4' : '1';
 }
 
 function stopSpeak() {

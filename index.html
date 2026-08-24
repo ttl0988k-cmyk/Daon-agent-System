@@ -69,6 +69,9 @@
             <button class="action-btn active" id="toggleLeftBtn" title="세션 목록 패널 열기/닫기">◧ 세션</button>
             <button class="action-btn active" id="toggleExplorerBtn" title="프로젝트 열기/닫기">📁 프로젝트</button>
             <button class="action-btn active" id="toggleRightBtn" title="채팅 패널 열기/닫기">◨ 채팅</button>
+            <input type="range" id="speakVolumeSlider" min="0" max="100" value="80"
+              oninput="setSpeakVolume(this.value)" title="에이전트 음성 볼륨: 80%"
+              style="width:64px; accent-color:#8b7ff5; cursor:pointer;" />
             <button class="action-btn active" id="speakMuteBtn" onclick="toggleSpeakMute()" title="에이전트 음성 출력 끄기"
               style="font-size:14px;">🔊</button>
           </div>
