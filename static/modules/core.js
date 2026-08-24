@@ -24,6 +24,13 @@ const State = {
   currentEventSource: null,
   currentStreamId: null,
 
+  // [세션 동시 작업] 세션별 실행 중 스트림 추적 (session_id -> stream_id).
+  // 세션을 이동해도 백엔드 작업은 계속되며, 복귀 시 이 기록으로 재접속한다.
+  sessionStreams: {},
+  // 활성 스트림의 프런트엔드 감시(SSE·타이머)를 일시정지하는 함수 참조.
+  // selectSession()이 세션 전환 직전에 호출한다 (백엔드 작업은 유지).
+  _suspendActiveStream: null,
+
   // Harness state
   harnessPollInterval: null,
   harnessRunId: null,

@@ -115,6 +115,11 @@ function renderSessionsList() {
   list.innerHTML = '';
   State.sessions.forEach(s => {
     const activeClass = s.session_id === State.activeSessionId ? 'active' : '';
+    // [세션 동시 작업] 백그라운드에서 실행 중인 세션은 ▶ 배지로 표시해
+    // "다른 세션 작업이 돌아가는 중"임을 한눈에 알린다.
+    const runningBadge = (State.sessionStreams && State.sessionStreams[s.session_id])
+      ? '<span class="session-running-badge" title="이 세션에서 에이전트가 작업 중입니다">▶</span>'
+      : '';
     const item = document.createElement('div');
     item.className = `session-item ${activeClass}`;
     item.dataset.sid = s.session_id;
@@ -124,6 +129,7 @@ function renderSessionsList() {
       <div class="session-title-container">
         <span class="session-icon">💬</span>
         <span class="session-title" id="title-text-${s.session_id}">${s.title}</span>
+        ${runningBadge}
       </div>
       <div class="session-actions">
         <button class="icon-btn edit-sess-btn" onclick="renameSessionPrompt(event, '${s.session_id}', '${s.title}')">✏</button>
@@ -131,6 +137,164 @@ function renderSessionsList() {
       </div>
     `;
     list.appendChild(item);
+  });
+}
+
+// ── [세션 동시 작업] 유틸 ─────────────────────────────────────────────────────
+// 스트림 기록: sendPrompt 성공 경로와 재접속 경로가 함께 사용한다.
+function _rememberSessionStream(sid, streamId) {
+  if (!sid || !streamId) return;
+  State.sessionStreams[sid] = streamId;
+}
+
+function _forgetSessionStream(sid, streamId) {
+  if (!sid) return;
+  // 같은 스트림일 때만 지운다 — 새 메시지가 이미 같은 세션의 기록을
+  // 덮어쓴 뒤 늦게 도착한 종료 이벤트가 새 기록을 지우는 것을 방지.
+  if (!streamId || State.sessionStreams[sid] === streamId) {
+    delete State.sessionStreams[sid];
+  }
+}
+
+// 세션 복귀 재접속: 백그라운드로 돌린 스트림에 SSE를 다시 붙인다.
+// 서버 큐에는 끊긴 동안 발행된 이벤트가 남아 있으므로(15초 heartbeat 유지),
+// 재접속 연결이 이후 이벤트와 done을 정상 수신한다. 라이브 중간 이벤트는
+// 유실될 수 있지만 done이 전체 결과를 렌더링하므로 최종 상태는 항상 옳다.
+async function _reattachSessionStream(sid, streamId) {
+  console.log('[SessionStream] 🔌 reattaching to stream', streamId, 'for session', sid);
+  setChatStatus('thinking', '작업 진행 중... (백그라운드 작업 재접속)');
+  $('sendPromptBtn').disabled = true;
+  $('cancelStreamBtn').style.display = 'block';
+
+  const box = $('chatMessages');
+  let asstBubble = document.createElement('div');
+  asstBubble.className = 'message-bubble assistant';
+  asstBubble.innerHTML = '<span class="cursor">|</span>';
+  box.appendChild(asstBubble);
+
+  const agentStatusBubble = document.createElement('div');
+  agentStatusBubble.className = 'agent-status-bubble thinking';
+  agentStatusBubble.textContent = '⏳ 백그라운드 작업 진행 중...';
+  box.insertBefore(agentStatusBubble, asstBubble);
+  scrollToChatBottom();
+
+  let finished = false;
+  function finish(reason) {
+    if (finished) return;
+    finished = true;
+    try { if (agentStatusBubble && agentStatusBubble.parentNode) agentStatusBubble.remove(); } catch (_) { }
+    try {
+      if (asstBubble) {
+        const cur = asstBubble.querySelector('.cursor');
+        if (cur) cur.remove();
+        const txt = (asstBubble.textContent || '').trim();
+        if (!txt && !asstBubble.querySelector('img, video, .text-muted, .text-danger') && asstBubble.parentNode) asstBubble.remove();
+      }
+    } catch (_) { }
+    cleanupStreamState();
+    // [세션 동시 작업] 재접속한 스트림이 끝났으면 기록을 지워 ▶ 배지를 정리한다.
+    try { _forgetSessionStream(sid, streamId); renderSessionsList(); } catch (_) { }
+    console.log('[SessionStream] finished:', reason);
+  }
+
+  const sse = new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`);
+  State.currentEventSource = sse;
+  State.currentStreamId = streamId;
+
+  sse.addEventListener('token', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      setChatStatus('thinking', '✍️ 최종 답변 생성 중...');
+      if (agentStatusBubble.parentNode) agentStatusBubble.style.display = 'none';
+      asstBubble._txt = (asstBubble._txt || '') + (d.text || '');
+      asstBubble.innerHTML = renderMd(asstBubble._txt);
+      scrollToChatBottom();
+    } catch (_) { }
+  });
+
+  sse.addEventListener('reasoning', () => {
+    setChatStatus('thinking', '💭 생각 중... (백그라운드 작업)');
+    scrollToChatBottom();
+  });
+
+  sse.addEventListener('tool', () => {
+    setChatStatus('thinking', '🔧 도구 실행 중... (백그라운드 작업)');
+    scrollToChatBottom();
+  });
+
+  sse.addEventListener('heartbeat', () => { /* keep-alive */ });
+
+  sse.addEventListener('approval', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data && data.status === 'pending') {
+        setChatStatus('thinking', data.type === 'dangerous_command'
+          ? '⚠️ 위험 명령 승인 대기 중...'
+          : '🛡️ 승인 대기 중...');
+        if (typeof _showApprovalBanner === 'function') _showApprovalBanner(data);
+      }
+    } catch (_) { }
+  });
+
+  sse.addEventListener('notice', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d && d.message && asstBubble.parentNode) {
+        const note = document.createElement('div');
+        note.className = 'text-muted';
+        note.style.cssText = 'margin-top:8px;font-size:12px;';
+        note.textContent = 'ℹ️ ' + d.message;
+        box.insertBefore(note, asstBubble);
+      }
+    } catch (_) { }
+  });
+
+  sse.addEventListener('done', (e) => {
+    finish('done');
+    try {
+      const data = JSON.parse(e.data);
+      if (data && data.session && data.session.messages) {
+        renderMessages(data.session.messages, data.session.tool_calls);
+        const localSess = State.sessions.find(x => x.session_id === sid);
+        if (localSess) localSess.title = data.session.title;
+        renderSessionsList();
+        refreshFileTree();
+      }
+    } catch (err) { console.error('[SessionStream] done handler error:', err); }
+  });
+
+  sse.addEventListener('cancel', () => finish('cancel'));
+
+  sse.addEventListener('apperror', (e) => {
+    finish('apperror');
+    let msg = '알 수 없는 오류';
+    try { const d = JSON.parse(e.data || '{}'); msg = d.message || msg; } catch (_) { }
+    if (asstBubble && asstBubble.parentNode) {
+      asstBubble.insertAdjacentHTML('beforeend',
+        `<div class="text-danger" style="margin-top:8px;">[오류: ${msg}]</div>`);
+    }
+  });
+
+  sse.addEventListener('error', () => {
+    // EventSource 자동 재연결에 맡긴다. 서버 큐가 살아있는 동안에는
+    // 재연결이 성공하고, 완전히 사라졌으면 아래 복구가 마무리한다.
+    if (sse.readyState === EventSource.CLOSED && !finished) {
+      // 스트림이 이미 끝났는데(404) done 캐시를 놓친 경우 — 세션을 다시
+      // 불러 최종 결과를 복구한다.
+      api(`/api/session?session_id=${encodeURIComponent(sid)}`).then((res) => {
+        const sess = res && res.session;
+        if (sess && sess.messages && sess.messages.length) {
+          const lastMsg = sess.messages[sess.messages.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            renderMessages(sess.messages, sess.tool_calls);
+            const localSess = State.sessions.find(x => x.session_id === sid);
+            if (localSess) localSess.title = sess.title;
+            renderSessionsList();
+          }
+        }
+        finish('sse_closed_recovered');
+      }).catch(() => finish('sse_closed'));
+    }
   });
 }
 
@@ -162,8 +326,16 @@ async function selectSession(sid) {
     // ── Phase 2: Only after API success, commit state changes ──
     State.activeSessionId = sid;
 
-    // Disconnect frontend SSE only — do NOT cancel backend agent work.
-    cleanupStreamState();
+    // [세션 동시 작업] 현재 세션에 실행 중 스트림이 있으면 백그라운드로 넘긴다.
+    // SSE 연결과 감시 타이머만 정리하고 백엔드 작업은 계속 진행된다.
+    // (_suspendActiveStream은 sendPrompt의 finishStream 경로에서 설정됨)
+    if (typeof State._suspendActiveStream === 'function') {
+      try { State._suspendActiveStream(); } catch (_) { }
+      State._suspendActiveStream = null;
+    } else {
+      // 실행 중 스트림이 없는 일반 전환 — 기존대로 SSE만 끊는다.
+      cleanupStreamState();
+    }
 
     // Render active selection in session list
     renderSessionsList();
@@ -187,6 +359,33 @@ async function selectSession(sid) {
 
     await refreshFileTree();
     renderMessages(session.messages, session.tool_calls);
+
+    // [세션 동시 작업] 복귀한 세션에 실행 중 스트림이 있으면 SSE 재접속해
+    // 실제 진행 상태를 표시한다. 백엔드는 계속 돌고 있었으므로 이후 이벤트와
+    // done을 그대로 수신한다. 없으면 기존대로 '대기 중'.
+    const resumedStreamId = State.sessionStreams[sid];
+    if (resumedStreamId) {
+      let stillActive = false;
+      try {
+        const st = await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(resumedStreamId)}`);
+        stillActive = !!(st && st.active);
+      } catch (_) { /* 조회 실패 시 비활성으로 간주 */ }
+      if (stillActive) {
+        await _reattachSessionStream(sid, resumedStreamId);
+        return; // finally에서 _selectSessionLock 해제됨
+      }
+      // 이미 끝난 스트림 — 기록 정리 후 최종 결과가 반영된 세션 데이터로 렌더링
+      _forgetSessionStream(sid, resumedStreamId);
+      try {
+        const fresh = await api(`/api/session?session_id=${encodeURIComponent(sid)}`);
+        if (fresh && fresh.session && fresh.session.messages) {
+          renderMessages(fresh.session.messages, fresh.session.tool_calls);
+          const localSess = State.sessions.find(x => x.session_id === sid);
+          if (localSess && fresh.session.title) localSess.title = fresh.session.title;
+        }
+      } catch (_) { }
+      renderSessionsList();
+    }
     setChatStatus('idle', '대기 중');
   } catch (e) {
     console.error("Session load failed:", e);
@@ -653,6 +852,10 @@ async function _executeAgentStream(displayText, uploaded) {
   // 선언하고 try 블록 안에서는 "할당"만 한다.
   let streamId = null;          // SSE stream ID (try 안에서 할당)
   let sse = null;               // EventSource 인스턴스 (try 안에서 할당)
+  // [세션 동시 작업] 이 스트림이 속한 세션(전송 시점의 활성 세션).
+  // 세션 이동 후 늦게 도착하는 비동기 복구 콜백이 다른 세션 화면에
+  // 결과를 덮어쓰지 않도록 소유권 확인에 사용한다.
+  const ownerSid = State.activeSessionId;
   let _reasoningCard = null;
   let _reasoningText = '';
   let _reasoningStartTs = 0;
@@ -890,6 +1093,17 @@ async function _executeAgentStream(displayText, uploaded) {
     // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
     try { _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
+    // [세션 동시 작업] 종료 사유별 스트림 기록 정리.
+    // 'session_switch'는 세션 이동으로 '감시'만 일시정지한 것이다 — 백엔드
+    // 작업은 계속되므로 기록을 남겨 두고, 복귀 시 /api/chat/stream/status로
+    // 확인해 재접속한다. 그 외(done/cancel/error/워치독 등)는 실제 종료이므로
+    // 기록을 지워 사이드바 ▶ 배지를 제거한다.
+    if (reason !== 'session_switch') {
+      try { _forgetSessionStream(ownerSid, streamId); renderSessionsList(); } catch (_) { }
+    }
+    // 어떤 경로로든 이 스트림의 일시정지 훅은 무효화한다.
+    // (정상 종료 후 남은 훅이 다음 세션 전환에서 헛돌지 않게 한다)
+    try { State._suspendActiveStream = null; } catch (_) { }
     // 도구 그룹 카드가 남아있으면 최종 상태로 갱신.
     // try/catch로 감싸 DOM 이상으로도 아래 cleanupStreamState()가
     // 건너뛰어지지 않게 한다 (과거 ReferenceError로 영구 잠김 발생).
@@ -978,6 +1192,9 @@ async function _executeAgentStream(displayText, uploaded) {
       // 세션 결과를 자동 복구해 렌더링한다. ("서버응답 없음" 재발 방지)
       setTimeout(function () {
         if (!State.activeSessionId) return;
+        // [세션 동시 작업] 소유권 가드 — 워치독 복구 대기 중 세션이 바뀌었으면
+        // 이전 세션의 메시지를 현재 화면에 덮어쓰지 않는다.
+        if (State.activeSessionId !== ownerSid) return;
         api('/api/sessions').then(function (sessRes) {
           var sessions = (sessRes && sessRes.sessions) || [];
           var found = sessions.find(function (s) { return s.session_id === State.activeSessionId; });
@@ -1023,6 +1240,15 @@ async function _executeAgentStream(displayText, uploaded) {
 
     streamId = startRes.stream_id;
     State.currentStreamId = streamId;
+
+    // [세션 동시 작업] 실행 중 스트림을 세션별로 기록해 ▶ 배지를 표시하고,
+    // 사용자가 다른 세션으로 이동했다가 돌아와도 재접속할 수 있게 한다.
+    _rememberSessionStream(ownerSid, streamId);
+    try { renderSessionsList(); } catch (_) { }
+    // 일시정지 훅: selectSession()이 세션 전환 직전에 호출한다.
+    // finishStream('session_switch')은 SSE·타이머만 정리하고 백엔드 작업과
+    // 위 기록은 유지된다 — "세션 이동 중에도 작업 지속"의 핵심 경로다.
+    State._suspendActiveStream = function () { finishStream('session_switch'); };
 
     // Connect to SSE endpoint
     sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
