@@ -7,6 +7,11 @@
 //   poll request file -> kill server -> respawn -> health check
 //     -> on failure: git rollback to checkpoint -> respawn again -> re-check
 //
+// [결함④ 수정] 스왑 직후 오판 방지 (onefile _MEI 추출로 수십 초 늦게 리슨):
+//   ② unhealthy 선고 전 심층 재판정 — deepHealthCheck(긴 유예창)으로 재검증.
+//   ③ 롤백 가드 — restoreBackup 이 실패(EBUSY)하면 새 exe 가 살아있다는
+//      신호이므로 복구를 포기하지 않고 심층 헬스체크로 최종 판정한다.
+//
 // Everything with side effects (fs, process kill/spawn, health probe, git) is
 // injectable so the probe (_probe/probe_gap_e3.js) can run this under plain
 // node with fakes — no Electron runtime required.
@@ -36,6 +41,7 @@ function defaultCandidateDirs(repoRoot) {
  *   killServer:    async () -> void            (kill the watched server)
  *   spawnServer:   async () -> void            (respawn the watched server)
  *   healthCheck:   async () -> boolean         (probe /health)
+ *   deepHealthCheck: async () -> boolean       (long-grace verdict for slow onefile boots)
  *   gitRollback:   async (ref) -> boolean      (git reset --hard ref + clean)
  *   log:           (msg) -> void
  *   pollMs:        request-file poll interval (default 5000)
@@ -84,7 +90,7 @@ function createRestartOrchestrator(deps = {}) {
     }
 
     // One full restart cycle. Returns a result dict:
-    //   { ok, rolledBack, restored, rebuilt, swapped, attempts, reason, checkpointRef }
+    //   { ok, rolledBack, restored, rebuilt, swapped, attempts, reason, checkpointRef, deepVerdict }
     async function performRestart(payload) {
         const checkpointRef = (payload && payload.checkpoint_ref) || null;
         const reason = (payload && payload.reason) || 'unspecified';
@@ -115,8 +121,9 @@ function createRestartOrchestrator(deps = {}) {
             }
         }
 
-        // 2. respawn + health check
+        // 2. respawn + health check (단발 판정: 즉사 불량 바이너리를 빠르게 걸러냄)
         let healthy = false;
+        let deepRescued = false;
         try {
             await deps.spawnServer();
             healthy = await deps.healthCheck();
@@ -124,9 +131,25 @@ function createRestartOrchestrator(deps = {}) {
             log(`[RestartOrch] respawn/health failed: ${e && e.message}`);
         }
 
+        // [결함④ 수정②] unhealthy 선고 전 심층 재판정: 스왑된 onefile exe 는
+        // _MEI 추출 때문에 수십 초 뒤에야 포트가 열린다. 한 번의 실패로
+        // '불량 바이너리'로 확정하지 않고 긴 유예창(deepHealthCheck)으로 재판정한다.
+        if (!healthy && swapped && typeof deps.deepHealthCheck === 'function') {
+            log('[RestartOrch] first health check failed after swap — deep re-verdict before rollback.');
+            try {
+                healthy = await deps.deepHealthCheck() === true;
+                if (healthy) {
+                    deepRescued = true;
+                    log('[RestartOrch] deep re-verdict passed — slow boot accepted, no rollback.');
+                }
+            } catch (e) {
+                log(`[RestartOrch] deep re-verdict threw: ${e && e.message}`);
+            }
+        }
+
         if (healthy) {
             log('[RestartOrch] server restarted and healthy.');
-            return { ok: true, rolledBack: false, restored: false, rebuilt: wantsRebuild, swapped, attempts: 1, reason, checkpointRef };
+            return { ok: true, rolledBack: false, restored: false, rebuilt: wantsRebuild, swapped, attempts: 1, reason, checkpointRef, deepVerdict: deepRescued };
         }
 
         // 3. unhealthy recovery:
@@ -141,6 +164,21 @@ function createRestartOrchestrator(deps = {}) {
                 if (restored) log('[RestartOrch] backup server.exe restored (last-known-good).');
             } catch (e) {
                 log(`[RestartOrch] backup restore failed: ${e && e.message}`);
+            }
+            // [결함④ 수정③] 롤백 가드: restore 실패(대상 락 = EBUSY 계열)는
+            // 새 exe 가 아직 살아있다는 신호다. 복구를 포기하지 말고 실행 중인
+            // 새 exe 를 심층 헬스체크로 최종 판정한다 — 통과 시 롤백을 건너뛰고
+            // 새 exe 를 유지한다.
+            if (!restored && typeof deps.deepHealthCheck === 'function') {
+                log('[RestartOrch] restore failed (target locked?) — new exe appears alive; final deep verdict.');
+                try {
+                    if (await deps.deepHealthCheck() === true) {
+                        log('[RestartOrch] final deep verdict: new exe healthy — keeping it (rollback skipped).');
+                        return { ok: true, rolledBack: false, restored: false, rebuilt: wantsRebuild, swapped, attempts: 2, reason: `${reason} (healthy on final deep verdict)`, checkpointRef, deepVerdict: true };
+                    }
+                } catch (e) {
+                    log(`[RestartOrch] final deep verdict threw: ${e && e.message}`);
+                }
             }
         }
         if (checkpointRef && deps.gitRollback) {

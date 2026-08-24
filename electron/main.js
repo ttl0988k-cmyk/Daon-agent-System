@@ -354,6 +354,46 @@ async function probeServerHealthStable(port) {
   return null;
 }
 
+// [결함④ 수정①] 스왑 후 첫 기동 유예: PyInstaller onefile exe 는 기동 시
+// _MEI 추출(실측 ~60s @1.15GB) 때문에 수십 초 뒤에야 /health 에 응답한다.
+// 짧은 단발 판정은 '느린 정상'을 '불량'으로 오판해 위험한 롤백을 유발했다.
+const POST_SWAP_HEALTH_GRACE_MS = 120000;
+
+// 긴 유예창 안에서 연속 stableHits 회 성공해야 healthy 로 인정 (카나리의
+// stableDeepHealth 와 동일 기준). isAlive 콜백이 false 를 반환하면 프로세스가
+// 이미 죽었다는 뜻이므로 남은 유예를 기다리지 않고 즉시 포기한다.
+async function probeServerHealthGrace(port, opts = {}) {
+  const maxWaitMs = opts.maxWaitMs != null ? opts.maxWaitMs : POST_SWAP_HEALTH_GRACE_MS;
+  const pollMs = opts.pollMs != null ? opts.pollMs : 1000;
+  const stableHits = opts.stableHits != null ? opts.stableHits : 3;
+  const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 1500;
+  const isAlive = typeof opts.isAlive === 'function' ? opts.isAlive : null;
+  const deadline = Date.now() + maxWaitMs;
+  let hits = 0;
+  let lastLogAt = 0;
+  while (Date.now() < deadline) {
+    if (isAlive && !isAlive()) {
+      console.log('[Electron] grace health aborted — server process already exited.');
+      return null;
+    }
+    const h = await probeServerHealth(port, timeoutMs);
+    if (h && h.healthy && h.pid) {
+      hits += 1;
+      if (hits >= stableHits) return h;
+    } else {
+      if (hits > 0) console.log('[Electron] grace health: stability reset (flapping).');
+      hits = 0;
+      if (Date.now() - lastLogAt > 10000) {
+        lastLogAt = Date.now();
+        console.log(`[Electron] grace health: waiting for server (${Math.max(0, Math.round((deadline - Date.now()) / 1000))}s left)...`);
+      }
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  console.log(`[Electron] grace health: deadline exceeded (${maxWaitMs}ms).`);
+  return null;
+}
+
 function checkCdpHealth(retries = 10, delayMs = 500) {
   let attempted = 0;
   const poll = () => {
@@ -860,6 +900,16 @@ app.whenReady().then(async () => {
       },
       healthCheck: async () => {
         const h = await probeServerHealthStable(serverPort);
+        return !!(h && h.healthy);
+      },
+      // [결함④ 수정①·②] 스왑 후 심층 헬스체크: onefile _MEI 추출 유예창.
+      // 프로세스가 즉사하면 isAlive 로 조기 중단되어 불량 바이너리 판정이 빨라진다.
+      deepHealthCheck: async () => {
+        const h = await probeServerHealthGrace(serverPort, {
+          maxWaitMs: POST_SWAP_HEALTH_GRACE_MS,
+          stableHits: 3,
+          isAlive: () => !!pythonProcess && pythonProcess.exitCode === null && pythonProcess.signalCode === undefined,
+        });
         return !!(h && h.healthy);
       },
       rebuildAndSwap: rebuildAndSwapServerExe,

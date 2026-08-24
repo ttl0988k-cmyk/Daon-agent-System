@@ -9,6 +9,13 @@
 //                                       -> ok, restored=true, attempts=2
 //   S4 rebuild:true, swap FAILS        -> old exe kept, plain restart still ok
 //   S5 rebuild:true, swap OK, unhealthy, restore FAILS, no checkpoint -> ok:false
+//
+// [결함④] 스왑 후 오판 방지 시나리오:
+//   S6 swap OK, 첫 healthCheck 실패(느린 onefile 부팅), deep 재판정 통과
+//      -> 구제됨: restore/롤백 없이 ok, deepVerdict=true
+//   S7 swap OK, unhealthy, deep 재판정 실패, restore EBUSY 실패,
+//      최종 deep 판정 통과 -> 새 exe 유지, ok, deepVerdict=true
+//   S8 회귀: deep 재판정 실패 + restore 성공 -> 기존 복구 경로 그대로 동작
 const path = require('path');
 const { createRestartOrchestrator } = require(path.join(__dirname, '..', 'electron', 'restart_orchestrator.js'));
 
@@ -121,6 +128,72 @@ async function main() {
         check('S5 restored=false', r.restored === false);
         check('S5 swapped=true', r.swapped === true);
         check('S5 attempts=1(no retry possible)', r.attempts === 1);
+    }
+
+    // S6 [결함④②]: slow onefile boot — first healthCheck false, deep re-verdict
+    // passes -> rescued WITHOUT touching backup/rollback.
+    {
+        const calls = [];
+        const orch = createRestartOrchestrator({
+            fs: fakeFs(), dirs: [], log: () => { }, sleep: async () => { },
+            killServer: async () => { calls.push('kill'); },
+            spawnServer: async () => { calls.push('spawn'); },
+            healthCheck: async () => { calls.push('health'); return false; },
+            deepHealthCheck: async () => { calls.push('deep'); return true; },
+            rebuildAndSwap: async () => { calls.push('rebuild'); return { swapped: true }; },
+            restoreBackup: async () => { calls.push('restore'); return true; },
+        });
+        const r = await orch.performRestart({ reason: 'slow boot', rebuild: true });
+        check('S6 ok', r.ok === true);
+        check('S6 deepVerdict=true', r.deepVerdict === true);
+        check('S6 attempts=1', r.attempts === 1);
+        check('S6 no restore call', !calls.includes('restore'));
+        check('S6 order kill,rebuild,spawn,health,deep',
+            calls.join(',') === 'kill,rebuild,spawn,health,deep');
+    }
+
+    // S7 [결함④③]: deep re-verdict fails, restore hits EBUSY (new exe alive),
+    // final deep verdict passes -> keep the new exe, report ok.
+    {
+        const calls = [];
+        let deepCalls = 0;
+        const orch = createRestartOrchestrator({
+            fs: fakeFs(), dirs: [], log: () => { }, sleep: async () => { },
+            killServer: async () => { calls.push('kill'); },
+            spawnServer: async () => { calls.push('spawn'); },
+            healthCheck: async () => { calls.push('health'); return false; },
+            deepHealthCheck: async () => { deepCalls += 1; calls.push('deep'); return deepCalls >= 2; },
+            rebuildAndSwap: async () => { calls.push('rebuild'); return { swapped: true }; },
+            restoreBackup: async () => { calls.push('restore'); return false; }, // EBUSY
+        });
+        const r = await orch.performRestart({ reason: 'ebusy rollback', rebuild: true });
+        check('S7 ok', r.ok === true);
+        check('S7 restored=false', r.restored === false);
+        check('S7 deepVerdict=true', r.deepVerdict === true);
+        check('S7 attempts=2', r.attempts === 2);
+        check('S7 order kill,rebuild,spawn,health,deep,restore,deep',
+            calls.join(',') === 'kill,rebuild,spawn,health,deep,restore,deep');
+    }
+
+    // S8 regression: deep re-verdict fails AND restore succeeds -> classic
+    // recovery path (respawn with known-good backup) must still work.
+    {
+        const calls = [];
+        const orch = createRestartOrchestrator({
+            fs: fakeFs(), dirs: [], log: () => { }, sleep: async () => { },
+            killServer: async () => { calls.push('kill'); },
+            spawnServer: async () => { calls.push('spawn'); },
+            healthCheck: async () => { calls.push('health'); return calls.filter(c => c === 'health').length >= 2; },
+            deepHealthCheck: async () => { calls.push('deep'); return false; },
+            rebuildAndSwap: async () => { calls.push('rebuild'); return { swapped: true }; },
+            restoreBackup: async () => { calls.push('restore'); return true; },
+        });
+        const r = await orch.performRestart({ reason: 'bad exe v2', rebuild: true });
+        check('S8 ok', r.ok === true);
+        check('S8 restored=true', r.restored === true);
+        check('S8 attempts=2', r.attempts === 2);
+        check('S8 order kill,rebuild,spawn,health,deep,restore,kill,spawn,health',
+            calls.join(',') === 'kill,rebuild,spawn,health,deep,restore,kill,spawn,health');
     }
 
     console.log(`RESULT pass=${pass} fail=${fail}`);
