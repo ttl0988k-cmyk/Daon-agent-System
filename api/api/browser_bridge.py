@@ -117,6 +117,12 @@ def _run_browser_command_via_bridge(
         result = _submit_task("record", subcommand=subcommand, path=path)
         return _convert_result(result)
 
+    elif command == "close":
+        # cleanup_browser가 세션 정리 시 호출 — Playwright 드라이버를 닫고
+        # 상태를 리셋한다 (Electron 뷰 자체는 닫지 않는다).
+        result = _submit_task("close")
+        return _convert_result(result)
+
     else:
         return {"success": False, "error": f"Unsupported browser command: {command}"}
 

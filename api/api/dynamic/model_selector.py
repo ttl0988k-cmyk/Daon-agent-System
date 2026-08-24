@@ -86,6 +86,48 @@ _DEFAULT_PROFILES: list[ModelProfile] = []
 
 
 # ---------------------------------------------------------------------------
+# 난이도별 가중치 프리셋 (7차원 — 비용 차원은 설계상 제외)
+# ---------------------------------------------------------------------------
+# 대표님 결정 (2026-08-24): 비용은 선별 가중치에서 완전히 제외한다.
+# 모델 선택은 오직 "작업 난이도/특성 ↔ 모델 능력" 적합도만으로 결정되며,
+# 각 프리셋의 가중치 합은 항상 1.0이다.
+_WEIGHT_PRESETS: dict[str, dict[str, float]] = {
+    # heavy — 복잡한 추론/설계/디버깅: 품질·신뢰도 극대화, 속도 희생 허용
+    "heavy": {
+        "strength": 0.38, "success_rate": 0.22, "reliability": 0.15,
+        "context": 0.13, "latency": 0.04, "status": 0.04, "load": 0.04,
+    },
+    # standard — 일반 구현/리뷰/QA/디자인: 균형
+    "standard": {
+        "strength": 0.32, "success_rate": 0.22, "reliability": 0.12,
+        "context": 0.12, "latency": 0.12, "status": 0.05, "load": 0.05,
+    },
+    # light — 단순/루틴/짧은 작업: 응답 속도 우선
+    "light": {
+        "strength": 0.22, "success_rate": 0.15, "reliability": 0.10,
+        "context": 0.06, "latency": 0.35, "status": 0.06, "load": 0.06,
+    },
+}
+
+# 난이도 추론 키워드 — 작업 본문(task)/역할(role)에서 감지한다.
+# 비용 관련 단어는 의도적으로 없다: 난이도는 순수하게 작업 특성만으로 판단한다.
+_DIFFICULTY_HEAVY_PATTERNS = [
+    r'\barchitect\w*', r'\bsystem\s+design', r'\brefactor\w*', r'\bmigrat\w*',
+    r'\bscalab\w*', r'\boptimi[sz]e', r'\bdistributed', r'\bconcurren\w*',
+    r'\bthread[- ]safe', r'\bsecurity', r'\balgorithm\w*', r'\bdata\s+model',
+    r'\bcomplex\w*', r'\bcore\s+engine', r'\binfrastructure', r'\bmulti[- ]tenant',
+    r'\bperformance\s+tun\w*', r'\brace\s+condition', r'\bdeadlock',
+]
+_DIFFICULTY_LIGHT_PATTERNS = [
+    r'\btypo\w*', r'\brename\w*', r'\bformatt?ing', r'\bcomments?\b',
+    r'\bdocstrings?\b', r'\blint\b', r'\bboilerplate', r'\bscaffold\w*',
+    r'\breadme\b', r'\bchangelog\b', r'\bcopy.?edit\w*', r'\btranslat\w*',
+    r'\bsummar(y|ize|ise)\b', r'\bsimple\s+(crud|fix|change|update)\b',
+    r'\bminor\s+(fix|change|tweak)\b', r'\bquick\s+fix\b',
+]
+
+
+# ---------------------------------------------------------------------------
 # Task Context Extraction (language, framework detection)
 # ---------------------------------------------------------------------------
 
@@ -482,17 +524,19 @@ class SkillHistory:
 class DynamicModelSelector:
     """Select the best model for a task using multi-factor scoring.
     
-    Scoring factors:
-        1. Historical success rate (weight: 40%)  — context-aware (lang/framework)
-        2. Strength match (weight: 25%)            — does the model's strengths match the task?
-        3. Cost efficiency (weight: 20%)           — lower cost = better (up to budget cap)
-        4. Context fit (weight: 15%)               — does the context window fit the required tokens?
+    Scoring factors (v3, 2026-08-24 — cost EXCLUDED by CEO decision):
+        1. Strength match          — does the model's proven capability match the task?
+        2. Historical success rate — context-aware (lang/framework)
+        3. Reliability             — JSON/tool reliability incl. retry evidence
+        4. Context fit             — does the context window fit the required tokens?
+        5. Latency / Status / Load — operational health
+        Weights follow difficulty presets (light/standard/heavy) — see _WEIGHT_PRESETS.
     
     Usage:
         selector = DynamicModelSelector()
         chain = selector.select_for_node(
             role="developer", task="Build a FastAPI REST API",
-            required_context=32000, max_budget=0.05,
+            required_context=32000,
             required_strength="code"
         )
     """
@@ -630,27 +674,22 @@ class DynamicModelSelector:
         profile: ModelProfile,
         role: str,
         required_context: int = 32000,
-        max_budget: float = 0.05,
         required_strength: str = "code",
         max_latency_ms: float = 30000,
         context_keys: list[str] = None,
         daon_stats: dict = None,
+        difficulty: str = "standard",
     ) -> tuple[float, dict]:
-        """Compute an 8-dimensional weighted score for a model."""
+        """Compute a 7-dimensional weighted score for a model.
+
+        비용(cost) 차원은 의도적으로 제외됐다 (대표님 결정 2026-08-24):
+        모델 선별은 작업 난이도/특성과 모델 능력의 적합도만으로 이뤄지며,
+        가중치 프리셋은 난이도(light/standard/heavy)에 따라 달라진다.
+        """
         import time
         scores = {}
         
-        # New V2 weights
-        weights = {
-            "strength": 0.30,         # Task/Role Fit
-            "success_rate": 0.20,     # Context-specific Success
-            "cost": 0.10,             # Cost Efficiency
-            "latency": 0.10,          # Response Latency
-            "context": 0.10,          # Context Window Fit
-            "reliability": 0.10,      # JSON/Tool Reliability
-            "status": 0.05,           # API Health / Availability
-            "load": 0.05,             # System Load Balancing
-        }
+        weights = _WEIGHT_PRESETS.get(difficulty, _WEIGHT_PRESETS["standard"])
         ctx_keys = context_keys or ["overall"]
         
         # 1. Strength (Task/Role Fit)
@@ -693,19 +732,7 @@ class DynamicModelSelector:
             role, profile.model_id, ctx_keys
         )
         
-        # 3. Cost Efficiency
-        if max_budget <= 0:
-            scores["cost"] = 1.0 if profile.cost_per_1m_input <= 0 else 0.3
-        else:
-            cost_ratio = profile.cost_per_1m_input / max_budget
-            if cost_ratio <= 0:
-                scores["cost"] = 1.0
-            elif cost_ratio >= 1.0:
-                scores["cost"] = 0.1
-            else:
-                scores["cost"] = 1.0 - cost_ratio
-                
-        # 4. Latency
+        # 3. Latency
         avg_lat = self._history.get_avg_latency(role, profile.model_id, ctx_keys)
         # Convert avg_lat (ms) to a score where < 2000 is 1.0, and > max is 0.1
         if avg_lat <= 2000:
@@ -719,7 +746,7 @@ class DynamicModelSelector:
         if profile.avg_latency_rank <= 2:
             scores["latency"] = min(1.0, scores["latency"] + 0.2)
             
-        # 5. Context Window Fit
+        # 4. Context Window Fit
         if profile.context_window >= required_context * 2:
             scores["context"] = 1.0
         elif profile.context_window >= required_context:
@@ -728,7 +755,7 @@ class DynamicModelSelector:
         else:
             scores["context"] = 0.0
             
-        # 6. JSON Reliability
+        # 5. JSON Reliability
         # Use base reliability, adjusted by history if available
         scores["reliability"] = profile.base_json_reliability
         # Phase 2: retry evidence — models that need many retries to succeed
@@ -739,7 +766,7 @@ class DynamicModelSelector:
             scores["reliability"] = max(0.0, scores["reliability"] - _retry_penalty)
         scores["_avg_retries"] = round(_avg_retries, 2)
         
-        # 7. Status / API Health
+        # 6. Status / API Health
         now = time.time()
         if profile.status == "Available":
             scores["status"] = 1.0
@@ -753,7 +780,7 @@ class DynamicModelSelector:
         else:
             scores["status"] = 0.1
             
-        # 8. Load Balancing (Simplified: default to 1.0, could track active in-flight requests)
+        # 7. Load Balancing (Simplified: default to 1.0, could track active in-flight requests)
         scores["load"] = 1.0 
         
         total = sum(scores[k] * weights[k] for k in weights)
@@ -770,20 +797,31 @@ class DynamicModelSelector:
         task: str = "",
         preferred_model: str = None,
         required_context: int = 32000,
-        max_budget: float = 0.05,
         required_strength: str = "code",
         max_latency_ms: float = 30000,
         top_k: int = 5,
+        difficulty: str = None,
     ) -> tuple[list[dict], dict]:
         """Select the best model(s) for a DAG node.
-        
+
+        difficulty: light/standard/heavy 가중치 프리셋. None이면 작업 본문과
+        strength에서 자동 추론한다(infer_difficulty). 비용 파라미터(max_budget)는
+        제거됐다 — 선별 어디에도 비용을 사용하지 않는다(대표님 결정 2026-08-24).
+
         Returns:
             (model_chain, context_info) where context_info contains
-            the extracted languages/frameworks for downstream use.
+            the extracted languages/frameworks and the resolved difficulty
+            for downstream use.
         """
         # Extract task context
         task_context = extract_task_context(task) if task else {}
         context_keys = build_context_keys(task_context)
+
+        # 난이도 프리셋 결정: 명시 지정 > 자동 추론 (task/role/strength)
+        if difficulty not in _WEIGHT_PRESETS:
+            difficulty = self.infer_difficulty(
+                role=role, required_strength=required_strength, task=task,
+            )
         
         # Score all eligible models
         scored = []
@@ -842,15 +880,19 @@ class DynamicModelSelector:
                 profile=profile,
                 role=role,
                 required_context=required_context,
-                max_budget=max_budget,
                 required_strength=required_strength,
                 max_latency_ms=max_latency_ms,
                 context_keys=context_keys,
                 daon_stats=_daon_stats,
+                difficulty=difficulty,
             )
             
+            # 선호 모델 보너스: +0.15 → +0.05 로 축소 (2026-08-24).
+            # 기존 0.15는 strength 가중치(0.32~0.38) 기준 실제 능력 격차 0.4를
+            # 완전히 상쇄해 열등한 모델이 당선되는 원인이었다. 0.05는 동점 수준의
+            # 타이브레이커 역할만 수행한다.
             if preferred_model and model_id == preferred_model:
-                score = min(1.0, score + 0.15)
+                score = min(1.0, score + 0.05)
             
             scored.append((score, profile, breakdown))
         
@@ -900,6 +942,7 @@ class DynamicModelSelector:
             "languages": task_context.get("languages", []),
             "frameworks": task_context.get("frameworks", []),
             "context_keys": context_keys,
+            "difficulty": difficulty,
         }
         
         # Phase 2: record the selection (chain + per-model evidence) into the
@@ -909,6 +952,7 @@ class DynamicModelSelector:
                 "ts": time.time(),
                 "role": role,
                 "required_strength": required_strength,
+                "difficulty": difficulty,
                 "context_keys": list(context_keys),
                 "chain": [
                     {
@@ -947,6 +991,35 @@ class DynamicModelSelector:
 
         return ""
     
+    # ── Difficulty Inference (작업 난이도 → 가중치 프리셋) ──
+    
+    @staticmethod
+    def infer_difficulty(role: str = "", required_strength: str = "code",
+                         task: str = "") -> str:
+        """작업 난이도(light/standard/heavy)를 추론한다.
+
+        우선순위: (1) 작업 본문+역할 키워드 → (2) strength 기본값.
+        비용 정보는 의도적으로 사용하지 않는다 — 난이도는 작업 특성만으로
+        판단한다(대표님 결정 2026-08-24).
+        """
+        import re as _re
+
+        text = f"{task or ''} {role or ''}".lower()
+        if text.strip():
+            for pat in _DIFFICULTY_HEAVY_PATTERNS:
+                if _re.search(pat, text):
+                    return "heavy"
+            for pat in _DIFFICULTY_LIGHT_PATTERNS:
+                if _re.search(pat, text):
+                    return "light"
+
+        strength = (required_strength or "code").lower()
+        if strength in ("reasoning", "debug"):
+            return "heavy"
+        if strength == "fast":
+            return "light"
+        return "standard"
+
     # ── Role → Required Strength Mapping ──
     
     @staticmethod

@@ -281,8 +281,8 @@ class HermesPlanner:
             "- For Contract Validation: use a reviewer template + 'contract-validator' skill in plan-level skills.\n"
             "- AVOID_WHEN ENFORCEMENT: Each catalog entry has [AVOID: ...] markers. If the task matches ANY avoid_when condition of a template, you MUST NOT select that template. Example: frontend-react has [AVOID: backend_only_task, native_mobile_app] — do NOT use it for a pure backend API task.\n"
             "- DOMAIN MATCHING: Check the 'capability' and 'domain' fields. Select the template whose domain best matches the subtask requirement.\n"
-            "- COST OPTIMIZATION: Each catalog entry has [COST: low/mid/high] marker. For simple tasks (CRUD, boilerplate, docs), prefer low-cost templates + cheaper models. Reserve high-cost templates for complex reasoning/architecture tasks. Example: simple API endpoint → python-backend [COST: mid] + deepseek-v3, NOT architect [COST: high] + claude-sonnet.\n"
-            "- MODEL SELECTION BY COST: low-cost tasks → deepseek-v3/minimax-m3; mid-cost → deepseek-v3/qwen-coder; high-cost complex reasoning → claude-sonnet/gpt-4o. Always prefer the cheapest model that can handle the task quality requirement.\n\n"
+            "- TEMPLATE COST FIT: Each catalog entry has [COST: low/mid/high] marker estimating agent workload. Prefer low-cost templates for simple tasks (CRUD, boilerplate, docs); reserve high-cost templates for complex reasoning/architecture tasks. This sizes the AGENT workload only — it must NOT influence which MODEL you pick.\n"
+            "- MODEL SELECTION BY TASK FIT (MANDATORY): Pick each node's model ONLY from AVAILABLE MODELS, judging solely from the Dynamic Model Selector scorecards and Model Intelligence cards below. Complex reasoning/architecture/debugging nodes -> highest Score/Quality/Reliability. Simple routine steps -> best Speed. Do NOT stereotype any provider as budget or premium — every candidate carries live evidence. NEVER downgrade a node's model to save cost: cost is NOT a selection criterion in this system.\n\n"
             "[RETRIEVER ≠ AUTO-SELECT — CRITICAL ENFORCEMENT]\n"
             "The Semantic Skill Retriever provides Top-K RECOMMENDATIONS based on embedding similarity.\n"
             "These are SUGGESTIONS ONLY. You are the CEO and YOU make the FINAL decision.\n"
@@ -392,11 +392,15 @@ class HermesPlanner:
                 _log.warning("Model intel cards unavailable: %s", _ie)
 
             _model_rec_block = (
-                "\n[Dynamic Model Selector — 8-Dimensional Role-based Scorecards]\n"
-                "The system has evaluated all available models on 8 dimensions: Task Fit, Success Rate, Cost, Latency, Context Window, JSON Reliability, Health, and Load.\n"
-                "Use the scorecards below to select the optimal model for each role. (Higher is better for Score/Quality/Speed/Rel. Lower is better for Cost).\n"
+                "\n[Dynamic Model Selector — 7-Dimensional Role-based Scorecards]\n"
+                "The system has evaluated all available models on 7 dimensions: Task Fit, Success Rate, Latency, Context Window, JSON Reliability, Health, and Load. Cost is intentionally NOT scored (CEO decision 2026-08-24) — the Cost/1M figure below is reference information only.\n"
+                "Use the scorecards below to select the optimal model for each role. (Higher is better for Score/Quality/Speed/Rel.)\n"
+                "Each scorecard is computed with a DIFFICULTY WEIGHT PRESET inferred from the task text and role:\n"
+                "- heavy (complex reasoning/architecture/debugging): Task Fit & Success Rate dominate; slow-but-brilliant models win.\n"
+                "- standard (normal implementation/review/design): balanced.\n"
+                "- light (simple/routine steps): Speed dominates; fast models win.\n"
                 "High Risk/Complex tasks -> Prioritize Quality & Reliability.\n"
-                "Simple/QA tasks -> Prioritize Speed & Cost.\n"
+                "Simple/Routine tasks -> Prioritize Speed.\n"
                 + "\n".join(_role_recommendations) + "\n"
                 "\n[End Dynamic Model Selector Recommendations]\n"
             ) if _role_recommendations else ""
@@ -434,14 +438,15 @@ class HermesPlanner:
                             _flag_txt = " [high potential / field-unverified]"
                         elif _intel_flag == "lineage_estimate":
                             _flag_txt = " [lineage estimate]"
+                        _diff = _entry.get("difficulty", "?")
                         _log_lines.append(
-                            f"  - role={_role} strength={_strength} -> {_top_model} "
+                            f"  - role={_role} strength={_strength} difficulty={_diff} -> {_top_model} "
                             f"(score {round(_top_score, 3)}, intel DAON {_intel_n}){_flag_txt}"
                         )
                     _model_rec_block += (
                         "\n[Model Selection Log — recent choices]\n"
                         "These are the selector's most recent picks per role. If a choice looks wrong,\n"
-                        "the blend weights (strength/success/cost/latency) or the intel DB are the levers.\n"
+                        "the difficulty weight presets or the intel DB are the levers.\n"
                         + "\n".join(_log_lines) + "\n"
                         "\n[End Model Selection Log]\n"
                     )

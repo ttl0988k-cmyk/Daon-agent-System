@@ -1115,8 +1115,18 @@ def _run_browser_command(
     # Never fall back to the local agent-browser daemon in this mode: doing so
     # launches a second Chromium window outside the application and can cover
     # the entire DAON window. The API bridge is installed by streaming.py;
-    # this guard is the final safety net when that patch cannot be installed.
-    if os.environ.get("BROWSER_CDP_URL"):
+    # this guard is the final safety net — and now attempts a one-time lazy
+    # re-patch before giving up, so a startup-time patch failure can never
+    # leave EVERY browser call dead with the bridge-missing error.
+    if os.environ.get("BROWSER_CDP_URL") and not globals().get("_daon_electron_bridge_ready"):
+        try:
+            from api.browser_bridge import patch_browser_tool  # noqa: E402
+            patch_browser_tool()
+        except Exception:
+            pass
+        if globals().get("_daon_electron_bridge_ready"):
+            # 패치가 늦게라도 성공했으면 브리지 함수로 위임해 정상 처리한다.
+            return globals()["_run_browser_command"](task_id, command, args, timeout)
         return {
             "success": False,
             "error": (
@@ -1472,6 +1482,23 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
         data = result.get("data", {})
         title = data.get("title", "")
         final_url = data.get("url", url)
+
+        # Electron 공유 뷰가 아직 자동 오픈 중이면 open이 pending 응답(title/url 없음)으로
+        # 성공 처리된다. 이 상태에서 즉시 스냅샷을 찍으면 "탭 없음/cooldown" 실패로 이어져
+        # 에이전트가 내비게이션 실패로 오판한다 → 짧은 재시도로 뷰 준비를 기다린다.
+        if not title and not data.get("snapshot") and os.environ.get("BROWSER_CDP_URL"):
+            for _ in range(3):
+                time.sleep(2.5)
+                retry = _run_browser_command(
+                    effective_task_id, "open", [final_url or url],
+                    timeout=max(_get_command_timeout(), 30),
+                )
+                if retry.get("success") and (retry.get("data", {}) or {}).get("title"):
+                    result = retry
+                    data = retry.get("data", {})
+                    title = data.get("title", "")
+                    final_url = data.get("url", final_url)
+                    break
 
         # Post-redirect SSRF check — if the browser followed a redirect to a
         # private/internal address, block the result so the model can't read

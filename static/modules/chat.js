@@ -361,13 +361,19 @@ function renderMessages(messages, toolCalls) {
     // ── 빈 assistant 버블 스킵 (얇은 빈 줄 아티팩트 방지) ──
     // 도구 전용 턴은 content가 비어 있거나 think 블록뿐인 assistant 메시지를 남긴다.
     // 이걸 버블로 렌더링하면 테두리만 있는 얇은 빈 줄로 보인다.
+    let _toolOnlyTurn = false;
     if (!isUser) {
       const plain = stripThinkBlocks(msg.content);
       const msgToolsPre = toolCalls ? toolCalls.filter(tc => tc.assistant_msg_idx === idx) : [];
       if (!plain.trim() && msgToolsPre.length === 0) return;
+      // 도구 전용 턴(텍스트 없이 도구 호출만): 빈 텍스트 버블 대신
+      // 도구 카드만 가진 작업 단위 블록으로 렌더링 (Roo Code 스타일 분리).
+      // 배경/테두리를 제거해 얇은 선 잔상처럼 보이지 않게 한다.
+      _toolOnlyTurn = true;
     }
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${isUser ? 'user' : 'assistant'}`;
+    if (_toolOnlyTurn) bubble.classList.add('tool-only-turn');
 
     // Style judge message differently
     if (msg.sender && msg.sender.includes('판사')) {
@@ -559,7 +565,8 @@ async function _executeAgentStream(displayText, uploaded) {
 
   // Create stream target assistant bubble
   const box = $('chatMessages');
-  const asstBubble = document.createElement('div');
+  // 작업 단위 분리를 위해 스트림 중 새 버블로 교체 가능해야 하므로 let으로 선언
+  let asstBubble = document.createElement('div');
   asstBubble.className = 'message-bubble assistant';
   asstBubble.innerHTML = '<span class="cursor">|</span>';
   box.appendChild(asstBubble);
@@ -570,15 +577,42 @@ async function _executeAgentStream(displayText, uploaded) {
   // the equivalent without replacing the existing UI.
   const agentStatusBubble = document.createElement('div');
   agentStatusBubble.className = 'agent-status-bubble thinking';
-  agentStatusBubble.textContent = '⏳ 에이전트 작업 시작 중...';
   box.insertBefore(agentStatusBubble, asstBubble);
   scrollToChatBottom();
+
+  // ── 경과 시간 카운터 (대표님 요청 2026-08-24) ──
+  // 상태 말풍선(⏳ 시작 중 / 💭 생각 중 / 🔧 도구 실행 중 / ✍️ 최종 답변 생성 중)
+  // 뒤에 흐르는 초를 실시간 표시해 "서버가 죽었는지 계속 작업 중인지" 즉시
+  // 구별할 수 있게 한다. finishStream()이 유일한 종료 진입점이므로 여기서 정리.
+  const _statusStartTs = Date.now();
+  let _statusTimer = null;
+  let _statusBaseText = '';
+
+  function _statusElapsed() {
+    return Math.max(0, Math.floor((Date.now() - _statusStartTs) / 1000));
+  }
+
+  function _renderStatusText() {
+    if (!agentStatusBubble) return;
+    agentStatusBubble.textContent = _statusBaseText
+      ? `${_statusBaseText} (${_statusElapsed()}초)`
+      : '';
+  }
+
+  _statusBaseText = '⏳ 에이전트 작업 시작 중...';
+  _renderStatusText();
+  // 1초 간격으로 말풍선의 경과 초를 갱신한다.
+  _statusTimer = setInterval(function () {
+    if (!agentStatusBubble || !agentStatusBubble.parentNode) return;
+    _renderStatusText();
+  }, 1000);
 
   function setStreamStatus(status, text) {
     setChatStatus(status, text);
     if (agentStatusBubble && agentStatusBubble.parentNode) {
       agentStatusBubble.className = `agent-status-bubble ${status}`;
-      agentStatusBubble.textContent = text || '';
+      _statusBaseText = text || '';
+      _renderStatusText();
       agentStatusBubble.style.display = text ? '' : 'none';
     }
   }
@@ -651,6 +685,35 @@ async function _executeAgentStream(displayText, uploaded) {
       const sum = _reasoningCard.querySelector('summary');
       if (sum) sum.textContent = finalLabel || ('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
     }
+  }
+
+  // ── Roo Code 스타일 작업 단위 분리 (대표님 요청 2026-08-24) ──
+  // 지금까지 스트리밍된 답변을 "완료된 블록"으로 확정하고 새 빈 버블을 만들어
+  // 다음 단위(추론/도구 이후 답변)를 받는다. 결과적으로 스트림이
+  // [💭 생각 카드][답변 블록 1][🔧 도구 카드][답변 블록 2] 처럼 작업 하나마다
+  // 끊어져 표시되고, 빈 블록(얇은 선 잔상)이 남지 않는다.
+  let _answerSegments = [];
+  function _freezeAnswerSegment() {
+    try {
+      if (!asstBubble || !asstBubble.parentNode) return;
+      const segText = (incomingText || '').trim();
+      if (!segText) return; // 빈 세그먼트는 확정하지 않는다 — 잔상 방지 핵심
+      const cur = asstBubble.querySelector('.cursor');
+      if (cur) cur.remove();
+      asstBubble.classList.add('answer-segment');
+      _answerSegments.push(asstBubble);
+      incomingText = ''; // 다음 단위부터 새로 누적 (중복 방지)
+      const nb = document.createElement('div');
+      nb.className = 'message-bubble assistant';
+      nb.innerHTML = '<span class="cursor">|</span>';
+      // 기존 버블 위치 "뒤"에 새 버블을 붙여 스트림 순서를 유지한다
+      box.insertBefore(nb, asstBubble.nextSibling);
+      // 살아있는 상태 표시 말풍선은 항상 현재(마지막) 활성 블록 바로 위에 위치
+      if (agentStatusBubble && agentStatusBubble.parentNode) {
+        box.insertBefore(agentStatusBubble, nb);
+      }
+      asstBubble = nb;
+    } catch (_) { }
   }
 
   function _updateToolGroupHeader() {
@@ -822,6 +885,8 @@ async function _executeAgentStream(displayText, uploaded) {
     _approvalPending = false;
     clearTimeout(_idleTimer);
     clearTimeout(_startWatchdog);
+    // 상태 말풍선의 경과 초 카운터 정지 (대표님 요청 2026-08-24)
+    try { if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; } } catch (_) { }
     // "생각 중" 카드의 경과 초 카운터가 돌고 있으면 정지
     try { _stopReasoningTimer(); } catch (_) { }
     console.log('[SSE-DIAG] 🏁 finishStream called, reason=', reason);
@@ -856,6 +921,10 @@ async function _executeAgentStream(displayText, uploaded) {
     try {
       if (_terminalOutputCard && _terminalOutputCard.parentNode) _terminalOutputCard.remove();
     } catch (_) { }
+    // 확정 답변 세그먼트 추적 해제. 요소 자체는 DOM에 유지한다 — done 경로는
+    // renderMessages가 전체 재렌더링으로 정리하고, cancel 등 비-done 경로에서는
+    // 지금까지 받은 부분 답변이 화면에 남아 "중지해도 내용이 보존된다"는 안전감을 준다.
+    try { _answerSegments = []; } catch (_) { }
     try {
       if (asstBubble) {
         const _cur = asstBubble.querySelector('.cursor');
@@ -978,6 +1047,8 @@ async function _executeAgentStream(displayText, uploaded) {
         setStreamStatus('thinking', '💭 생각 중...');
         _reasoningText += data.text || '';
         if (!_reasoningCard) {
+          // 새 추론 단위가 시작되면 진행 중이던 답변을 별도 블록으로 확정 (Roo 스타일 분리)
+          _freezeAnswerSegment();
           _reasoningStartTs = Date.now();
           _reasoningCard = document.createElement('details');
           _reasoningCard.className = 'tool-card reasoning-card';
@@ -1270,6 +1341,8 @@ async function _executeAgentStream(displayText, uploaded) {
       // ── 도구 그룹 카드: 반복 호출을 하나의 접이식 카드로 묶음 ──
       // 그룹 카드가 없으면 새로 생성 (reasoning 카드와 같이 box에 독립 삽입)
       if (!_toolGroupCard) {
+        // 새 도구 그룹이 시작되면 진행 중이던 답변을 별도 블록으로 확정 (Roo 스타일 분리)
+        _freezeAnswerSegment();
         _toolGroupCard = document.createElement('details');
         _toolGroupCard.className = 'tool-group-card';
         _toolGroupCard.innerHTML = `

@@ -116,6 +116,13 @@ function toggleBrowserView() {
     if (toggleBtn) toggleBtn.classList.remove('active');
     // Restore monaco (default editor view)
     if (monacoContainer) monacoContainer.style.display = 'flex';
+    // 브라우저 뷰를 열 때 남긴 인라인 display:none 잔재를 반드시 회수한다.
+    // 인라인 스타일은 #htmlPreviewContainer.active 같은 CSS 규칙보다 우선하므로,
+    // 이걸 지우지 않으면 이후 미리보기 버튼을 눌러도 화면이 안 뜬다.
+    // 표시 여부는 각자의 원래 메커니즘(CSS 규칙 또는 togglePreview)에 맡긴다.
+    if (htmlPreview) htmlPreview.style.display = '';
+    if (imgPreview) imgPreview.style.display = '';
+    if (mdPreview) mdPreview.style.display = '';
     if (welcomeCanvas) {
       // Show welcome only if no file is open
       var activeFile = document.getElementById('activeFilePath');

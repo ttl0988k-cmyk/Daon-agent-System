@@ -82,13 +82,21 @@ BENCHMARK_CAPABILITY_MAP = {
 }
 
 # Selector strength keyword -> primary capability axis. Strengths without a
-# mapping (creative/fast/design) keep the legacy binary behaviour.
+# mapping (fast) keep the legacy binary behaviour.
+# creative/design -> coding: 디자이너 노드도 프론트엔드 '코드'를 생산하며,
+# ROLE_CAPABILITY_MAP["designer"]="coding" 과 정렬시켜야 DAON 필드 증거
+# (designer 역할의 실행 결과)가 creative 조회에 반영된다. 이 매핑이 없으면
+# Intel 블렌딩이 아예 작동하지 않아 이름 매칭 점수로 만능화된다 — "더 나은
+# 모델이 있는데도 하위 모델이 코딩/디자인을 맡는" 문제(2026-08-24 대표님
+# 지적)의 원인 중 하나였다.
 STRENGTH_CAPABILITY_MAP = {
     "code": "coding",
     "reasoning": "reasoning",
     "debug": "debugging",
     "qa": "debugging",
     "review": "debugging",
+    "creative": "coding",
+    "design": "coding",
 }
 
 # Harness role -> capability axis (for DAON field aggregation).

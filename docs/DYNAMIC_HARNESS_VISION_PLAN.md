@@ -322,3 +322,17 @@ MCP는 `api/api/streaming.py:1212` 부근에서 **런타임에 일괄 주입**�
 - `_probe/probe_gap_d.py` 확장 — ALL GAP-D PROBES PASSED
   (중계 레지스트리 시맨틱 / 해피패스에서 자식 로그가 `서브팀·` 접두어로 부모 콜백에
    전달되는지 / orchestrator·도구·상태 API·프론트 소스 배선 확인)
+
+## 11. 모델 선별 시스템 전면 개편 완료 기록 (2026-08-24)
+
+대표님 4대 지시(① 난이도/특성 기반 동적 모델 구성 ② 등록 모델 전체 후보군 포함
+③ 가중치에서 비용 제외 ④ 문제점 수정)에 따라 모델 선별 엔진을 개편했다.
+
+- **8차원 → 7차원**: 비용 차원 완전 제거 (`_score_model`에서 cost 블록·`max_budget` 삭제)
+- **난이도 프리셋**: `_WEIGHT_PRESETS` heavy/standard/light 도입 + `infer_difficulty()` 자동 추론
+- **선호 모델 보너스 축소**: +0.15 → +0.05 (타이브레이커로 격하)
+- **CEO 프롬프트 탈벤더화**: deepseek/minimax 직명 비용 규칙 삭제 → TASK FIT 강제 규칙 신설
+- **Intel 매핑 보강**: creative/design → coding 매핑 추가로 디자이너 노드도 Bayesian 블렌딩 적용
+- **후보군 커버리지 재확인**: `custom_providers.json` 단일 소스 — 등록 모델 전부 후보
+
+상세 내역·문제 원인 5건·남은 과제: [MODEL_SELECTION_OVERHAUL_2026-08-24.md](MODEL_SELECTION_OVERHAUL_2026-08-24.md)

@@ -46,6 +46,28 @@ function initMonaco() {
  * AI가 파일을 쓰는 도중(tool.started 시점)에는 디스크에 아직 파일이 없으므로
  * 이 헬퍼로 즉시 에디터에 반영한다.
  */
+// ── 에이전트 작업 결과 자동 미리보기 ──────────────────────────
+// 에이전트가 HTML 파일을 쓰면 탭만 열고 끝내지 않고, 미리보기까지
+// 자동으로 켜서 대표님이 브라우저를 따로 열 필요 없게 한다.
+function _autoPreviewIfHtml(path) {
+  try {
+    var name = String(path).split('/').pop().split('\\').pop();
+    var ext = name.split('.').pop().toLowerCase();
+    if (ext !== 'html' && ext !== 'htm') return;
+    // 활성 탭이 방금 연/갱신된 그 파일일 때만 자동 미리보기
+    var tab = getActiveTab();
+    if (!tab || tab.path !== path) return;
+    if (!$('previewHtmlBtn') || $('previewHtmlBtn').style.display === 'none') return;
+    var alreadyOn = $('htmlPreviewContainer').classList.contains('active');
+    if (alreadyOn) {
+      refreshHtmlPreviewFrame(tab);   // 이미 켜져 있으면 내용만 갱신
+    } else {
+      togglePreview();                // 꺼져 있으면 켠다
+    }
+  } catch (e) { /* 자동 미리보기 실패는 조용히 무시 */ }
+}
+// ───────────────────────────────────────────────────────────
+
 function createTabWithContent(path, content) {
   const existingIdx = State.openTabs.findIndex(t => t.path === path);
   if (existingIdx !== -1) {
@@ -56,6 +78,7 @@ function createTabWithContent(path, content) {
       tab.model.setValue(content);
     }
     switchTab(existingIdx);
+    _autoPreviewIfHtml(path);  // 에이전트가 HTML을 다시 썼으면 미리보기 갱신
     return;
   }
 
@@ -85,6 +108,7 @@ function createTabWithContent(path, content) {
 
   State.openTabs.push(newTab);
   switchTab(State.openTabs.length - 1);
+  _autoPreviewIfHtml(path);  // 에이전트가 새 HTML 파일을 썼으면 즉시 미리보기
 }
 
 async function openFileInTab(path) {
@@ -134,6 +158,7 @@ async function openFileInTab(path) {
 
     State.openTabs.push(newTab);
     switchTab(State.openTabs.length - 1);
+    _autoPreviewIfHtml(path);  // 에이전트가 쓴 HTML 파일을 열 때도 즉시 미리보기
   } catch (e) {
     showToast("파일 로드 실패: " + e.message);
   }
@@ -333,6 +358,9 @@ async function deleteCurrentFile() {
 }
 function _closeAllPreviews() {
   $('htmlPreviewContainer').classList.remove('active');
+  // 브라우저 뷰가 남긴 인라인 display:none 잔재를 제거해야
+  // #htmlPreviewContainer.active CSS 규칙이 다시 적용된다.
+  $('htmlPreviewContainer').style.display = '';
   $('imgPreviewContainer').style.display = 'none';
   $('mdPreviewContainer').style.display = 'none';
   $('monacoContainer').classList.remove('preview-active');
@@ -359,6 +387,9 @@ function togglePreview() {
   } else {
     // Turn on preview based on file type
     if (ext === 'html') {
+      // 브라우저 뷰 등이 남긴 인라인 display:none이 있으면 CSS .active 규칙을
+      // 덮어버리므로, 미리보기를 켜기 전 반드시 인라인 스타일을 회수한다.
+      $('htmlPreviewContainer').style.display = '';
       $('htmlPreviewContainer').classList.add('active');
       monaco.classList.add('preview-active');
       btn.classList.add('active');
@@ -386,6 +417,84 @@ function toggleHtmlPreview() {
   togglePreview();
 }
 
+// ── 미리보기 로컬 에셋 재작성 ──────────────────────────────
+// srcdoc iframe은 <base href>로 서버 오리진을 기준으로 삼으므로,
+// 사용자 폴더의 HTML이 쓰는 상대경로 에셋(assets/xxx.jpg 등)은 전부 404가 된다.
+// 상대 참조를 /api/file/raw 절대 엔드포인트로 재작성해 미리보기에서도
+// 이미지/CSS 배경이 정상 표시되게 한다.
+function _previewRawUrl(localPath) {
+  return '/api/file/raw?session_id=' + encodeURIComponent(State.activeSessionId || '') +
+    '&path=' + encodeURIComponent(localPath);
+}
+
+function _previewIsExternalUrl(u) {
+  return /^(https?:|data:|blob:|mailto:|tel:|javascript:|#|\/\/)/i.test(String(u).trim());
+}
+
+function _previewResolveLocal(baseDir, rel) {
+  var clean = String(rel).split('#')[0].split('?')[0];
+  if (!clean) return null;
+  // 이미 절대 로컬 경로인 경우
+  if (/^[a-zA-Z]:[\\/]/.test(clean)) return clean.replace(/\\/g, '/');
+  // file:/// URL → 로컬 경로 변환
+  if (clean.toLowerCase().indexOf('file:///') === 0) {
+    try { return decodeURIComponent(clean.slice(8)); } catch (e) { return clean.slice(8); }
+  }
+  // 상대경로 → baseDir 기준 절대경로
+  var parts = baseDir.split('/');
+  var segs = clean.split(/[\\/]/);
+  for (var i = 0; i < segs.length; i++) {
+    var s = segs[i];
+    if (s === '' || s === '.') continue;
+    if (s === '..') { parts.pop(); continue; }
+    parts.push(s);
+  }
+  return parts.join('/');
+}
+
+function _rewritePreviewAssets(fragment, baseDir) {
+  // src / href / poster 속성
+  var out = fragment.replace(/\s(src|href|poster)\s*=\s*(["'])(.*?)\2/gi,
+    function (m, attr, quote, u) {
+      if (!u || _previewIsExternalUrl(u)) return m;
+      var abs = _previewResolveLocal(baseDir, u);
+      return abs ? (' ' + attr + '=' + quote + _previewRawUrl(abs) + quote) : m;
+    });
+  // srcset (다중 후보 지원)
+  out = out.replace(/\ssrcset\s*=\s*(["'])(.*?)\1/gi, function (m, quote, val) {
+    var rewritten = val.split(',').map(function (cand) {
+      var sp = cand.trim().split(/\s+/);
+      if (!sp[0] || _previewIsExternalUrl(sp[0])) return cand;
+      var abs = _previewResolveLocal(baseDir, sp[0]);
+      return abs ? (_previewRawUrl(abs) + (sp.length > 1 ? ' ' + sp.slice(1).join(' ') : '')) : cand;
+    }).join(', ');
+    return ' srcset=' + quote + rewritten + quote;
+  });
+  // CSS url(...) — 인라인 style 및 <style> 블록 모두 대상
+  out = out.replace(/url\(\s*(["']?)([^'")]+)\1\s*\)/gi, function (m, quote, u) {
+    if (!u || _previewIsExternalUrl(u)) return m;
+    var abs = _previewResolveLocal(baseDir, u);
+    return abs ? ('url(' + quote + _previewRawUrl(abs) + quote + ')') : m;
+  });
+  return out;
+}
+
+function _rewriteLocalAssetUrls(html, filePath) {
+  try {
+    var norm = String(filePath).replace(/\\/g, '/');
+    var baseDir = norm.slice(0, norm.lastIndexOf('/'));
+    if (!baseDir) return html;
+    // <script> 블록은 건드리지 않고 나머지 마크업만 재작성
+    return html.split(/(<script\b[\s\S]*?<\/script>)/gi).map(function (part) {
+      if (/^<script\b/i.test(part)) return part;
+      return _rewritePreviewAssets(part, baseDir);
+    }).join('');
+  } catch (e) {
+    return html; // 재작성 실패 시 원본 유지 (기존 동작)
+  }
+}
+// ───────────────────────────────────────────────────────────
+
 function refreshHtmlPreviewFrame(tab) {
   if (!tab) return;
   const frame = $('htmlPreview');
@@ -399,7 +508,7 @@ function refreshHtmlPreviewFrame(tab) {
     // /static/... 같은 절대 경로 외부 리소스가 해석되지 않음.
     // 서버 오리진을 base로 설정하여 index.html 등 외부 리소스 의존 파일도
     // 내장 미리보기에서 정상 렌더링됨.
-    var html = tab.content;
+    var html = _rewriteLocalAssetUrls(tab.content, tab.path || '');
     var baseTag = '<base href="' + window.location.origin + '/">';
     if (/<head[^>]*>/i.test(html)) {
       html = html.replace(/<head([^>]*)>/i, '<head$1>' + baseTag);

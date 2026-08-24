@@ -41,6 +41,47 @@ _BROWSER_WORKER_STOP = object()  # sentinel to stop the worker thread
 # Cached state accessible from any thread (read-only after worker sets them)
 _last_url = ""
 _browser_active = False
+
+# ── 참조번호(ref) 안정화 ──
+# 스냅샷 시점의 대화형 요소 목록을 서버에 보관한다. click/type/fill은 이 목록에서
+# 해당 ref의 식별자(id/name/텍스트/href)를 찾아 "셀렉터 우선"으로 원소를 찾고,
+# 못 찾을 때만 기존 위치 기반 재계산으로 폴백한다. DOM이 살짝 변해도 ref가
+# 다른 원소를 가리키는 사고를 막는다.
+_ref_store_lock = threading.Lock()
+_ref_store: dict = {}          # ref('e0') → {tag,text,href,type,placeholder,id,name}
+_REF_STORE_MAX = 400
+
+
+def _store_refs(elements) -> None:
+    """스냅샷/recommend 결과의 elements를 ref 저장소에 반영한다."""
+    if not isinstance(elements, list):
+        return
+    with _ref_store_lock:
+        _ref_store.clear()
+        for el in elements:
+            try:
+                ref = str(el.get("ref", ""))
+                if not ref:
+                    continue
+                _ref_store[ref] = {
+                    "tag": el.get("tag") or "",
+                    "text": (el.get("text") or "")[:120],
+                    "href": el.get("href"),
+                    "type": el.get("type"),
+                    "placeholder": el.get("placeholder"),
+                    "id": el.get("id"),
+                    "name": el.get("name"),
+                }
+            except Exception:
+                continue
+        # 상한 방어(비대한 페이지): 오래된 항목부터 잘라낸다.
+        while len(_ref_store) > _REF_STORE_MAX:
+            _ref_store.pop(next(iter(_ref_store)))
+
+
+def _get_stored_ref(ref: str):
+    with _ref_store_lock:
+        return dict(_ref_store.get(ref) or {})
 # AI requested navigate — frontend polls /api/browser/status and auto-opens the browser view.
 # TTL 기반: 탭 유무와 무관하게 navigate/open 실행 시 항상 설정하고, _PENDING_TTL 초 후 자동 만료.
 # 첫-navigate 타임아웃 수정 후 백엔드는 블로킹 없이 즉시 pending 응답하므로, 프론트 5초 폴링이
@@ -465,6 +506,10 @@ def _browser_worker_loop():
                         for el in elements:
                             refs[el.get("ref", "")] = el
 
+                        # ref 저장소 갱신 — 이후 click/type/fill이 위치 재계산 대신
+                        # 스냅샷 시점 식별자로 원소를 찾는다.
+                        _store_refs(elements)
+
                         _browser_result_queue.put({
                             "_result_id": result_id,
                             "status": "ok",
@@ -493,22 +538,46 @@ def _browser_worker_loop():
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
-                    # Try to find and click the element by ref
+                    # 스냅샷 시점 식별자를 우선 사용하고, 실패 시 위치 재계산으로 폴백.
+                    stored = _get_stored_ref(ref)
+                    ident_js = _json.dumps(stored or {})
                     click_js = f"""
                     (() => {{
                         const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],details,summary';
-                        const els = document.querySelectorAll(interactive);
-                        const filtered = [];
-                        els.forEach((el, i) => {{
-                            const rect = el.getBoundingClientRect();
-                            if (rect.width === 0 && rect.height === 0) return;
-                            filtered.push({{el, ref: 'e' + filtered.length}});
-                        }});
-                        const target = filtered.find(f => f.ref === '{ref}');
+                        const stored = {ident_js};
+                        let target = null;
+
+                        // 1순위: 스냅샷 시점 식별자(id/name/href/텍스트)로 정확히 찾기
+                        if (stored && (stored.id || stored.name || stored.href || stored.text)) {{
+                            const els = Array.from(document.querySelectorAll(interactive));
+                            target = els.find(el => {{
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width === 0 && rect.height === 0) return false;
+                                if (stored.id && el.id === stored.id) return true;
+                                if (stored.name && el.getAttribute('name') === stored.name) return true;
+                                if (stored.href && el.href && el.href === stored.href) return true;
+                                if (stored.text && !stored.href &&
+                                    (el.getAttribute('aria-label') || el.textContent || '').trim().substring(0, 120) === stored.text) return true;
+                                return false;
+                            }}) || null;
+                        }}
+
+                        // 2순위(폴백): 기존 방식 — 실행 시점 위치 재계산
+                        if (!target) {{
+                            const els = document.querySelectorAll(interactive);
+                            const filtered = [];
+                            els.forEach((el) => {{
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width === 0 && rect.height === 0) return;
+                                filtered.push({{el, ref: 'e' + filtered.length}});
+                            }});
+                            target = (filtered.find(f => f.ref === '{ref}') || {{}}).el || null;
+                        }}
+
                         if (target) {{
-                            target.el.scrollIntoView({{block: 'center'}});
-                            target.el.click();
-                            return {{clicked: true, ref: '{ref}', tag: target.el.tagName.toLowerCase()}};
+                            target.scrollIntoView({{block: 'center'}});
+                            target.click();
+                            return {{clicked: true, ref: '{ref}', tag: target.tagName.toLowerCase(), by: 'stored-or-positional'}};
                         }}
                         return {{clicked: false, ref: '{ref}', error: 'Element not found'}};
                     }})()
@@ -530,24 +599,45 @@ def _browser_worker_loop():
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
+                    # 스냅샷 시점 식별자 우선 → 위치 재계산 폴백 → 포커스 폴백
+                    stored = _get_stored_ref(ref)
+                    ident_js = _json.dumps(stored or {})
                     type_js = f"""
                     (() => {{
                         const interactive = 'input,textarea,[contenteditable="true"],[role="textbox"]';
-                        const els = document.querySelectorAll(interactive);
-                        const filtered = [];
-                        els.forEach((el, i) => {{
-                            const rect = el.getBoundingClientRect();
-                            if (rect.width === 0 && rect.height === 0) return;
-                            filtered.push({{el, ref: 'e' + filtered.length}});
-                        }});
-                        const target = filtered.find(f => f.ref === '{ref}');
+                        let target = null;
+                        const stored = {ident_js};
+
+                        if (stored && (stored.id || stored.name || stored.placeholder)) {{
+                            const els = Array.from(document.querySelectorAll(interactive));
+                            target = els.find(el => {{
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width === 0 && rect.height === 0) return false;
+                                if (stored.id && el.id === stored.id) return true;
+                                if (stored.name && el.getAttribute('name') === stored.name) return true;
+                                if (stored.placeholder && el.placeholder === stored.placeholder) return true;
+                                return false;
+                            }}) || null;
+                        }}
+
+                        if (!target) {{
+                            const els = document.querySelectorAll(interactive);
+                            const filtered = [];
+                            els.forEach((el) => {{
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width === 0 && rect.height === 0) return;
+                                filtered.push({{el, ref: 'e' + filtered.length}});
+                            }});
+                            target = (filtered.find(f => f.ref === '{ref}') || {{}}).el || null;
+                        }}
+
                         if (target) {{
-                            target.el.scrollIntoView({{block: 'center'}});
-                            target.el.focus();
-                            target.el.value = {_json.dumps(text)};
-                            target.el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                            target.el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            return {{typed: true, ref: '{ref}'}};
+                            target.scrollIntoView({{block: 'center'}});
+                            target.focus();
+                            target.value = {_json.dumps(text)};
+                            target.dispatchEvent(new Event('input', {{bubbles: true}}));
+                            target.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            return {{typed: true, ref: '{ref}', by: 'stored-or-positional'}};
                         }}
                         // Fallback: type into focused element
                         const active = document.activeElement;
@@ -664,6 +754,9 @@ def _browser_worker_loop():
                     })()
                     """
                     data = page.evaluate(rec_js)
+                    # recommend 결과의 refs도 저장소에 반영 — 이후 click/type/fill이
+                    # 식별자 매칭으로 정확한 요소를 찾도록 한다.
+                    _store_refs(data.get("elements", []))
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
@@ -723,24 +816,43 @@ def _browser_worker_loop():
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
+                    # 스냅샷 시점에 저장한 ref 정보(id/name/placeholder)로 먼저 식별자
+                    # 매칭을 시도하고, 실패 시에만 위치 기반 재구성으로 폴백한다.
+                    # (스냅샷 이후 DOM이 살짝 변해도 올바른 요소를 찾도록)
+                    stored = _get_stored_ref(ref)
+                    ident_js = _json.dumps(stored or {})
                     fill_js = f"""
                     (() => {{
                         const interactive = 'input,textarea,[contenteditable="true"],[role="textbox"]';
                         const els = document.querySelectorAll(interactive);
-                        const filtered = [];
-                        els.forEach((el, i) => {{
+                        const visible = [];
+                        els.forEach((el) => {{
                             const rect = el.getBoundingClientRect();
                             if (rect.width === 0 && rect.height === 0) return;
-                            filtered.push({{el, ref: 'e' + filtered.length}});
+                            visible.push(el);
                         }});
-                        const target = filtered.find(f => f.ref === '{ref}');
+                        const ident = {ident_js};
+                        let target = null;
+                        if (ident && (ident.id || ident.name || ident.placeholder)) {{
+                            target = visible.find((el) => {{
+                                if (ident.id && el.id === ident.id) return true;
+                                if (ident.name && el.getAttribute('name') === ident.name) return true;
+                                if (ident.placeholder && el.placeholder === ident.placeholder) return true;
+                                return false;
+                            }});
+                        }}
+                        if (!target) {{
+                            const filtered = visible.map((el, i) => ({{el, ref: 'e' + i}}));
+                            const posTarget = filtered.find(f => f.ref === '{ref}');
+                            if (posTarget) target = posTarget.el;
+                        }}
                         if (target) {{
-                            target.el.scrollIntoView({{block: 'center'}});
-                            target.el.focus();
-                            target.el.value = {_json.dumps(text)};
-                            target.el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                            target.el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            return {{filled: true, ref: '{ref}'}};
+                            target.scrollIntoView({{block: 'center'}});
+                            target.focus();
+                            target.value = {_json.dumps(text)};
+                            target.dispatchEvent(new Event('input', {{bubbles: true}}));
+                            target.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            return {{filled: true, ref: '{ref}', tag: target.tagName.toLowerCase(), by: 'stored-or-positional'}};
                         }}
                         const active = document.activeElement;
                         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {{
