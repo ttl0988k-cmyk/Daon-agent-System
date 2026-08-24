@@ -1353,6 +1353,15 @@ from api.routes.sync_routes import (
 
 
 
+from api.routes.system_routes import (
+
+    handle_get_build_info,
+
+)
+
+
+
+
 
 from api.routes.skills_hub_routes import (
 
@@ -2818,6 +2827,15 @@ def handle_get(handler, parsed) -> bool:
 
     # ── Sync API (GET) ──
 
+
+
+
+
+    if parsed.path == '/api/system/build-info':
+
+
+
+        return handle_get_build_info(handler, parsed)
 
 
 
