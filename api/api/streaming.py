@@ -1505,6 +1505,66 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               print(f"[MediaTools] WARNING: tool injection failed: {_mg_inj_e}", flush=True)
           # ========================================================
 
+          # === [Self-Update] 에이전트 도구 주입: request_server_update ===
+          # Gap E-3 배선 완성: 서버는 스스로 재시작하지 않고(감시자/피감시자 분리),
+          # STATE_DIR/restart-request.json을 기록하면 Electron 감시자가
+          # kill → (재빌드·교체) → 재기동 → 헬스체크 → 실패 시 롤백을 수행한다.
+          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
+          try:
+              from api.dynamic.restart_request import request_restart as _rr_request, RestartRequestError as _RR_Error
+              from tools.registry import registry as _su_registry
+
+              _su_schema = {
+                  "type": "function",
+                  "function": {
+                      "name": "request_server_update",
+                      "description": "Request a server restart so backend changes take effect. The Electron supervisor kills the server, optionally rebuilds/replaces server.exe, respawns it, health-checks it, and rolls back on failure. Refused while dynamic harness jobs are still running.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {
+                              "reason": {"type": "string", "description": "Why the restart is needed (e.g. 'backend patch applied to config.py')"},
+                              "checkpoint_ref": {"type": "string", "description": "Git ref (commit hash) to roll back to if the restarted server fails its health check"},
+                              "rebuild": {"type": "boolean", "description": "True when backend Python source changed and server.exe must be rebuilt before respawn"},
+                          },
+                          "required": ["reason"]
+                      }
+                  }
+              }
+              agent.tools.append(_su_schema)
+              agent.valid_tool_names.add("request_server_update")
+
+              def _su_handler(args: dict, **kwargs) -> str:
+                  import json as _json
+                  reason = (args.get('reason') or '').strip()
+                  if not reason:
+                      return _json.dumps({"ok": False, "error": "reason is required"}, ensure_ascii=False)
+                  try:
+                      payload = _rr_request(
+                          reason,
+                          checkpoint_ref=args.get('checkpoint_ref'),
+                          rebuild=bool(args.get('rebuild')),
+                      )
+                      return _json.dumps({"ok": True, **payload,
+                                          "message": "Restart request recorded. The supervisor will restart the server within ~5s."}, ensure_ascii=False)
+                  except _RR_Error as _e:
+                      return _json.dumps({"ok": False, "error": str(_e)}, ensure_ascii=False)
+
+              _su_registry.register(
+                  name="request_server_update",
+                  toolset="self-update",
+                  schema={"name": "request_server_update", "description": "Request supervised server restart (optionally rebuild) to apply backend changes",
+                          "parameters": _su_schema["function"]["parameters"]},
+                  handler=_su_handler,
+                  check_fn=lambda: True,
+                  is_async=False,
+                  description="Record a self-update restart request for the Electron supervisor",
+              )
+              _su_registry.register_toolset_alias("update", "self-update")
+              print("[SelfUpdate] ✅ Injected request_server_update tool into agent.", flush=True)
+          except Exception as _su_inj_e:
+              print(f"[SelfUpdate] WARNING: tool injection failed: {_su_inj_e}", flush=True)
+          # ========================================================
+
           # Prepend workspace context so the agent always knows which directory
           # to use for file operations, regardless of session age or AGENTS.md defaults.
           import platform as _platform

@@ -1,6 +1,7 @@
 console.log("[BUILD ID]: main-v5-2026-08-03-22:50");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
 console.log("[BUILD ID]: restore-aug3-browser-2026-08-14-23:35");
+console.log("[BUILD ID]: self-update-canary-v1-2026-08-24");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -13,6 +14,7 @@ const os = require('os');
 // 서버는 재시작 요청 파일만 기록하고(restart_request.py), 실제 kill/재시작/
 // 헬스체크/롤백은 감시자인 일렉트론 메인 측 오케스트레이터가 수행한다.
 const { createRestartOrchestrator } = require('./restart_orchestrator');
+const { createSelfUpdate } = require('./self_update');
 
 // ── Electron main 로그 파일화 (서버 사망 원인 추적용) ──
 // 기존엔 main process의 console.log/console.error가 어떤 파일에도 저장되지 않아,
@@ -404,6 +406,38 @@ function findServerExe() {
 
   return null;
 }
+
+// ── Self-Update (Gap E-3 확장): server.exe 재빌드 + 카나리 검증 + 교체 ──
+// 실제 파이프라인은 electron/self_update.js (주입형 deps 팩토리)가 담당하고
+// 여기서는 프로덕션 구현체만 주입해 위임한다:
+//   백업(server.exe.bak) → PyInstaller 재빌드 → 카나리(③b: 임시 포트 선구동 +
+//   ③: 심층 헬스체크 연속 2회 성공·페이로드 검증) → 스왑.
+// 어느 단계든 실패하면 old exe를 유지한 채 {swapped:false} 반환 — 재시작은 계속.
+function resolveBuildRoot() {
+  const candidates = [
+    process.env.DAON_BUILD_ROOT,
+    path.join(__dirname, '..'),
+    'C:\\daon\\Daon agent System',
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, 'daon-server.spec'))) return c;
+    } catch (_) { /* keep scanning */ }
+  }
+  return null;
+}
+
+const selfUpdate = createSelfUpdate({
+  log: mlog,
+  errLog: merr,
+  findTargetExe: findServerExe,
+  resolveBuildRoot,
+  probeHealth: (port) => probeServerHealth(port, 1500),
+  findFreePort,
+});
+
+const rebuildAndSwapServerExe = selfUpdate.rebuildAndSwap;
+const restoreBackupServerExe = selfUpdate.restoreBackup;
 
 // ── Process Spawning & Auto-Restart Safety Net ──
 
@@ -806,6 +840,8 @@ app.whenReady().then(async () => {
         const h = await probeServerHealthStable(serverPort);
         return !!(h && h.healthy);
       },
+      rebuildAndSwap: rebuildAndSwapServerExe,
+      restoreBackup: restoreBackupServerExe,
       gitRollback: async (ref) => {
         try {
           execSync(`git reset --hard ${ref}`, { cwd: repoRoot, windowsHide: true, timeout: 30000 });

@@ -57,12 +57,14 @@ def count_active_jobs(jobs=None):
     return len(active)
 
 
-def request_restart(reason, checkpoint_ref=None, state_dir=None, jobs=None):
+def request_restart(reason, checkpoint_ref=None, rebuild=False, state_dir=None, jobs=None):
     """Record a restart request. Returns the payload dict.
 
     reason: human-readable summary of why the restart is needed (required).
     checkpoint_ref: git ref the supervisor can roll back to if the restarted
                     server fails its health check (optional).
+    rebuild: True when backend Python source changed and the supervisor must
+             rebuild + swap server.exe while it is down (optional, default False).
     Raises RestartRequestError when active jobs exist or reason is empty.
     """
     reason = str(reason or "").strip()
@@ -78,6 +80,7 @@ def request_restart(reason, checkpoint_ref=None, state_dir=None, jobs=None):
         "version": REQUEST_VERSION,
         "reason": reason,
         "checkpoint_ref": checkpoint_ref,
+        "rebuild": bool(rebuild),
         "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "server_pid": os.getpid(),
     }
