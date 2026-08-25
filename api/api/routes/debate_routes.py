@@ -104,13 +104,19 @@ def _execute_debate_llm(model_id, system_prompt, user_prompt, stream_fn=None, ti
         msg = f"⚠️ [{model_label}] 응답 시간 초과 ({timeout_sec}초 제한 도달 — 건너뜀)"
         if stream_fn:
             stream_fn(msg)
-        return msg
+        return "__DEBATE_FAILED__::timeout::" + msg
     except Exception as e:
         _logger.error("Debate LLM call for %s failed: %s", model_id, e, exc_info=True)
-        msg = f"⚠️ [{model_label}] 응답 생성 실패: {str(e)}"
+        err_text = str(e)
+        reason = "unknown"
+        for code in ("401", "403", "404", "429", "500", "502", "503"):
+            if code in err_text:
+                reason = code
+                break
+        msg = f"⚠️ [{model_label}] 응답 생성 실패 ({reason}): {err_text[:200]}"
         if stream_fn:
             stream_fn(msg)
-        return msg
+        return f"__DEBATE_FAILED__::{reason}::{msg}"
     finally:
         executor.shutdown(wait=False)
 
@@ -204,12 +210,19 @@ def _run_debate_round_thread(session_id):
                     put('debate_message_done', {'sender': sender_tag, 'model_id': m_id})
                     return m_id, res
 
+                failed_models = []
                 with concurrent.futures.ThreadPoolExecutor(max_workers=len(models)) as pool:
                     futures = [pool.submit(_worker_round1, m) for m in models]
                     for fut in concurrent.futures.as_completed(futures):
                         try:
                             m_id, content = fut.result()
-                            state["round1_responses"][m_id] = content
+                            if isinstance(content, str) and content.startswith("__DEBATE_FAILED__"):
+                                parts = content.split("::", 2)
+                                reason = parts[1] if len(parts) > 1 else "unknown"
+                                failed_models.append((m_id, reason))
+                                state["round1_responses"][m_id] = (content, reason)
+                            else:
+                                state["round1_responses"][m_id] = (content, None)
                             m_lbl = _get_model_label(m_id)
                             msg = {
                                 'role': 'assistant',
@@ -222,10 +235,28 @@ def _run_debate_round_thread(session_id):
                             s.save()
                         except Exception as worker_e:
                             _logger.error("Round 1 worker exception: %s", worker_e)
+                            failed_models.append((m_id, "exception"))
+
+                put('debate_health', {'models': [
+                    {'model_id': m_id, 'label': _get_model_label(m_id),
+                     'status': 'failed' if any(f[0] == m_id for f in failed_models) else 'ok',
+                     'reason': next((r for (mid, r) in failed_models if mid == m_id), None)}
+                    for m_id in models
+                ]})
+                for (m_id, reason) in failed_models:
+                    put('debate_partial_failed', {
+                        'model_id': m_id,
+                        'sender': f"🤖 {_get_model_label(m_id)} (주장)",
+                        'reason': reason,
+                        'round': 1,
+                    })
 
                 if not is_cancelled():
-                    state["current_round"] = 2
-                    put('debate_status', {'text': '1라운드 완료. 다음 라운드(반박) 진행 버튼을 눌러주세요.', 'waiting_next': True, 'round': 1})
+                    if failed_models and len(failed_models) == len(models):
+                        put('debate_status', {'text': f'❌ 모든 모델({len(failed_models)}개) 응답 실패. 키/설정 확인 후 다시 시작하세요.', 'round': 1, 'waiting_next': False})
+                    else:
+                        state["current_round"] = 2
+                        put('debate_status', {'text': f'1라운드 완료 ({len(failed_models)}개 실패). 다음 버튼을 눌러주세요.', 'waiting_next': True, 'round': 1})
                     put('done', {'session': s.compact() | {'messages': s.messages}})
 
             # --- Round 2: 상호 반박 수집 (병렬 Fan-Out) ---
@@ -261,12 +292,25 @@ def _run_debate_round_thread(session_id):
                     put('debate_message_done', {'sender': sender_tag, 'model_id': m_id})
                     return m_id, res
 
+                failed_r2 = []
                 with concurrent.futures.ThreadPoolExecutor(max_workers=len(models)) as pool:
                     futures = [pool.submit(_worker_round2, m) for m in models]
                     for fut in concurrent.futures.as_completed(futures):
                         try:
                             m_id, content = fut.result()
-                            state["round2_responses"][m_id] = content
+                            if isinstance(content, str) and content.startswith("__DEBATE_FAILED__"):
+                                parts = content.split("::", 2)
+                                reason = parts[1] if len(parts) > 1 else "unknown"
+                                failed_r2.append((m_id, reason))
+                                state["round2_responses"][m_id] = (content, reason)
+                                put('debate_partial_failed', {
+                                    'model_id': m_id,
+                                    'sender': f"💬 {_get_model_label(m_id)} (반박)",
+                                    'reason': reason,
+                                    'round': 2,
+                                })
+                            else:
+                                state["round2_responses"][m_id] = (content, None)
                             m_lbl = _get_model_label(m_id)
                             msg = {
                                 'role': 'assistant',
@@ -279,10 +323,14 @@ def _run_debate_round_thread(session_id):
                             s.save()
                         except Exception as worker_e:
                             _logger.error("Round 2 worker exception: %s", worker_e)
+                            failed_r2.append((m_id, "exception"))
 
                 if not is_cancelled():
-                    state["current_round"] = 3
-                    put('debate_status', {'text': '2라운드 완료. 최종 판결 요청 버튼을 눌러주세요.', 'waiting_next': True, 'round': 2})
+                    if failed_r2 and len(failed_r2) == len(models):
+                        put('debate_status', {'text': f'❌ 모든 모델({len(failed_r2)}개) 응답 실패. 라운드 2 중단.', 'round': 2, 'waiting_next': False})
+                    else:
+                        state["current_round"] = 3
+                        put('debate_status', {'text': f'2라운드 완료 ({len(failed_r2)}개 실패). 최종 판결 버튼을 눌러주세요.', 'waiting_next': True, 'round': 2})
                     put('done', {'session': s.compact() | {'messages': s.messages}})
 
             # --- Round 3: 최종 판결문 및 계획안 생성 ---
@@ -294,10 +342,18 @@ def _run_debate_round_thread(session_id):
                 transcript = ""
                 for m_id in state["models"]:
                     m_lbl = _get_model_label(m_id)
-                    r1 = state["round1_responses"].get(m_id, "")
-                    r2 = state["round2_responses"].get(m_id, "")
-                    transcript += f"■ {m_lbl} (1라운드 주장):\n{r1}\n\n"
-                    transcript += f"■ {m_lbl} (2라운드 반박):\n{r2}\n\n"
+                    r1_entry = state["round1_responses"].get(m_id, ("", None))
+                    r2_entry = state["round2_responses"].get(m_id, ("", None))
+                    r1, r1_fail = (r1_entry if isinstance(r1_entry, tuple) else (r1_entry, None))
+                    r2, r2_fail = (r2_entry if isinstance(r2_entry, tuple) else (r2_entry, None))
+                    if r1_fail:
+                        transcript += f"■ {m_lbl} (1라운드 주장): [응답 실패 (HTTP {r1_fail}) — 이 모델의 주장은 사용 불가]\n\n"
+                    else:
+                        transcript += f"■ {m_lbl} (1라운드 주장):\n{r1}\n\n"
+                    if r2_fail:
+                        transcript += f"■ {m_lbl} (2라운드 반박): [응답 실패 (HTTP {r2_fail}) — 이 모델의 반박은 사용 불가]\n\n"
+                    else:
+                        transcript += f"■ {m_lbl} (2라운드 반박):\n{r2}\n\n"
 
                 content = _execute_debate_llm(
                     model_id=judge_model_id,
