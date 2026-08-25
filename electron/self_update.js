@@ -213,6 +213,16 @@ function createSelfUpdate(deps = {}) {
         const buildRoot = resolveBuildRoot();
         if (!buildRoot) return { swapped: false, reason: 'daon-server.spec not found — set DAON_BUILD_ROOT to enable packaged self-update' };
 
+        // [재발 방지 2026-08-25] _sync_build.py 부재 가드. spec의 datas는 dist_new/
+        // 미러를 번들한다. 미러 동기화 스크립트가 없는 트리에서 재빌드하면
+        // stale 미러(구버전 소스)가 exe로 굳어 "프론트엔드는 반영, 백엔드는 누락"
+        // 상태가 된다(실측 사고). 스크립트가 없으면 빌드를 거부한다.
+        const syncScript = path.join(buildRoot, '_sync_build.py');
+        if (!fs.existsSync(syncScript)) {
+            errLog('[SelfUpdate] rebuild refused — _sync_build.py missing in build root; dist_new mirror may be stale.');
+            return { swapped: false, reason: 'rebuild refused: _sync_build.py missing (stale mirror risk)' };
+        }
+
         // 0) [Self-Update 근본 수정 ④] 스왑 프리플라이트: 재빌드는 수 분 걸리므로
         // 목표 exe 가 지금 쓰기 불가(누군가 이미지 락 홀드 — 생존한 OLD/TTS 프로세스)
         // 상태라면 빌드 전에 즉시 실패 처리한다. 7분 재빌드 후 EBUSY 로 헛돈 실측 교훈.
