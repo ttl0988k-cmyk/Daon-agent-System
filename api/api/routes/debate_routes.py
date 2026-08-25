@@ -670,6 +670,7 @@ def handle_post_debate_start(handler, body) -> bool:
                 "current_round": 1,
                 "round1_responses": {},
                 "round2_responses": {},
+                "round2_failed": [],
                 "judge_response": "",
                 "history": [],
                 "cancelled": False,
