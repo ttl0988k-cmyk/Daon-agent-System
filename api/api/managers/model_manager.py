@@ -419,6 +419,22 @@ class ModelManager:
                 if mid == model_id:
                     return model_id, pname, cfg.get('base_url')
 
+        # 2.5) Case-insensitive fallback — 'minimax-m3' → 'MiniMax-M3' 등.
+        # 프론트/세션에 저장된 대소문자 변형 ID를 등록된 원본(canonical) ID로
+        # 정규화한다. 정확 일치가 없을 때만 도달하며, 매칭 시 등록된 원본 ID를
+        # 반환하므로 이후 API 호출도 canonical 이름으로 수행된다.
+        _target = model_id.casefold()
+        for p, models in provider_models.items():
+            for m in models:
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid and mid.casefold() == _target:
+                    return mid, p, self._get_base_url(p)
+        for pname, cfg in data.get('providers', {}).items():
+            for m in cfg.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid and mid.casefold() == _target:
+                    return mid, pname, cfg.get('base_url')
+
         # 3) Check if model_id has a provider/ prefix
         if '/' in model_id:
             provider, bare_model = model_id.split('/', 1)

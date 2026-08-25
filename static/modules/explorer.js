@@ -537,12 +537,13 @@ function renderTray() {
 }
 
 // 멀티모달(비전) 지원 모델 prefix 패턴
+// [2026-08-26] 'minimax-m3' 소문자 하드코딩 제거 — MiniMax-M3는 비전 모델이 아니며,
+// 이 배열은 toLowerCase() 비교용이라 대소문자 혼동의 발단이 되던 항목을 정리함.
 function _isVisionModel(modelId) {
   if (!modelId) return false;
   const visionPrefixes = [
     'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision',
     'claude-3', 'claude-3.5', 'claude-3.7',
-    'minimax-m3',
     'deepseek-janus-pro', 'deepseek-vl2',
   ];
   const lower = modelId.toLowerCase();

@@ -56,22 +56,44 @@ def _raw_call_llm(model_id, system_prompt, user_prompt) -> str:
     from agent.auxiliary_client import call_llm
 
     _model, _provider, _base_url = resolve_model_provider(model_id)
-    # [2026-08-26 토론 401 수정] 설정창 동적 프로바이더(custom_providers.json) 키 최우선.
-    # resolve_runtime_provider는 ~/.hermes 인증 체인만 보므로 구식 .env 키로 떨어져 401 유발.
+
+    # [2026-08-26 토론 401 수정 v2] minimax는 공식 OpenAI 호환 엔드포인트 강제.
+    if _provider == 'minimax':
+        _base_url = 'https://api.minimax.io/v1'
+
+    # [2026-08-26 토론 401 수정 v2] startswith("custom") 가드 제거.
+    # 대소문자 변형 model_id('minimax-m3')가 ('custom', None)으로 해석되면
+    # 구 가드가 동적 키 조회를 스킵해 구식 .env 키(또는 빈 키)로 호출되어
+    # 401 invalid api key(2049)가 발생했다. 이제 최종 호출 대상
+    # (base_url / provider 이름) 기준으로 키를 페어링한다.
+    def _norm_url(u):
+        return str(u or '').strip().rstrip('/').casefold()
+
     _dyn_key = ""
-    if _provider and not str(_provider).startswith("custom"):
-        try:
-            from api.managers.model_manager import model_manager as _mm
+    try:
+        from api.managers.model_manager import model_manager as _mm
+        # 1) base_url이 custom_providers.json 등록 엔트리와 일치하면
+        #    해당 프로바이더의 키를 사용 (설정창 동적 키 최우선 정책 유지)
+        if _base_url:
+            for _pname, _pcfg in (_mm.get_custom_providers().get('providers') or {}).items():
+                _reg = _norm_url(_pcfg.get('base_url'))
+                if _reg and _reg == _norm_url(_base_url):
+                    _dyn_key = _mm._get_api_key(_pname) or ""
+                    if not _provider or str(_provider).startswith('custom'):
+                        _provider = _pname
+                    break
+        # 2) 프로바이더 이름 직접 조회 (custom 가드 없음 — 미등록 이름은 빈 값)
+        if not _dyn_key and _provider:
             _dyn_key = _mm._get_api_key(_provider) or ""
-        except Exception as _key_err:
-            _logger.warning("Debate dynamic-provider key lookup failed for %s: %s", _provider, _key_err)
+    except Exception as _key_err:
+        _logger.warning("Debate dynamic-provider key lookup failed for %s: %s", _provider, _key_err)
     _rt = resolve_runtime_provider(requested=_provider)
     _api_key = _dyn_key or _rt.get("api_key")
     rt_provider = _rt.get("provider")
     rt_base_url = _rt.get("base_url")
     if not _provider or str(_provider).startswith('custom:'):
         _provider = rt_provider
-    if not _base_url or str(_provider).startswith('custom'):
+    if not _base_url:
         _base_url = rt_base_url
     messages = [
         {"role": "system", "content": system_prompt},
@@ -232,16 +254,18 @@ def _run_debate_round_thread(session_id):
                                 state["round1_responses"][m_id] = (content, reason)
                             else:
                                 state["round1_responses"][m_id] = (content, None)
-                            m_lbl = _get_model_label(m_id)
-                            msg = {
-                                'role': 'assistant',
-                                'content': content,
-                                'sender': f"🤖 {m_lbl} (주장)",
-                                'is_debate': True,
-                                'timestamp': int(time.time())
-                            }
-                            s.messages.append(msg)
-                            s.save()
+                            # [2026-08-26 R3] __DEBATE_FAILED__ 센티널은 세션 메시지로 저장하지 않는다.
+                            if not (isinstance(content, str) and content.startswith("__DEBATE_FAILED__")):
+                                m_lbl = _get_model_label(m_id)
+                                msg = {
+                                    'role': 'assistant',
+                                    'content': content,
+                                    'sender': f"🤖 {m_lbl} (주장)",
+                                    'is_debate': True,
+                                    'timestamp': int(time.time())
+                                }
+                                s.messages.append(msg)
+                                s.save()
                         except Exception as worker_e:
                             _logger.error("Round 1 worker exception: %s", worker_e)
                             failed_models.append((m_id, "exception"))
@@ -320,16 +344,18 @@ def _run_debate_round_thread(session_id):
                                 })
                             else:
                                 state["round2_responses"][m_id] = (content, None)
-                            m_lbl = _get_model_label(m_id)
-                            msg = {
-                                'role': 'assistant',
-                                'content': content,
-                                'sender': f"💬 {m_lbl} (반박)",
-                                'is_debate': True,
-                                'timestamp': int(time.time())
-                            }
-                            s.messages.append(msg)
-                            s.save()
+                            # [2026-08-26 R3] __DEBATE_FAILED__ 센티널은 세션 메시지로 저장하지 않는다.
+                            if not (isinstance(content, str) and content.startswith("__DEBATE_FAILED__")):
+                                m_lbl = _get_model_label(m_id)
+                                msg = {
+                                    'role': 'assistant',
+                                    'content': content,
+                                    'sender': f"💬 {m_lbl} (반박)",
+                                    'is_debate': True,
+                                    'timestamp': int(time.time())
+                                }
+                                s.messages.append(msg)
+                                s.save()
                         except Exception as worker_e:
                             _logger.error("Round 2 worker exception: %s", worker_e)
                             failed_r2.append((m_id, "exception"))
@@ -388,15 +414,17 @@ def _run_debate_round_thread(session_id):
                 )
 
                 state["judge_response"] = content
-                msg = {
-                    'role': 'assistant',
-                    'content': content,
-                    'sender': f"⚖️ 판사 ({judge_label})",
-                    'is_debate': True,
-                    'timestamp': int(time.time())
-                }
-                s.messages.append(msg)
-                s.save()
+                # [2026-08-26 R3] __DEBATE_FAILED__ 센티널은 세션 메시지로 저장하지 않는다.
+                if not (isinstance(content, str) and content.startswith("__DEBATE_FAILED__")):
+                    msg = {
+                        'role': 'assistant',
+                        'content': content,
+                        'sender': f"⚖️ 판사 ({judge_label})",
+                        'is_debate': True,
+                        'timestamp': int(time.time())
+                    }
+                    s.messages.append(msg)
+                    s.save()
 
                 put('debate_message_done', {'sender': f"⚖️ 판사 ({judge_label})", 'model_id': judge_model_id})
                 state["current_round"] = 4
@@ -529,23 +557,24 @@ def _run_debate_round_thread(session_id):
                         is_cancelled_fn=is_cancelled
                     )
 
-                    state["history"].append({
-                        'turn': current_turn,
-                        'speaker': speaker_label,
-                        'speaker_id': next_speaker,
-                        'question': question,
-                        'content': speaker_content
-                    })
-
-                    msg = {
-                        'role': 'assistant',
-                        'content': f"> **🎙️ 사회자 질문**: {question}\n\n{speaker_content}",
-                        'sender': sender_tag,
-                        'is_debate': True,
-                        'timestamp': int(time.time())
-                    }
-                    s.messages.append(msg)
-                    s.save()
+                    # [2026-08-26 R3] __DEBATE_FAILED__ 센티널은 회의록(history)/세션 메시지로 저장하지 않는다.
+                    if not (isinstance(speaker_content, str) and speaker_content.startswith("__DEBATE_FAILED__")):
+                        state["history"].append({
+                            'turn': current_turn,
+                            'speaker': speaker_label,
+                            'speaker_id': next_speaker,
+                            'question': question,
+                            'content': speaker_content
+                        })
+                        msg = {
+                            'role': 'assistant',
+                            'content': f"> **🎙️ 사회자 질문**: {question}\n\n{speaker_content}",
+                            'sender': sender_tag,
+                            'is_debate': True,
+                            'timestamp': int(time.time())
+                        }
+                        s.messages.append(msg)
+                        s.save()
 
                     put('debate_message_done', {'sender': sender_tag, 'model_id': next_speaker})
 
@@ -594,15 +623,17 @@ def _run_debate_round_thread(session_id):
                 )
 
                 state["judge_response"] = content
-                msg = {
-                    'role': 'assistant',
-                    'content': content,
-                    'sender': f"⚖️ 판사 ({judge_label})",
-                    'is_debate': True,
-                    'timestamp': int(time.time())
-                }
-                s.messages.append(msg)
-                s.save()
+                # [2026-08-26 R3] __DEBATE_FAILED__ 센티널은 세션 메시지로 저장하지 않는다.
+                if not (isinstance(content, str) and content.startswith("__DEBATE_FAILED__")):
+                    msg = {
+                        'role': 'assistant',
+                        'content': content,
+                        'sender': f"⚖️ 판사 ({judge_label})",
+                        'is_debate': True,
+                        'timestamp': int(time.time())
+                    }
+                    s.messages.append(msg)
+                    s.save()
 
                 put('debate_message_done', {'sender': f"⚖️ 판사 ({judge_label})", 'model_id': judge_model_id})
                 state["completed"] = True
