@@ -98,6 +98,7 @@ from agent.model_metadata import (
 from agent.context_compressor import ContextCompressor
 from agent.subdirectory_hints import SubdirectoryHintTracker
 from agent.prompt_caching import apply_anthropic_cache_control
+from agent.cache_capabilities import resolve_cache_strategy
 from agent.prompt_builder import build_skills_system_prompt, build_context_files_prompt, build_environment_hints, load_soul_md, TOOL_USE_ENFORCEMENT_GUIDANCE, TOOL_USE_ENFORCEMENT_MODELS, DEVELOPER_ROLE_MODELS, GOOGLE_MODEL_OPERATIONAL_GUIDANCE, OPENAI_MODEL_EXECUTION_GUIDANCE
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
 from agent.display import (
@@ -2451,23 +2452,19 @@ class AIAgent:
         eff_api_mode = api_mode if api_mode is not None else (self.api_mode or "")
         eff_model = (model if model is not None else self.model) or ""
 
-        base_lower = eff_base_url.lower()
-        is_claude = "claude" in eff_model.lower()
-        is_openrouter = "openrouter" in base_lower
-        is_anthropic_wire = eff_api_mode == "anthropic_messages"
-        is_native_anthropic = (
-            is_anthropic_wire
-            and (eff_provider == "anthropic" or "api.anthropic.com" in base_lower)
+        # Delegate to the central cache-capability table.  The explicit wire
+        # rules inside ``resolve_cache_strategy`` are an exact clone of the
+        # former inline if-chain, so results are identical for every input;
+        # implicit-cache providers (DeepSeek/Moonshot/MiniMax-direct/GLM/
+        # OpenAI/Gemini ...) resolve to ``strategy='implicit'`` which maps to
+        # ``should_cache=False`` -- no markers sent, usage observed instead.
+        result = resolve_cache_strategy(
+            provider=eff_provider,
+            base_url=eff_base_url,
+            api_mode=eff_api_mode,
+            model=eff_model,
         )
-
-        if is_native_anthropic:
-            return True, True
-        if is_openrouter and is_claude:
-            return True, False
-        if is_anthropic_wire and is_claude:
-            # Third-party Anthropic-compatible gateway.
-            return True, True
-        return False, False
+        return result.should_inject_markers, result.native_layout
 
     @staticmethod
     def _model_requires_responses_api(model: str) -> bool:
