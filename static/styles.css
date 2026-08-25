@@ -1315,6 +1315,24 @@
       color: var(--text);
     }
 
+    /* ⚖️ 토론 & 👥 회의 모드 전용 스타일 */
+    .moderator-pick-card {
+      align-self: stretch;
+      margin: 8px 0;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, rgba(233, 69, 96, 0.08), rgba(15, 52, 96, 0.15));
+      border: 1px solid rgba(233, 69, 96, 0.35);
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      animation: fadeInSlide 0.25s ease-out;
+    }
+
+    @keyframes fadeInSlide {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     /* 안전망: 자식이 전혀 없는 빈 버블은 렌더하지 않는다.
        (도구 전용 턴/잔여 live 버블이 얇은 빈 줄로 보이는 아티팩트 방지) */
     .message-bubble:empty {

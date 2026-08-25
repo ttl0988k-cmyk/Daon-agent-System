@@ -2498,9 +2498,49 @@ function setupEventListeners() {
   });
 }
 
-// ── ⚖️ 전문가 토론 모드 프론트엔드 연동 ──
+// ── ⚖️ 전문가 토론 및 다자간 회의 모드 프론트엔드 연동 ──
 
 let debateIsActive = false;
+let currentDebateType = 'debate'; // 'debate' | 'meeting'
+let currentDebatePlanText = '';
+
+function selectDebateType(type) {
+  currentDebateType = type;
+  const debateBtn = $('debateTypeDebateBtn');
+  const meetingBtn = $('debateTypeMeetingBtn');
+  const meetingRow = $('meetingOptionsRow');
+  const submitBtn = $('startDebateSubmitBtn');
+  const label = $('debateModelSelectLabel');
+  const topicLabel = $('debateTopicLabel');
+
+  if (type === 'meeting') {
+    if (debateBtn) {
+      debateBtn.className = 'cron-btn';
+      debateBtn.style.fontWeight = 'normal';
+    }
+    if (meetingBtn) {
+      meetingBtn.className = 'cron-btn run';
+      meetingBtn.style.fontWeight = '600';
+    }
+    if (meetingRow) meetingRow.style.display = 'flex';
+    if (submitBtn) submitBtn.textContent = '👥 회의 시작';
+    if (label) label.textContent = '👥 회의 참여 패널 모델 선택 (최소 2개 이상):';
+    if (topicLabel) topicLabel.textContent = '회의 아젠다/주제:';
+  } else {
+    if (debateBtn) {
+      debateBtn.className = 'cron-btn run';
+      debateBtn.style.fontWeight = '600';
+    }
+    if (meetingBtn) {
+      meetingBtn.className = 'cron-btn';
+      meetingBtn.style.fontWeight = 'normal';
+    }
+    if (meetingRow) meetingRow.style.display = 'none';
+    if (submitBtn) submitBtn.textContent = '⚖️ 토론 시작';
+    if (label) label.textContent = '⚖️ 토론 참여 모델 선택 (최소 2개 이상):';
+    if (topicLabel) topicLabel.textContent = '토론 주제:';
+  }
+}
 
 function toggleDebateModeUI(show) {
   const chatInput = $('chatInputArea');
@@ -2521,6 +2561,7 @@ function toggleDebateModeUI(show) {
       debateSetup.style.display = 'flex';
       debateControl.style.display = 'none';
       populateDebateModels();
+      selectDebateType(currentDebateType);
     }
   } else {
     chatInput.style.display = 'flex';
@@ -2544,8 +2585,10 @@ function toggleDebateModeUI(show) {
 
 function populateDebateModels() {
   const container = $('debateModelCheckboxes');
+  const modSelect = $('debateModeratorSelect');
   if (!container) return;
   container.innerHTML = '';
+  if (modSelect) modSelect.innerHTML = '';
 
   const flatModels = [];
   (State.models || []).forEach(g => {
@@ -2559,7 +2602,7 @@ function populateDebateModels() {
     return;
   }
 
-  flatModels.forEach(m => {
+  flatModels.forEach((m, idx) => {
     const label = document.createElement('label');
     label.style = "display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text); cursor:pointer; margin-right:8px; margin-bottom:4px; user-select:none;";
 
@@ -2569,23 +2612,52 @@ function populateDebateModels() {
     input.className = 'debate-model-checkbox';
     input.style = "cursor:pointer;";
 
-    // Auto-check common models for convenience
+    // Auto-check first few or common models for convenience
     const idLower = m.id.toLowerCase();
-    if (idLower.includes('deepseek-v3') || idLower.includes('claude-3.5-sonnet') || idLower.includes('gpt-4o-mini')) {
+    if (idLower.includes('deepseek-v3') || idLower.includes('claude-3.5-sonnet') || idLower.includes('gpt-4o-mini') || idx < 3) {
       input.checked = true;
     }
 
     label.appendChild(input);
-    label.appendChild(document.createTextNode(m.label));
+    label.appendChild(document.createTextNode(m.label || m.id));
     container.appendChild(label);
+
+    if (modSelect) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label || m.id;
+      if (idLower.includes('claude-3.5-sonnet') || idLower.includes('gpt-4o') || idx === 0) {
+        opt.selected = true;
+      }
+      modSelect.appendChild(opt);
+    }
   });
+}
+
+function sendDebatePlanToHarness(customPlan) {
+  const plan = customPlan || currentDebatePlanText;
+  if (!plan) {
+    showToast('추천 실행 계획안이 없습니다.');
+    return;
+  }
+
+  if (typeof switchMode === 'function') {
+    switchMode('harness');
+  }
+
+  const hInput = $('harnessInput');
+  if (hInput) {
+    hInput.value = plan;
+    hInput.focus();
+  }
+  showToast('⚡ 다이나믹 하네스에 실행 계획안이 설정되었습니다.');
 }
 
 async function startDebateWorkflow() {
   const topicInput = $('debateTopicInput');
   const topic = topicInput ? topicInput.value.trim() : '';
   if (!topic) {
-    showToast('토론 주제를 입력해 주세요.');
+    showToast(currentDebateType === 'meeting' ? '회의 아젠다를 입력해 주세요.' : '토론 주제를 입력해 주세요.');
     return;
   }
 
@@ -2601,20 +2673,25 @@ async function startDebateWorkflow() {
     return;
   }
 
+  const maxTurns = parseInt($('debateMaxTurnsSelect')?.value || '8', 10);
+  const moderatorModel = $('debateModeratorSelect')?.value;
+
   // UI state change to active
   debateIsActive = true;
+  currentDebatePlanText = '';
   $('debateSetupArea').style.display = 'none';
   $('debateControlArea').style.display = 'flex';
-  $('debateStatusText').textContent = '토론 준비 중...';
+  $('debateStatusText').textContent = currentDebateType === 'meeting' ? '👥 회의 준비 중...' : '⚖️ 토론 준비 중...';
   $('debateNextBtn').style.display = 'none';
 
-  // Target debateMessages instead of chatMessages and clear previous debate
+  // Clear debate messages and render initial banner
   const box = $('debateMessages');
   if (box) box.innerHTML = '';
 
   const userBubble = document.createElement('div');
   userBubble.className = 'message-bubble user';
-  userBubble.innerHTML = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">⚖️ 토론 시작</div><strong>주제:</strong> ${topic}`;
+  const badgeTitle = currentDebateType === 'meeting' ? '👥 다자간 회의 시작' : '⚖️ 전문가 토론 시작';
+  userBubble.innerHTML = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">${badgeTitle}</div><strong>주제:</strong> ${topic}`;
   box.appendChild(userBubble);
   scrollToChatBottom();
 
@@ -2624,118 +2701,174 @@ async function startDebateWorkflow() {
       body: {
         session_id: State.activeSessionId,
         topic: topic,
-        models: selectedModels
+        models: selectedModels,
+        mode: currentDebateType,
+        max_turns: maxTurns,
+        moderator_model: moderatorModel
       }
     });
 
     if (!res.ok) {
-      showToast('토론 시작 실패: ' + (res.message || ''));
+      showToast('시작 실패: ' + (res.message || ''));
       cancelDebateWorkflow();
       return;
     }
 
     const streamId = res.stream_id;
-    State.currentStreamId = streamId;
+    bindDebateStream(streamId);
 
-    // Connect to SSE stream
-    const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
-    State.currentEventSource = sse;
+  } catch (err) {
+    showToast('토론/회의를 시작할 수 없습니다: ' + err.message);
+    cancelDebateWorkflow();
+  }
+}
 
-    // Re-bind token, debate_token, and other listeners dynamically to this stream
-    let debateBubbles = {};
-    let debateTexts = {};
-    // done/cancel 수신 후 발생하는 자동 재연결 error는 진짜 에러가 아니다.
-    let debateStreamFinished = false;
+function bindDebateStream(streamId) {
+  State.currentStreamId = streamId;
 
-    sse.addEventListener('debate_token', (e) => {
-      const data = JSON.parse(e.data);
-      const sender = data.sender;
-      const text = data.text;
+  if (State.currentEventSource) {
+    State.currentEventSource.close();
+  }
 
-      if (!debateBubbles[sender]) {
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble assistant';
-        if (sender.includes('판사')) {
-          bubble.style.border = '2px solid var(--accent)';
-          bubble.style.background = 'rgba(233, 69, 96, 0.05)';
-          bubble.style.maxWidth = '95%';
-        }
-        box.appendChild(bubble);
-        debateBubbles[sender] = bubble;
-        debateTexts[sender] = '';
+  const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
+  State.currentEventSource = sse;
+
+  const box = $('debateMessages');
+  let debateBubbles = {};
+  let debateTexts = {};
+  let debateStreamFinished = false;
+
+  sse.addEventListener('heartbeat', (e) => {
+    // Connection keep-alive
+  });
+
+  sse.addEventListener('moderator_pick', (e) => {
+    const data = JSON.parse(e.data);
+    const card = document.createElement('div');
+    card.className = 'moderator-pick-card';
+    card.style = "margin: 8px 0; padding: 10px 14px; background: linear-gradient(135deg, rgba(233, 69, 96, 0.08), rgba(15, 52, 96, 0.15)); border: 1px solid rgba(233, 69, 96, 0.3); border-radius: 8px; font-size: 12px;";
+    card.innerHTML = `
+      <div style="font-weight: 700; color: var(--accent); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+        <span>🎙️ 사회자 지목 [턴 ${data.turn}/${data.max_turns}] → <strong>${data.speaker}</strong></span>
+        <span style="font-size: 10px; opacity: 0.75; font-weight: normal;">${data.reason || ''}</span>
+      </div>
+      <div style="color: var(--text); padding-left: 4px; border-left: 2px solid var(--accent); margin-top: 6px;">
+        <strong>질문/요청:</strong> ${data.question}
+      </div>
+    `;
+    box.appendChild(card);
+    scrollToChatBottom();
+  });
+
+  sse.addEventListener('debate_token', (e) => {
+    const data = JSON.parse(e.data);
+    const sender = data.sender;
+    const text = data.text;
+
+    if (!debateBubbles[sender]) {
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble assistant';
+      if (sender.includes('판사')) {
+        bubble.style.border = '2px solid var(--accent)';
+        bubble.style.background = 'rgba(233, 69, 96, 0.06)';
+        bubble.style.maxWidth = '96%';
       }
+      box.appendChild(bubble);
+      debateBubbles[sender] = bubble;
+      debateTexts[sender] = '';
+    }
 
-      debateTexts[sender] += text;
-      const badge = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">${sender}</div>`;
-      debateBubbles[sender].innerHTML = badge + renderMd(debateTexts[sender]);
-      scrollToChatBottom();
-    });
+    debateTexts[sender] += text;
+    const badge = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">${sender}</div>`;
+    debateBubbles[sender].innerHTML = badge + renderMd(debateTexts[sender]);
 
-    sse.addEventListener('debate_status', (e) => {
-      const data = JSON.parse(e.data);
-      $('debateStatusText').textContent = data.text;
-      if (data.waiting_next) {
+    if (sender.includes('판사')) {
+      currentDebatePlanText = debateTexts[sender];
+    }
+    scrollToChatBottom();
+  });
+
+  sse.addEventListener('debate_status', (e) => {
+    const data = JSON.parse(e.data);
+    $('debateStatusText').textContent = data.text;
+
+    if (data.completed) {
+      $('debateNextBtn').style.display = 'none';
+      // Append Harness Execution Bridge button if Judge verdict is finished
+      if (currentDebatePlanText) {
+        const bridgeCard = document.createElement('div');
+        bridgeCard.style = "margin-top: 12px; padding: 10px; background: var(--bg2); border: 1px solid var(--border2); border-radius: 8px; text-align: center;";
+        bridgeCard.innerHTML = `
+          <div style="font-size: 11px; color: var(--text2); margin-bottom: 6px;">💡 판결 추천 계획안을 다이나믹 하네스에 전달하여 즉시 실행할 수 있습니다.</div>
+          <button class="cron-btn run" onclick="sendDebatePlanToHarness()" style="padding: 6px 14px; font-size: 12px; font-weight: 600;">⚡ 다이나믹 하네스로 계획 실행</button>
+        `;
+        box.appendChild(bridgeCard);
+        scrollToChatBottom();
+      }
+    } else if (data.waiting_next) {
+      const isAuto = $('debateAutoAdvanceToggle')?.checked;
+      if (isAuto && !data.completed) {
+        $('debateStatusText').textContent = data.text + ' (⚡ 자동 진행 중...)';
+        $('debateNextBtn').style.display = 'none';
+        setTimeout(() => {
+          if (debateIsActive) {
+            proceedDebateRound();
+          }
+        }, 1200);
+      } else {
         $('debateNextBtn').style.display = 'block';
         if (data.text.includes('1라운드')) {
           $('debateNextBtn').textContent = '▶ 2라운드(반박) 진행';
         } else if (data.text.includes('2라운드')) {
           $('debateNextBtn').textContent = '⚖️ 최종 판결 요청';
+        } else if (data.text.includes('턴')) {
+          $('debateNextBtn').textContent = '▶ 다음 발언/판결 진행';
+        } else {
+          $('debateNextBtn').textContent = '▶ 다음 단계 진행';
         }
-      } else {
-        $('debateNextBtn').style.display = 'none';
       }
-    });
+    } else {
+      $('debateNextBtn').style.display = 'none';
+    }
+  });
 
-    sse.addEventListener('debate_message_done', (e) => {
-      const data = JSON.parse(e.data);
-      delete debateBubbles[data.sender];
-      delete debateTexts[data.sender];
-    });
+  sse.addEventListener('debate_message_done', (e) => {
+    const data = JSON.parse(e.data);
+    delete debateBubbles[data.sender];
+    delete debateTexts[data.sender];
+  });
 
-    sse.addEventListener('done', (e) => {
-      const data = JSON.parse(e.data);
-      debateStreamFinished = true;
+  sse.addEventListener('done', (e) => {
+    const data = JSON.parse(e.data);
+    debateStreamFinished = true;
+    sse.close();
+    State.currentEventSource = null;
+    State.currentStreamId = null;
+
+    const sessIdx = State.sessions.findIndex(x => x.session_id === data.session.session_id);
+    if (sessIdx !== -1) {
+      State.sessions[sessIdx] = data.session;
+    }
+
+    if ($('debateStatusText').textContent.includes('완료')) {
+      debateIsActive = false;
+    }
+  });
+
+  sse.addEventListener('error', (e) => {
+    if (debateStreamFinished || State.currentEventSource !== sse) {
       sse.close();
-      State.currentEventSource = null;
-      State.currentStreamId = null;
-
-      // Update session data in State but do NOT render in chatMessages
-      const sessIdx = State.sessions.findIndex(x => x.session_id === data.session.session_id);
-      if (sessIdx !== -1) {
-        State.sessions[sessIdx] = data.session;
-      }
-
-      // If completed all rounds
-      if ($('debateStatusText').textContent.includes('판결 완료')) {
-        debateIsActive = false;
-        // Keep the debate window visible so they can review the judge outcome.
-        // The user can exit manually by clicking "일반대화" button.
-      }
-    });
-
-    sse.addEventListener('error', (e) => {
-      // done/cancel 후 정상 종료로 연결이 닫히면 EventSource가 자동 재연결을
-      // 시도하며 error 이벤트를 발생시킨다. 이미 완료(또는 교체)된 스트림의
-      // error는 진짜 에러가 아니므로 조용히 닫고 무시한다.
-      if (debateStreamFinished || State.currentEventSource !== sse) {
-        sse.close();
-        return;
-      }
-      sse.close();
-      showToast('토론 스트리밍 에러가 발생했습니다.');
-      cancelDebateWorkflow();
-    });
-
-  } catch (err) {
-    showToast('토론을 시작할 수 없습니다: ' + err.message);
-    cancelDebateWorkflow();
-  }
+      return;
+    }
+    sse.close();
+    showToast('토론/회의 스트리밍 연결이 종료되었습니다.');
+  });
 }
 
 async function proceedDebateRound() {
   if (!State.activeSessionId) return;
   $('debateNextBtn').style.display = 'none';
-  $('debateStatusText').textContent = '다음 라운드 데이터를 요청 중...';
+  $('debateStatusText').textContent = '다음 데이터를 생성 요청 중...';
 
   try {
     const res = await api('/api/debate/next', {
@@ -2744,100 +2877,15 @@ async function proceedDebateRound() {
     });
 
     if (!res.ok) {
-      showToast('다음 라운드 시작 실패: ' + (res.message || ''));
+      showToast('다음 단계 진행 실패: ' + (res.message || ''));
       return;
     }
 
     const streamId = res.stream_id;
-    State.currentStreamId = streamId;
-
-    // Connect to SSE stream
-    const sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
-    State.currentEventSource = sse;
-
-    const box = $('debateMessages');
-    let debateBubbles = {};
-    let debateTexts = {};
-    // done/cancel 수신 후 발생하는 자동 재연결 error는 진짜 에러가 아니다.
-    let debateStreamFinished = false;
-
-    sse.addEventListener('debate_token', (e) => {
-      const data = JSON.parse(e.data);
-      const sender = data.sender;
-      const text = data.text;
-
-      if (!debateBubbles[sender]) {
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble assistant';
-        if (sender.includes('판사')) {
-          bubble.style.border = '2px solid var(--accent)';
-          bubble.style.background = 'rgba(233, 69, 96, 0.05)';
-          bubble.style.maxWidth = '95%';
-        }
-        box.appendChild(bubble);
-        debateBubbles[sender] = bubble;
-        debateTexts[sender] = '';
-      }
-
-      debateTexts[sender] += text;
-      const badge = `<div class="model-attribution" style="margin-bottom: 6px; font-weight: bold; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">${sender}</div>`;
-      debateBubbles[sender].innerHTML = badge + renderMd(debateTexts[sender]);
-      scrollToChatBottom();
-    });
-
-    sse.addEventListener('debate_status', (e) => {
-      const data = JSON.parse(e.data);
-      $('debateStatusText').textContent = data.text;
-      if (data.waiting_next) {
-        $('debateNextBtn').style.display = 'block';
-        if (data.text.includes('1라운드')) {
-          $('debateNextBtn').textContent = '▶ 2라운드(반박) 진행';
-        } else if (data.text.includes('2라운드')) {
-          $('debateNextBtn').textContent = '⚖️ 최종 판결 요청';
-        }
-      } else {
-        $('debateNextBtn').style.display = 'none';
-      }
-    });
-
-    sse.addEventListener('debate_message_done', (e) => {
-      const data = JSON.parse(e.data);
-      delete debateBubbles[data.sender];
-      delete debateTexts[data.sender];
-    });
-
-    sse.addEventListener('done', (e) => {
-      const data = JSON.parse(e.data);
-      debateStreamFinished = true;
-      sse.close();
-      State.currentEventSource = null;
-      State.currentStreamId = null;
-
-      const sessIdx = State.sessions.findIndex(x => x.session_id === data.session.session_id);
-      if (sessIdx !== -1) {
-        State.sessions[sessIdx] = data.session;
-      }
-
-      if ($('debateStatusText').textContent.includes('판결 완료')) {
-        debateIsActive = false;
-      }
-    });
-
-    sse.addEventListener('error', (e) => {
-      // done/cancel 후 정상 종료로 연결이 닫히면 EventSource가 자동 재연결을
-      // 시도하며 error 이벤트를 발생시킨다. 이미 완료(또는 교체)된 스트림의
-      // error는 진짜 에러가 아니므로 조용히 닫고 무시한다.
-      if (debateStreamFinished || State.currentEventSource !== sse) {
-        sse.close();
-        return;
-      }
-      sse.close();
-      showToast('토론 스트리밍 에러가 발생했습니다.');
-      cancelDebateWorkflow();
-    });
+    bindDebateStream(streamId);
 
   } catch (err) {
-    showToast('다음 라운드를 진행할 수 없습니다: ' + err.message);
+    showToast('다음 단계를 진행할 수 없습니다: ' + err.message);
   }
 }
 
@@ -2866,3 +2914,4 @@ async function cancelDebateWorkflow() {
     selectSession(activeSess.session_id);
   }
 }
+

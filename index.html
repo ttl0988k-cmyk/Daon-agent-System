@@ -1235,39 +1235,75 @@
             </div>
           </div>
 
-          <!-- ⚖️ 토론 설정 영역 (기본 숨김) -->
+          <!-- ⚖️ 토론 및 회의 설정 영역 (기본 숨김) -->
           <div class="chat-input-area" id="debateSetupArea"
             style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); background:var(--bg2);">
+            
+            <!-- 모드 선택 탭 (토론 vs 회의) -->
+            <div style="display:flex; gap:6px; width:100%; border-bottom:1px solid var(--border2); padding-bottom:6px;">
+              <button id="debateTypeDebateBtn" class="cron-btn run" onclick="selectDebateType('debate')"
+                style="flex:1; padding:4px 6px; font-size:11px; font-weight:600;">⚖️ 3라운드 토론</button>
+              <button id="debateTypeMeetingBtn" class="cron-btn" onclick="selectDebateType('meeting')"
+                style="flex:1; padding:4px 6px; font-size:11px; font-weight:600;">👥 다자간 회의</button>
+            </div>
+
+            <!-- 회의 모드 전용 설정 (사회자 & 턴 수) -->
+            <div id="meetingOptionsRow" style="display:none; flex-direction:column; gap:6px; width:100%; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px;">
+                  <span>🎙️ 사회자(의장):</span>
+                  <select id="debateModeratorSelect" style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
+                    <!-- JS에서 옵션 주입 -->
+                  </select>
+                </label>
+                <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px;">
+                  <span>⏳ 최대 턴:</span>
+                  <select id="debateMaxTurnsSelect" style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
+                    <option value="4">4턴 (간단 브리핑)</option>
+                    <option value="6">6턴 (표준)</option>
+                    <option value="8" selected>8턴 (심층 분석)</option>
+                    <option value="10">10턴 (종합 끝장토론)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
             <div
               style="font-weight:600; font-size:11px; color:var(--text2); display:flex; justify-content:space-between; align-items:center;">
-              <span>⚖️ 토론 참여 모델 선택 (최소 2개 이상):</span>
+              <span id="debateModelSelectLabel">⚖️ 참여 모델 선택 (최소 2개 이상):</span>
             </div>
             <div id="debateModelCheckboxes"
               style="display:flex; flex-wrap:wrap; gap:8px; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px; max-height:90px; overflow-y:auto; width:100%;">
               <!-- JS에서 동적 로드 -->
             </div>
-            <div style="font-weight:600; font-size:11px; color:var(--text2);">토론 주제:</div>
-            <textarea id="debateTopicInput" rows="2" placeholder="AI 모델들이 토론할 주제를 입력하세요..."
+
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-weight:600; font-size:11px; color:var(--text2);" id="debateTopicLabel">토론/회의 주제:</span>
+              <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <input type="checkbox" id="debateAutoAdvanceToggle" checked style="cursor:pointer;">
+                <span>⚡ 자동 진행</span>
+              </label>
+            </div>
+            <textarea id="debateTopicInput" rows="2" placeholder="AI 모델들이 토론 또는 회의할 주제를 입력하세요..."
               style="width:100%; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; color:var(--text); padding:6px; font-size:11px; outline:none; resize:none; font-family:inherit;"></textarea>
             <div style="display:flex; gap:6px; width:100%;">
-              <button class="cron-btn run" onclick="startDebateWorkflow()"
-                style="flex:1; padding:5px; font-size:11px; font-weight:600;">⚖️ 토론 시작</button>
+              <button class="cron-btn run" id="startDebateSubmitBtn" onclick="startDebateWorkflow()"
+                style="flex:1; padding:6px; font-size:11px; font-weight:600;">⚖️ 토론 시작</button>
               <button class="cron-btn" onclick="toggleDebateModeUI(false)"
-                style="flex:1; padding:5px; font-size:11px;">일반
-                대화로</button>
+                style="flex:1; padding:6px; font-size:11px;">일반 대화로</button>
             </div>
           </div>
 
-          <!-- ⚖️ 토론 진행 제어 영역 (기본 숨김) -->
+          <!-- ⚖️ 토론/회의 진행 제어 영역 (기본 숨김) -->
           <div class="chat-input-area" id="debateControlArea"
-            style="display:none; padding:12px; gap:8px; border-top:1px solid var(--border); align-items:center; background:var(--bg2);">
-            <div id="debateStatusText" style="font-size:11px; color:var(--accent); font-weight:600; text-align:center;">
-              토론을 시작해 주세요.</div>
+            style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); align-items:center; background:var(--bg2);">
+            <div id="debateStatusText" style="font-size:11px; color:var(--accent); font-weight:600; text-align:center; width:100%;">
+              토론/회의를 시작해 주세요.</div>
             <div style="display:flex; gap:6px; width:100%;">
               <button class="cron-btn run" id="debateNextBtn" onclick="proceedDebateRound()"
-                style="flex:1; padding:6px; font-size:11px; display:none;">▶ 다음 라운드 진행</button>
+                style="flex:1; padding:6px; font-size:11px; display:none;">▶ 다음 단계 진행</button>
               <button class="cron-btn pause" id="debateCancelBtn" onclick="cancelDebateWorkflow()"
-                style="flex:1; padding:6px; font-size:11px;">✕ 토론 중단</button>
+                style="flex:1; padding:6px; font-size:11px;">✕ 중단</button>
             </div>
           </div>
         </div>
