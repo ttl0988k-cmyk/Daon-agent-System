@@ -26,6 +26,7 @@ const CANARY_STABLE_HITS = 2;                // 연속 성공 횟수 = 안정 �
 const CANARY_EXIT_WAIT_MS = 5000;            // 스왑 전 카나리 종료 대기 상한
 const SWAP_RETRIES = 6;                      // 스왑 EBUSY 재시도 횟수 (총 7회 시도)
 const SWAP_RETRY_DELAY_MS = 500;             // 스왑 재시도 간격
+const SYNC_SCRIPT_TIMEOUT_MS = 5 * 60 * 1000; // _sync_build.py 미러 동기화 상한 (5분)
 
 // [Self-Update 근본 수정 ③] 트리킬 기본 구현.
 // PyInstaller onefile 은 bootloader 부모 + 실제 앱 자식 2단계 프로세스다.
@@ -110,6 +111,43 @@ function createSelfUpdate(deps = {}) {
             child.on('error', (e) => {
                 clearTimeout(timer);
                 resolve({ ok: false, error: `spawn failed: ${e.message} (python/PyInstaller 필요)` });
+            });
+        });
+    }
+
+    // [자가 빌드 완성 2026-08-25] 미러 동기화 단계. spec 은 dist_new/ 미러를
+    // 번들하므로 동기화 없이 빌드하면 stale 소스가 exe 로 굳는다(실측 사고:
+    // 프론트엔드만 최신, 백엔드는 구버전). 실패 시 호출자가 빌드를 거부한다.
+    function runSyncScriptAsync(buildRoot) {
+        return new Promise((resolve) => {
+            const script = path.join(buildRoot, '_sync_build.py');
+            let stderrTail = '';
+            let child;
+            try {
+                child = spawnFn('python', [script], {
+                    cwd: buildRoot,
+                    windowsHide: true,
+                    env: { ...process.env },
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                });
+            } catch (e) {
+                resolve({ ok: false, error: `spawn failed: ${e.message}` });
+                return;
+            }
+            const timer = setTimeout(() => {
+                try { child.kill(); } catch (_) { }
+                resolve({ ok: false, error: 'mirror sync timeout' });
+            }, SYNC_SCRIPT_TIMEOUT_MS);
+            child.stderr.on('data', (d) => { stderrTail = (stderrTail + String(d)).slice(-2000); });
+            child.on('exit', (code) => {
+                clearTimeout(timer);
+                resolve(code === 0
+                    ? { ok: true }
+                    : { ok: false, error: `_sync_build exit ${code}${stderrTail ? ' :: ' + stderrTail.slice(-400) : ''}` });
+            });
+            child.on('error', (e) => {
+                clearTimeout(timer);
+                resolve({ ok: false, error: `spawn failed: ${e.message} (python 필요)` });
             });
         });
     }
@@ -207,20 +245,65 @@ function createSelfUpdate(deps = {}) {
         return { ok: false, error: (lastErr && lastErr.message) || 'unknown' };
     }
 
+    // [자가 업데이트 완성 2026-08-25] 설치 앱 느슨한 리소스 갱신.
+    // server.py 는 _MEIPASS 번들보다 resources/ 의 느슨한 파일을 우선한다
+    // (webview/index.html 부재 → RESOURCE_DIR=RUN_DIR). exe 만 스왑하면
+    // 프론트엔드·데이터성 모듈이 구버전인 채 남는다. 코드성 자산만 갱신하고
+    // 사용자 상태(data/, .env, config.yaml)는 절대 건드리지 않는다.
+    const RESOURCE_REFRESH_PAIRS = [
+        ['dist_new/api/api', 'api'],
+        ['dist_new/static', 'static'],
+        ['dist_new/index.html', 'index.html'],
+        ['api/agents', 'agents'],
+        ['skills', 'skills'],
+    ];
+
+    async function refreshLooseResources(targetExe, buildRoot) {
+        if (typeof fs.cpSync !== 'function') return { refreshed: false, reason: 'fs.cpSync unavailable' };
+        const destRoot = path.dirname(targetExe);
+        const results = [];
+        for (const pair of RESOURCE_REFRESH_PAIRS) {
+            const src = path.join(buildRoot, pair[0].split('/').join(path.sep));
+            const dst = path.join(destRoot, pair[1].split('/').join(path.sep));
+            try {
+                if (!fs.existsSync(src)) {
+                    results.push({ dst: pair[1], ok: false, error: 'source missing' });
+                    continue;
+                }
+                fs.cpSync(src, dst, { recursive: true, force: true });
+                results.push({ dst: pair[1], ok: true });
+            } catch (e) {
+                results.push({ dst: pair[1], ok: false, error: e.message });
+            }
+        }
+        const failed = results.filter((r) => !r.ok);
+        if (failed.length) {
+            errLog('[SelfUpdate] resource refresh partial failures: '
+                + failed.map((f) => `${f.dst}(${f.error})`).join(', '));
+        }
+        return { refreshed: failed.length === 0, results };
+    }
+
     async function rebuildAndSwap() {
         const targetExe = findTargetExe();
         if (!targetExe) return { swapped: false, reason: 'no server.exe target (dev python mode)' };
         const buildRoot = resolveBuildRoot();
         if (!buildRoot) return { swapped: false, reason: 'daon-server.spec not found — set DAON_BUILD_ROOT to enable packaged self-update' };
 
-        // [재발 방지 2026-08-25] _sync_build.py 부재 가드. spec의 datas는 dist_new/
-        // 미러를 번들한다. 미러 동기화 스크립트가 없는 트리에서 재빌드하면
-        // stale 미러(구버전 소스)가 exe로 굳어 "프론트엔드는 반영, 백엔드는 누락"
-        // 상태가 된다(실측 사고). 스크립트가 없으면 빌드를 거부한다.
+        // [자가 빌드 완성 2026-08-25] 미러 동기화를 파이프라인에 통합.
+        // spec의 datas는 dist_new/ 미러를 번들하므로 동기화 없이 빌드하면
+        // stale 소스가 exe로 굳는다(실측 사고: 프론트엔드만 최신, 백엔드 구버전).
+        // 스크립트 부재 또는 동기화 실패 시 재빌드를 거부한다.
         const syncScript = path.join(buildRoot, '_sync_build.py');
         if (!fs.existsSync(syncScript)) {
             errLog('[SelfUpdate] rebuild refused — _sync_build.py missing in build root; dist_new mirror may be stale.');
             return { swapped: false, reason: 'rebuild refused: _sync_build.py missing (stale mirror risk)' };
+        }
+        log('[SelfUpdate] syncing dist_new mirror via _sync_build.py...');
+        const ss = await runSyncScriptAsync(buildRoot);
+        if (!ss.ok) {
+            errLog('[SelfUpdate] mirror sync failed — refusing to build from stale tree: ' + ss.error);
+            return { swapped: false, reason: `mirror sync failed: ${ss.error}` };
         }
 
         // 0) [Self-Update 근본 수정 ④] 스왑 프리플라이트: 재빌드는 수 분 걸리므로
@@ -282,7 +365,9 @@ function createSelfUpdate(deps = {}) {
             return { swapped: false, reason: `swap failed after ${swapRetries + 1} attempts: ${swapErr.message}` };
         }
         log(`[SelfUpdate] server.exe swapped in: ${targetExe}`);
-        return { swapped: true, canary: { pid: cv.pid, port: cv.port } };
+        const rr = await refreshLooseResources(targetExe, buildRoot);
+        if (rr.refreshed) log('[SelfUpdate] loose resources refreshed (api/static/index.html/agents/skills).');
+        return { swapped: true, refreshed: rr.refreshed, refresh: rr.results, canary: { pid: cv.pid, port: cv.port } };
     }
 
     async function restoreBackup() {
