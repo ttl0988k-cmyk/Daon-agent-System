@@ -104,6 +104,15 @@ toolsets:
     - "web"
     - "webhook"
 
+# --- Self-evolution (Gap E-4b) ---
+# auto_mode: Builder 승인 게이트의 자동 타임아웃 승인을 허용할지 여부.
+# 기본 false = 사용자가 매 승인 카드를 직접 승인해야 Builder 서브팀이 스폰됨
+# (리스크 5 안전 기본). true 로 바꾸면 세션 승인 인프라의 자동 타임아웃
+# 경로(approvals.builder_auto_timeout, 기본 45초)만 활성화된다 —
+# 불변 질서(생성->격리->검증->승인->편입->사용) 자체는 절대 우회되지 않는다.
+self_evolution:
+  auto_mode: false
+
 # --- Fallback models (when model_manager is unavailable) ---
 # OpenRouter 차단: 기존 fallback이 모두 OpenRouter 경유라 대시보드 사용량
 # 청구를 막기 위해 목록을 비움. (메인 MiniMax-M3 는 api.minimax.io 직결이라 무관)

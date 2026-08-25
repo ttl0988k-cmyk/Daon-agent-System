@@ -1565,6 +1565,58 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               print(f"[SelfUpdate] WARNING: tool injection failed: {_su_inj_e}", flush=True)
           # ========================================================
 
+          # === [Self-Evolution] 에이전트 도구 주입: propose_self_evolution ===
+          # 갭 E-4b: 채팅 에이전트가 결핍 능력을 감지하면 Builder 제작 파이프라인
+          # (E-L2 스폰 게이트 -> E-L4 편입 거버넌스)을 백그라운드로 가동한다.
+          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
+          try:
+              from api.dynamic.self_evolution import start_proposal as _sevo_start
+              from tools.registry import registry as _sevo_registry
+
+              _sevo_schema = {
+                  "type": "function",
+                  "function": {
+                      "name": "propose_self_evolution",
+                      "description": "Propose building a MISSING capability (skill/plugin) via the Builder sub-team. Use ONLY when no existing tool or skill can accomplish the task. The system runs the immutable order: create -> isolate -> verify -> approve -> incorporate -> use. The user approves each step.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {
+                              "capability": {"type": "string", "description": "Short name of the missing capability (e.g. 'pdf-form-filler')"},
+                              "description": {"type": "string", "description": "What the capability must do and how success can be verified (acceptance criteria)"},
+                          },
+                          "required": ["capability"]
+                      }
+                  }
+              }
+              agent.tools.append(_sevo_schema)
+              agent.valid_tool_names.add("propose_self_evolution")
+
+              def _sevo_handler(args: dict, **kwargs) -> str:
+                  import json as _json
+                  cap = (args.get('capability') or '').strip()
+                  if not cap:
+                      return _json.dumps({"ok": False, "status": "invalid",
+                                          "error": "capability is required"}, ensure_ascii=False)
+                  result = _sevo_start(cap, args.get('description') or '',
+                                       session_id=session_id)
+                  return _json.dumps(result, ensure_ascii=False)
+
+              _sevo_registry.register(
+                  name="propose_self_evolution",
+                  toolset="self-evolution",
+                  schema={"name": "propose_self_evolution", "description": "Propose building a missing capability via the Builder sub-team",
+                          "parameters": _sevo_schema["function"]["parameters"]},
+                  handler=_sevo_handler,
+                  check_fn=lambda: True,
+                  is_async=False,
+                  description="Start a self-evolution build proposal (Builder spawn + incorporation governance)",
+              )
+              _sevo_registry.register_toolset_alias("evolution", "self-evolution")
+              print("[SelfEvolution] ✅ Injected propose_self_evolution tool into agent.", flush=True)
+          except Exception as _sevo_inj_e:
+              print(f"[SelfEvolution] WARNING: tool injection failed: {_sevo_inj_e}", flush=True)
+          # ========================================================
+
           # Prepend workspace context so the agent always knows which directory
           # to use for file operations, regardless of session age or AGENTS.md defaults.
           import platform as _platform
@@ -1672,6 +1724,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   workspace_system_msg += "\n\n" + _patch_prompt
           except Exception as _pr_prompt_e:
               print(f"[webui] WARNING: patch registry prompt injection failed: {_pr_prompt_e}", flush=True)
+
+          # ── Self-Evolution: 자가 진화 인지 블록 주입 (갭 E-4b) ──
+          # 에이전트가 결핍 능력 감지 시 propose_self_evolution 툴로 Builder
+          # 제작 파이프라인을 트리거할 수 있음을 인지시킨다. auto_mode 와 무관하게
+          # 항상 주입(인지는 무료) — 실제 스폰은 승인 게이트가 통제한다.
+          try:
+              from api.dynamic.self_evolution import get_self_evolution_prompt_block as _sevo_block_fn
+              _sevo_prompt = _sevo_block_fn()
+              if _sevo_prompt:
+                  workspace_system_msg += "\n\n" + _sevo_prompt
+          except Exception as _sevo_prompt_e:
+              print(f"[webui] WARNING: self-evolution prompt injection failed: {_sevo_prompt_e}", flush=True)
 
           # ── 에이전트 간 메시징: 활성 프로필(페르소나)의 수신함을 주입 ──
           # 다른 에이전트(Dynamic Harness 노드 또는 채팅)가 이 프로필 앞으로 보낸
