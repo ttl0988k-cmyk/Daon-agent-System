@@ -90,6 +90,11 @@ def get_self_evolution_prompt_block() -> str:
             "- One proposal per capability per session; never spam duplicates.",
             "- Never claim the capability exists until incorporation succeeds.",
             "- The user always sees and controls the approval step.",
+            "- If you edited backend Python source (api/, server.py) during this task,",
+            "  call `request_server_update` afterward with rebuild=true and a",
+            "  checkpoint_ref (git commit) so the Electron supervisor can rebuild,",
+            "  health-check, and roll back on failure. NEVER restart the server",
+            "  yourself - you may only record the request.",
         ]
         return "\n".join(lines)
     except Exception:
