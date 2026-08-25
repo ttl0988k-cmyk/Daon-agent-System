@@ -550,6 +550,9 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # 채널로 라우팅한다 (요약 전문이 챗창에 새는 것을 차단).
           _compaction_mode = False
 
+          # API 오류 중계 상태 (스팸 방지 스로틀용)
+          _api_err_state = {'last_msg': None, 'last_ts': 0.0, 'count': 0}
+
           def on_token(text):
               nonlocal _token_buf, _token_sent, _compaction_mode
               if text is None:
@@ -590,6 +593,29 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               if send_end > _token_sent:
                   put('token', {'text': visible[_token_sent:send_end]})
                   _token_sent = send_end
+
+          def on_api_error(error_msg):
+              # 에이전트 내부 API 호출 실패(404/503 등)를 UI 로 중계한다.
+              # 재시도 루프는 계속 진행되므로 스트림을 끊지 않는 "경고" 이벤트.
+              # 동일 오류 스팸 방지: 같은 메시지는 15초 내 재발행 억제,
+              # 스트림당 최대 8회까지만 발행.
+              try:
+                  now = time.time()
+                  if error_msg == _api_err_state.get('last_msg') and \
+                          (now - _api_err_state.get('last_ts', 0)) < 15.0:
+                      return
+                  if _api_err_state.get('count', 0) >= 8:
+                      return
+                  _api_err_state['last_msg'] = error_msg
+                  _api_err_state['last_ts'] = now
+                  _api_err_state['count'] = _api_err_state.get('count', 0) + 1
+                  put('apierror', {
+                      'message': error_msg[:500],
+                      'type': 'api_error',
+                      'count': _api_err_state['count'],
+                  })
+              except Exception:
+                  pass
 
           def on_reasoning(text):
               # 추론(reasoning) 델타 — 별도 'reasoning' SSE 이벤트로 전송해
@@ -1194,6 +1220,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               stream_delta_callback=on_token,
               tool_progress_callback=on_tool,
               reasoning_callback=on_reasoning,
+              api_error_callback=on_api_error,
               ephemeral_system_prompt=_ephemeral_prompt,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)

@@ -839,6 +839,7 @@ class AIAgent:
         interim_assistant_callback: callable = None,
         tool_gen_callback: callable = None,
         status_callback: callable = None,
+        api_error_callback: callable = None,
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
         service_tier: str = None,
@@ -1018,6 +1019,9 @@ class AIAgent:
         self.step_callback = step_callback
         self.stream_delta_callback = stream_delta_callback
         self.interim_assistant_callback = interim_assistant_callback
+        # API 호출 실패(404/503 등)를 UI 로 중계하는 콜백. 재시도 루프는 계속
+        # 진행되므로 이 콜백은 "경고" 용도이며 절대 raise 하지 않아야 한다.
+        self.api_error_callback = api_error_callback
         self.status_callback = status_callback
         self.tool_gen_callback = tool_gen_callback
 
@@ -8849,6 +8853,14 @@ class AIAgent:
                     print(f"❌ {error_msg}")
                 except (OSError, ValueError):
                     logger.error(error_msg)
+
+                # UI 로 API 오류를 중계한다 (재시도 루프는 계속 진행됨).
+                # 콜백은 절대 대화 흐름을 깨면 안 되므로 모든 예외를 삼킨다.
+                if self.api_error_callback:
+                    try:
+                        self.api_error_callback(error_msg)
+                    except Exception:
+                        logger.debug("api_error_callback raised", exc_info=True)
                 
                 logger.debug("Outer loop error in API call #%d", api_call_count, exc_info=True)
                 

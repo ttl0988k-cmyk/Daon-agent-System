@@ -274,6 +274,16 @@ async function _reattachSessionStream(sid, streamId) {
         `<div class="text-danger" style="margin-top:8px;">[오류: ${msg}]</div>`);
     }
   });
+  // API 호출 실패(404/503 등) 중계 — 에이전트 내부 재시도 루프가 계속
+  // 진행 중이므로 스트림을 끊지 않고(finish 금지) 경고만 표시한다.
+  sse.addEventListener('apierror', (e) => {
+    let msg = '알 수 없는 오류';
+    try { const d = JSON.parse(e.data || '{}'); msg = d.message || msg; } catch (_) { }
+    if (asstBubble && asstBubble.parentNode) {
+      asstBubble.insertAdjacentHTML('beforeend',
+        `<div style="margin-top:8px;font-size:12px;color:#e67e22;">⚠️ [API 오류] ${msg} — 재시도 중...</div>`);
+    }
+  });
 
   sse.addEventListener('error', () => {
     // EventSource 자동 재연결에 맡긴다. 서버 큐가 살아있는 동안에는
@@ -2084,6 +2094,19 @@ sse.addEventListener('debate_status', (e) => {
       try { data = JSON.parse(e.data || '{}'); } catch (_) { data = { message: e.data || '알 수 없는 오류' }; }
       if (asstBubble && asstBubble.parentNode) {
         asstBubble.insertAdjacentHTML('beforeend', `<div class="text-danger" style="margin-top:8px;">[오류: ${data.message || '알 수 없는 오류'}]</div>`);
+      }
+    });
+    // API 호출 실패(404/503 등) 중계 — 에이전트 내부 재시도 루프가 계속
+    // 진행 중이므로 스트림을 끊지 않고(finishStream 금지) 경고만 표시한다.
+    sse.addEventListener('apierror', (e) => {
+      console.log('[SSE-DIAG] ⚠️ apierror event received');
+      let data = {};
+      try { data = JSON.parse(e.data || '{}'); } catch (_) { data = { message: e.data || '알 수 없는 오류' }; }
+      if (asstBubble && asstBubble.parentNode) {
+        const warn = document.createElement('div');
+        warn.style.cssText = 'margin-top:8px;font-size:12px;color:#e67e22;';
+        warn.textContent = '⚠️ [API 오류] ' + (data.message || '알 수 없는 오류') + ' — 재시도 중...';
+        asstBubble.appendChild(warn);
       }
     });
 
