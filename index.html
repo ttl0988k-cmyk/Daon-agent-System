@@ -69,9 +69,8 @@
             <button class="action-btn active" id="toggleLeftBtn" title="세션 목록 패널 열기/닫기">◧ 세션</button>
             <button class="action-btn active" id="toggleExplorerBtn" title="프로젝트 열기/닫기">📁 프로젝트</button>
             <button class="action-btn active" id="toggleRightBtn" title="채팅 패널 열기/닫기">◨ 채팅</button>
-            <input type="range" id="speakVolumeSlider" min="0" max="100" value="80"
-              oninput="setSpeakVolume(this.value)" title="에이전트 음성 볼륨: 80%"
-              style="width:64px; accent-color:#8b7ff5; cursor:pointer;" />
+            <input type="range" id="speakVolumeSlider" min="0" max="100" value="80" oninput="setSpeakVolume(this.value)"
+              title="에이전트 음성 볼륨: 80%" style="width:64px; accent-color:#8b7ff5; cursor:pointer;" />
             <button class="action-btn active" id="speakMuteBtn" onclick="toggleSpeakMute()" title="에이전트 음성 출력 끄기"
               style="font-size:14px;">🔊</button>
           </div>
@@ -1215,9 +1214,9 @@
                 </label>
 
                 <!-- [H] 실행 방식 토글: 🛡️ 일반 실행(위험 작업마다 확인) / 🤖 자율 실행(승인 자동 통과) -->
-                <button id="approvalModeToggle" onclick="toggleApprovalMode()"
+                <button id="approvalModeToggle" onclick="toggleApprovalMode()" class="mode-normal"
                   title="일반 실행 모드: 위험 작업마다 확인합니다. 클릭하면 자율 실행으로 전환."
-                  style="margin-left:8px; background:var(--bg3); border:1px solid var(--border2); color:var(--text2); border-radius:5px; padding:3px 8px; font-size:11px; cursor:pointer;">🛡️
+                  style="margin-left:8px; background:rgba(59,130,246,0.16); border:1px solid #3b82f6; color:var(--text, #e2e2f2); border-radius:5px; padding:3px 10px; font-size:11px; font-weight:600; cursor:pointer;">🛡️
                   일반 실행</button>
 
                 <button class="icon-btn mic-btn" id="voiceMicBtn" title="음성 입력 (Web Speech API)" style="display:none">
@@ -1238,7 +1237,7 @@
           <!-- ⚖️ 토론 및 회의 설정 영역 (기본 숨김) -->
           <div class="chat-input-area" id="debateSetupArea"
             style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); background:var(--bg2);">
-            
+
             <!-- 모드 선택 탭 (토론 vs 회의) -->
             <div style="display:flex; gap:6px; width:100%; border-bottom:1px solid var(--border2); padding-bottom:6px;">
               <button id="debateTypeDebateBtn" class="cron-btn run" onclick="selectDebateType('debate')"
@@ -1248,17 +1247,20 @@
             </div>
 
             <!-- 회의 모드 전용 설정 (사회자 & 턴 수) -->
-            <div id="meetingOptionsRow" style="display:none; flex-direction:column; gap:6px; width:100%; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px;">
+            <div id="meetingOptionsRow"
+              style="display:none; flex-direction:column; gap:6px; width:100%; padding:6px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px;">
               <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
                 <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px;">
                   <span>🎙️ 사회자(의장):</span>
-                  <select id="debateModeratorSelect" style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
+                  <select id="debateModeratorSelect"
+                    style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
                     <!-- JS에서 옵션 주입 -->
                   </select>
                 </label>
                 <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px;">
                   <span>⏳ 최대 턴:</span>
-                  <select id="debateMaxTurnsSelect" style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
+                  <select id="debateMaxTurnsSelect"
+                    style="background:var(--bg2); color:var(--text); border:1px solid var(--border2); border-radius:4px; font-size:11px; padding:2px 4px;">
                     <option value="4">4턴 (간단 브리핑)</option>
                     <option value="6">6턴 (표준)</option>
                     <option value="8" selected>8턴 (심층 분석)</option>
@@ -1279,7 +1281,8 @@
 
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="font-weight:600; font-size:11px; color:var(--text2);" id="debateTopicLabel">토론/회의 주제:</span>
-              <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px; cursor:pointer;">
+              <label
+                style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:4px; cursor:pointer;">
                 <input type="checkbox" id="debateAutoAdvanceToggle" checked style="cursor:pointer;">
                 <span>⚡ 자동 진행</span>
               </label>
@@ -1297,7 +1300,8 @@
           <!-- ⚖️ 토론/회의 진행 제어 영역 (기본 숨김) -->
           <div class="chat-input-area" id="debateControlArea"
             style="display:none; padding:10px; gap:8px; border-top:1px solid var(--border); align-items:center; background:var(--bg2);">
-            <div id="debateStatusText" style="font-size:11px; color:var(--accent); font-weight:600; text-align:center; width:100%;">
+            <div id="debateStatusText"
+              style="font-size:11px; color:var(--accent); font-weight:600; text-align:center; width:100%;">
               토론/회의를 시작해 주세요.</div>
             <div style="display:flex; gap:6px; width:100%;">
               <button class="cron-btn run" id="debateNextBtn" onclick="proceedDebateRound()"

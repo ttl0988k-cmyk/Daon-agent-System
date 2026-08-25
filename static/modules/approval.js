@@ -537,8 +537,25 @@ function syncApprovalModeUI() {
     btn.title = auto
         ? '자율 실행 모드: 승인 요청(위험 명령 포함)을 자동으로 승인합니다. 클릭하면 일반 실행으로 전환.'
         : '일반 실행 모드: 위험 작업마다 확인합니다. 클릭하면 자율 실행으로 전환.';
-    btn.style.borderColor = auto ? 'var(--warning-orange, #e67e22)' : '';
-    btn.style.color = auto ? 'var(--warning-orange, #e67e22)' : '';
+    // 두 모드를 강하게 시각 구분한다 (일반=파랑 보호 톤 / 자율=주황 경고 톤).
+    // 배경 틴트 + 테두리 + 굵기(+자율은 발광)로 상태를 전달하고, 글자는 항상
+    // 밝은 본문색(var(--text))으로 유지해 어두운/밝은 테마 모두에서 가독성을 보장한다.
+    if (auto) {
+        btn.classList.add('mode-autonomous');
+        btn.classList.remove('mode-normal');
+        btn.style.background = 'rgba(230, 126, 34, 0.20)';
+        btn.style.borderColor = '#e67e22';
+        btn.style.fontWeight = '700';
+        btn.style.boxShadow = '0 0 6px rgba(230, 126, 34, 0.45)';
+    } else {
+        btn.classList.add('mode-normal');
+        btn.classList.remove('mode-autonomous');
+        btn.style.background = 'rgba(59, 130, 246, 0.16)';
+        btn.style.borderColor = '#3b82f6';
+        btn.style.fontWeight = '600';
+        btn.style.boxShadow = 'none';
+    }
+    btn.style.color = 'var(--text, #e2e2f2)';
 }
 // [H] 자율 실행 모드에서 승인 요청을 백엔드 승인 API 로 자동 통과시킨다.
 async function _autoRespondApproval(data) {
