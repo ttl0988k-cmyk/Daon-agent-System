@@ -2883,8 +2883,10 @@ function bindDebateStream(streamId) {
     scrollToChatBottom();
   });
 
-  sse.addEventListener('debate_status', (e) => {
-    const data = JSON.parse(e.data);
+  let lastDebateCompleted = false;
+  sse.addEventListener('debate_status', (e) => {
+    const data = JSON.parse(e.data);
+    lastDebateCompleted = !!data.completed;
     $('debateStatusText').textContent = data.text;
 
     if (data.completed) {
@@ -2945,8 +2947,11 @@ function bindDebateStream(streamId) {
       State.sessions[sessIdx] = data.session;
     }
 
-    if ($('debateStatusText').textContent.includes('완료')) {
-      debateIsActive = false;
+    // [2026-08-26 수정] '완료' 문자열 매칭 금지 — 대기 상태 텍스트('[N/M턴 완료] 다음 발언...')
+    // 에도 '완료'가 포함되어 waiting_next 대기 중인데 종결 처리되는 버그.
+    // 서버가 보낸 debate_status.completed 플래그로만 판정한다.
+    if (lastDebateCompleted) {
+      debateIsActive = false;
     }
   });
 
