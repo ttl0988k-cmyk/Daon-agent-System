@@ -2595,7 +2595,8 @@ function setupEventListeners() {
 
 // ── ⚖️ 전문가 토론 및 다자간 회의 모드 프론트엔드 연동 ──
 
-let debateIsActive = false;
+let debateIsActive = false;
+let debateAutoTimer = null; // waiting_next 자동진행 타이머(수동 클릭/새 상태 수신 시 취소)
 let currentDebateType = 'debate'; // 'debate' | 'meeting'
 let currentDebatePlanText = '';
 
@@ -2772,7 +2773,8 @@ async function startDebateWorkflow() {
   const moderatorModel = $('debateModeratorSelect')?.value;
 
   // UI state change to active
-  debateIsActive = true;
+  debateIsActive = true;
+  if (debateAutoTimer) { clearTimeout(debateAutoTimer); debateAutoTimer = null; }
   currentDebatePlanText = '';
   $('debateSetupArea').style.display = 'none';
   $('debateControlArea').style.display = 'flex';
@@ -2902,15 +2904,20 @@ function bindDebateStream(streamId) {
         box.appendChild(bridgeCard);
         scrollToChatBottom();
       }
-    } else if (data.waiting_next) {
-      const isAuto = $('debateAutoAdvanceToggle')?.checked;
-      if (isAuto && !data.completed) {
-        $('debateStatusText').textContent = data.text + ' (⚡ 자동 진행 중...)';
-        $('debateNextBtn').style.display = 'none';
-        setTimeout(() => {
-          if (debateIsActive) {
-            proceedDebateRound();
-          }
+    } else if (data.waiting_next) {
+      // [2026-08-26 수정] 자동 모드에서도 수동 진행 버튼을 항상 표시한다.
+      // 기존엔 display:none으로 숨겨 타이머가 실패하면 복구 수단이 없었다.
+      if (debateAutoTimer) { clearTimeout(debateAutoTimer); debateAutoTimer = null; }
+      const isAuto = $('debateAutoAdvanceToggle')?.checked;
+      if (isAuto && !data.completed) {
+        $('debateStatusText').textContent = data.text + ' (⚡ 자동 진행 중...)';
+        $('debateNextBtn').textContent = '▶ 지금 진행';
+        $('debateNextBtn').style.display = 'block';
+        debateAutoTimer = setTimeout(() => {
+          debateAutoTimer = null;
+          if (debateIsActive) {
+            proceedDebateRound();
+          }
         }, 1200);
       } else {
         $('debateNextBtn').style.display = 'block';
@@ -2937,7 +2944,8 @@ function bindDebateStream(streamId) {
 
   sse.addEventListener('done', (e) => {
     const data = JSON.parse(e.data);
-    debateStreamFinished = true;
+    debateStreamFinished = true;
+    if (debateAutoTimer) { clearTimeout(debateAutoTimer); debateAutoTimer = null; }
     sse.close();
     State.currentEventSource = null;
     State.currentStreamId = null;
@@ -2965,8 +2973,10 @@ function bindDebateStream(streamId) {
   });
 }
 
-async function proceedDebateRound() {
-  if (!State.activeSessionId) return;
+async function proceedDebateRound() {
+  if (!State.activeSessionId) return;
+  // 수동 클릭 시 대기 중인 자동진행 타이머를 취소해 이중 진행을 방지한다.
+  if (debateAutoTimer) { clearTimeout(debateAutoTimer); debateAutoTimer = null; }
   $('debateNextBtn').style.display = 'none';
   $('debateStatusText').textContent = '다음 데이터를 생성 요청 중...';
 
