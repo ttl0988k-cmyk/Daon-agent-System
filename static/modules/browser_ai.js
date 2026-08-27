@@ -664,10 +664,30 @@ setInterval(syncElectronBrowserBounds, 500);
 
   var _lastPending = '';
   var _lastPendingTs = 0;
+  var _lastAgentUrl = '';
   setInterval(function () {
     fetch('/api/browser/status')
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        // ── 에이전트 탭 전환 동기화 (2026-08-27) ──
+        // 백엔드 _last_url은 에이전트의 navigate/back/forward/switch_tab 으로만
+        // 변한다(사용자가 Electron 탭을 전환해도 백엔드 page 객체는 불변).
+        // status.url 변화를 감지해 같은 URL의 Electron 탭으로 탭 바를 전환한다.
+        var agentUrl = data.url || '';
+        if (agentUrl && agentUrl !== _lastAgentUrl) {
+          var hadPrev = !!_lastAgentUrl;
+          _lastAgentUrl = agentUrl;
+          if (hadPrev) {
+            for (var ti = 0; ti < _browserTabs.length; ti++) {
+              if (_browserTabs[ti].url === agentUrl && !_browserTabs[ti].active) {
+                console.log('[BrowserAI] Agent switched tab →', _browserTabs[ti].id, agentUrl);
+                browserSwitchTab(_browserTabs[ti].id);
+                break;
+              }
+            }
+          }
+        }
+
         var pending = data.pending_url || '';
         if (pending) {
           if (pending !== _lastPending) {

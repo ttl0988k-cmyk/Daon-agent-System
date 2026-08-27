@@ -525,6 +525,10 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/browser/screenshot': 'handle_post_browser_screenshot',
                 '/api/browser/execute': 'handle_post_browser_execute',
                 '/api/browser/close': 'handle_post_browser_close',
+                '/api/browser/back': 'handle_post_browser_back',
+                '/api/browser/forward': 'handle_post_browser_forward',
+                '/api/browser/tabs': 'handle_post_browser_tabs',
+                '/api/browser/switch_tab': 'handle_post_browser_switch_tab',
             }
             if path in browser_post_routes:
                 try:
@@ -536,6 +540,10 @@ class Handler(BaseHTTPRequestHandler):
                         handle_post_browser_screenshot,
                         handle_post_browser_execute,
                         handle_post_browser_close,
+                        handle_post_browser_back,
+                        handle_post_browser_forward,
+                        handle_post_browser_tabs,
+                        handle_post_browser_switch_tab,
                     )
                     func_name = browser_post_routes[path]
                     func = locals()[func_name]
@@ -632,14 +640,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
         self.send_header('Cache-Control', 'no-cache')
-        self.send_header('Connection', 'keep-alive')
+        # SSE는 단발성 응답 — done/error 후 연결을 즉시 닫아야 클라이언트
+        # readline()이 EOF를 받고 루프를 탈출한다. keep-alive로 두면 서버가
+        # 연결을 유지해 커넥터가 타임아웃(120s)까지 대기하는 원인이 된다.
+        self.send_header('Connection', 'close')
         self.send_header('X-Accel-Buffering', 'no')
         self.end_headers()
+        self.close_connection = True
 
+        # 최대 수명 방어선: 워커 크래시 등으로 done을 못 받는 스트림에서
+        # 스레드가 영구 점유되는 누수를 막는다 (10분 후 강제 종료).
+        _sse_started = time.time()
         while True:
             try:
                 event, data = q.get(timeout=15)
             except queue.Empty:
+                if time.time() - _sse_started > 600.0:
+                    self.close_connection = True
+                    break  # SSE max lifetime exceeded — free the thread
                 try:
                     self.wfile.write(b": heartbeat\n\n")
                     self.wfile.flush()
@@ -655,6 +673,7 @@ class Handler(BaseHTTPRequestHandler):
                 break  # Client disconnected
 
             if event in ('done', 'error', 'cancel', 'apperror'):
+                self.close_connection = True  # 즉시 소켓 종료 → 클라이언트 EOF
                 break
 
 def _find_port_owner(port: int):

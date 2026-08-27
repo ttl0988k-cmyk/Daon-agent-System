@@ -1109,6 +1109,10 @@ from api.routes.browser_routes import (
 
 
     handle_post_browser_close,
+    handle_post_browser_back,
+    handle_post_browser_forward,
+    handle_post_browser_tabs,
+    handle_post_browser_switch_tab,
 
 
 
@@ -4539,6 +4543,18 @@ def handle_post(handler, parsed) -> bool:
 
 
         return handle_post_browser_close(handler, body)
+
+    if parsed.path == '/api/browser/back':
+        return handle_post_browser_back(handler, body)
+
+    if parsed.path == '/api/browser/forward':
+        return handle_post_browser_forward(handler, body)
+
+    if parsed.path == '/api/browser/tabs':
+        return handle_post_browser_tabs(handler, body)
+
+    if parsed.path == '/api/browser/switch_tab':
+        return handle_post_browser_switch_tab(handler, body)
 
 
 

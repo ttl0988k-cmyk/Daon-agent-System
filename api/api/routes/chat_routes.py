@@ -7,6 +7,7 @@ import logging
 import os
 import queue
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -85,8 +86,10 @@ def handle_get_sse_stream(handler, parsed) -> bool:
             handler.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             handler.send_header('Cache-Control', 'no-cache')
             handler.send_header('X-Accel-Buffering', 'no')
-            handler.send_header('Connection', 'keep-alive')
+            # 단발성 done 응답 — 연결을 즉시 닫아 클라이언트가 EOF로 루프 탈출
+            handler.send_header('Connection', 'close')
             handler.end_headers()
+            handler.close_connection = True
             try:
                 _sse(handler, 'done', done_data)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
@@ -103,8 +106,10 @@ def handle_get_sse_stream(handler, parsed) -> bool:
             handler.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             handler.send_header('Cache-Control', 'no-cache')
             handler.send_header('X-Accel-Buffering', 'no')
-            handler.send_header('Connection', 'keep-alive')
+            # 단발성 cancel 응답 — 연결을 즉시 닫아 클라이언트가 EOF로 루프 탈출
+            handler.send_header('Connection', 'close')
             handler.end_headers()
+            handler.close_connection = True
             try:
                 _sse(handler, 'cancel', {'message': 'Cancelled by user'})
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
@@ -115,8 +120,14 @@ def handle_get_sse_stream(handler, parsed) -> bool:
     handler.send_header('Content-Type', 'text/event-stream; charset=utf-8')
     handler.send_header('Cache-Control', 'no-cache')
     handler.send_header('X-Accel-Buffering', 'no')
-    handler.send_header('Connection', 'keep-alive')
+    # SSE는 단발성 응답 — done/error 후 연결을 즉시 닫아야 클라이언트
+    # readline()이 EOF를 받고 루프를 탈출한다 (커넥터 120s 타임아웃 방지).
+    handler.send_header('Connection', 'close')
     handler.end_headers()
+    handler.close_connection = True
+    # 최대 수명 방어선: 워커 크래시 등으로 done을 못 받는 스트림에서
+    # 스레드가 영구 점유되는 누수를 막는다 (10분 후 강제 종료).
+    _sse_started = time.time()
     try:
         while True:
             try:
@@ -128,6 +139,9 @@ def handle_get_sse_stream(handler, parsed) -> bool:
                 # 반드시 실제 이벤트여야 한다 (plan.md Cause C).
                 event, data = q.get(timeout=15)
             except queue.Empty:
+                if time.time() - _sse_started > 600.0:
+                    handler.close_connection = True
+                    break  # SSE max lifetime exceeded — free the thread
                 try:
                     if not _sse(handler, 'heartbeat', {}):
                         break  # client disconnected during heartbeat
@@ -141,6 +155,7 @@ def handle_get_sse_stream(handler, parsed) -> bool:
             if not _sse(handler, event, data):
                 break
             if event in ('done', 'error', 'cancel'):
+                handler.close_connection = True  # 즉시 소켓 종료 → 클라이언트 EOF
                 break
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
         pass

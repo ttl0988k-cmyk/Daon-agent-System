@@ -823,6 +823,42 @@ BROWSER_TOOL_SCHEMAS = [
         }
     },
     {
+        "name": "browser_forward",
+        "description": "Navigate forward to the next page in browser history (only works after browser_back). Requires browser_navigate to be called first.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "browser_tabs",
+        "description": "List all open tabs in the built-in browser. Returns each tab's index, URL, title, and which tab is currently active. Use browser_switch_tab to change the active tab.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "browser_switch_tab",
+        "description": "Switch the active browser tab by index (from browser_tabs) or by exact URL. Subsequent browser tools (browser_snapshot, browser_click, browser_type, ...) operate on the newly active tab.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "type": "integer",
+                    "description": "Tab index from browser_tabs to switch to"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Exact URL of the tab to switch to (alternative to index)"
+                }
+            },
+            "required": []
+        }
+    },
+    {
         "name": "browser_press",
         "description": "Press a keyboard key. Useful for submitting forms (Enter), navigating (Tab), or keyboard shortcuts. Requires browser_navigate to be called first.",
         "parameters": {
@@ -1774,6 +1810,104 @@ def browser_back(task_id: Optional[str] = None) -> str:
         }, ensure_ascii=False)
 
 
+def browser_forward(task_id: Optional[str] = None) -> str:
+    """
+    Navigate forward in browser history.
+
+    Args:
+        task_id: Task identifier for session isolation
+
+    Returns:
+        JSON string with navigation result
+    """
+    if _is_camofox_mode():
+        return json.dumps({
+            "success": False,
+            "error": "browser_forward is not supported by the Camofox backend."
+        }, ensure_ascii=False)
+
+    effective_task_id = task_id or "default"
+    result = _run_browser_command(effective_task_id, "forward", [])
+
+    if result.get("success"):
+        data = result.get("data", {})
+        return json.dumps({
+            "success": True,
+            "url": data.get("url", "")
+        }, ensure_ascii=False)
+    else:
+        return json.dumps({
+            "success": False,
+            "error": result.get("error", "Failed to go forward")
+        }, ensure_ascii=False)
+
+
+def browser_tabs(task_id: Optional[str] = None) -> str:
+    """
+    List all open tabs in the built-in browser.
+
+    Args:
+        task_id: Task identifier for session isolation
+
+    Returns:
+        JSON string with the tab list (index/url/title/active) and active_url
+    """
+    effective_task_id = task_id or "default"
+    result = _run_browser_command(effective_task_id, "tabs", [])
+
+    if result.get("success"):
+        data = result.get("data", {})
+        return json.dumps({
+            "success": True,
+            "tabs": data.get("tabs", []),
+            "active_url": data.get("active_url", "")
+        }, ensure_ascii=False)
+    else:
+        return json.dumps({
+            "success": False,
+            "error": result.get("error", "Failed to list tabs")
+        }, ensure_ascii=False)
+
+
+def browser_switch_tab(index: Optional[int] = None, url: Optional[str] = None, task_id: Optional[str] = None) -> str:
+    """
+    Switch the active browser tab by index or URL.
+
+    Args:
+        index: Tab index from browser_tabs
+        url: Exact URL of the tab to switch to (used when index is None)
+        task_id: Task identifier for session isolation
+
+    Returns:
+        JSON string with the newly active tab's url/title
+    """
+    effective_task_id = task_id or "default"
+    if index is not None:
+        args = [str(index)]
+    elif url:
+        args = [url]
+    else:
+        return json.dumps({
+            "success": False,
+            "error": "Provide 'index' (from browser_tabs) or 'url' of the tab to switch to."
+        }, ensure_ascii=False)
+
+    result = _run_browser_command(effective_task_id, "switch_tab", args)
+
+    if result.get("success"):
+        data = result.get("data", {})
+        return json.dumps({
+            "success": True,
+            "url": data.get("url", ""),
+            "title": data.get("title", "")
+        }, ensure_ascii=False)
+    else:
+        return json.dumps({
+            "success": False,
+            "error": result.get("error", "Failed to switch tab")
+        }, ensure_ascii=False)
+
+
 def browser_press(key: str, task_id: Optional[str] = None) -> str:
     """
     Press a keyboard key.
@@ -2528,6 +2662,31 @@ registry.register(
     handler=lambda args, **kw: browser_back(task_id=kw.get("task_id")),
     check_fn=check_browser_requirements,
     emoji="◀️",
+)
+registry.register(
+    name="browser_forward",
+    toolset="browser",
+    schema=_BROWSER_SCHEMA_MAP["browser_forward"],
+    handler=lambda args, **kw: browser_forward(task_id=kw.get("task_id")),
+    check_fn=check_browser_requirements,
+    emoji="▶️",
+)
+registry.register(
+    name="browser_tabs",
+    toolset="browser",
+    schema=_BROWSER_SCHEMA_MAP["browser_tabs"],
+    handler=lambda args, **kw: browser_tabs(task_id=kw.get("task_id")),
+    check_fn=check_browser_requirements,
+    emoji="🗂️",
+)
+registry.register(
+    name="browser_switch_tab",
+    toolset="browser",
+    schema=_BROWSER_SCHEMA_MAP["browser_switch_tab"],
+    handler=lambda args, **kw: browser_switch_tab(
+        index=args.get("index"), url=args.get("url"), task_id=kw.get("task_id")),
+    check_fn=check_browser_requirements,
+    emoji="🔀",
 )
 registry.register(
     name="browser_press",

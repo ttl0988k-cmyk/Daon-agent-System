@@ -790,11 +790,111 @@ def _browser_worker_loop():
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
                     page.go_back(wait_until="domcontentloaded", timeout=15000)
+                    _last_url = page.url
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
                         "url": page.url,
                     })
+
+            elif action == "forward":
+                page, err = _ensure_browser()
+                if err:
+                    _browser_result_queue.put({"_result_id": result_id, "error": err})
+                else:
+                    page.go_forward(wait_until="domcontentloaded", timeout=15000)
+                    _last_url = page.url
+                    _browser_result_queue.put({
+                        "_result_id": result_id,
+                        "status": "ok",
+                        "url": page.url,
+                    })
+
+            elif action == "tabs":
+                # CDP로 연결된 브라우저의 열린 탭 목록을 조회한다.
+                # 메인 UI(http://127.0.0.1)와 DevTools 내부 페이지는 제외 —
+                # _ensure_browser의 페이지 선택 기준과 동일하게 유지한다.
+                page, err = _ensure_browser()
+                if err:
+                    _browser_result_queue.put({"_result_id": result_id, "error": err})
+                else:
+                    tabs_list = []
+                    for ctx in (browser.contexts if browser is not None else []):
+                        for p in ctx.pages:
+                            url = (p.url or "").strip()
+                            if url.startswith("http://127.0.0.1"):
+                                continue  # skip main UI
+                            if url.startswith("devtools://") or url.startswith("chrome://") or url.startswith("devtools:"):
+                                continue  # skip internal DevTools
+                            try:
+                                title = p.title()
+                            except Exception:
+                                title = ""
+                            tabs_list.append({
+                                "index": len(tabs_list),
+                                "url": url,
+                                "title": title,
+                                "active": p is page,
+                            })
+                    _browser_result_queue.put({
+                        "_result_id": result_id,
+                        "status": "ok",
+                        "tabs": tabs_list,
+                        "active_url": page.url,
+                    })
+
+            elif action == "switch_tab":
+                # 에이전트의 활성 탭을 전환한다. browser_page를 대상 page 객체로
+                # 교체하면 이후 snapshot/click 등 모든 도구가 새 탭에서 동작한다.
+                # Electron 모드에서 new_page()는 새 BrowserWindow를 만들므로 여기서도
+                # 절대 호출하지 않는다 — 기존에 열린 탭 사이에서만 전환한다.
+                target_index = task.get("index")
+                target_url = (task.get("url") or "").strip()
+                page, err = _ensure_browser()
+                if err:
+                    _browser_result_queue.put({"_result_id": result_id, "error": err})
+                else:
+                    candidates = []
+                    for ctx in (browser.contexts if browser is not None else []):
+                        for p in ctx.pages:
+                            url = (p.url or "").strip()
+                            if url.startswith("http://127.0.0.1"):
+                                continue  # skip main UI
+                            if url.startswith("devtools://") or url.startswith("chrome://") or url.startswith("devtools:"):
+                                continue  # skip internal DevTools
+                            candidates.append(p)
+                    new_page = None
+                    if target_index is not None:
+                        try:
+                            ti = int(target_index)
+                            if 0 <= ti < len(candidates):
+                                new_page = candidates[ti]
+                        except (ValueError, TypeError):
+                            pass
+                    elif target_url:
+                        for p in candidates:
+                            if (p.url or "").strip() == target_url:
+                                new_page = p
+                                break
+                    if new_page is None:
+                        _browser_result_queue.put({
+                            "_result_id": result_id,
+                            "error": "지정한 탭을 찾을 수 없습니다. browser_tabs로 목록을 먼저 확인하세요.",
+                        })
+                    else:
+                        browser_page = new_page
+                        _last_url = new_page.url
+                        _browser_active = True
+                        try:
+                            new_title = new_page.title()
+                        except Exception:
+                            new_title = ""
+                        _browser_result_queue.put({
+                            "_result_id": result_id,
+                            "status": "ok",
+                            "url": new_page.url,
+                            "title": new_title,
+                        })
 
             elif action == "press":
                 key = task.get("key", "")
@@ -1193,6 +1293,53 @@ def handle_post_browser_close(handler, body: dict):
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {"status": "closed"})
+
+
+def handle_post_browser_back(handler, body: dict):
+    """POST /api/browser/back — go back in browser history."""
+    result = _submit_task("back")
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "url": result.get("url", ""),
+    })
+
+
+def handle_post_browser_forward(handler, body: dict):
+    """POST /api/browser/forward — go forward in browser history."""
+    result = _submit_task("forward")
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "url": result.get("url", ""),
+    })
+
+
+def handle_post_browser_tabs(handler, body: dict):
+    """POST /api/browser/tabs — list open browser tabs (CDP pages)."""
+    result = _submit_task("tabs")
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "tabs": result.get("tabs", []),
+        "active_url": result.get("active_url", ""),
+    })
+
+
+def handle_post_browser_switch_tab(handler, body: dict):
+    """POST /api/browser/switch_tab — switch the agent's active tab (by index or url)."""
+    body = body or {}
+    index = body.get("index")
+    url = (body.get("url") or "").strip()
+    if index is None and not url:
+        return j_err(handler, "Provide 'index' or 'url' of the tab to switch to")
+    result = _submit_task("switch_tab", index=index, url=url)
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "url": result.get("url", ""),
+        "title": result.get("title", ""),
+    })
 
 
 # ── Browser Proxy (iframe bypass) ──

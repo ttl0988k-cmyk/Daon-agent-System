@@ -91,6 +91,38 @@ def _run_browser_command_via_bridge(
         result = _submit_task("back")
         return _convert_result(result)
 
+    elif command == "forward":
+        result = _submit_task("forward")
+        return _convert_result(result)
+
+    elif command == "tabs":
+        result = _submit_task("tabs")
+        return _convert_result(result)
+
+    elif command == "tab":
+        # agent-browser 스타일: "tab select <index>" → 활성 탭 전환
+        if args and args[0] == "select":
+            try:
+                idx = int(args[1]) if len(args) > 1 else 0
+            except (ValueError, TypeError):
+                return {"success": False, "error": f"Invalid tab index: {args[1] if len(args) > 1 else ''}"}
+            result = _submit_task("switch_tab", index=idx)
+            return _convert_result(result)
+        result = _submit_task("tabs")
+        return _convert_result(result)
+
+    elif command == "switch_tab":
+        # args: [index] 또는 [url] — 정수면 인덱스, 아니면 URL로 취급
+        index = None
+        url = ""
+        if args:
+            try:
+                index = int(args[0])
+            except (ValueError, TypeError):
+                url = args[0]
+        result = _submit_task("switch_tab", index=index, url=url)
+        return _convert_result(result)
+
     elif command == "press":
         key = args[0] if args else ""
         result = _submit_task("press", key=key)

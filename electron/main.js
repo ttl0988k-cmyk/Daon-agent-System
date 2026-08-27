@@ -409,13 +409,39 @@ function probeServerHealth(port, timeoutMs = 1000) {
 // '재사용 불가'로 확정하지 않고, 짧은 재시도를 거쳐 진짜 죽었는지 확인한다.
 // 기존엔 probe 1회 실패 → taskkill /F /IM server.exe 로 healthy 서버까지 죽였다.
 async function probeServerHealthStable(port) {
-  const first = await probeServerHealth(port, 1500);
+  // 타임아웃 상향(1.5/2s → 3/4s): 서버가 무거운 작업 중이면 /health 응답이
+  // 수 초 지연된다. 짧은 타임아웃은 '바쁜 살아있는 서버'를 '죽음'으로 오판해
+  // taskkill → 재시작 → 세션 유실의 악순환을 만들었다.
+  const first = await probeServerHealth(port, 3000);
   if (first && first.healthy && first.pid) return first;
   // 1차 실패 — 500ms 후 2차 시도 (진짜 다운인지 일시 지연인지 구분)
   await new Promise(r => setTimeout(r, 500));
-  const second = await probeServerHealth(port, 2000);
+  const second = await probeServerHealth(port, 4000);
   if (second && second.healthy && second.pid) return second;
   return null;
+}
+
+// [근본 수정 2026-08-28] TCP 레벨 포트 LISTENING 확인.
+// HTTP /health probe 실패 = 서버 죽음이 아니다 — 서버가 바쁘면 응답이 늦을 뿐.
+// TCP connect는 커널 백로그에서 처리되므로 서버가 아무리 바빠도 즉시 성공한다.
+// connect 성공 = 서버 프로세스 생존 확정 → 절대 taskkill 하지 않는다.
+function isPortListening(port, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const done = (v) => {
+      if (!settled) {
+        settled = true;
+        try { socket.destroy(); } catch (_) { }
+        resolve(v);
+      }
+    };
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+    socket.setTimeout(timeoutMs);
+    socket.connect(port, '127.0.0.1');
+  });
 }
 
 // [결함④ 수정①] 스왑 후 첫 기동 유예: PyInstaller onefile exe 는 기동 시
@@ -872,11 +898,26 @@ app.whenReady().then(async () => {
       // Adopt the running server so quit / watchdog cleanup can still target it.
       pythonProcess = { pid: healthProbe.pid, _adopted: true };
     } else {
-      merr(`[Electron] No healthy server to reuse on ${DEFAULT_PORT} — will taskkill + spawn fresh. probe=`, healthProbe);
+      // [근본 수정 2026-08-28] probe 실패 = 서버 죽음이 아니다. 서버가 무거운
+      // 작업(Whisper 추론, 이미지 생성 등) 중이면 /health 응답이 수 초 지연된다.
+      // 이전 로직은 probe 실패 → taskkill /IM 으로 살아있는 서버를 죽였고,
+      // 그 결과 매 앱 시작마다 서버 재시작 + 세션 유실 + 수십 초 응답 지연이
+      // 반복됐다. 이제 TCP LISTENING 여부로 프로세스 생존을 먼저 확정한다.
+      const portAlive = await isPortListening(DEFAULT_PORT, 2000);
+      if (portAlive) {
+        mlog(`[Electron] /health probe failed but port ${DEFAULT_PORT} is LISTENING — server is ALIVE (busy). Adopting instead of killing; STEP 3 health wait will confirm.`);
+        // taskkill 금지 — 기존 서버를 그대로 두고 STEP 3의 health 대기가
+        // 응답 복구를 확인한다. pid는 이 시점에 알 수 없으므로 null로 adopt.
+        pythonProcess = { pid: null, _adopted: true, _busy: true };
+        reusedServer = true;
+      } else {
+        merr(`[Electron] No server on ${DEFAULT_PORT} (probe failed + port closed) — will taskkill + spawn fresh. probe=`, healthProbe);
+      }
     }
 
     if (!reusedServer) {
       // Kill old server processes synchronously BEFORE spawning new server
+      // (포트가 닫혀 있어 서버가 정말 없을 때만 도달한다)
       try {
         if (process.platform === 'win32') {
           execSync('taskkill /F /IM server.exe /T 2>nul', { windowsHide: true });
@@ -908,6 +949,17 @@ app.whenReady().then(async () => {
     console.log(`[Electron] Waiting for server on port ${serverPort}...`);
     await checkServerHealth(serverPort, 180, 1000);
     console.log(`[Electron] Main server is ready!`);
+    // [근본 수정 2026-08-28] busy 서버를 adopt한 경우 pid를 이 시점에 확정한다 —
+    // watchdog/quit 정리가 대상 pid를 알아야 동작한다.
+    if (pythonProcess && pythonProcess._busy && !pythonProcess.pid) {
+      try {
+        const h = await probeServerHealth(serverPort, 3000);
+        if (h && h.pid) {
+          pythonProcess = { pid: h.pid, _adopted: true };
+          mlog(`[Electron] Busy server adopted — pid resolved: ${h.pid}`);
+        }
+      } catch (_) { }
+    }
 
     // ── STEP 3a: CDP 9222는 앱 시작부터 항상 ON (8월 3일 정상 빌드 복원) ──
     // 온디맨드 relaunch 폴링(restart-for-cdp.flag)은 제거했다. 백업은 앱 시작

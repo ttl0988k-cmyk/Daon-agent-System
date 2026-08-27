@@ -173,6 +173,7 @@ _LEGACY_TOOLSET_MAP = {
     "browser_tools": [
         "browser_navigate", "browser_snapshot", "browser_click",
         "browser_type", "browser_scroll", "browser_back",
+        "browser_forward", "browser_tabs", "browser_switch_tab",
         "browser_press", "browser_get_images",
         "browser_vision", "browser_console"
     ],
