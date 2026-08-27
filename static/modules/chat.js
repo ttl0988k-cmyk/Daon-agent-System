@@ -1827,7 +1827,8 @@ sse.addEventListener('debate_status', (e) => {
           // 읽기 전용 "✅ 자동 승인됨" 카드로 교체한다.
           _approvalPending = false;
           _idleExtensions = 0;
-          if (data.type === 'dangerous_command') {
+          if (data.type === 'dangerous_command') {
+          // [2026-08-27] restore the web view hidden during approval wait
             setStreamStatus('thinking', '⏱️ 응답 없음 — 자동 승인됨');
           } else {
             setStreamStatus('thinking', '⏱️ 자동 승인됨');
@@ -1847,7 +1848,11 @@ sse.addEventListener('debate_status', (e) => {
           // 승인 대기 표시 — idle 워치독이 스트림을 종료하지 않게 유예한다.
           // (백엔드는 사용자 응답을 기다리며 블로킹 중)
           _approvalPending = true;
-          _idleExtensions = 0;
+          _idleExtensions = 0;
+          // [2026-08-27] WebContentsView covers the chat/approval card area and
+          // steals clicks (measured: 0 respond requests -> 45s auto-approve).
+          // Hide the web view while approval is pending so the card is on top.
+          try { if (window.electronAPI) window.electronAPI.setVisibility(false); } catch (_) { }
           // 상단 상태 표시를 "승인 대기"로 전환해 에이전트가 멈춘 것이 아니라
           // 사용자 검토를 기다리는 중임을 명확히 한다.
           if (data.type === 'dangerous_command') {

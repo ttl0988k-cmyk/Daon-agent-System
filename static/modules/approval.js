@@ -174,6 +174,8 @@ async function handleInlineApproval(approved, btnEl) {
             }
             card.removeAttribute('data-busy');
         }
+        // [2026-08-27] 승인 대기 중 숨겼던 웹 뷰 복원
+        try { if (window.electronAPI) window.electronAPI.setVisibility(true); } catch (_) { }
         setTimeout(function () {
             var resolved = document.querySelector('.inline-approval-card.resolved');
             if (resolved) resolved.remove();
@@ -199,6 +201,8 @@ async function handleInlineApproval(approved, btnEl) {
                 actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
             }
         }
+        // [2026-08-27] 승인 대기 중 숨겼던 웹 뷰 복원
+        try { if (window.electronAPI) window.electronAPI.setVisibility(true); } catch (_) { }
         setTimeout(function () {
             var resolved = document.querySelector('.inline-approval-card.resolved');
             if (resolved) resolved.remove();
@@ -265,6 +269,8 @@ async function handleInlineApproval(approved, btnEl) {
     var leftoverBar = document.getElementById('diffActiveBar');
     if (leftoverBar) leftoverBar.style.display = 'none';
     if (typeof _resetApprovalButtons === 'function') _resetApprovalButtons();
+    // [2026-08-27] 승인 대기 중 숨겼던 웹 뷰 복원
+    try { if (window.electronAPI) window.electronAPI.setVisibility(true); } catch (_) { }
     setTimeout(function () {
         var resolved = document.querySelector('.inline-approval-card.resolved');
         if (resolved) resolved.remove();
