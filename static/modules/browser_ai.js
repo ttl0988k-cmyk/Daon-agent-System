@@ -198,7 +198,7 @@ async function browserGoToAddress() {
     // Electron mode: navigate via IPC (WebContentsView shared with AI)
     if (frame) frame.style.display = 'none';
     if (placeholder) placeholder.style.display = 'none';
-    window.electronAPI.navigate('tab1', url);
+    window.electronAPI.navigate(_activeTabId, url);
     // bounds sync after a short delay to let WebContentsView initialize
     setTimeout(function () {
       syncElectronBrowserBounds();
@@ -311,7 +311,7 @@ function _navigateIframeTo(url) {
 
 function browserGoBack() {
   if (window.electronAPI) {
-    window.electronAPI.goBack('tab1');
+    window.electronAPI.goBack(_activeTabId);
   } else if (_browserHistoryIdx > 0) {
     _browserHistoryIdx--;
     var entry = _browserHistory[_browserHistoryIdx];
@@ -326,7 +326,7 @@ function browserReload() { browserRefresh(); }
 
 function browserGoForward() {
   if (window.electronAPI) {
-    window.electronAPI.goForward('tab1');
+    window.electronAPI.goForward(_activeTabId);
   } else if (_browserHistoryIdx < _browserHistory.length - 1) {
     _browserHistoryIdx++;
     var entry = _browserHistory[_browserHistoryIdx];
@@ -336,7 +336,7 @@ function browserGoForward() {
 
 function browserRefresh() {
   if (window.electronAPI) {
-    window.electronAPI.reload('tab1');
+    window.electronAPI.reload(_activeTabId);
   } else {
     var frame = document.getElementById('browserFrame');
     if (frame && _browserCurrentUrl) {
@@ -355,7 +355,7 @@ function browserRefresh() {
  */
 function browserClosePage() {
   if (window.electronAPI) {
-    window.electronAPI.navigate('tab1', 'about:blank');
+    window.electronAPI.navigate(_activeTabId, 'about:blank');
     // CRITICAL: Hide the Electron WebContentsView overlay to prevent white screen
     window.electronAPI.setVisibility(false);
   }
@@ -699,3 +699,66 @@ setInterval(syncElectronBrowserBounds, 500);
   }, 5000); // 5초 폴링 — 서버 CDP 재연결 백오프(5초)와 정합. 1초 폴링은 CDP 미준비 시
   // connect_over_cdp 실패를 반복시켜 서버 스레드를 소진하고 다른 API를 15초 타임아웃에 빠뜨림.
 })();
+
+// ═══════════════════════════════════════════
+// Tab management (2026-08-27)
+// Electron TabManager와 동기화되는 다중 탭 UI.
+// _activeTabId: 현재 활성 탭 — navigate/goBack 등이 'tab1' 고정 대신 이 값을 쓴다.
+// ═══════════════════════════════════════════
+var _browserTabs = [];
+var _activeTabId = 'tab1';
+
+function _escTab(s) {
+  // \x26 = '&' — HTML 엔티티를 리터럴로 쓰면 저장 시 디코딩되는 사고 방지
+  return String(s == null ? '' : s)
+    .replace(/&/g, '\x26amp;')
+    .replace(/</g, '\x26lt;')
+    .replace(/>/g, '\x26gt;')
+    .replace(/"/g, '\x26quot;')
+    .replace(/'/g, '\x26#39;');
+}
+
+function browserNewTab() {
+  if (!window.electronAPI) return;
+  var id = 'tab' + Date.now();
+  window.electronAPI.newTab(id, 'about:blank');
+  _activeTabId = id;
+}
+
+function browserSwitchTab(id) {
+  if (!window.electronAPI || !id) return;
+  _activeTabId = id;
+  window.electronAPI.switchTab(id);
+}
+
+function browserCloseTab(id) {
+  if (!window.electronAPI || !id) return;
+  window.electronAPI.closeTab(id);
+}
+
+function renderBrowserTabs() {
+  var wrap = document.getElementById('browserTabs');
+  if (!wrap) return;
+  var html = '';
+  for (var i = 0; i < _browserTabs.length; i++) {
+    var t = _browserTabs[i];
+    html += '<div class="browser-tab' + (t.active ? ' active' : '') + '"'
+      + ' onclick="browserSwitchTab(\'' + _escTab(t.id) + '\')"'
+      + ' title="' + _escTab(t.title || t.id) + '">'
+      + '<span class="browser-tab-title">' + _escTab(t.title || t.id) + '</span>'
+      + '<span class="browser-tab-close" onclick="event.stopPropagation();browserCloseTab(\'' + _escTab(t.id) + '\')">×</span>'
+      + '</div>';
+  }
+  wrap.innerHTML = html;
+}
+
+// Electron → 탭 목록 수신 (생성/전환/닫기/제목 변경 시 브로드캐스트)
+if (window.electronAPI && window.electronAPI.onTabsUpdated) {
+  window.electronAPI.onTabsUpdated(function (tabs) {
+    _browserTabs = tabs || [];
+    for (var i = 0; i < _browserTabs.length; i++) {
+      if (_browserTabs[i].active) { _activeTabId = _browserTabs[i].id; break; }
+    }
+    renderBrowserTabs();
+  });
+}

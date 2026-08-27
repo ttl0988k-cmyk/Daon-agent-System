@@ -992,6 +992,10 @@
               </div>
               <!-- Browser View (in-canvas) -->
               <div id="browserViewWrap" style="display:none; flex-direction: column; height: 100%;">
+                <div class="browser-tab-bar" id="browserTabBar">
+                  <div class="browser-tabs" id="browserTabs"></div>
+                  <button class="browser-tab-new" onclick="browserNewTab()" title="새 탭">＋</button>
+                </div>
                 <div class="browser-url-bar">
                   <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
                   <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>

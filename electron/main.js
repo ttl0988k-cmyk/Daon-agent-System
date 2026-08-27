@@ -2,6 +2,11 @@ console.log("[BUILD ID]: main-v5-2026-08-03-22:50");
 console.log("[BUILD ID]: watchdog-fix-v3-2026-07-25-17:28");
 console.log("[BUILD ID]: restore-aug3-browser-2026-08-14-23:35");
 console.log("[BUILD ID]: self-update-canary-v1-2026-08-24");
+console.log("[BUILD ID]: firefox-ua-webauthn-block-2026-08-27");
+console.log("[BUILD ID]: cdp-safe-no-debugger-attach-2026-08-27");
+console.log("[BUILD ID]: webcontents-null-guard-2026-08-27");
+console.log("[BUILD ID]: cdp-relaunch-guarantee-2026-08-27");
+console.log("[BUILD ID]: tab-bar-ui-2026-08-27");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -106,6 +111,65 @@ function cleanupOrphanedTemp() {
 const NEEDED_CDP_PORT = '9222';
 app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
 app.commandLine.appendSwitch('remote-allow-origins', '*');
+// ── 패스키(암호 키) 유도 차단 (2026-08-27 실측) ──
+// Chrome 완전 위장 시 구글이 WebAuthn/패스키 로그인을 강제 제안하고, Electron에선
+// 플로우가 완결되지 않아 "USB 보안 키 삽입" 요구로 막힌다(실측). WebAuthentication
+// 피처를 비활성화하면 navigator.credentials WebAuthn 요청이 실패하고, 구글은 이
+// 브라우저를 "패스키 미지원"으로 보고 비밀번호 로그인 플로우를 제공한다.
+app.commandLine.appendSwitch('disable-features', 'WebAuthentication');
+
+// ── 구글 로그인 신뢰 신호: User-Agent를 Firefox로 위장 (2026-08-27 밤 전환) ──
+// [변천] 순정 Electron UA → "자바스크립트 미지원" 거부. Chrome 138 위장(07e9750
+// 재적용) → Client Hints 정합성 검사에 걸쳐 "암호 키 강제" + "안전하지 않은
+// 브라우저" 차단(실측). Chrome 위장은 Chromium 엔진의 미세 흔적과 UA-CH 정합성
+// 검증을 모두 통과해야 하므로 한계에 도달.
+// Firefox 위장은 구글이 Client Hints 정합성 검사를 하지 않는다 — Firefox는
+// Sec-CH-UA*를 전송하지 않는 브라우저이므로, 오히려 Chromium이 자동으로 붙이는
+// Sec-CH-UA* 헤더를 "제거"하는 것이 와이어에서 일관된 Firefox가 되는 길이다.
+try {
+  app.userAgentFallback =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0';
+} catch (e) {
+  console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
+}
+
+// ── Firefox 정합 헤더 정규화 ──
+// 1) Chromium이 자동 송신하는 Sec-CH-UA* 헤더를 전부 제거 (Firefox는 미전송)
+// 2) Accept-Language가 비정상적으로 짧으면 표준 형태로 보정
+const FULL_ACCEPT_LANG = 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7';
+function normalizeFirefoxHeaders(headers, url) {
+  const h = { ...headers };
+  for (const k of Object.keys(h)) {
+    if (k.toLowerCase().startsWith('sec-ch-ua')) delete h[k];
+  }
+  const alKey = Object.keys(h).find((k) => k.toLowerCase() === 'accept-language');
+  if (alKey && (h[alKey] === 'ko' || h[alKey] === 'en' || !h[alKey])) h[alKey] = FULL_ACCEPT_LANG;
+  return h;
+}
+function attachChromeHeaderNormalization(ses, label) {
+  try {
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: normalizeFirefoxHeaders(details.requestHeaders, details.url) });
+    });
+    console.log('[FirefoxUA] Header normalization attached: ' + label);
+  } catch (e) {
+    console.warn('[FirefoxUA] attach failed (' + label + '):', e && e.message);
+  }
+}
+
+// ── CDP 9222 부팅 보장 (2026-08-27, B안: 커맨드라인 relaunch) ──
+// appendSwitch는 패키지 빌드에서 main 프로세스 CDP에 스위치가 확실히 안 심긴다
+// (실측: 9222 LISTENING 부재, 렌더러로만 플래그 누수 — 본 파일 하단 주석도 인정).
+// 커맨드라인에 --remote-debugging-port가 없으면 앱을 1회 재실행해 확실히 심는다.
+// argv 체크 덕에 relaunch는 최대 1회 — 무한 루프 없음. 반드시 single instance
+// lock "앞"에 둔다: lock이 먼저 걸리면 relaunch된 새 프로세스가 즉사한다.
+if (!process.argv.some(function (a) { return String(a).indexOf('--remote-debugging-port=') === 0; })) {
+  console.log('[CDP] --remote-debugging-port missing in argv — relaunching once to guarantee CDP 9222.');
+  app.relaunch({
+    args: process.argv.slice(1).concat(['--remote-debugging-port=' + NEEDED_CDP_PORT]),
+  });
+  app.exit(0);
+}
 
 // ── Single Instance Lock ──
 // Each instance needs exclusive access to CDP port 9222 and spawns its own
@@ -748,6 +812,11 @@ app.whenReady().then(async () => {
   // ── Always-on: 트레이 아이콘 생성 (서버 백그라운드 상주) ──
   createTray();
 
+  // ── Firefox 정합 헤더: 기본 세션 (메인 UI + 공유 브라우저) ──
+  // 공유 브라우저(WebContentsView)도 기본 세션을 쓰므로 defaultSession 하나만
+  // attach 하면 동일 적용된다 (24aab44 이후 구조).
+  attachChromeHeaderNormalization(session.defaultSession, 'defaultSession');
+
   // ── STEP 0: Show splash window safely on ready-to-show without any white/black blank flash ──
   splashWindow = new BrowserWindow({
     width: 420,
@@ -1174,9 +1243,43 @@ class TabManager {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        javascript: true,
       }
     });
     this.tabs.set(tabId, view);
+
+    // ── 구글 로그인 신뢰 신호: UA를 Firefox로 재정의 (2026-08-27 밤 전환) ──
+    // Electron 기본 UA는 임베디드 감지 → 거부. Chrome 위장은 UA-CH 정합성 검사에
+    // 걸림(실측: 암호 키 강제 + "안전하지 않은 브라우저"). Firefox는 Client Hints
+    // 가 없는 브라우저라 구글의 정합성 검사 대상에서 벗어난다.
+    // javascript:true 는 명시적 선언으로, Google의 JS 지원 검사 신호를 보장한다.
+    try {
+      view.webContents.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0'
+      );
+    } catch (e) {
+      console.warn('[TabManager] Failed to set Firefox user agent:', e && e.message);
+    }
+
+    // JS 측 navigator.userAgentData도 제거한다 — Firefox에는 이 API가 없다.
+    // [2026-08-27 실측 결함 수정] debugger.attach('1.3')는 always-on CDP 9222와
+    // 락 경합을 일으켜 CDP 서버를 응답불능으로 만든다(에이전트 connect_over_cdp
+    // 실패 → 에이전트 응답 정지). 07e9750 시절엔 CDP가 기본 OFF(9a52070)라
+    // 충돌이 없었지만, 24aab44 이후 always-on 구조에서는 debugger.attach 금지.
+    // UA는 setUserAgent + executeJavaScript(did-finish-load)로만 처리한다.
+    view.webContents.on('did-finish-load', () => {
+      // Firefox 정합 지문: vendor(Chromium은 "Google Inc.", Firefox는 빈 문자열),
+      // userAgentData 제거, oscpu(Firefox 전용 필드) 부여. (2026-08-27 실측:
+      // 구글이 "지원하지 않는 브라우저" 경고 — vendor 등 엔진 지문이 원인)
+      view.webContents.executeJavaScript(
+        'try{delete navigator.userAgentData}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"userAgentData",{get:()=>undefined})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"vendor",{get:()=>""})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"oscpu",{get:()=>"Windows NT 10.0"})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};1'
+      ).catch(() => { });
+    });
+    view.webContents.on('page-title-updated', () => { this._notifyTabs(); });
 
     // Prevent new BrowserWindows from opening — navigate in the same view instead
     // (뷰 단위 팝업 억제: 외부 창 튀어나옴을 막되, 구글 OAuth 팝업/리다이렉트는
@@ -1202,6 +1305,42 @@ class TabManager {
       this.mainWindow.contentView.addChildView(view);
       view.setBounds(this.bounds);
     }
+    this._notifyTabs();
+  }
+
+  closeTab(tabId) {
+    const view = this.tabs.get(tabId);
+    if (!view) return;
+    try { view.webContents.close(); } catch (e) { }
+    this.tabs.delete(tabId);
+    try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
+    if (this.activeTabId === tabId) {
+      this.activeTabId = null;
+      const next = this.tabs.keys().next();
+      if (!next.done) {
+        this.switchTab(next.value);
+        return; // switchTab already notifies
+      }
+      this.isVisible = false;
+    }
+    this._notifyTabs();
+  }
+
+  // 프론트엔드 탭 바 동기화: 탭 목록(id/제목/URL/활성)을 renderer로 브로드캐스트.
+  _notifyTabs() {
+    const tabs = [];
+    for (const [id, view] of this.tabs) {
+      let title = id;
+      let url = '';
+      try {
+        if (view.webContents && !view.webContents.isDestroyed()) {
+          title = view.webContents.getTitle() || id;
+          url = view.webContents.getURL() || '';
+        }
+      } catch (e) { }
+      tabs.push({ id, title, url, active: id === this.activeTabId });
+    }
+    try { this.mainWindow.webContents.send('browser-tabs-updated', tabs); } catch (e) { }
   }
 
   navigate(tabId, url) {
@@ -1218,6 +1357,7 @@ class TabManager {
     this.activeTabId = tabId;
     try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
     view.setBounds(this.bounds);
+    this._notifyTabs();
   }
 
   setBounds(bounds) {
@@ -1248,6 +1388,22 @@ ipcMain.on('browser-navigate', (event, { id, url }) => {
   if (tabManager) tabManager.navigate(id || 'tab1', url);
 });
 
+// ── Tab management IPC (2026-08-27) ──
+ipcMain.on('browser-tab-new', (event, { id, url }) => {
+  if (!tabManager) return;
+  const tabId = id || ('tab' + Date.now());
+  tabManager.createTab(tabId, url || 'about:blank');
+  tabManager.switchTab(tabId);
+});
+
+ipcMain.on('browser-tab-switch', (event, { id }) => {
+  if (tabManager && id && tabManager.tabs.has(id)) tabManager.switchTab(id);
+});
+
+ipcMain.on('browser-tab-close', (event, { id }) => {
+  if (tabManager && id) tabManager.closeTab(id);
+});
+
 ipcMain.on('browser-set-bounds', (event, bounds) => {
   if (tabManager) tabManager.setBounds(bounds);
 });
@@ -1259,10 +1415,15 @@ ipcMain.on('browser-set-visibility', (event, visible) => {
 ipcMain.on('browser-set-ignore-mouse-events', (event, ignore) => {
   if (tabManager && tabManager.activeTabId && tabManager.tabs.has(tabManager.activeTabId)) {
     const view = tabManager.tabs.get(tabManager.activeTabId);
-    if (ignore) {
-      view.webContents.setIgnoreMouseEvents(true, { forward: true });
-    } else {
-      view.webContents.setIgnoreMouseEvents(false);
+    // [2026-08-27 크래시 수정] 탭 객체가 남아있어도 webContents가 이미 파괴되면
+    // undefined다 — canGoBack/reload 등 접근 시 메인 프로세스 Uncaught Exception
+    // 로 앱 전체가 죽는다(실측: main.js:1355 TypeError canGoBack of undefined).
+    if (view && view.webContents && !view.webContents.isDestroyed()) {
+      if (ignore) {
+        view.webContents.setIgnoreMouseEvents(true, { forward: true });
+      } else {
+        view.webContents.setIgnoreMouseEvents(false);
+      }
     }
   }
 });
@@ -1270,7 +1431,7 @@ ipcMain.on('browser-set-ignore-mouse-events', (event, ignore) => {
 ipcMain.on('browser-go-back', (event, { id }) => {
   if (tabManager && tabManager.activeTabId && tabManager.tabs.has(tabManager.activeTabId)) {
     const view = tabManager.tabs.get(tabManager.activeTabId);
-    if (view.webContents.canGoBack()) {
+    if (view && view.webContents && !view.webContents.isDestroyed() && view.webContents.canGoBack()) {
       view.webContents.goBack();
     }
   }
@@ -1279,7 +1440,7 @@ ipcMain.on('browser-go-back', (event, { id }) => {
 ipcMain.on('browser-go-forward', (event, { id }) => {
   if (tabManager && tabManager.activeTabId && tabManager.tabs.has(tabManager.activeTabId)) {
     const view = tabManager.tabs.get(tabManager.activeTabId);
-    if (view.webContents.canGoForward()) {
+    if (view && view.webContents && !view.webContents.isDestroyed() && view.webContents.canGoForward()) {
       view.webContents.goForward();
     }
   }
@@ -1288,7 +1449,9 @@ ipcMain.on('browser-go-forward', (event, { id }) => {
 ipcMain.on('browser-reload', (event, { id }) => {
   if (tabManager && tabManager.activeTabId && tabManager.tabs.has(tabManager.activeTabId)) {
     const view = tabManager.tabs.get(tabManager.activeTabId);
-    view.webContents.reload();
+    if (view && view.webContents && !view.webContents.isDestroyed()) {
+      view.webContents.reload();
+    }
   }
 });
 
