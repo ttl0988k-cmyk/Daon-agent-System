@@ -2113,6 +2113,29 @@ sse.addEventListener('debate_status', (e) => {
   } catch (err) {
     console.log('[SSE-DIAG] ❌ catch block (start run failed):', err.message);
     finishStream('start_failed');
+    // [2026-08-27 압축 리네임 경합 폴백] 도구 실행 중 취소하면 컨텍스트 압축이
+    // 세션 파일을 리네임하고 compressed 이벤트(new_session_id)가 유실될 수 있다.
+    // 이 경우 옧 session_id로 /api/chat/start가 404 Session not found를 반환한다.
+    // 세션 목록을 재로드해 가장 최근 세션으로 자동 전환해 복구를 시도한다.
+    if (/Session not found/i.test(String(err.message))) {
+      try {
+        const sessRes = await api('/api/sessions');
+        const sessions = (sessRes && sessRes.sessions) || [];
+        if (sessions.length) {
+          const latest = sessions.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+          State.sessions = sessions;
+          State.activeSessionId = latest.session_id;
+          if (typeof renderSessionsList === 'function') renderSessionsList();
+          if (typeof selectSession === 'function') { await selectSession(latest.session_id); }
+          if (asstBubble && asstBubble.parentNode) {
+            asstBubble.innerHTML = '<div class="text-warning" style="margin-top:8px;">[세션이 압축 갱신되어 최근 세션으로 전환했습니다 — 메시지를 다시 보내주세요]</div>';
+          }
+          return;
+        }
+      } catch (recoveryErr) {
+        console.warn('[SSE-DIAG] session recovery failed:', recoveryErr);
+      }
+    }
     asstBubble.innerHTML = `<div class="text-danger">[Failed to start run: ${err.message}]</div>`;
   }
 }
