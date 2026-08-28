@@ -589,40 +589,74 @@ def list_summaries(limit: int = 50) -> list:
 # ---------------------------------------------------------------------------
 # Stats / Context
 # ---------------------------------------------------------------------------
-def get_store_stats() -> dict:
+def get_store_stats(lock_timeout: Optional[float] = None) -> dict:
+    """저장소 통계. lock_timeout 지정 시 락 경합 중이면 기다리지 않고 기본값 반환 —
+    트레이/대시보드 폴링이 에이전트의 무거운 DB 작업에 끌려가지 않도록 한다."""
+    lock_acquired = False
     try:
         _ensure_schema()
-        with _db_lock:
-            conn = _connect()
-            try:
-                facts = conn.execute('SELECT COUNT(*) AS c FROM facts').fetchone()['c']
-                profile = conn.execute('SELECT COUNT(*) AS c FROM profile').fetchone()['c']
-                summaries = conn.execute('SELECT COUNT(*) AS c FROM summaries').fetchone()['c']
-                return {'facts': facts, 'profile': profile, 'summaries': summaries}
-            finally:
-                conn.close()
+        if lock_timeout is not None:
+            lock_acquired = _db_lock.acquire(timeout=lock_timeout)
+            if not lock_acquired:
+                return {'facts': 0, 'profile': 0, 'summaries': 0}
+        else:
+            _db_lock.acquire()
+            lock_acquired = True
+        conn = _connect()
+        try:
+            facts = conn.execute('SELECT COUNT(*) AS c FROM facts').fetchone()['c']
+            profile = conn.execute('SELECT COUNT(*) AS c FROM profile').fetchone()['c']
+            summaries = conn.execute('SELECT COUNT(*) AS c FROM summaries').fetchone()['c']
+            return {'facts': facts, 'profile': profile, 'summaries': summaries}
+        finally:
+            conn.close()
     except Exception:
         return {'facts': 0, 'profile': 0, 'summaries': 0}
+    finally:
+        if lock_acquired:
+            _db_lock.release()
 
 
-def get_queue_stats() -> dict:
-    """job_queue의 상태별 개수 집계 (pending/processing/done/failed)."""
+def get_queue_stats(lock_timeout: Optional[float] = None) -> dict:
+    """job_queue의 상태별 개수 집계 (pending/processing/done/failed).
+
+    lock_timeout 지정 시 락 경합 중이면 기다리지 않고 기본값 반환.
+    """
+    lock_acquired = False
     try:
         _ensure_schema()
-        with _db_lock:
-            conn = _connect()
-            try:
-                rows = conn.execute(
-                    "SELECT status, COUNT(*) AS c FROM job_queue GROUP BY status"
-                ).fetchall()
-                stats = {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
-                for r in rows:
-                    stats[r['status']] = r['c']
-                return stats
-            finally:
-                conn.close()
+        if lock_timeout is not None:
+            lock_acquired = _db_lock.acquire(timeout=lock_timeout)
+            if not lock_acquired:
+                return {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+        else:
+            _db_lock.acquire()
+            lock_acquired = True
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS c FROM job_queue GROUP BY status"
+            ).fetchall()
+            stats = {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+            for r in rows:
+                stats[r['status']] = r['c']
+            return stats
+        finally:
+            conn.close()
     except Exception:
         return {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+    finally:
+        if lock_acquired:
+            _db_lock.release()
+
+
+# ── system/status 캐시 (2026-08-28) ──
+# 트레이가 10초마다 /api/system/status를 폴링하는데, 이 함수가 전역 _db_lock을
+# 3번 획득하므로 에이전트가 무거운 DB 작업 중이면 락 대기로 4~8초 블로킹됐다.
+# 그 결과 트레이 툴팁이 "서버정상"과 "서버 오류"를 반복했다. 5초 캐시 + 락
+# 타임아웃(1초)으로 폴링이 락 경합의 영향을 받지 않도록 한다.
+_sys_status_cache: dict = {'data': None, 'ts': 0.0}
+_SYS_STATUS_TTL = 5.0
 
 
 def get_system_status() -> dict:
@@ -632,11 +666,15 @@ def get_system_status() -> dict:
     실패해도 절대 예외를 던지지 않는다(순수 부가 원칙).
     """
     import os as _os
+    now = time.time()
+    cached = _sys_status_cache.get('data')
+    if cached is not None and (now - _sys_status_cache['ts']) < _SYS_STATUS_TTL:
+        return cached
     status = {
         'ok': True,
         'worker_running': _queue_worker_started,
-        'queue': get_queue_stats(),
-        'store': get_store_stats(),
+        'queue': get_queue_stats(lock_timeout=1.0),
+        'store': get_store_stats(lock_timeout=1.0),
         'maintenance': {
             'last_maintenance_ts': _last_maintenance_ts,
             'last_daily_ts': _last_daily_ts,
@@ -669,19 +707,24 @@ def get_system_status() -> dict:
     # Phase 6: 인과 그래프 통계 (별도 try — 테이블 미존재 시에도 무영향)
     try:
         _ensure_schema()
-        with _db_lock:
-            conn = _connect()
+        if _db_lock.acquire(timeout=1.0):
             try:
-                a_cnt = conn.execute('SELECT COUNT(*) AS c FROM session_artifacts').fetchone()['c']
-                e_cnt = conn.execute('SELECT COUNT(*) AS c FROM fact_artifacts').fetchone()['c']
-                status['graph'] = {'artifacts_count': a_cnt, 'fact_edges_count': e_cnt}
-            finally:
+                conn = _connect()
                 try:
-                    conn.close()
-                except Exception:
-                    pass
+                    a_cnt = conn.execute('SELECT COUNT(*) AS c FROM session_artifacts').fetchone()['c']
+                    e_cnt = conn.execute('SELECT COUNT(*) AS c FROM fact_artifacts').fetchone()['c']
+                    status['graph'] = {'artifacts_count': a_cnt, 'fact_edges_count': e_cnt}
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            finally:
+                _db_lock.release()
     except Exception:
         pass
+    _sys_status_cache['data'] = status
+    _sys_status_cache['ts'] = now
     return status
 
 
