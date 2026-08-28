@@ -52,6 +52,34 @@ _ref_store: dict = {}          # ref('e0') → {tag,text,href,type,placeholder,i
 _REF_STORE_MAX = 400
 
 
+# ── 큰 iframe 감지 (2026-08-28) ──
+# upsampler.co처럼 생성기/플레이어가 iframe으로 임베드된 사이트에서는
+# iframe이 페이지 레이아웃에 묻혀 잘 안 보인다. iframe URL을 직접 열면
+# 전체 화면으로 사용할 수 있다. 에이전트가 판단할 수 있도록 주요 iframe
+# (400x300 이상) 목록을 navigate/open/snapshot 결과에 포함한다.
+# 광고/분석용 작은 iframe은 제외되므로 자동 새 탭 폭탄 위험이 없다.
+_IFRAME_DETECT_JS = """
+(() => {
+  try {
+    const frames = Array.from(document.querySelectorAll('iframe'));
+    return frames
+      .map(f => ({ src: f.src || '', width: f.clientWidth || 0, height: f.clientHeight || 0 }))
+      .filter(f => f.src && f.src.startsWith('http') && f.height >= 300 && f.width >= 400)
+      .sort((a, b) => (b.width * b.height) - (a.width * a.height))
+      .slice(0, 3);
+  } catch (e) { return []; }
+})()
+"""
+
+
+def _detect_iframes(page):
+    """페이지의 주요 iframe 목록을 반환한다 (실패 시 빈 리스트 — 순수 부가)."""
+    try:
+        return page.evaluate(_IFRAME_DETECT_JS) or []
+    except Exception:
+        return []
+
+
 def _store_refs(elements) -> None:
     """스냅샷/recommend 결과의 elements를 ref 저장소에 반영한다."""
     if not isinstance(elements, list):
@@ -440,6 +468,7 @@ def _browser_worker_loop():
                         "status": "ok",
                         "url": page.url,
                         "title": page.title(),
+                        "iframes": _detect_iframes(page),
                     })
 
             elif action == "snapshot":
@@ -518,6 +547,7 @@ def _browser_worker_loop():
                             "snapshot": snapshot_text or page.inner_text('body')[:10000],
                             "refs": refs,
                             "elements": elements,
+                            "iframes": _detect_iframes(page),
                         })
                     except Exception as snap_err:
                         # Fallback: just get page text
@@ -1000,7 +1030,7 @@ def _browser_worker_loop():
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
-                        "data": {"url": page.url, "title": page.title()},
+                        "data": {"url": page.url, "title": page.title(), "iframes": _detect_iframes(page)},
                     })
 
             elif action == "get_images":
@@ -1215,10 +1245,20 @@ def handle_post_browser_navigate(handler, body: dict):
     result = _submit_task("navigate", url=url)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
-    return j_ok(handler, {
+    resp = {
         "url": result.get("url", ""),
         "title": result.get("title", ""),
-    })
+    }
+    # 큰 iframe이 있으면 에이전트/사용자에게 힌트 — upsampler.co처럼 생성기가
+    # iframe으로 임베드된 사이트에서 iframe URL을 직접 열면 전체 화면으로 쓸 수 있다.
+    iframes = result.get("iframes") or []
+    if iframes:
+        resp["iframes"] = iframes
+        resp["hint"] = (
+            f"이 페이지는 큰 iframe {len(iframes)}개를 포함합니다. "
+            "생성기/플레이어가 잘 안 보이면 iframe URL을 browser_navigate로 직접 여세요."
+        )
+    return j_ok(handler, resp)
 
 
 def handle_post_browser_snapshot(handler, body: dict):

@@ -1,0 +1,19 @@
+name: embedded-generator
+label: 임베드 생성기 직접 열기
+category: Browser
+version: '1.0'
+description: upsampler.co처럼 생성기/플레이어가 iframe으로 임베드된 사이트에서, 주요 iframe을
+  감지해 그 URL을 직접 열어 전체 화면으로 사용한다.
+priority: medium
+capabilities:
+- browser_navigation
+- iframe_detection
+knowledge:
+- prompts
+trigger:
+- iframe
+- 임베드
+- 생성기 안 보임
+- upsampler
+- hf.space
+- embed
