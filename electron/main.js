@@ -1284,7 +1284,16 @@ class TabManager {
     this.activeTabId = null;
     this.bounds = { x: 300, y: 50, width: 800, height: 600 };
     this.isVisible = false;
+    // ── 탭 렌더러 크래시 자동 복구 상태 (2026-08-28) ──
+    // wan2.video 같은 무거운 미디어 페이지에서 WebContentsView 렌더러가 죽으면
+    // 하얀 화면 + CDP 타겟 소멸로 이어졌다(메인 윈도우에는 복구 핸들러가 있지만
+    // 탭에는 없었음). 탭별 크래시 카운터로 복구 루프를 방지한다.
+    this._tabRecovery = new Map();   // tabId → { count, windowStart }
+    this._recoveringTabs = new Set(); // 복구 진행 중인 탭
   }
+
+  static get MAX_TAB_RECOVERY() { return 3; }
+  static get TAB_RECOVERY_WINDOW_MS() { return 60000; }
 
   createTab(tabId, url) {
     // 8월 3일 정상 빌드 구조: 기본 세션(partition 없음) WebContentsView.
@@ -1320,6 +1329,8 @@ class TabManager {
     // 충돌이 없었지만, 24aab44 이후 always-on 구조에서는 debugger.attach 금지.
     // UA는 setUserAgent + executeJavaScript(did-finish-load)로만 처리한다.
     view.webContents.on('did-finish-load', () => {
+      // 성공 로드 시 크래시 복구 카운터 리셋 (페이지가 살아났음).
+      this._tabRecovery.delete(tabId);
       // Firefox 정합 지문: vendor(Chromium은 "Google Inc.", Firefox는 빈 문자열),
       // userAgentData 제거, oscpu(Firefox 전용 필드) 부여. (2026-08-27 실측:
       // 구글이 "지원하지 않는 브라우저" 경고 — vendor 등 엔진 지문이 원인)
@@ -1333,6 +1344,69 @@ class TabManager {
     });
     view.webContents.on('page-title-updated', () => { this._notifyTabs(); });
 
+    // ── 렌더러 크래시/로드 실패 자동 복구 (메인 윈도우와 동일 패턴) ──
+    // 렌더러가 죽으면 reload로 살리려 하고, webContents가 파괴됐으면 탭을
+    // 재생성한다. 횟수 제한(60초 창 내 3회)으로 크래시 루프를 방지한다.
+    view.webContents.on('render-process-gone', (event, details) => {
+      console.warn(`[TabCrash] tab=${tabId} render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
+      const now = Date.now();
+      let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
+      if (now - st.windowStart > TabManager.TAB_RECOVERY_WINDOW_MS) {
+        st = { count: 0, windowStart: now };
+      }
+      if (this._recoveringTabs.has(tabId)) {
+        console.warn(`[TabCrash] tab=${tabId} recovery already in flight, skipping.`);
+        return;
+      }
+      if (st.count >= TabManager.MAX_TAB_RECOVERY) {
+        console.warn(`[TabCrash] tab=${tabId} recovery limit reached (${TabManager.MAX_TAB_RECOVERY} per ${TabManager.TAB_RECOVERY_WINDOW_MS / 1000}s) — NOT reloading to avoid crash loop.`);
+        return;
+      }
+      st.count++;
+      this._tabRecovery.set(tabId, st);
+      this._recoveringTabs.add(tabId);
+      console.log(`[TabCrash] tab=${tabId} auto-recovery attempt ${st.count}/${TabManager.MAX_TAB_RECOVERY}`);
+      setTimeout(() => {
+        this._recoveringTabs.delete(tabId);
+        let destroyed = true;
+        try { destroyed = view.webContents.isDestroyed(); } catch (_) { }
+        if (destroyed) {
+          // webContents가 파괴된 경우 reload로는 살릴 수 없다 — 탭 재생성.
+          this._recreateTab(tabId);
+        }
+      }, 5000);
+      try {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.reload();
+        } else {
+          this._recreateTab(tabId);
+        }
+      } catch (_) {
+        this._recreateTab(tabId);
+      }
+    });
+    view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return; // 서브프레임 실패는 무시
+      console.warn(`[TabFail] tab=${tabId} did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+      const now = Date.now();
+      let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
+      if (now - st.windowStart > TabManager.TAB_RECOVERY_WINDOW_MS) {
+        st = { count: 0, windowStart: now };
+      }
+      if (st.count >= TabManager.MAX_TAB_RECOVERY) {
+        console.warn(`[TabFail] tab=${tabId} retry limit reached — giving up.`);
+        return;
+      }
+      st.count++;
+      this._tabRecovery.set(tabId, st);
+      const retryUrl = validatedURL || url;
+      setTimeout(() => {
+        try {
+          if (!view.webContents.isDestroyed()) view.webContents.loadURL(retryUrl);
+        } catch (_) { }
+      }, 3000);
+    });
+
     // Prevent new BrowserWindows from opening — navigate in the same view instead
     // (뷰 단위 팝업 억제: 외부 창 튀어나옴을 막되, 구글 OAuth 팝업/리다이렉트는
     //  같은 뷰 내 탐색으로 처리되어 로그인 흐름이 끊기지 않는다 — 8월 3일 방식)
@@ -1345,6 +1419,28 @@ class TabManager {
 
     view.webContents.loadURL(url);
     return view;
+  }
+
+  // 크래시로 webContents가 파괴된 탭을 새 WebContentsView로 재생성한다.
+  // 세션/쿠키는 앱 기본 세션을 공유하므로 로그인 상태는 유지된다.
+  _recreateTab(tabId) {
+    const old = this.tabs.get(tabId);
+    let url = 'about:blank';
+    try { url = (old && old.webContents.getURL()) || url; } catch (_) { }
+    if (old) {
+      try { this.mainWindow.contentView.removeChildView(old); } catch (_) { }
+      try { old.webContents.close(); } catch (_) { }
+      this.tabs.delete(tabId);
+    }
+    console.log(`[TabCrash] tab=${tabId} recreating WebContentsView (url=${url})`);
+    const view = this.createTab(tabId, url);
+    if (this.activeTabId === tabId && this.isVisible && view) {
+      try {
+        this.mainWindow.contentView.addChildView(view);
+        view.setBounds(this.bounds);
+      } catch (_) { }
+    }
+    this._notifyTabs();
   }
 
   switchTab(tabId) {
@@ -1365,6 +1461,8 @@ class TabManager {
     if (!view) return;
     try { view.webContents.close(); } catch (e) { }
     this.tabs.delete(tabId);
+    this._tabRecovery.delete(tabId);
+    this._recoveringTabs.delete(tabId);
     try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
     if (this.activeTabId === tabId) {
       this.activeTabId = null;
