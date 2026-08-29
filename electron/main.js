@@ -1292,8 +1292,8 @@ class TabManager {
     this._recoveringTabs = new Set(); // 복구 진행 중인 탭
   }
 
-  static get MAX_TAB_RECOVERY() { return 3; }
-  static get TAB_RECOVERY_WINDOW_MS() { return 60000; }
+  static get MAX_TAB_RECOVERY() { return 5; }
+  static get TAB_RECOVERY_WINDOW_MS() { return 300000; }
 
   createTab(tabId, url) {
     // 8월 3일 정상 빌드 구조: 기본 세션(partition 없음) WebContentsView.
@@ -1348,53 +1348,41 @@ class TabManager {
     // 렌더러가 죽으면 reload로 살리려 하고, webContents가 파괴됐으면 탭을
     // 재생성한다. 횟수 제한(60초 창 내 3회)으로 크래시 루프를 방지한다.
     view.webContents.on('render-process-gone', (event, details) => {
-      console.warn(`[TabCrash] tab=${tabId} render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
+      // mlog/merr 사용 — console.log만 쓰면 패키지 빌드에서 파일 로그(daon-main.log)에
+      // 아무것도 남지 않아 크래시/닫힘 구분이 불가능했다 (2026-08-29 실측 결함).
+      merr(`[TabCrash] tab=${tabId} render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
       const now = Date.now();
       let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
       if (now - st.windowStart > TabManager.TAB_RECOVERY_WINDOW_MS) {
         st = { count: 0, windowStart: now };
       }
       if (this._recoveringTabs.has(tabId)) {
-        console.warn(`[TabCrash] tab=${tabId} recovery already in flight, skipping.`);
+        merr(`[TabCrash] tab=${tabId} recovery already in flight, skipping.`);
         return;
       }
       if (st.count >= TabManager.MAX_TAB_RECOVERY) {
-        console.warn(`[TabCrash] tab=${tabId} recovery limit reached (${TabManager.MAX_TAB_RECOVERY} per ${TabManager.TAB_RECOVERY_WINDOW_MS / 1000}s) — NOT reloading to avoid crash loop.`);
+        merr(`[TabCrash] tab=${tabId} recovery limit reached (${TabManager.MAX_TAB_RECOVERY} per ${TabManager.TAB_RECOVERY_WINDOW_MS / 1000}s) — NOT recreating to avoid crash loop.`);
         return;
       }
       st.count++;
       this._tabRecovery.set(tabId, st);
       this._recoveringTabs.add(tabId);
-      console.log(`[TabCrash] tab=${tabId} auto-recovery attempt ${st.count}/${TabManager.MAX_TAB_RECOVERY}`);
-      setTimeout(() => {
-        this._recoveringTabs.delete(tabId);
-        let destroyed = true;
-        try { destroyed = view.webContents.isDestroyed(); } catch (_) { }
-        if (destroyed) {
-          // webContents가 파괴된 경우 reload로는 살릴 수 없다 — 탭 재생성.
-          this._recreateTab(tabId);
-        }
-      }, 5000);
-      try {
-        if (!view.webContents.isDestroyed()) {
-          view.webContents.reload();
-        } else {
-          this._recreateTab(tabId);
-        }
-      } catch (_) {
-        this._recreateTab(tabId);
-      }
+      mlog(`[TabCrash] tab=${tabId} auto-recovery attempt ${st.count}/${TabManager.MAX_TAB_RECOVERY} — recreating view.`);
+      // 크래시 후 reload는 백지 재발이 잦다(실측) — 즉시 재생성이 확실하다.
+      // 세션/쿠키는 앱 기본 세션을 공유하므로 로그인 상태는 유지된다.
+      this._recreateTab(tabId);
+      setTimeout(() => { this._recoveringTabs.delete(tabId); }, 5000);
     });
     view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return; // 서브프레임 실패는 무시
-      console.warn(`[TabFail] tab=${tabId} did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+      merr(`[TabFail] tab=${tabId} did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
       const now = Date.now();
       let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
       if (now - st.windowStart > TabManager.TAB_RECOVERY_WINDOW_MS) {
         st = { count: 0, windowStart: now };
       }
       if (st.count >= TabManager.MAX_TAB_RECOVERY) {
-        console.warn(`[TabFail] tab=${tabId} retry limit reached — giving up.`);
+        merr(`[TabFail] tab=${tabId} retry limit reached — giving up.`);
         return;
       }
       st.count++;
@@ -1432,7 +1420,7 @@ class TabManager {
       try { old.webContents.close(); } catch (_) { }
       this.tabs.delete(tabId);
     }
-    console.log(`[TabCrash] tab=${tabId} recreating WebContentsView (url=${url})`);
+    mlog(`[TabCrash] tab=${tabId} recreating WebContentsView (url=${url})`);
     const view = this.createTab(tabId, url);
     if (this.activeTabId === tabId && this.isVisible && view) {
       try {
