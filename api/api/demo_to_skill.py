@@ -14,7 +14,9 @@ Architecture:
 Event Sources:
   - CDP (Chrome DevTools Protocol) — browser automation observation
   - Text — user manually describes steps for non-browser workflows
-  - MCP — capture MCP tool calls made during a session (future)
+  - computer_use — replayable macro (JSONL) recorded via windows-computer-use MCP
+    automation_macro. Raon records desktop work -> Demo-to-Skill converts it into
+    a reusable Skill whose replay path is automation_macro(operation="replay").
 
 Usage:
     from api.demo_to_skill import DemoToSkillSession, get_recording_manager
@@ -97,7 +99,21 @@ Prioritize Playwright locators in this order:
 4. Generic CSS/XPath as a last resort.
 
 Use {variable_name} syntax for parameterized values.
-Focus on the USER'S INTENT and generate EXECUTABLE code."""
+Focus on the USER'S INTENT and generate EXECUTABLE code.
+
+## Special Case: Computer-Use (Desktop) Demonstrations
+If the captured events have type "computer_use_action" (source "computer_use"),
+the demonstration happened on DESKTOP applications (KakaoTalk, Notepad, etc.)
+via windows-computer-use MCP tools - NOT in a browser. In that case:
+1. Replace the "## Playwright Script" section with a "## Replay Steps" section
+   containing the steps as JSON in automation_macro format, e.g.:
+   [{"tool": "automation_mouse", "params": {"operation": "click", "x": 123, "y": 456}},
+    {"tool": "automation_keyboard", "params": {"operation": "type", "text": "..."}}]
+2. Set frontmatter category to "desktop-automation" and add the "computer-use" tag.
+3. Explain that replay runs via automation_macro(operation="replay", steps=...).
+4. Generalize variable values (typed text, window titles, target coordinates)
+   into a Variables section so the workflow is reusable.
+5. Keep coordinates as recorded, but note they assume the recorded screen layout."""
 
 # Injected JavaScript: captures real user interactions with rich element context.
 # Uses console.log as transport to CDP. Installs on every page load via
@@ -904,6 +920,106 @@ class CDPEventCollector:
 
 
 # =============================================================================
+# Computer-Use Event Collector (windows-computer-use MCP macro source)
+# =============================================================================
+# Raon records desktop work with automation_macro(record/stop), producing a
+# JSONL file of captured tool steps:
+#   {"tool": "automation_keyboard", "params": {...}, "label": "...", "outcome": {...}}
+# This collector converts that file into standard Demo-to-Skill events.
+# =============================================================================
+
+def _cua_macros_dir() -> Path:
+    """Locate the windows-computer-use-mcp macros directory.
+
+    Honors CUA_MCP_MISSION_DIR / windows_computer_use_mcp_MISSION_DIR env vars
+    (same resolution as the MCP server's mission_store._persist_dir), falling
+    back to ~/.cua-mcp/missions/macros.
+    """
+    base = (os.environ.get("CUA_MCP_MISSION_DIR")
+            or os.environ.get("windows_computer_use_mcp_MISSION_DIR"))
+    if base:
+        return Path(base) / "macros"
+    return Path.home() / ".cua-mcp" / "missions" / "macros"
+
+
+class ComputerUseEventCollector:
+    """Collects desktop automation events from a computer-use macro JSONL file."""
+
+    def __init__(self, macro_file: str = ""):
+        self.macro_file = Path(macro_file) if macro_file else None
+        self._events: list[dict] = []
+        self._running = False
+
+    def resolve_macro_path(self) -> Optional[Path]:
+        """Resolve the macro file: explicit path, or macro_id in the macros dir."""
+        if not self.macro_file:
+            return None
+        p = self.macro_file
+        if p.exists():
+            return p
+        # Try as macro_id inside the default macros dir
+        candidate = _cua_macros_dir() / f"{p.stem}.jsonl"
+        if candidate.exists():
+            return candidate
+        # Try appending .jsonl to the given path
+        if not p.suffix:
+            with_suffix = Path(str(p) + ".jsonl")
+            if with_suffix.exists():
+                return with_suffix
+        return None
+
+    def start(self) -> bool:
+        """Validate the macro file exists. Macro is pre-recorded, so 'start'
+        just resolves and validates the file."""
+        resolved = self.resolve_macro_path()
+        if not resolved:
+            _logger.warning("[DemoToSkill] Computer-use macro not found: %s (macros dir: %s)",
+                            self.macro_file, _cua_macros_dir())
+            return False
+        self.macro_file = resolved
+        self._running = True
+        return True
+
+    def stop(self) -> list[dict]:
+        """Read the JSONL macro and return normalized events."""
+        self._running = False
+        events: list[dict] = []
+        if not self.macro_file or not self.macro_file.exists():
+            return events
+        try:
+            raw = self.macro_file.read_text(encoding="utf-8").splitlines()
+        except Exception as e:
+            _logger.warning("[DemoToSkill] Cannot read macro file %s: %s", self.macro_file, e)
+            return events
+
+        for i, line in enumerate(raw):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                step = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            events.append({
+                "type": "computer_use_action",
+                "source": "computer_use",
+                "tool": step.get("tool", "unknown"),
+                "params": step.get("params", {}),
+                "label": step.get("label", step.get("tool", "")),
+                "outcome": step.get("outcome", {}),
+                "step_index": i,
+                "timestamp": time.time() * 1000,
+            })
+        self._events = events
+        _logger.info("[DemoToSkill] Computer-use macro loaded: %d steps from %s",
+                     len(events), self.macro_file)
+        return events
+
+    def is_collecting(self) -> bool:
+        return self._running
+
+
+# =============================================================================
 # Skill Analyzer (LLM-based)
 # =============================================================================
 class SkillAnalyzer:
@@ -980,6 +1096,41 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
         def _describe(ev: dict) -> str:
             """Build a detailed description string for a single event."""
             etype = ev.get("type", "?")
+
+            # Computer-use macro steps (windows-computer-use MCP)
+            if etype == "computer_use_action" or ev.get("source") == "computer_use":
+                tool = ev.get("tool", "?")
+                params = ev.get("params", {})
+                op = params.get("operation", "")
+                if "mouse" in tool:
+                    x, y = params.get("x", "?"), params.get("y", "?")
+                    btn = params.get("button", "left")
+                    return f"  MOUSE {op or 'action'}: ({x},{y}) btn={btn}"
+                if "keyboard" in tool:
+                    if op == "type":
+                        txt = str(params.get("text", ""))[:80]
+                        return f'  TYPE: "{txt}"'
+                    return f"  KEY {op}: {params.get('key', '')} (window: {params.get('window_handle', 'focused')})"
+                if "windows" in tool:
+                    return f"  WINDOW {op}: title='{params.get('title', '')}' handle={params.get('handle', '')}"
+                if "visual" in tool:
+                    has_region = params.get("region_left") is not None
+                    return f"  VISUAL {op or 'screenshot'}" + (" (region)" if has_region else "")
+                if "system" in tool:
+                    app = params.get("app_path", "") or params.get("title", "")
+                    return f"  SYSTEM {op}: {str(app)[:60]}"
+                if "macro" in tool:
+                    return f"  MACRO {op}: name={params.get('name', '')}"
+                if "element" in tool:
+                    target = params.get("title", "") or params.get("control_id", "") or params.get("auto_id", "")
+                    return f"  ELEMENT {op}: '{target}'"
+                if "task" in tool or "mission" in tool:
+                    return f"  {tool} {op}: {str(params.get('goal', params.get('app', '')))[:60]}"
+                if "dialog" in tool:
+                    return f"  DIALOG {op}: {params.get('path', '')}"
+                if "shortcut" in tool:
+                    return f"  SHORTCUT {op}: app={params.get('app', '')} action={params.get('action', '')}"
+                return f"  TOOL {tool} {op}: {json.dumps(params, ensure_ascii=False)[:100]}"
 
             # Enriched interaction events (from injected JS — daon_injected source)
             if ev.get("source") == "daon_injected":
@@ -1072,11 +1223,11 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
 
             return f"  ❓ {etype}: {json.dumps(ev, ensure_ascii=False)[:120]}"
 
-        # Filter: only user interactions (daon_injected) + navigation/page_load/scroll
+        # Filter: only user interactions (daon_injected/computer_use) + nav/page_load/scroll
         # Exclude network_request, console, dom_insert noise
         user_events = [
             e for e in events
-            if e.get("source") == "daon_injected"
+            if e.get("source") in ("daon_injected", "computer_use")
             or e.get("type") in ("navigation", "page_load", "scroll")
         ]
 
@@ -1105,15 +1256,21 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
         # Filter to user interactions only
         user_events = [
             e for e in events
-            if e.get("source") == "daon_injected"
+            if e.get("source") in ("daon_injected", "computer_use")
             or e.get("type") in ("navigation", "page_load", "scroll")
         ]
 
         # Infer basic structure
         event_types = set(e.get("type", "") for e in user_events)
         is_browser = any(t in event_types for t in ("navigation", "click", "page_load"))
-        category = "browser-automation" if is_browser else "general"
-        purpose = f"Automate the captured browser workflow: {name}"
+        is_computer_use = any(
+            e.get("source") == "computer_use" or e.get("type") == "computer_use_action"
+            for e in user_events
+        )
+        category = ("desktop-automation" if is_computer_use
+                    else "browser-automation" if is_browser else "general")
+        purpose = (f"Automate the captured desktop workflow: {name}"
+                   if is_computer_use else f"Automate the captured browser workflow: {name}")
 
         # Auto-generate Playwright code from user events
         pw_lines = []
@@ -1147,6 +1304,34 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
             pw_lines.append('    pass  # No user actions captured')
 
         playwright_code = "\n".join(pw_lines)
+
+        # Build the replay-script section: desktop macro vs browser Playwright
+        if is_computer_use:
+            macro_steps = [
+                {"tool": e.get("tool", ""), "params": e.get("params", {})}
+                for e in user_events if e.get("type") == "computer_use_action"
+            ]
+            macro_json = json.dumps(macro_steps, ensure_ascii=False, indent=2)
+            script_section = (
+                "## Replay Steps (computer-use macro)\n"
+                "Replay via automation_macro(operation=\"replay\", steps=...) with:\n"
+                "```json\n" + macro_json + "\n```\n\n"
+                "NOTE: coordinates assume the recorded screen layout / window position."
+            )
+            success_criteria = (
+                "- All automation_macro steps execute without errors\n"
+                "- Target window is present at the expected position\n"
+                "- Final UI state matches the demonstrated outcome"
+            )
+        else:
+            script_section = (
+                "## Playwright Script\n```python\n" + playwright_code + "\n```"
+            )
+            success_criteria = (
+                "- All page navigations complete successfully\n"
+                "- All click/fill actions find their target elements\n"
+                "- No timeout errors during execution"
+            )
 
         # Build variables section
         var_lines = []
@@ -1183,15 +1368,10 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
 ## Variables
 {chr(10).join(var_lines)}
 
-## Playwright Script
-```python
-{playwright_code}
-```
+{script_section}
 
 ## Success Criteria
-- All page navigations complete successfully
-- All click/fill actions find their target elements
-- No timeout errors during execution
+{success_criteria}
 """,
         }
 
@@ -1290,16 +1470,20 @@ class RecordingSession:
     def __init__(self, session_id: str, name: str, source: str = "cdp",
                  cdp_port: int = 9222,
                  capture_screenshots: bool = False,
-                 capture_dom: bool = False):
+                 capture_dom: bool = False,
+                 macro_file: str = ""):
         self.session_id = session_id
         self.name = name
         self.source = source
         self.cdp_port = cdp_port
         self.capture_screenshots = capture_screenshots
         self.capture_dom = capture_dom
+        self.macro_file = macro_file
         self.status = "idle"  # idle, recording, analyzing, done, error
         self.events: list[dict] = []
         self.collector: Optional[CDPEventCollector] = None
+        if source == "computer_use":
+            self.collector = ComputerUseEventCollector(macro_file=macro_file)
         self.result_skill_path: Optional[Path] = None
         self.result_skill_data: Optional[dict] = None
         self.created_at = time.time()
@@ -1315,6 +1499,7 @@ class RecordingSession:
             "cdp_port": self.cdp_port,
             "capture_screenshots": self.capture_screenshots,
             "capture_dom": self.capture_dom,
+            "macro_file": str(self.macro_file) if self.macro_file else None,
             "has_result": self.result_skill_path is not None,
             "result_skill": str(self.result_skill_path) if self.result_skill_path else None,
             "result_skill_name": self.result_skill_path.parent.name if self.result_skill_path else None,
@@ -1333,15 +1518,19 @@ class RecordingManager:
     def start_session(self, name: str = "", source: str = "cdp",
                       cdp_port: int = 9222,
                       capture_screenshots: bool = False,
-                      capture_dom: bool = False) -> str:
+                      capture_dom: bool = False,
+                      macro_file: str = "") -> str:
         """Start a new recording session. Returns session_id.
 
         Args:
             name: Human-readable session name.
-            source: "cdp" (browser) or "text" (manual description).
+            source: "cdp" (browser), "text" (manual description), or
+                "computer_use" (pre-recorded windows-computer-use macro JSONL).
             cdp_port: Chrome DevTools Protocol port.
             capture_screenshots: If True, capture a screenshot after each event.
             capture_dom: If True, capture a DOM snapshot after each event.
+            macro_file: For source="computer_use" - path or macro_id of the
+                automation_macro JSONL file (under ~/.cua-mcp/missions/macros).
         """
         session_id = hashlib.md5(f"{name}{time.time()}".encode()).hexdigest()[:12]
         session = RecordingSession(
@@ -1351,6 +1540,7 @@ class RecordingManager:
             cdp_port=cdp_port,
             capture_screenshots=capture_screenshots,
             capture_dom=capture_dom,
+            macro_file=macro_file,
         )
 
         with self._lock:
@@ -1369,6 +1559,19 @@ class RecordingManager:
             if not success:
                 session.status = "error"
                 session.error = f"Failed to connect to Chrome CDP on port {cdp_port}. Start Chrome with --remote-debugging-port={cdp_port}"
+                _logger.warning("[DemoToSkill] %s", session.error)
+                return session_id
+
+        elif source == "computer_use":
+            # collector was attached in RecordingSession.__init__
+            success = session.collector.start() if session.collector else False
+            if not success:
+                session.status = "error"
+                session.error = (
+                    f"Computer-use macro not found: '{macro_file}'. "
+                    f"Record one first with automation_macro(record/stop), "
+                    f"or pass the full JSONL path. Macros dir: {_cua_macros_dir()}"
+                )
                 _logger.warning("[DemoToSkill] %s", session.error)
                 return session_id
 

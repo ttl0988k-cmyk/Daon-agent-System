@@ -45,6 +45,7 @@ def handle_post_demo_start(handler, body: dict) -> bool:
         cdp_port=int(body.get('cdp_port', 9222)),
         capture_screenshots=body.get('capture_screenshots', False),
         capture_dom=body.get('capture_dom', False),
+        macro_file=body.get('macro_file', ''),
     )
 
     session = mgr.get_session(session_id)
