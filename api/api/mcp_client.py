@@ -364,14 +364,17 @@ class MCPServerConnection:
         try:
             buffer = ''
             while self.process and self.process.poll() is None:
+                # readline(): read(1) char-by-char는 대용량 응답(tools/list 50KB+)에서
+                # 스레드 많은 frozen 환경에서 GIL 경쟁으로 5초 타임아웃 유발.
+                # 라인 단위 read는 라인당 1 syscall이라 수백 배 빠름.
                 try:
-                    char = self.process.stdout.read(1)
-                    if not char:
-                        break
+                    line = self.process.stdout.readline()
                 except Exception:
                     break
-                buffer += char
-                if char == '\n' and buffer.strip():
+                if not line:  # EOF
+                    break
+                buffer = line
+                if buffer.strip():
                     try:
                         msg = _json.loads(buffer.strip())
                         rid = msg.get('id')
@@ -503,12 +506,16 @@ class MCPServerConnection:
         if self.transport == TRANSPORT_HTTP:
             self._discover_tools_http()
             return
-        result = self._send_request('tools/list', timeout=5.0)
+        result = self._send_request('tools/list', timeout=30.0)
         if result and 'result' in result:
             self.tools = result['result'].get('tools', [])
             _logger.info("MCP server '%s' offers %d tools", self.label, len(self.tools))
+        else:
+            _logger.warning("MCP server '%s' tools/list failed: %s", self.label,
+                            (result or {}).get('error', {}).get('message', 'None response')
+                            if isinstance(result, dict) else 'None')
         # Also discover resources
-        result = self._send_request('resources/list', timeout=5.0)
+        result = self._send_request('resources/list', timeout=30.0)
         if result and 'result' in result:
             self.resources = result['result'].get('resources', [])
 

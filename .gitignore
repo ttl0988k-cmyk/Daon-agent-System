@@ -38,6 +38,14 @@ Desktop.ini
 extracted_asar/
 test_app_unpacked/
 clean_build_unpacked/
+
+# Harness run artifacts (runtime-generated, not source)
+final_output.md
+metadata.json
+metrics.json
+
+# Runtime-generated media (agent-created praise/media files)
+static/media_*
 dist_new/
 dist_old_*/
 
