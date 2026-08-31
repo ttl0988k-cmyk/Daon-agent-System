@@ -551,6 +551,46 @@ function stripThinkBlocks(text) {
 
 function renderMessages(messages, toolCalls) {
   const box = $('chatMessages');
+  // ── [2026-08-31 도구 카드 소실 근본 해결] ──
+  // 서버(streaming.py)의 tool_calls 수집이 Anthropic 형식(content 내 tool_use)
+  // 만 파싱하기 때문에 OpenAI 호환 모델(Qwen 등)에서는 세션 저장 시 tool_calls가
+  // 항상 0개다. 그러면 done 후 히스토리 재렌더링 시 도구 카드가 재생성되지 않고,
+  // 도구 전용 턴은 빈 블록(얇은 라인)만 남았다. 여기서 messages의 OpenAI 형식
+  // (assistant.tool_calls + role=tool 결과)을 직접 파싱해 복원한다.
+  if ((!toolCalls || toolCalls.length === 0) && Array.isArray(messages)) {
+    toolCalls = (function _parseToolCallsFromMessages(msgs) {
+      var out = [];
+      var pending = {};  // tool_call_id -> {name, args, asstIdx}
+      msgs.forEach(function (m, idx) {
+        if (!m) return;
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+          m.tool_calls.forEach(function (tc) {
+            if (!tc || typeof tc !== 'object') return;
+            var tid = tc.id || tc.call_id || '';
+            var fname = (tc.function && tc.function.name) || tc.name || '';
+            if (!tid || !fname) return;
+            var args = {};
+            try { args = JSON.parse((tc.function && tc.function.arguments) || '{}'); } catch (_) { }
+            pending[tid] = { name: fname, args: args, asstIdx: idx };
+          });
+        } else if (m.role === 'tool') {
+          var tid2 = m.tool_call_id || m.tool_use_id || '';
+          var p = pending[tid2];
+          if (p) {
+            out.push({
+              name: p.name,
+              snippet: String(m.content || '').substring(0, 200),
+              tid: tid2,
+              assistant_msg_idx: p.asstIdx,
+              args: p.args,
+            });
+          }
+        }
+      });
+      return out;
+    })(messages);
+    if (toolCalls.length) console.log('[renderMessages] tool_calls 복원(OpenAI 형식 파싱):', toolCalls.length, '개');
+  }
   // ── 진행 중 승인/선택 카드 보존 ──
   // innerHTML 초기화로 pending 승인 카드가 사라지면 승인 버튼이 영구 유실된다
   // ("승인/거절 버튼이 안 먹히는" 문제의 주원인). 렌더 후 다시 붙인다.
@@ -1748,9 +1788,13 @@ sse.addEventListener('debate_status', (e) => {
         }
       }
 
+      // [2026-08-31] _thinking은 내부 추론 마커다 — 도구 카드에 노출하지 않는다
+      // (카운트는 started/completed 쌍을 맞춰야 하므로 유지하고 항목만 숨긴다)
+      var _isInternalMarker = (toolName === '_thinking');
+
       // ── 도구 그룹 카드: 반복 호출을 하나의 접이식 카드로 묶음 ──
       // 그룹 카드가 없으면 새로 생성 (reasoning 카드와 같이 box에 독립 삽입)
-      if (!_toolGroupCard) {
+      if (!_toolGroupCard && !_isInternalMarker) {
         // 새 도구 그룹이 시작되면 진행 중이던 답변을 별도 블록으로 확정 (Roo 스타일 분리)
         _freezeAnswerSegment();
         // [2026-08-31c] 이전 도구 카드 전량 삭제는 철회했다 — Roo Code 스타일
@@ -1783,7 +1827,8 @@ sse.addEventListener('debate_status', (e) => {
 
       if (isStarted) {
         _toolGroupCount++;
-        // 새 항목 추가
+        // 새 항목 추가 (내부 마커는 카운트만 유지하고 항목은 숨김)
+        if (!_isInternalMarker) {
         const item = document.createElement('div');
         item.className = 'tool-group-item';
         item.innerHTML = `
@@ -1793,16 +1838,31 @@ sse.addEventListener('debate_status', (e) => {
         `;
         _toolItemMap[toolCallId] = item;
         if (_toolGroupItems) _toolGroupItems.appendChild(item);
+        }
       } else {
         // completed: 기존 항목을 찾아 상태 업데이트
         _toolGroupDoneCount++;
-        const existingItem = _toolItemMap[toolCallId];
+        let existingItem = _toolItemMap[toolCallId];
+        // [2026-08-31] tool_call_id 불일치 폴백 — 재연결/재전달로 id가 어긋나면
+        // "completed만 온 경우" 분기가 같은 도구를 중복 추가했다. 같은 이름의
+        // 실행 중 항목을 찾아 그 항목을 완료 처리한다.
+        if (!existingItem && !_isInternalMarker) {
+          for (var _tid in _toolItemMap) {
+            var _it = _toolItemMap[_tid];
+            var _nm = _it.querySelector('.tgi-name');
+            var _st = _it.querySelector('.tgi-status');
+            if (_nm && _nm.textContent === toolName && _st && _st.textContent === '실행 중') {
+              existingItem = _it;
+              break;
+            }
+          }
+        }
         if (existingItem) {
           const icon = existingItem.querySelector('.tgi-icon');
           const status = existingItem.querySelector('.tgi-status');
           if (icon) icon.textContent = '✅';
           if (status) status.textContent = '완료';
-        } else {
+        } else if (!_isInternalMarker) {
           // started 없이 completed만 온 경우 — 항목 새로 추가
           _toolGroupCount++;
           const item = document.createElement('div');

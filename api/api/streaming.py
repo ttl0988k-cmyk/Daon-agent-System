@@ -2015,6 +2015,24 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           pending_asst_idx = {} # tool_call_id -> index in s.messages
           for msg_idx, m in enumerate(s.messages):
               if m.get('role') == 'assistant':
+                  # [2026-08-31] OpenAI 호환 형식(assistant.tool_calls 필드) 파싱 —
+                  # Qwen 등 OpenAI 호환 모델은 tool 호출이 content가 아니라
+                  # m['tool_calls'] 필드([{id, function:{name, arguments}}])로 온다.
+                  # 기존 로직은 Anthropic 형식(content 내 tool_use 블록)만 파싱해
+                  # 이 모델들에서 tool_calls가 항상 0개였다(도구 카드 소실 원인).
+                  for _tc in (m.get('tool_calls') or []):
+                      if not isinstance(_tc, dict):
+                          continue
+                      _fn = _tc.get('function') or {}
+                      _tid = _tc.get('id') or _tc.get('call_id') or ''
+                      _tname = _fn.get('name') or _tc.get('name') or ''
+                      if _tid and _tname:
+                          pending_names[_tid] = _tname
+                          try:
+                              pending_args[_tid] = json.loads(_fn.get('arguments') or '{}')
+                          except Exception:
+                              pending_args[_tid] = {}
+                          pending_asst_idx[_tid] = msg_idx
                   c = m.get('content', '')
                   if isinstance(c, list):
                       for p in c:
