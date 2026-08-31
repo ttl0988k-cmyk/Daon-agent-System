@@ -1945,6 +1945,12 @@ sse.addEventListener('debate_status', (e) => {
           } else {
             setStreamStatus('thinking', '⏱️ 자동 승인됨');
           }
+          // [2026-08-31] 자동 승인 음성 안내 — 승인 카드가 사라진 이유를 알린다.
+          try {
+            if (typeof speak === 'function') {
+              speak('응답이 없어 자동 승인했습니다.');
+            }
+          } catch (_) { }
           // 완료 카드도 승인 카드와 같은 컨테이너 가시성 규칙을 따른다.
           if (data.type === 'dangerous_command' && typeof switchMode === 'function') {
             try {
@@ -1972,6 +1978,15 @@ sse.addEventListener('debate_status', (e) => {
           } else {
             setStreamStatus('thinking', '🛡️ 승인 대기 중...');
           }
+          // [2026-08-31] 승인 요청 음성 안내 — 사용자가 딴짓하다가도 화면을
+          // 보게 한다. 도구 사용 음성 안내와 동일한 speak() 경로를 사용한다.
+          try {
+            if (typeof speak === 'function') {
+              speak(data.type === 'dangerous_command'
+                ? '위험 명령 승인이 필요합니다. 화면에서 확인해 주세요.'
+                : '승인이 필요합니다. 화면에서 확인해 주세요.');
+            }
+          } catch (_) { }
           // [2026-08-30] 도구 그룹 카드의 "실행 중" 항목을 "승인 대기"로 바꿔
           // 카드가 (0/1)에서 멈춰 보이는 이유를 즉시 설명한다.
           try {
