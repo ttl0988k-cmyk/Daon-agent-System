@@ -1329,8 +1329,15 @@
     }
 
     @keyframes fadeInSlide {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* 안전망: 자식이 전혀 없는 빈 버블은 렌더하지 않는다.
@@ -1456,6 +1463,10 @@
       border-radius: 6px;
       margin-top: 6px;
       overflow: hidden;
+      /* [2026-08-31] reasoning-card/terminal-live-card가 공유하는 규칙 —
+         flex column 컨테이너에서 overflow:hidden이면 min-height 0으로
+         찌그러든다 (tool-group-card와 동일 문제). */
+      flex-shrink: 0;
     }
 
     .tool-card-header {
@@ -1491,6 +1502,10 @@
       margin: 6px 0;
       overflow: hidden;
       background: var(--bg2);
+      /* [2026-08-31] flex column 컨테이너(#chatMessages)에서 overflow:hidden이
+         있으면 automatic minimum size가 0이 되어 카드가 2px 선으로 찌그러든다.
+         flex-shrink: 0으로 찌그러짐 방지 (에이전트 CDP 실측: 2px → 37px 복원). */
+      flex-shrink: 0;
     }
 
     .tool-group-card summary {
