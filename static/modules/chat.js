@@ -976,6 +976,25 @@ async function _executeAgentStream(displayText, uploaded) {
     'text_to_speech': '음성을 생성합니다',
   };
   function _toolDescKo(name) { return _TOOL_DESC_KO[name] || ''; }
+  // [2026-08-31] 도구 인자 요약 — "무엇을 대상으로"를 선보고에 표시
+  function _argsSummary(args) {
+    if (!args || typeof args !== 'object') return '';
+    var keys = ['url', 'path', 'file_path', 'command', 'query', 'pattern', 'task', 'code', 'name'];
+    for (var i = 0; i < keys.length; i++) {
+      var v = args[keys[i]];
+      if (v) {
+        var s2 = String(v).replace(/\s+/g, ' ').trim();
+        return s2.substring(0, 90) + (s2.length > 90 ? '…' : '');
+      }
+    }
+    for (var k in args) {
+      if (typeof args[k] === 'string' && args[k]) {
+        var s3 = args[k].replace(/\s+/g, ' ').trim();
+        return s3.substring(0, 90) + (s3.length > 90 ? '…' : '');
+      }
+    }
+    return '';
+  }
   // [2026-08-31] 도구 인자 요약 — 카드에서 '무슨 일을 하는지' 즉시 보이게
   function _toolArgsSummary(args) {
     if (!args || typeof args !== 'object') return '';
@@ -1896,11 +1915,12 @@ async function _executeAgentStream(displayText, uploaded) {
       // "싱킹 → 도구 실행"만으로는 뭘 하는지 알 수 없다는 요청 — 도구 실행
       // 직전에 한국어 선보고를 채팅 스트림에 삽입한다. 프론트엔드 로직이므로
       // 모델이 설명을 하든 안 하든 100% 표시된다 (Roo Code 스타일).
-      if (!_isInternalMarker && isStarted && _tDesc) {
+      if (!_isInternalMarker && isStarted) {
         try {
           const ann = document.createElement('div');
           ann.className = 'tool-announce';
-          ann.textContent = '🔧 ' + _tDesc + '...';
+          var _argSum = _argsSummary(data.args);
+          ann.textContent = '🔧 ' + (_tDesc || toolName) + (_argSum ? ' → ' + _argSum : '') + '...';
           box.insertBefore(ann, asstBubble);
         } catch (_) { }
       }
