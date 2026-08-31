@@ -7,6 +7,8 @@ console.log("[BUILD ID]: cdp-safe-no-debugger-attach-2026-08-27");
 console.log("[BUILD ID]: webcontents-null-guard-2026-08-27");
 console.log("[BUILD ID]: cdp-relaunch-guarantee-2026-08-27");
 console.log("[BUILD ID]: tab-bar-ui-2026-08-27");
+console.log("[BUILD ID]: chrome-ua-revert-2026-08-31");
+console.log("[BUILD ID]: tabfail-aborted-skip-2026-09-01");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -121,29 +123,39 @@ app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 // 브라우저를 "패스키 미지원"으로 보고 비밀번호 로그인 플로우를 제공한다.
 app.commandLine.appendSwitch('disable-features', 'WebAuthentication');
 
-// ── 구글 로그인 신뢰 신호: User-Agent를 Firefox로 위장 (2026-08-27 밤 전환) ──
-// [변천] 순정 Electron UA → "자바스크립트 미지원" 거부. Chrome 138 위장(07e9750
-// 재적용) → Client Hints 정합성 검사에 걸쳐 "암호 키 강제" + "안전하지 않은
-// 브라우저" 차단(실측). Chrome 위장은 Chromium 엔진의 미세 흔적과 UA-CH 정합성
-// 검증을 모두 통과해야 하므로 한계에 도달.
-// Firefox 위장은 구글이 Client Hints 정합성 검사를 하지 않는다 — Firefox는
-// Sec-CH-UA*를 전송하지 않는 브라우저이므로, 오히려 Chromium이 자동으로 붙이는
-// Sec-CH-UA* 헤더를 "제거"하는 것이 와이어에서 일관된 Firefox가 되는 길이다.
+// ── 구글 로그인 신뢰 신호: User-Agent를 Chrome 138로 위장 (2026-08-31 재전환) ──
+// [변천] 순정 Electron UA → "자바스크립트 미지원" 거부. Chrome 138 위장 →
+// Client Hints 정합성 검사 + 암호 키 강제로 차단(실측). Firefox 위장 → 로그인은
+// 됐으나 체감 딜레이/사용성 문제. 이번 재전환은 두 가지 정합 장치로 보완한다:
+// 1) disable-features=WebAuthentication(위)이 이전 Chrome 시도를 죽인 패스키 강제를
+//    원천 차단한다.
+// 2) Sec-CH-UA* 헤더와 navigator.userAgentData를 Chrome 138 정합 값으로 "재작성"해
+//    UA-CH 정합성 검사를 통과한다(이전 시도는 Electron 기본 brands가 그대로
+//    송신되어 정합성 검사에 걸렸음).
+// Electron 37 = Chromium 138 이라 엔진 지문과 Chrome/138 UA는 본질적으로 정합.
 try {
   app.userAgentFallback =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0';
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 } catch (e) {
   console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
 }
 
-// ── Firefox 정합 헤더 정규화 ──
-// 1) Chromium이 자동 송신하는 Sec-CH-UA* 헤더를 전부 제거 (Firefox는 미전송)
+// ── Chrome 정합 헤더 정규화 ──
+// 1) Chromium이 자동 송신하는 Sec-CH-UA* 헤더(Electron 기본 brands 포함)를
+//    Chrome 138 정합 값으로 재작성 — UA-CH 정합성 검사 통과가 목적.
+//    (삭제하지 않는다: Chrome은 Sec-CH-UA*를 정상 송신하는 브라우저다)
 // 2) Accept-Language가 비정상적으로 짧으면 표준 형태로 보정
 const FULL_ACCEPT_LANG = 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7';
-function normalizeFirefoxHeaders(headers, url) {
+const CHROME_UA_HEADER = '"Chromium";v="138", "Google Chrome";v="138", "Not)A;Brand";v="99"';
+const CHROME_UA_FULL_LIST = '"Chromium";v="138.0.0.0", "Google Chrome";v="138.0.0.0", "Not)A;Brand";v="99.0.0.0"';
+function normalizeChromeHeaders(headers, url) {
   const h = { ...headers };
   for (const k of Object.keys(h)) {
-    if (k.toLowerCase().startsWith('sec-ch-ua')) delete h[k];
+    const lk = k.toLowerCase();
+    if (lk === 'sec-ch-ua') h[k] = CHROME_UA_HEADER;
+    else if (lk === 'sec-ch-ua-mobile') h[k] = '?0';
+    else if (lk === 'sec-ch-ua-platform') h[k] = '"Windows"';
+    else if (lk === 'sec-ch-ua-full-version-list') h[k] = CHROME_UA_FULL_LIST;
   }
   const alKey = Object.keys(h).find((k) => k.toLowerCase() === 'accept-language');
   if (alKey && (h[alKey] === 'ko' || h[alKey] === 'en' || !h[alKey])) h[alKey] = FULL_ACCEPT_LANG;
@@ -152,11 +164,11 @@ function normalizeFirefoxHeaders(headers, url) {
 function attachChromeHeaderNormalization(ses, label) {
   try {
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
-      callback({ requestHeaders: normalizeFirefoxHeaders(details.requestHeaders, details.url) });
+      callback({ requestHeaders: normalizeChromeHeaders(details.requestHeaders, details.url) });
     });
-    console.log('[FirefoxUA] Header normalization attached: ' + label);
+    console.log('[ChromeUA] Header normalization attached: ' + label);
   } catch (e) {
-    console.warn('[FirefoxUA] attach failed (' + label + '):', e && e.message);
+    console.warn('[ChromeUA] attach failed (' + label + '):', e && e.message);
   }
 }
 
@@ -841,7 +853,7 @@ app.whenReady().then(async () => {
   // ── Always-on: 트레이 아이콘 생성 (서버 백그라운드 상주) ──
   createTray();
 
-  // ── Firefox 정합 헤더: 기본 세션 (메인 UI + 공유 브라우저) ──
+  // ── Chrome 정합 헤더: 기본 세션 (메인 UI + 공유 브라우저) ──
   // 공유 브라우저(WebContentsView)도 기본 세션을 쓰므로 defaultSession 하나만
   // attach 하면 동일 적용된다 (24aab44 이후 구조).
   attachChromeHeaderNormalization(session.defaultSession, 'defaultSession');
@@ -1312,53 +1324,51 @@ class TabManager {
     });
     this.tabs.set(tabId, view);
 
-    // ── 구글 로그인 신뢰 신호: UA를 Firefox로 재정의 (2026-08-27 밤 전환) ──
-    // Electron 기본 UA는 임베디드 감지 → 거부. Chrome 위장은 UA-CH 정합성 검사에
-    // 걸림(실측: 암호 키 강제 + "안전하지 않은 브라우저"). Firefox는 Client Hints
-    // 가 없는 브라우저라 구글의 정합성 검사 대상에서 벗어난다.
+    // ── 구글 로그인 신뢰 신호: UA를 Chrome 138로 재정의 (2026-08-31 재전환) ──
+    // Electron 기본 UA는 임베디드 감지 → 거부. 이전 Chrome 위장은 UA-CH 정합성
+    // 검사에 걸렸으나(실측: 암호 키 강제 + "안전하지 않은 브라우저"), 이번엔
+    // Sec-CH-UA* 헤더 + navigator.userAgentData를 Chrome 정합 값으로 재작성하고
+    // disable-features=WebAuthentication 으로 패스키 강제를 원천 차단한다.
     // javascript:true 는 명시적 선언으로, Google의 JS 지원 검사 신호를 보장한다.
     try {
       view.webContents.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0'
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
       );
     } catch (e) {
-      console.warn('[TabManager] Failed to set Firefox user agent:', e && e.message);
+      console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);
     }
 
-    // JS 측 navigator.userAgentData도 제거한다 — Firefox에는 이 API가 없다.
+    // JS 측 navigator.userAgentData도 Chrome 138 정합 값으로 맞춘다 — setUserAgent
+    // 만으로는 UA-CH API/헤더의 brands가 Electron 기본값으로 남아 정합성 검사에
+    // 걸린다(이전 Chrome 시도 실패 원인).
     // [2026-08-27 실측 결함 수정] debugger.attach('1.3')는 always-on CDP 9222와
     // 락 경합을 일으켜 CDP 서버를 응답불능으로 만든다(에이전트 connect_over_cdp
     // 실패 → 에이전트 응답 정지). 07e9750 시절엔 CDP가 기본 OFF(9a52070)라
     // 충돌이 없었지만, 24aab44 이후 always-on 구조에서는 debugger.attach 금지.
     // UA는 setUserAgent + executeJavaScript(did-finish-load)로만 처리한다.
+    // Chrome 정합 지문 주입 스크립트: userAgentData brands를 Chrome 138로,
+    // vendor를 "Google Inc."로, webdriver는 숨김 유지. oscpu/productSub는
+    // Firefox 전용 필드라 Chrome 모드에서는 건드리지 않는다(Chromium 기본값이
+    // 이미 Chrome 정합).
+    const CHROME_FP_PATCH =
+      'try{Object.defineProperty(navigator,"userAgentData",{get:()=>({'
+      + 'brands:[{brand:"Chromium",version:"138"},{brand:"Google Chrome",version:"138"},{brand:"Not)A;Brand",version:"99"}],'
+      + 'mobile:false,platform:"Windows",'
+      + 'getHighEntropyValues:()=>Promise.resolve({architecture:"x86",bitness:"64",model:"",platform:"Windows",platformVersion:"15.0.0",uaFullVersion:"138.0.0.0",fullVersionList:[{brand:"Chromium",version:"138.0.0.0"},{brand:"Google Chrome",version:"138.0.0.0"},{brand:"Not)A;Brand",version:"99.0.0.0"}]}),'
+      + 'toJSON:function(){return{brands:this.brands,mobile:this.mobile,platform:this.platform}}'
+      + ')})}catch(e){};'
+      + 'try{Object.defineProperty(navigator,"vendor",{get:()=>"Google Inc."})}catch(e){};'
+      + 'try{delete navigator.webdriver}catch(e){};'
+      + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};';
     view.webContents.on('did-finish-load', () => {
       // 성공 로드 시 크래시 복구 카운터 리셋 (페이지가 살아났음).
       this._tabRecovery.delete(tabId);
-      // Firefox 정합 지문: vendor(Chromium은 "Google Inc.", Firefox는 빈 문자열),
-      // userAgentData 제거, oscpu(Firefox 전용 필드) 부여. (2026-08-27 실측:
-      // 구글이 "지원하지 않는 브라우저" 경고 — vendor 등 엔진 지문이 원인)
-      view.webContents.executeJavaScript(
-        'try{delete navigator.userAgentData}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"userAgentData",{get:()=>undefined})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"vendor",{get:()=>""})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"oscpu",{get:()=>"Windows NT 10.0"})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};'
-        + 'try{delete navigator.webdriver}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};1'
-      ).catch(() => { });
+      view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
     });
     // [2026-08-31 캡챠/로그인 차단 완화] SPA 네비게이션 대응 — dom-ready마다도
     // 동일 지문 완화를 주입한다 (did-finish-load는 SPA 라우팅에서 스킵될 수 있음).
     view.webContents.on('dom-ready', () => {
-      view.webContents.executeJavaScript(
-        'try{delete navigator.userAgentData}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"userAgentData",{get:()=>undefined})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"vendor",{get:()=>""})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"oscpu",{get:()=>"Windows NT 10.0"})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};'
-        + 'try{delete navigator.webdriver}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};1'
-      ).catch(() => { });
+      view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
     });
     view.webContents.on('page-title-updated', () => { this._notifyTabs(); });
 
@@ -1393,6 +1403,14 @@ class TabManager {
     });
     view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return; // 서브프레임 실패는 무시
+      // [2026-09-01 튕김 방지] -3(ERR_ABORTED)는 리다이렉트·사용자 중단 등
+      // "탐색이 대체됨" 신호일 뿐 실제 로드 실패가 아니다. 구글 검색결과 클릭
+      // 시 이 신호가 뜨고, 3초 후 강제 재시도가 화면을 되돌려 "튕김"을
+      // 만들었다(실측). 실제 실패(네트워크/DNS 등)만 재시도한다.
+      if (errorCode === -3) {
+        mlog(`[TabFail] tab=${tabId} aborted navigation ignored (code=-3) url=${validatedURL}`);
+        return;
+      }
       merr(`[TabFail] tab=${tabId} did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
       const now = Date.now();
       let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
