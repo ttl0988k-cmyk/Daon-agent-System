@@ -2004,7 +2004,10 @@ sse.addEventListener('debate_status', (e) => {
             } catch (_swErr) { /* 무시 */ }
           }
         }
-        if (data && data.status === 'pending') {
+        // [2026-08-31] 위험 명령 승인은 status 필드가 없을 수 있다 (type으로 판별) —
+        // approval.js와 동일한 완화 판별을 적용해 음성 안내가 누락되지 않게 한다.
+        var _isApprovalPending = data && (data.status === 'pending' || (!data.status && data.type === 'dangerous_command'));
+        if (data && _isApprovalPending) {
           // 승인 대기 표시 — idle 워치독이 스트림을 종료하지 않게 유예한다.
           // (백엔드는 사용자 응답을 기다리며 블로킹 중)
           _approvalPending = true;
@@ -2758,6 +2761,32 @@ function setupEventListeners() {
       addFiles(e.target.files);
       fileInput.value = '';
     };
+  }
+
+  // 🖼️ Image Paste Bindings (2026-08-31) — 채팅 입력창에 이미지 Ctrl+V 지원
+  // 클립보드의 이미지 파일을 감지해 기존 첨부 파이프라인(addFiles)으로 넣는다.
+  // 파일 선택 버튼/드래그&드롭과 동일한 경로라 업로드·전송 흐름이 그대로 재사용된다.
+  if (promptInput) {
+    promptInput.addEventListener('paste', (e) => {
+      try {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        const imgFiles = [];
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f && f.type && f.type.indexOf('image/') === 0) imgFiles.push(f);
+          }
+        }
+        if (imgFiles.length > 0) {
+          e.preventDefault();  // 이미지면 기본 붙여넣기(깨진 텍스트) 방지
+          addFiles(imgFiles);
+          if (typeof showToast === 'function') showToast('🖼️ 이미지 ' + imgFiles.length + '개가 첨부되었습니다.');
+        }
+      } catch (_pErr) {
+        console.warn('[paste] image paste failed:', _pErr);
+      }
+    });
   }
 
   // 📦 Drag & Drop Bindings on Chat Input Area (expanded to Right Panel)
