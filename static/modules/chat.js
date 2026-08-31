@@ -1185,6 +1185,11 @@ async function _executeAgentStream(displayText, uploaded) {
     try {
       if (_terminalOutputCard && _terminalOutputCard.parentNode) _terminalOutputCard.remove();
     } catch (_) { }
+    // [2026-08-31c] DOM 직접 조회 정리 (이중 안전장치) — 변수 참조가 유실된
+    // 카드(클로저 소멸 등)도 확실히 제거한다. cancel 경로와 동일한 방식.
+    try {
+      box.querySelectorAll('.tool-group-card, .reasoning-card, .terminal-live-card').forEach((el) => el.remove());
+    } catch (_) { }
     // 확정 답변 세그먼트 추적 해제. 요소 자체는 DOM에 유지한다 — done 경로는
     // renderMessages가 전체 재렌더링으로 정리하고, cancel 등 비-done 경로에서는
     // 지금까지 받은 부분 답변이 화면에 남아 "중지해도 내용이 보존된다"는 안전감을 준다.
@@ -1401,8 +1406,13 @@ async function _executeAgentStream(displayText, uploaded) {
       incomingText += data.text;
       asstBubble.innerHTML = renderMd(incomingText);
       // 추론이 끝났으면 카드 제목 갱신 (경과 초 포함)
-      if (_reasoningCard && _reasoningTimer) {
-        _stopReasoningTimer('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
+      if (_reasoningCard) {
+        if (_reasoningTimer) {
+          _stopReasoningTimer('💭 생각 완료 (' + _reasoningElapsed() + '초) (클릭하여 보기)');
+        }
+        // [2026-08-31c] 참조 해제 — 다음 턴의 싱킹이 새 카드로 시작되게 한다.
+        // (이전 턴 카드를 재사용하면 A방식 정리(①)가 실행되지 않았었다)
+        _reasoningCard = null;
       }
       // 텍스트 토큰이 오면 현재 도구 그룹 카드를 확정 → 다음 도구 호출 시 새 그룹 시작
       if (_toolGroupCard) {
