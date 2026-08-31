@@ -1892,6 +1892,19 @@ async function _executeAgentStream(displayText, uploaded) {
         }
       }
 
+      // ── [2026-08-31 도구 실행 선보고] ──
+      // "싱킹 → 도구 실행"만으로는 뭘 하는지 알 수 없다는 요청 — 도구 실행
+      // 직전에 한국어 선보고를 채팅 스트림에 삽입한다. 프론트엔드 로직이므로
+      // 모델이 설명을 하든 안 하든 100% 표시된다 (Roo Code 스타일).
+      if (!_isInternalMarker && isStarted && _tDesc) {
+        try {
+          const ann = document.createElement('div');
+          ann.className = 'tool-announce';
+          ann.textContent = '🔧 ' + _tDesc + '...';
+          box.insertBefore(ann, asstBubble);
+        } catch (_) { }
+      }
+
       // ── 내부 브라우저 자동 오픈 (2026-08-31) ──
       // 에이전트가 browser_* 도구를 호출하면 5초 pending_url 폴링을 기다리지
       // 않고 즉시 내부 브라우저 뷰를 연다. 기존 구조에서는 서버가 "탭 없음"을

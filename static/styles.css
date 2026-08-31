@@ -1613,6 +1613,19 @@
     }
 
     /* [2026-08-31] 한국어 설명 — 카드에서 주(主) 텍스트로 강조 */
+    /* [2026-08-31] 도구 실행 선보고 텍스트 — Roo Code 스타일 */
+    .tool-announce {
+      align-self: flex-start;
+      max-width: 90%;
+      padding: 4px 10px;
+      margin: 4px 0;
+      font-size: 11px;
+      color: var(--text2);
+      background: rgba(245, 158, 11, 0.08);
+      border-left: 3px solid rgba(245, 158, 11, 0.55);
+      border-radius: 4px;
+    }
+
     .tool-group-item .tgi-desc {
       font-size: 11px;
       color: var(--text1, #e5e7eb);
