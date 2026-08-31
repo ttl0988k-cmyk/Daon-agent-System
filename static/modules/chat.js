@@ -1753,12 +1753,12 @@ sse.addEventListener('debate_status', (e) => {
       if (!_toolGroupCard) {
         // 새 도구 그룹이 시작되면 진행 중이던 답변을 별도 블록으로 확정 (Roo 스타일 분리)
         _freezeAnswerSegment();
-        // [2026-08-31b] 새 도구 그룹 시작 시 이전 도구 카드들을 제거한다 —
-        // 화면에는 항상 "최신 도구 카드 1개"만 표시되어 누적(지저분함)이 없고,
-        // 카드는 다음 도구 시작까지 유지되므로 도구 사용도 확실히 보인다.
-        // 최종 전체 기록은 done 경로의 renderMessages가 세션 tool_calls 기반으로
-        // 다시 그리므로 유실되지 않는다.
-        try { box.querySelectorAll('.tool-group-card').forEach((el) => el.remove()); } catch (_) { }
+        // [2026-08-31c] 이전 도구 카드 전량 삭제는 철회했다 — Roo Code 스타일
+        // 순차 누적([💭][답변1][🔧도구1][답변2][🔧도구2]...)이 원래 설계다.
+        // 전량 삭제는 텍스트↔도구 교대마다 카드를 지워 "카드가 계속 사라지는"
+        // 증상을 만들었다(에이전트 코드 분석으로 적발). 어제의 지저분함의
+        // 진짜 원인은 SSE 유실이었고 그것은 재연결 존중 + 10초 감시로 해결됨.
+        // 멈춘 카드(0/1)는 승인 대기 표시로 이유가 설명된다.
         _toolGroupCard = document.createElement('details');
         _toolGroupCard.className = 'tool-group-card';
         _toolGroupCard.innerHTML = `
