@@ -1685,6 +1685,11 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               f"Active workspace: {s.workspace}\n"
               "Use this directory for ALL file operations unless the user specifies otherwise.\n\n"
               + _tabs_sys +
+              "[LANGUAGE — CRITICAL]\n"
+              "Always think (reasoning) and respond in Korean (한국어). Your internal\n"
+              "thinking/reasoning output is displayed to the user in a '💭 생각 중' panel —\n"
+              "write it in Korean too, never in English. All user-facing text, tool call\n"
+              "previews, and reasoning must be in Korean.\n\n"
               "[WEBUI ENVIRONMENT]\n"
               "You are running in the Daon WebUI — a rich web-based chat interface.\n"
               "You CAN and MUST use Markdown formatting directly in your text responses.\n"
