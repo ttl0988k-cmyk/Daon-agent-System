@@ -976,6 +976,19 @@ async function _executeAgentStream(displayText, uploaded) {
     'text_to_speech': '음성을 생성합니다',
   };
   function _toolDescKo(name) { return _TOOL_DESC_KO[name] || ''; }
+  // [2026-08-31] 도구 인자 요약 — 카드에서 '무슨 일을 하는지' 즉시 보이게
+  function _toolArgsSummary(args) {
+    if (!args || typeof args !== 'object') return '';
+    var keys = ['command', 'url', 'path', 'file_path', 'pattern', 'query', 'goal', 'task', 'prompt', 'text', 'message', 'name', 'expression', 'identifier', 'server_id'];
+    for (var i = 0; i < keys.length; i++) {
+      var v = args[keys[i]];
+      if (typeof v === 'string' && v.trim()) {
+        v = v.trim().replace(/\s+/g, ' ');
+        return v.length > 68 ? v.slice(0, 68) + '…' : v;
+      }
+    }
+    return '';
+  }
 
   // ── finishStream: 단일 진입점 — 모든 스트림 종료 경로를 이곳으로 통합 ──
   // dedup guard: 두 번 이상 호출되더라도 cleanupStreamState()는 한 번만 실행
@@ -1951,12 +1964,17 @@ async function _executeAgentStream(displayText, uploaded) {
         if (!_isInternalMarker) {
           const item = document.createElement('div');
           item.className = 'tool-group-item';
+          const _argSum = _toolArgsSummary(data.args);
           item.innerHTML = `
           <span class="tgi-icon">⏳</span>
           <span class="tgi-name">${toolName}</span>
           <span class="tgi-desc">${_tDesc}</span>
+          ${_argSum ? '<span class="tgi-args" title="' + _argSum.replace(/"/g, '&quot;') + '">' + _argSum + '</span>' : ''}
           <span class="tgi-status">실행 중</span>
         `;
+          // [2026-08-31] 그룹 헤더에도 최신 작업 표시 — 접힌 상태에서도 무엇을 하는지 보인다
+          const _grpLabel = _toolGroupCard ? _toolGroupCard.querySelector('.tool-group-label') : null;
+          if (_grpLabel) _grpLabel.textContent = '도구 실행 중: ' + (_tDesc || toolName) + '...';
           _toolItemMap[toolCallId] = item;
           if (_toolGroupItems) _toolGroupItems.appendChild(item);
         }

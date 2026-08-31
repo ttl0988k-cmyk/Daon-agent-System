@@ -1606,9 +1606,33 @@
     }
 
     .tool-group-item .tgi-name {
-      flex: 1;
+      flex-shrink: 0;
       font-family: var(--mono-font, 'JetBrains Mono', monospace);
       font-size: 11px;
+      opacity: 0.75;
+    }
+
+    /* [2026-08-31] 한국어 설명 — 카드에서 주(主) 텍스트로 강조 */
+    .tool-group-item .tgi-desc {
+      font-size: 11px;
+      color: var(--text1, #e5e7eb);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 1;
+    }
+
+    /* [2026-08-31] 인자 요약(경로/URL/명령어) — 무엇을 대상으로 하는지 즉시 보이게 */
+    .tool-group-item .tgi-args {
+      flex: 1;
+      min-width: 0;
+      font-family: var(--mono-font, 'JetBrains Mono', monospace);
+      font-size: 10px;
+      opacity: 0.55;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
     }
 
     .tool-group-item .tgi-status {
