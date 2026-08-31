@@ -202,10 +202,44 @@ async function _reattachSessionStream(sid, streamId) {
         if (!txt && !asstBubble.querySelector('img, video, .text-muted, .text-danger') && asstBubble.parentNode) asstBubble.remove();
       }
     } catch (_) { }
+    // [A방식] 종료 시 백그라운드 카드들 정리 — done 후 renderMessages가
+    // 최종 답변만 렌더링하므로 카드 잔존 없이 깔끔하게 마무리된다.
+    try { box.querySelectorAll('.tool-group-card, .reasoning-card').forEach((el) => el.remove()); } catch (_) { }
     cleanupStreamState();
     // [세션 동시 작업] 재접속한 스트림이 끝났으면 기록을 지워 ▶ 배지를 정리한다.
     try { _forgetSessionStream(sid, streamId); renderSessionsList(); } catch (_) { }
     console.log('[SessionStream] finished:', reason);
+  }
+
+  // ── [2026-08-31 백그라운드 작업 시각화] ──
+  // 복귀 후에도 작업 진행 내용(도구 카드/추론 카드)이 채팅에 표시되게 한다.
+  let _raToolCard = null;
+  let _raToolItems = null;
+  let _raToolCount = 0;
+  let _raToolDone = 0;
+  let _raToolMap = {};
+  let _raReasoningCard = null;
+
+  function _raEnsureToolCard() {
+    if (!_raToolCard) {
+      _raToolCard = document.createElement('details');
+      _raToolCard.className = 'tool-group-card';
+      _raToolCard.innerHTML = `
+        <summary>
+          <span class="tool-group-icon">🔧</span>
+          <span class="tool-group-label">도구 실행 중...</span>
+          <span class="tool-group-counter">0</span>
+          <span class="tool-group-spinner"></span>
+          <span class="tool-group-chevron">▶</span>
+        </summary>
+        <div class='tool-group-items'></div>
+      `;
+      _raToolItems = _raToolCard.querySelector('.tool-group-items');
+      _raToolCount = 0;
+      _raToolDone = 0;
+      _raToolMap = {};
+      box.insertBefore(_raToolCard, asstBubble);
+    }
   }
 
   const sse = new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`);
@@ -217,19 +251,85 @@ async function _reattachSessionStream(sid, streamId) {
       const d = JSON.parse(e.data);
       setChatStatus('thinking', '✍️ 최종 답변 생성 중...');
       if (agentStatusBubble.parentNode) agentStatusBubble.style.display = 'none';
+      // [A방식] 토큰이 오면 추론 카드 정리 — 다음 턴 싱킹이 새 카드로 시작
+      if (_raReasoningCard) { try { _raReasoningCard.remove(); } catch (_) { } _raReasoningCard = null; }
       asstBubble._txt = (asstBubble._txt || '') + (d.text || '');
       asstBubble.innerHTML = renderMd(asstBubble._txt);
       scrollToChatBottom();
     } catch (_) { }
   });
 
-  sse.addEventListener('reasoning', () => {
+  sse.addEventListener('reasoning', (e) => {
     setChatStatus('thinking', '💭 생각 중... (백그라운드 작업)');
+    try {
+      const d = JSON.parse(e.data);
+      // [A방식] 새 싱킹 단위 시작 시 이전 도구박스 정리
+      if (!_raReasoningCard) {
+        if (_raToolCard) { try { _raToolCard.remove(); } catch (_) { } _raToolCard = null; _raToolItems = null; }
+        _raReasoningCard = document.createElement('details');
+        _raReasoningCard.className = 'tool-card reasoning-card';
+        _raReasoningCard.innerHTML = `
+          <summary style="cursor:pointer; padding:6px 10px; opacity:0.75;">💭 생각 중... (백그라운드)</summary>
+          <div class="tool-card-body" style="display:block;">
+            <pre style="white-space:pre-wrap; max-height:240px; overflow:auto; opacity:0.7; font-size:12px;"></pre>
+          </div>
+        `;
+        box.insertBefore(_raReasoningCard, asstBubble);
+      }
+      const pre = _raReasoningCard.querySelector('pre');
+      if (pre) pre.textContent = (pre.textContent || '') + (d.text || '');
+    } catch (_) { }
     scrollToChatBottom();
   });
 
-  sse.addEventListener('tool', () => {
+  sse.addEventListener('tool', (e) => {
     setChatStatus('thinking', '🔧 도구 실행 중... (백그라운드 작업)');
+    try {
+      const d = JSON.parse(e.data);
+      const tName = d.name || 'unknown';
+      const isStart = (d.event || 'tool.started') === 'tool.started';
+      const tid = d.tool_call_id || (tName + '_' + _raToolCount);
+      // [A방식] 새 도구박스 시작 시 이전 싱킹카드 정리
+      if (isStart && _raReasoningCard) { try { _raReasoningCard.remove(); } catch (_) { } _raReasoningCard = null; }
+      _raEnsureToolCard();
+      if (isStart) {
+        _raToolCount++;
+        const item = document.createElement('div');
+        item.className = 'tool-group-item';
+        item.innerHTML = `<span class="tgi-icon">⏳</span><span class="tgi-name">${tName}</span><span class="tgi-status">실행 중</span>`;
+        _raToolMap[tid] = item;
+        if (_raToolItems) _raToolItems.appendChild(item);
+      } else {
+        _raToolDone++;
+        let it = _raToolMap[tid];
+        if (!it) {
+          // id 불일치 폴백: 같은 이름의 실행 중 항목을 완료 처리 (중복 방지)
+          for (var _t in _raToolMap) {
+            const _i = _raToolMap[_t];
+            const _n = _i.querySelector('.tgi-name');
+            const _s = _i.querySelector('.tgi-status');
+            if (_n && _n.textContent === tName && _s && _s.textContent === '실행 중') { it = _i; break; }
+          }
+        }
+        if (it) {
+          const ic = it.querySelector('.tgi-icon');
+          const st = it.querySelector('.tgi-status');
+          if (ic) ic.textContent = '✅';
+          if (st) st.textContent = '완료';
+        } else {
+          _raToolCount++;
+          const item = document.createElement('div');
+          item.className = 'tool-group-item';
+          item.innerHTML = `<span class="tgi-icon">✅</span><span class="tgi-name">${tName}</span><span class="tgi-status">완료</span>`;
+          if (_raToolItems) _raToolItems.appendChild(item);
+        }
+        const label = _raToolCard.querySelector('.tool-group-label');
+        const counter = _raToolCard.querySelector('.tool-group-counter');
+        const running = _raToolCount - _raToolDone;
+        if (label) label.textContent = running > 0 ? `도구 실행 중... (${_raToolDone}/${_raToolCount} 완료)` : `도구 실행 완료`;
+        if (counter) counter.textContent = _raToolCount;
+      }
+    } catch (_) { }
     scrollToChatBottom();
   });
 

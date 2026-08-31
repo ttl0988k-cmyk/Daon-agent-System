@@ -867,15 +867,30 @@
             </div>
             <div class="panel-body-scroll" style="gap:8px;padding:8px;">
 
-              <!-- import 폼 -->
-              <div
-                style="background:var(--bg2);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;">
-                <div style="font-size:11px;font-weight:600;color:var(--text);">📥 플러그인 가져오기</div>
-                <input id="pluginImportInput" placeholder="Git URL 또는 로컬 폴더 경로 (예: https://github.com/owner/repo)"
-                  style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;" />
-                <button class="action-btn" onclick="importPlugin()"
-                  style="background:var(--success);color:white;">가져오기</button>
+              <!-- 스토어/설치됨 세그먼트 전환 -->
+              <div class="pstore-seg">
+                <button id="pstoreSegStore" class="pstore-seg-btn active" onclick="storeSetView('store')">🛍️ 스토어</button>
+                <button id="pstoreSegInstalled" class="pstore-seg-btn" onclick="storeSetView('installed')">📦 설치됨 <span id="pstoreInstalledCount" class="pstore-count-badge">0</span></button>
               </div>
+
+              <!-- 스토어 뷰 -->
+              <div id="pstoreView">
+                <input id="pstoreSearch" class="pstore-search" placeholder="🔍 플러그인 검색 (이름·설명)" oninput="storeSetQuery(this.value)" />
+                <div id="pstoreCats" class="pstore-cats"></div>
+                <div id="pstoreGrid" class="pstore-grid"><div class="pstore-empty">스토어 불러오는 중…</div></div>
+                <div class="pstore-footer" id="pstoreFooter"></div>
+              </div>
+
+              <!-- 설치됨 뷰 -->
+              <div id="installedView" style="display:none;">
+                <details style="background:var(--bg2);border-radius:8px;padding:8px;margin-bottom:8px;">
+                  <summary style="font-size:11px;font-weight:600;color:var(--text);cursor:pointer;">📥 수동 가져오기 (Git URL / 폴더 경로)</summary>
+                  <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+                    <input id="pluginImportInput" placeholder="예: https://github.com/owner/repo"
+                      style="width:100%;padding:6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;" />
+                    <button class="action-btn" onclick="importPlugin()" style="background:var(--success);color:white;">가져오기</button>
+                  </div>
+                </details>
 
               <!-- 상태 요약 -->
               <div id="pluginStateSummary" style="font-size:10px;color:var(--muted);padding:2px 2px 0;"></div>
@@ -1608,7 +1623,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
   <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
   <script src="/static/modules/core.js?v=5"></script>
-  <script src="/static/modules/chat.js?v=23"></script>
+  <script src="/static/modules/chat.js?v=25"></script>
   <script src="/static/modules/explorer.js"></script>
   <script src="/static/modules/editor.js"></script>
   <script src="/static/modules/panels.js"></script>
