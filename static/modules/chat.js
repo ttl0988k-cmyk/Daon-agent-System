@@ -940,6 +940,43 @@ async function _executeAgentStream(displayText, uploaded) {
 
   let incomingText = '';
 
+  // ── [2026-08-31] 도구별 한국어 설명 맵 — 도구 카드에 표시 ──
+  var _TOOL_DESC_KO = {
+    'browser_navigate': '브라우저로 페이지를 엽니다',
+    'browser_snapshot': '브라우저 화면을 분석합니다',
+    'browser_click': '브라우저 요소를 클릭합니다',
+    'browser_type': '브라우저에 텍스트를 입력합니다',
+    'browser_scroll': '브라우저 화면을 스크롤합니다',
+    'browser_press': '브라우저에 키를 입력합니다',
+    'browser_console': '브라우저 콘솔을 확인합니다',
+    'browser_cdp': '브라우저를 CDP로 제어합니다',
+    'browser_tabs': '브라우저 탭을 관리합니다',
+    'browser_switch_tab': '브라우저 탭을 전환합니다',
+    'browser_get_images': '브라우저에서 이미지를 추출합니다',
+    'terminal': '터미널 명령을 실행합니다',
+    'execute_command': '명령을 실행합니다',
+    'execute_code': '코드를 실행합니다',
+    'read_file': '파일을 읽습니다',
+    'write_file': '파일을 생성/수정합니다',
+    'patch': '코드를 수정합니다',
+    'apply_diff': '코드 변경사항을 적용합니다',
+    'search_files': '파일을 검색합니다',
+    'web_search': '웹을 검색합니다',
+    'skill_view': '스킬 정보를 확인합니다',
+    'skill_manage': '스킬을 관리합니다',
+    'query_patches': '패치 기록을 확인합니다',
+    'register_patch': '패치를 등록합니다',
+    'todo': '작업 계획을 관리합니다',
+    'memory': '메모리를 검색/저장합니다',
+    'clarify': '사용자에게 확인합니다',
+    'delegate_task': '하위 작업을 위임합니다',
+    'image_generate': '이미지를 생성합니다',
+    'video_generate': '영상을 생성합니다',
+    'vision_analyze': '이미지를 분석합니다',
+    'text_to_speech': '음성을 생성합니다',
+  };
+  function _toolDescKo(name) { return _TOOL_DESC_KO[name] || ''; }
+
   // ── finishStream: 단일 진입점 — 모든 스트림 종료 경로를 이곳으로 통합 ──
   // dedup guard: 두 번 이상 호출되더라도 cleanupStreamState()는 한 번만 실행
   let _streamFinished = false;
@@ -1651,7 +1688,7 @@ async function _executeAgentStream(displayText, uploaded) {
       resetIdleTimer();
     });
 
-sse.addEventListener('debate_status', (e) => {
+    sse.addEventListener('debate_status', (e) => {
       const data = JSON.parse(e.data);
       const statusText = $('debateStatusText');
       if (statusText) {
@@ -1873,6 +1910,7 @@ sse.addEventListener('debate_status', (e) => {
       // [2026-08-31] _thinking은 내부 추론 마커다 — 도구 카드에 노출하지 않는다
       // (카운트는 started/completed 쌍을 맞춰야 하므로 유지하고 항목만 숨긴다)
       var _isInternalMarker = (toolName === '_thinking');
+      var _tDesc = _toolDescKo(toolName);
 
       // ── 도구 그룹 카드: 반복 호출을 하나의 접이식 카드로 묶음 ──
       // 그룹 카드가 없으면 새로 생성 (reasoning 카드와 같이 box에 독립 삽입)
@@ -1911,15 +1949,16 @@ sse.addEventListener('debate_status', (e) => {
         _toolGroupCount++;
         // 새 항목 추가 (내부 마커는 카운트만 유지하고 항목은 숨김)
         if (!_isInternalMarker) {
-        const item = document.createElement('div');
-        item.className = 'tool-group-item';
-        item.innerHTML = `
+          const item = document.createElement('div');
+          item.className = 'tool-group-item';
+          item.innerHTML = `
           <span class="tgi-icon">⏳</span>
           <span class="tgi-name">${toolName}</span>
+          <span class="tgi-desc">${_tDesc}</span>
           <span class="tgi-status">실행 중</span>
         `;
-        _toolItemMap[toolCallId] = item;
-        if (_toolGroupItems) _toolGroupItems.appendChild(item);
+          _toolItemMap[toolCallId] = item;
+          if (_toolGroupItems) _toolGroupItems.appendChild(item);
         }
       } else {
         // completed: 기존 항목을 찾아 상태 업데이트
@@ -1952,6 +1991,7 @@ sse.addEventListener('debate_status', (e) => {
           item.innerHTML = `
             <span class="tgi-icon">✅</span>
             <span class="tgi-name">${toolName}</span>
+            <span class="tgi-desc">${_tDesc}</span>
             <span class="tgi-status">완료</span>
           `;
           if (_toolGroupItems) _toolGroupItems.appendChild(item);
@@ -2082,7 +2122,7 @@ sse.addEventListener('debate_status', (e) => {
           _approvalPending = false;
           _idleExtensions = 0;
           if (data.type === 'dangerous_command') {
-          // [2026-08-27] restore the web view hidden during approval wait
+            // [2026-08-27] restore the web view hidden during approval wait
             setStreamStatus('thinking', '⏱️ 응답 없음 — 자동 승인됨');
           } else {
             setStreamStatus('thinking', '⏱️ 자동 승인됨');
