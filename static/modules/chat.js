@@ -1,3 +1,14 @@
+// [2026-08-31] 로드 버전 표시 — F12 콘솔에서 캐시 문제를 즉시 판별하기 위함.
+// sync_to_installed.ps1이 index.html의 ?v=NN을 자동 올리므로, 콘솔의 v 번호와
+// index.html의 v 번호가 다르면 캐시 문제다.
+(function () {
+  try {
+    var _m = null;
+    try { _m = (document.currentScript && document.currentScript.src || '').match(/v=(\d+)/); } catch (_) { }
+    console.log('[DAON] chat.js loaded (v=' + ((_m && _m[1]) || '?') + ', build=2026-08-31-sse-watchdog)');
+  } catch (_) { }
+})();
+
 function getModelDisplayName(modelId) {
   if (!modelId) return '알 수 없음';
   // Friendly names for common models
@@ -851,6 +862,11 @@ async function _executeAgentStream(displayText, uploaded) {
   // 백엔드는 활성인데 EventSource 연결이 끊겼을 때 같은 stream_id로
   // 재연결을 시도한 횟수 (최대 3회, plan.md Phase 2).
   let _sseReconnects = 0;
+  // [2026-08-31 SSE 끊김 감시] 마지막 SSE error 이벤트 시각 (0=정상).
+  // error 후 10초 내 open(재연결 성공)이 없으면 수동 복구를 가동한다 —
+  // EventSource 자동 재연결(CONNECTING)이 장기화돼 화면이 조용히 멈추는
+  // "도구 카드/음성/토큰 전부 미수신" 증상의 구조적 해결책.
+  let _sseErrorTs = 0;
 
   // ── 블록 스코프 주의 (중요) ──
   // finishStream() / _handleIdleTimeout() 등 종료 경로 함수들은 아래 try 블록
@@ -1290,6 +1306,35 @@ async function _executeAgentStream(displayText, uploaded) {
     // started after the first token/tool/reasoning event, so a backend run
     // that produced no SSE event could leave the input locked forever.
     resetIdleTimer();
+
+    // ── [2026-08-31 SSE 끊김 감시] error 후 10초 내 재연결 안 되면 수동 복구 ──
+    // EventSource는 끊기면 CONNECTING 상태로 자동 재연결을 반복 시도하지만,
+    // 서버/네트워크 상황에 따라 장기화된다. 그 동안 tool/token/speak 이벤트가
+    // 전부 유실돼 "도구 카드도 음성도 없는" 정체 화면이 된다. error 시각을
+    // 기록해 두고 10초 내 open이 없으면 _handleIdleTimeout()을 즉시 호출해
+    // 백엔드 상태 확인 → 수동 재연결/세션 복구 경로를 강제 가동한다.
+    _sseErrorTs = 0;
+    sse.addEventListener('open', function () { _sseErrorTs = 0; });
+    sse.addEventListener('error', function () {
+      if (_sseErrorTs === 0) {
+        _sseErrorTs = Date.now();
+        console.warn('[SSE-DIAG] ⚠️ connection error — watching for reconnect (10s)');
+      }
+    });
+    (function _sseWatchdog() {
+      var _iv = setInterval(function () {
+        try {
+          if (_streamFinished || !sse) { clearInterval(_iv); return; }
+          if (_sseErrorTs > 0 && Date.now() - _sseErrorTs > 10000) {
+            clearInterval(_iv);
+            console.warn('[SSE-DIAG] 🔌 no reconnect within 10s — forcing recovery path');
+            _sseErrorTs = 0;
+            _idleRecoveryInFlight = false;  // 수동 복구가 막히지 않게 해제
+            _handleIdleTimeout();
+          }
+        } catch (_wErr) { clearInterval(_iv); }
+      }, 3000);
+    })();
 
     // ── 추론(reasoning) 스트림: 별도 접이식 박스 표시 ──
     // 추론 단계에서는 token 이벤트가 오지 않아 idle timer가 스트림을 조기
