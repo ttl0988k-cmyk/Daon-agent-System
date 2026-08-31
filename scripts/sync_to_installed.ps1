@@ -38,8 +38,15 @@ Select-Object -Skip 3 |
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 # ── 2. 동기화: index.html + static/ (JS/CSS/이미지 등 UI 자산 전체) ──
+# 주의: Copy-Item에 폴더를 그대로 넘기면 대상 폴더 안에 통째로 중첩 복사
+# (static\static 생성)되므로, 내용물 와일드카드로 복사한다.
 Copy-Item (Join-Path $src 'index.html') $dst -Force
-Copy-Item (Join-Path $src 'static') (Join-Path $dst 'static') -Recurse -Force
+Copy-Item (Join-Path $src 'static\*') (Join-Path $dst 'static') -Recurse -Force
+# 과거 버그로 생긴 중첩 폴더가 있으면 정리
+if (Test-Path (Join-Path $dst 'static\static')) {
+    Remove-Item (Join-Path $dst 'static\static') -Recurse -Force
+    Write-Host '[정리] 잘못 생성됐던 static\static 중첩 폴더 삭제'
+}
 
 Write-Host "[OK] 동기화 완료 → $dst" -ForegroundColor Green
 Write-Host "     백업: $backup"
