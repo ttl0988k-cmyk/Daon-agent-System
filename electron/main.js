@@ -111,6 +111,9 @@ function cleanupOrphanedTemp() {
 const NEEDED_CDP_PORT = '9222';
 app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
 app.commandLine.appendSwitch('remote-allow-origins', '*');
+// [2026-08-31 캡챠/로그인 차단 완화] Chromium의 자동화 플래그(navigator.webdriver)
+// 비활성화 — Cloudflare 등이 이 신호로 봇 판정해 캡챠를 강제하는 것을 줄인다.
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 // ── 패스키(암호 키) 유도 차단 (2026-08-27 실측) ──
 // Chrome 완전 위장 시 구글이 WebAuthn/패스키 로그인을 강제 제안하고, Electron에선
 // 플로우가 완결되지 않아 "USB 보안 키 삽입" 요구로 막힌다(실측). WebAuthentication
@@ -1339,7 +1342,22 @@ class TabManager {
         + 'try{Object.defineProperty(navigator,"userAgentData",{get:()=>undefined})}catch(e){};'
         + 'try{Object.defineProperty(navigator,"vendor",{get:()=>""})}catch(e){};'
         + 'try{Object.defineProperty(navigator,"oscpu",{get:()=>"Windows NT 10.0"})}catch(e){};'
-        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};1'
+        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};'
+        + 'try{delete navigator.webdriver}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};1'
+      ).catch(() => { });
+    });
+    // [2026-08-31 캡챠/로그인 차단 완화] SPA 네비게이션 대응 — dom-ready마다도
+    // 동일 지문 완화를 주입한다 (did-finish-load는 SPA 라우팅에서 스킵될 수 있음).
+    view.webContents.on('dom-ready', () => {
+      view.webContents.executeJavaScript(
+        'try{delete navigator.userAgentData}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"userAgentData",{get:()=>undefined})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"vendor",{get:()=>""})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"oscpu",{get:()=>"Windows NT 10.0"})}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"productSub",{get:()=>"20100101"})}catch(e){};'
+        + 'try{delete navigator.webdriver}catch(e){};'
+        + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};1'
       ).catch(() => { });
     });
     view.webContents.on('page-title-updated', () => { this._notifyTabs(); });

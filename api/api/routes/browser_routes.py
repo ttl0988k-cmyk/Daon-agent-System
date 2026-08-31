@@ -507,6 +507,26 @@ def _browser_worker_loop():
 
                         snapshot_text = _a11y_to_text(snapshot) if snapshot else ""
 
+                        # [2026-08-31 캡챠 감지] 스냅샷에 캡챠/차단 패턴이 있으면
+                        # 에이전트가 인지하고 사용자에게 직접 해결을 요청할 수 있게
+                        # 스냅샷 앞에 경고를 삽입한다.
+                        try:
+                            _captcha_patterns = ['captcha', 'challenge', 'verify you are human',
+                                                 'are you a robot', 'confirm you are human',
+                                                 '보안 확인', '자동입력 방지', 'access denied',
+                                                 'unusual traffic', 'blocked']
+                            _lower = snapshot_text.lower()
+                            _detected = [p for p in _captcha_patterns if p in _lower]
+                            if _detected:
+                                snapshot_text = (
+                                    "[CAPTCHA/차단 감지됨 - 패턴: " + ', '.join(_detected) + "]\n"
+                                    "[사용자에게 알리고, 내부 브라우저에서 사용자가 직접 해결하도록 요청하세요. "
+                                    "해결될 때까지 다른 도구 실행을 잠시 멈추는 것이 좋습니다.]\n\n"
+                                    + snapshot_text
+                                )
+                        except Exception:
+                            pass
+
                         # Get interactive elements via JS for refs
                         elements_js = """
                         (() => {
