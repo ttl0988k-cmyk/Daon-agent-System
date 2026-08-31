@@ -624,8 +624,9 @@ function renderMessages(messages, toolCalls) {
     let _toolOnlyTurn = false;
     if (!isUser) {
       const plain = stripThinkBlocks(msg.content);
-      const msgToolsPre = toolCalls ? toolCalls.filter(tc => tc.assistant_msg_idx === idx) : [];
-      if (!plain.trim() && msgToolsPre.length === 0) return;
+      // [2026-08-31c A방식] done 후 도구 카드를 그리지 않으므로 도구 전용 턴은
+      // 빈 블록(얇은 라인)만 남는다 — 통째로 스킵한다.
+      if (!plain.trim()) return;
       // 도구 전용 턴(텍스트 없이 도구 호출만): 빈 텍스트 버블 대신
       // 도구 카드만 가진 작업 단위 블록으로 렌더링 (Roo Code 스타일 분리).
       // 배경/테두리를 제거해 얇은 선 잔상처럼 보이지 않게 한다.
@@ -649,50 +650,10 @@ function renderMessages(messages, toolCalls) {
     }
     bubble.innerHTML = html;
 
-    // Find tool calls matching this assistant message — 그룹으로 묶어 표시
-    if (!isUser && toolCalls) {
-      const msgTools = toolCalls.filter(tc => tc.assistant_msg_idx === idx);
-      if (msgTools.length > 0) {
-        const groupCard = document.createElement('details');
-        groupCard.className = 'tool-group-card';
-        const totalCount = msgTools.length;
-        groupCard.innerHTML = `
-          <summary>
-            <span class="tool-group-icon">🔧</span>
-            <span class="tool-group-label">도구 실행 완료</span>
-            <span class="tool-group-counter">${totalCount}</span>
-            <span class="tool-group-chevron">▶</span>
-          </summary>
-          <div class="tool-group-items"></div>
-        `;
-        const itemsContainer = groupCard.querySelector('.tool-group-items');
-        msgTools.forEach(tool => {
-          const item = document.createElement('div');
-          item.className = 'tool-group-item';
-          item.style.cursor = 'pointer';
-          item.innerHTML = `
-            <span class="tgi-icon">✅</span>
-            <span class="tgi-name">${tool.name}</span>
-          `;
-          // 클릭 시 상세 보기 토글
-          const detailDiv = document.createElement('div');
-          detailDiv.className = 'tool-card-body';
-          detailDiv.style.display = 'none';
-          detailDiv.innerHTML = `
-            <div>Arguments:</div>
-            <pre style="margin-bottom:8px;">${JSON.stringify(tool.args, null, 2)}</pre>
-            <div>Output Snippet:</div>
-            <pre>${tool.snippet}</pre>
-          `;
-          item.addEventListener('click', function () {
-            detailDiv.style.display = detailDiv.style.display === 'none' ? 'block' : 'none';
-          });
-          item.appendChild(detailDiv);
-          itemsContainer.appendChild(item);
-        });
-        bubble.appendChild(groupCard);
-      }
-    }
+    // [2026-08-31c A방식] done 후 도구 카드 재렌더 블록 제거 —
+    // "응답 완료 시 싱킹 말풍선과 도구박스가 사라진다"는 UX를 위해
+    // 히스토리 재렌더링 시 도구 카드를 다시 그리지 않는다.
+    // (세션 tool_calls 데이터는 유지되므로 나중에 UX를 되돌릴 때 즉시 복구 가능)
 
     box.appendChild(bubble);
   });
@@ -1393,6 +1354,17 @@ async function _executeAgentStream(displayText, uploaded) {
       if (!_reasoningCard) {
         // 새 추론 단위가 시작되면 진행 중이던 답변을 별도 블록으로 확정 (Roo 스타일 분리)
         _freezeAnswerSegment();
+        // [2026-08-31c A방식] 새 싱킹이 뜨는 순간 이전 도구박스 + 이전 싱킹카드를
+        // 정리한다 — 화면에는 "현재 진행 중인 유닛"만 남는다.
+        try {
+          if (_toolGroupCard && _toolGroupCard.parentNode) _toolGroupCard.remove();
+          box.querySelectorAll('.tool-group-card, .reasoning-card').forEach((el) => el.remove());
+        } catch (_) { }
+        _toolGroupCard = null;
+        _toolGroupItems = null;
+        _toolGroupCount = 0;
+        _toolGroupDoneCount = 0;
+        _toolItemMap = {};
         _reasoningStartTs = Date.now();
         _reasoningCard = document.createElement('details');
         _reasoningCard.className = 'tool-card reasoning-card';
