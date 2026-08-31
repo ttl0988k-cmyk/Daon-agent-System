@@ -1,0 +1,629 @@
+{
+ "updated": "2026-08-31T19:37:43",
+ "categories": [
+  "LLM/AI",
+  "SEO/콘텐츠",
+  "개발",
+  "기타",
+  "디자인",
+  "문서",
+  "보안",
+  "비즈니스",
+  "인프라/운영",
+  "테스트/품질"
+ ],
+ "plugins": [
+  {
+   "name": "anthropic-skill-creator",
+   "desc": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.",
+   "category": "LLM/AI",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-skill-creator",
+   "src": "anthropics",
+   "color": "#b39ddb"
+  },
+  {
+   "name": "block-no-verify",
+   "desc": "PreToolUse hook that prevents AI agents from using --no-verify, --no-gpg-sign, and other bypass flags that skip git hooks",
+   "category": "LLM/AI",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\block-no-verify",
+   "src": "wshobson",
+   "color": "#aed581"
+  },
+  {
+   "name": "cicd-automation",
+   "desc": "CI/CD pipeline configuration, GitHub Actions/GitLab CI workflow setup, and automated deployment pipeline orchestration",
+   "category": "LLM/AI",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\cicd-automation",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "conductor",
+   "desc": "Context-Driven Development plugin that transforms Claude Code into a project management tool with structured workflow: Context → Spec & Plan → Implement",
+   "category": "LLM/AI",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\conductor",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "hermes-tweet",
+   "desc": "Hermes Agent plugin for X/Twitter research, timeline reading, tweet analysis, and approval-gated tweet actions through Hermes Tweet",
+   "category": "LLM/AI",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\hermes-tweet",
+   "src": "wshobson",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "llm-application-dev",
+   "desc": "LLM application development with LangGraph, RAG systems, vector search, and AI agent architectures for Claude 4.6 and GPT-5.4",
+   "category": "LLM/AI",
+   "skills": 8,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\llm-application-dev",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "llm-finetuning",
+   "desc": "Eval-gated LLM fine-tuning lifecycle: LoRA/QLoRA SFT, preference optimization (DPO/ORPO/KTO), GRPO/RLVR, vision SFT, and quantized export — Unsloth-first with TRL fallback, no eval harness means no fine-tune",
+   "category": "LLM/AI",
+   "skills": 10,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\llm-finetuning",
+   "src": "wshobson",
+   "color": "#9575cd"
+  },
+  {
+   "name": "machine-learning-ops",
+   "desc": "ML model training pipelines, hyperparameter tuning, model deployment automation, experiment tracking, and MLOps workflows",
+   "category": "LLM/AI",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\machine-learning-ops",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "anthropic-academy-guide",
+   "desc": ">",
+   "category": "SEO/콘텐츠",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-academy-guide",
+   "src": "anthropics",
+   "color": "#e57373"
+  },
+  {
+   "name": "social-publishing",
+   "desc": "Schedule and publish social media posts across 13 platforms (X, LinkedIn Profile + Page, Instagram Business + Standalone, Facebook Pages, TikTok, Discord, Telegram, YouTube, Reddit, WordPress, Pinterest) via SocialClaw — one workspace API key covers everything",
+   "category": "SEO/콘텐츠",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\social-publishing",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "anthropic-claude-api",
+   "desc": "|-",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-claude-api",
+   "src": "anthropics",
+   "color": "#f06292"
+  },
+  {
+   "name": "anthropic-webapp-testing",
+   "desc": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-webapp-testing",
+   "src": "anthropics",
+   "color": "#b39ddb"
+  },
+  {
+   "name": "api-scaffolding",
+   "desc": "REST and GraphQL API scaffolding, framework selection, backend architecture, and API generation",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\api-scaffolding",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "developer-essentials",
+   "desc": "Essential developer skills including Git workflows, SQL optimization, error handling, code review, E2E testing, authentication, debugging, and monorepo management",
+   "category": "개발",
+   "skills": 11,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\developer-essentials",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "dotnet-contribution",
+   "desc": "Comprehensive .NET backend development with C#, ASP.NET Core, Entity Framework Core, and Dapper for production-grade applications",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\dotnet-contribution",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "framework-migration",
+   "desc": "Framework updates, migration planning, and architectural transformation workflows",
+   "category": "개발",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\framework-migration",
+   "src": "wshobson",
+   "color": "#9575cd"
+  },
+  {
+   "name": "frontend-mobile-development",
+   "desc": "Frontend UI development and mobile application implementation across platforms",
+   "category": "개발",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\frontend-mobile-development",
+   "src": "wshobson",
+   "color": "#b39ddb"
+  },
+  {
+   "name": "game-development",
+   "desc": "Unity game development with C# scripting, Minecraft server plugin development with Bukkit/Spigot APIs",
+   "category": "개발",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\game-development",
+   "src": "wshobson",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "javascript-typescript",
+   "desc": "JavaScript and TypeScript development with ES6+, Node.js, React, and modern web frameworks",
+   "category": "개발",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\javascript-typescript",
+   "src": "wshobson",
+   "color": "#aed581"
+  },
+  {
+   "name": "plugin-eval",
+   "desc": "Three-layer quality evaluation framework for Claude Code plugins with Elo ranking",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\plugin-eval",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "python-development",
+   "desc": "Modern Python development with Python 3.12+, Django, FastAPI, async patterns, and production best practices",
+   "category": "개발",
+   "skills": 16,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\python-development",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "quantitative-trading",
+   "desc": "Quantitative analysis, algorithmic trading strategies, financial modeling, portfolio risk management, and backtesting",
+   "category": "개발",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\quantitative-trading",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "shell-scripting",
+   "desc": "Production-grade Bash scripting with defensive programming, POSIX compliance, and comprehensive testing",
+   "category": "개발",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\shell-scripting",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "ship-mate",
+   "desc": "Your AI development teammate. Turns a story file into a shipped, reviewed, and tested feature via orchestrator → architect → developer → PR reviewer → QA → Playwright.",
+   "category": "개발",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\ship-mate",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "systems-programming",
+   "desc": "Systems programming with Rust, Go, C, and C++ for performance-critical and low-level development",
+   "category": "개발",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\systems-programming",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "anthropic-discernment-nudge",
+   "desc": ">",
+   "category": "기타",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-discernment-nudge",
+   "src": "anthropics",
+   "color": "#9575cd"
+  },
+  {
+   "name": "accessibility-compliance",
+   "desc": "WCAG accessibility auditing, compliance validation, UI testing for screen readers, keyboard navigation, and inclusive design",
+   "category": "디자인",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\accessibility-compliance",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "anthropic-algorithmic-art",
+   "desc": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-algorithmic-art",
+   "src": "anthropics",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "anthropic-brand-guidelines",
+   "desc": "Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting, or company design standards apply.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-brand-guidelines",
+   "src": "anthropics",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "anthropic-frontend-design",
+   "desc": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-frontend-design",
+   "src": "anthropics",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "anthropic-mcp-builder",
+   "desc": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-mcp-builder",
+   "src": "anthropics",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "anthropic-slack-gif-creator",
+   "desc": "Knowledge and utilities for creating animated GIFs optimized for Slack. Provides constraints, validation tools, and animation concepts. Use when users request animated GIFs for Slack like \"make me a GIF of X doing Y for Slack.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-slack-gif-creator",
+   "src": "anthropics",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "anthropic-theme-factory",
+   "desc": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with colors/fonts that you can apply to any artifact that has been creating, or can generate a new theme on-the-fly.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-theme-factory",
+   "src": "anthropics",
+   "color": "#9575cd"
+  },
+  {
+   "name": "anthropic-web-artifacts-builder",
+   "desc": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-web-artifacts-builder",
+   "src": "anthropics",
+   "color": "#aed581"
+  },
+  {
+   "name": "backend-development",
+   "desc": "Backend API design, GraphQL architecture, workflow orchestration with Temporal, and test-driven backend development",
+   "category": "디자인",
+   "skills": 9,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\backend-development",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "before-you-build",
+   "desc": "Pre-build product risk review for founders, product teams, and AI-assisted builders before implementation starts.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\before-you-build",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "blockchain-web3",
+   "desc": "Smart contract development with Solidity, DeFi protocol implementation, NFT platforms, and Web3 application architecture",
+   "category": "디자인",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\blockchain-web3",
+   "src": "wshobson",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "brand-landingpage",
+   "desc": "Guides developers from brand discovery through iterative design to deployment-ready HTML via Stitch.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\brand-landingpage",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "cloud-infrastructure",
+   "desc": "Cloud architecture design for AWS/Azure/GCP/OCI, Kubernetes cluster configuration, Terraform infrastructure-as-code, hybrid cloud networking, and multi-cloud cost optimization",
+   "category": "디자인",
+   "skills": 8,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\cloud-infrastructure",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "data-engineering",
+   "desc": "ETL pipeline construction, data warehouse design, batch processing workflows, and data-driven feature development",
+   "category": "디자인",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\data-engineering",
+   "src": "wshobson",
+   "color": "#e57373"
+  },
+  {
+   "name": "database-design",
+   "desc": "Database architecture, schema design, and SQL optimization for production systems",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\database-design",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "review-agent-governance",
+   "desc": "Require a human approval signal before an AI agent can post PR reviews, comments, merges, or writes to CI config. Cedar-gated, receipt-signed, designed for the Hermes-style failure mode where a review bot posts without oversight.",
+   "category": "디자인",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\review-agent-governance",
+   "src": "wshobson",
+   "color": "#9575cd"
+  },
+  {
+   "name": "skill-forge-essentials",
+   "desc": "Three behavioral skills addressing AI-specific failure patterns: hidden code debt from agent generation, context compaction amnesia, and imprecise Design Mode edits",
+   "category": "디자인",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\skill-forge-essentials",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "startup-business-analyst",
+   "desc": "Comprehensive startup business analysis with market sizing (TAM/SAM/SOM), financial modeling, team planning, and strategic research",
+   "category": "디자인",
+   "skills": 5,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\startup-business-analyst",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "ui-design",
+   "desc": "Comprehensive UI/UX design plugin for mobile (iOS, Android, React Native) and web applications with design systems, accessibility, and modern patterns",
+   "category": "디자인",
+   "skills": 9,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\ui-design",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "anthropic-canvas-design",
+   "desc": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-canvas-design",
+   "src": "anthropics",
+   "color": "#e57373"
+  },
+  {
+   "name": "anthropic-doc-coauthoring",
+   "desc": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-doc-coauthoring",
+   "src": "anthropics",
+   "color": "#aed581"
+  },
+  {
+   "name": "anthropic-docx",
+   "desc": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files) or Word templates (.dotx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', '.dotx', or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx or .dotx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a 'report', 'memo', 'letter', 'template', or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-docx",
+   "src": "anthropics",
+   "color": "#b39ddb"
+  },
+  {
+   "name": "anthropic-pdf",
+   "desc": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rotating pages, adding watermarks, creating new PDFs, filling PDF forms, encrypting/decrypting PDFs, extracting images, and OCR on scanned PDFs to make them searchable. If the user mentions a .pdf file or asks to produce one, use this skill.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-pdf",
+   "src": "anthropics",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "anthropic-pptx",
+   "desc": "Use this skill any time a .pptx or .potx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from any .pptx or .potx file (even if the extracted content will be used elsewhere, like in an email or summary); editing, modifying, or updating existing presentations; combining or splitting slide files; working with templates (.potx), layouts, speaker notes, or comments. Trigger whenever the user mentions \\\"deck,\\\" \\\"slides,\\\" \\\"presentation,\\\" or references a .pptx or .potx filename, regardless of what they plan to do with the content afterward. If a .pptx or .potx file needs to be opened, created, or touched, use this skill.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-pptx",
+   "src": "anthropics",
+   "color": "#b39ddb"
+  },
+  {
+   "name": "anthropic-xlsx",
+   "desc": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .xltx, .csv, or .tsv file (e.g., adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path — even casually (like \\\"the xlsx in my downloads\\\") — and wants something done to it or produced from it. Also trigger for cleaning or restructuring messy tabular data files (malformed rows, misplaced headers, junk data) into proper spreadsheets. The deliverable must be a spreadsheet file. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-xlsx",
+   "src": "anthropics",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "documentation-generation",
+   "desc": "OpenAPI specification generation, Mermaid diagram creation, tutorial writing, API reference documentation",
+   "category": "문서",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\documentation-generation",
+   "src": "wshobson",
+   "color": "#aed581"
+  },
+  {
+   "name": "documentation-standards",
+   "desc": "HADS (Human-AI Document Standard) — semantic tagging convention for writing documentation that works efficiently for both human readers and AI models. Reduces token consumption and hallucination risk by separating machine-critical facts from human context.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\documentation-standards",
+   "src": "wshobson",
+   "color": "#4ecdc4"
+  },
+  {
+   "name": "file-conversion",
+   "desc": "Convert files between 999 routes — PDF to Word, HEIC to JPG, MP4 to MP3, CSV to JSON, EPUB to MOBI — via the free ChangeThisFile API. MCP-aware with a zero-dependency script fallback; no API key required.",
+   "category": "문서",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\file-conversion",
+   "src": "wshobson",
+   "color": "#aed581"
+  },
+  {
+   "name": "hr-legal-compliance",
+   "desc": "HR policy documentation, legal compliance templates (GDPR/SOC2/HIPAA), employment contracts, and regulatory documentation",
+   "category": "문서",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\hr-legal-compliance",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "pptx-deck-creation",
+   "desc": "Create production-ready, editable PowerPoint decks through a spec-first, coordinate-explicit workflow with read-only reference analysis and quality gates.",
+   "category": "문서",
+   "skills": 5,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\pptx-deck-creation",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "protect-mcp",
+   "desc": "Cedar policy enforcement + Ed25519 signed receipts for every Claude Code tool call. First cryptographic governance plugin — receipts independently verifiable offline.",
+   "category": "보안",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\protect-mcp",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "reverse-engineering",
+   "desc": "Binary reverse engineering, malware analysis, firmware security, and software protection research for authorized security research, CTF competitions, and defensive security",
+   "category": "보안",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\reverse-engineering",
+   "src": "wshobson",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "signed-audit-trails",
+   "desc": "Teaching skill: signed audit trails for Claude Code tool calls. Cookbook-style walkthrough of Cedar-gated tool calls with Ed25519 receipts, offline verification, and CI/CD integration. Pairs with the protect-mcp plugin.",
+   "category": "보안",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\signed-audit-trails",
+   "src": "wshobson",
+   "color": "#f06292"
+  },
+  {
+   "name": "business-analytics",
+   "desc": "Business metrics analysis, KPI tracking, financial reporting, and data-driven decision making",
+   "category": "비즈니스",
+   "skills": 2,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\business-analytics",
+   "src": "wshobson",
+   "color": "#9575cd"
+  },
+  {
+   "name": "anthropic-internal-comms",
+   "desc": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.).",
+   "category": "인프라/운영",
+   "skills": 1,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\anthropic-internal-comms",
+   "src": "anthropics",
+   "color": "#ff8a5c"
+  },
+  {
+   "name": "dgx-spark-ops",
+   "desc": "NVIDIA DGX Spark (GB10 Grace Blackwell) environment operations: aarch64/CUDA-13 stack setup, training gotcha preflights, and unified-memory/thermal management for local ML workloads",
+   "category": "인프라/운영",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\dgx-spark-ops",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "incident-response",
+   "desc": "Production incident management, triage workflows, and automated incident resolution",
+   "category": "인프라/운영",
+   "skills": 3,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\incident-response",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "kubernetes-operations",
+   "desc": "Kubernetes manifest generation, networking configuration, security policies, observability setup, GitOps workflows, and auto-scaling",
+   "category": "인프라/운영",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\kubernetes-operations",
+   "src": "wshobson",
+   "color": "#ffb74d"
+  },
+  {
+   "name": "observability-monitoring",
+   "desc": "Metrics collection, logging infrastructure, distributed tracing, SLO implementation, and monitoring dashboards",
+   "category": "인프라/운영",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\observability-monitoring",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "agent-teams",
+   "desc": "Orchestrate multi-agent teams for parallel code review, hypothesis-driven debugging, and coordinated feature development using Claude Code's Agent Teams",
+   "category": "테스트/품질",
+   "skills": 6,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\agent-teams",
+   "src": "wshobson",
+   "color": "#6c8cff"
+  },
+  {
+   "name": "payment-processing",
+   "desc": "Payment gateway integration with Stripe, PayPal, checkout flow implementation, subscription billing, and PCI compliance",
+   "category": "테스트/품질",
+   "skills": 4,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\payment-processing",
+   "src": "wshobson",
+   "color": "#4dd0e1"
+  },
+  {
+   "name": "security-scanning",
+   "desc": "SAST analysis, dependency vulnerability scanning, OWASP Top 10 compliance, container security scanning, and automated security hardening",
+   "category": "테스트/품질",
+   "skills": 5,
+   "path": "C:\\Users\\ttl09\\AppData\\Local\\Daon\\plugin_store\\security-scanning",
+   "src": "wshobson",
+   "color": "#ff8a5c"
+  }
+ ]
+}

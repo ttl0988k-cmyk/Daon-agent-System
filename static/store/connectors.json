@@ -1,0 +1,142 @@
+{
+  "updated": "2026-08-31",
+  "note": "DAON 커넥터 카탈로그. 시크릿 값은 코드에 존재하지 않는다 — 사용자가 연결할 때만 입력하며, 입력값은 저장 API로 전송 후 화면에서 즉시 폐기된다.",
+  "connectors": [
+    {
+      "id": "notion",
+      "name": "Notion",
+      "icon": "📘",
+      "tagline": "노션 데이터베이스 조회·페이지 생성·검색",
+      "category": "문서",
+      "env_fields": [{ "key": "NOTION_TOKEN", "label": "Notion Integration Token", "hint": "notion.so → Settings → Connections → Develop → New Integration → 'Secret' 값 (ntn_ 로 시작)" }],
+      "guide_url": "https://www.notion.so/my-integrations",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "auth_env_template": { "OPENAPI_MCP_HEADERS": "{\"Authorization\":\"Bearer ${NOTION_TOKEN}\",\"Notion-Version\":\"2022-06-28\"}" }
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "icon": "🐙",
+      "tagline": "저장소·PR·이슈 조회 및 코드 탐색",
+      "category": "개발",
+      "env_fields": [{ "key": "GITHUB_PERSONAL_ACCESS_TOKEN", "label": "GitHub Personal Access Token", "hint": "github.com → Settings → Developer settings → Personal access tokens → Fine-grained token (read 권한)" }],
+      "guide_url": "https://github.com/settings/tokens",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "auth_env_template": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}" }
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "icon": "🔽",
+      "tagline": "DB·Storage 쿼리, 모바일 작업실 백엔드 제어",
+      "category": "데이터",
+      "env_fields": [
+        { "key": "SUPABASE_PROJECT_ID", "label": "Project ref ID", "hint": "dashboard.supabase.com → 프로젝트 → 설정 → API → Project ID" },
+        { "key": "SUPABASE_ACCESS_TOKEN", "label": "Access Token", "hint": "dashboard.supabase.com → Account → Security → Access Tokens → Create new token" }
+      ],
+      "guide_url": "https://supabase.com/docs/guides/getting-started/mcp",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@supabase/mcp-server-supabase", "--read-only", "--project-ref=${SUPABASE_PROJECT_ID}"],
+      "auth_env_template": { "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}" }
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "icon": "🎨",
+      "tagline": "디자인 파일 읽기·코멘트",
+      "category": "디자인",
+      "env_fields": [{ "key": "FIGMA_TOKEN", "label": "Figma Personal Access Token", "hint": "figma.com → 계정 → Security → Personal access tokens → Generate new token" }],
+      "guide_url": "https://help.figma.com/hc/en-us/articles/8085703771159",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "figma-developer-mcp", "--stdio"],
+      "auth_env_template": { "FIGMA_API_KEY": "${FIGMA_TOKEN}" }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "icon": "💬",
+      "tagline": "알림·보고 메시지를 채널로 전송",
+      "category": "소통",
+      "env_fields": [{ "key": "SLACK_WEBHOOK_URL", "label": "Incoming Webhook URL", "hint": "app.slack.com → 앱 → Incoming Webhooks → Add New Webhook → https://hooks.slack.com/... 복사" }],
+      "guide_url": "https://api.slack.com/messaging/webhooks",
+      "transport": "integration",
+      "command": null,
+      "args": [],
+      "auth_env_template": { "SLACK_WEBHOOK_URL": "${SLACK_WEBHOOK_URL}" }
+    },
+    {
+      "id": "brave-search",
+      "name": "Brave Search",
+      "icon": "🦁",
+      "tagline": "웹 검색·이미지 검색 도구",
+      "category": "검색",
+      "env_fields": [{ "key": "BRAVE_API_KEY", "label": "Brave Search API Key", "hint": "brave.com/search/api → Free 플랜 signup → API key 복사 (월 2,000회 무료)" }],
+      "guide_url": "https://brave.com/search/api/",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "auth_env_template": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" }
+    },
+    {
+      "id": "exa",
+      "name": "Exa Search",
+      "icon": "🗺️",
+      "tagline": "AI 시맨틱 검색 (레퍼런스·자료 조사)",
+      "category": "검색",
+      "env_fields": [{ "key": "EXA_API_KEY", "label": "Exa API Key", "hint": "exa.ai → Dashboard → API Keys 복사 (무료 크레딧 제공)" }],
+      "guide_url": "https://docs.exa.ai/reference/getting-started",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "exa-mcp-server"],
+      "auth_env_template": { "EXA_API_KEY": "${EXA_API_KEY}" }
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity",
+      "icon": "🔮",
+      "tagline": "근거 있는 웹 검색·인용 답변",
+      "category": "검색",
+      "env_fields": [{ "key": "PPLX_API_KEY", "label": "Perplexity API Key", "hint": "perplexity.ai → Settings → API → Create API Key" }],
+      "guide_url": "https://docs.perplexity.ai/getting-started/getting-started",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "server-perplexity-ask"],
+      "auth_env_template": { "PERPLEXITY_API_KEY": "${PPLX_API_KEY}" }
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "icon": "🗓️",
+      "tagline": "별자리 노트 검색·생성 (Local REST API)",
+      "category": "문서",
+      "env_fields": [
+        { "key": "OBSIDIAN_API_KEY", "label": "Local REST API Key", "hint": "Obsidian → 설정 → Community plugins → Local REST API → API key 복사 (플러그인 미설치면 먼저 설치)" },
+        { "key": "OBSIDIAN_VAULT_PATH", "label": "Vault 경로 (선택)", "hint": "예: C:\\Users\\ttl09\\OneDrive\\문서\\별자리", "required": false }
+      ],
+      "guide_url": "https://github.com/coddingtonbear/obsidian-local-rest-api",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-obsidian"],
+      "auth_env_template": { "OBSIDIAN_API_KEY": "${OBSIDIAN_API_KEY}", "OBSIDIAN_HOST": "127.0.0.1", "OBSIDIAN_PORT": "27124" }
+    },
+    {
+      "id": "google",
+      "name": "Google (Gmail/캘린더/드라이브)",
+      "icon": "🇬",
+      "tagline": "OAuth 필요 — 공유브라우저 로그인 연동으로 준비 중",
+      "category": "생산성",
+      "env_fields": [],
+      "guide_url": null,
+      "transport": "coming-soon",
+      "command": null,
+      "args": [],
+      "auth_env_template": {}
+    }
+  ]
+}

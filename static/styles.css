@@ -5357,3 +5357,29 @@
     .image-lightbox-close:hover {
       opacity: 1;
     }
+/* ── DAON Connector Store ──────────────────────────────────────── */
+.conn-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; display: flex; flex-direction: column; gap: 3px; transition: border-color .15s; }
+.conn-card:hover { border-color: var(--accent); }
+.conn-head { display: flex; align-items: center; gap: 7px; }
+.conn-icon { font-size: 18px; line-height: 1; }
+.conn-name { font-size: 12px; font-weight: 700; color: var(--text); }
+.conn-badge { margin-left: auto; font-size: 9px; font-weight: 700; }
+.conn-badge.on { color: var(--success); }
+.conn-badge.off { color: var(--muted); }
+.conn-badge.err { color: var(--danger); }
+.conn-badge.soon { color: var(--warning); }
+.conn-tag { font-size: 10px; color: var(--muted); line-height: 1.35; }
+.conn-act { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.conn-act .pstore-btn { width: auto; padding: 4px 12px; }
+.conn-guide { font-size: 9.5px; color: var(--accent); text-decoration: none; }
+.conn-guide:hover { text-decoration: underline; }
+.conn-guide-box { font-size: 10px; color: var(--muted); background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; line-height: 1.5; }
+.conn-fields { margin: 0 0 8px; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
+.conn-fields li { font-size: 10px; color: var(--text); }
+.conn-fields input { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px 8px; background: var(--bg1); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: monospace; font-size: 11px; }
+.conn-fields input:focus { outline: none; border-color: var(--accent); }
+.conn-hint { font-size: 9px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.conn-modal-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+.conn-result { margin-top: 8px; font-size: 10px; padding: 6px 8px; border-radius: 4px; background: var(--bg3); color: var(--muted); line-height: 1.5; }
+.conn-result.ok { background: rgba(76,175,80,0.12); color: var(--success); }
+.conn-result.err { background: rgba(255,77,79,0.1); color: var(--danger); }

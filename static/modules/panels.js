@@ -32,7 +32,7 @@ async function switchPanel(name) {
   if (name === 'git') { cleanupGitPanel(); setTimeout(loadGitPanel, 50); }
   if (name === 'browser') { loadBrowserPanel(); }
   if (name === 'docs') { loadDocsPanel(); }
-  if (name === 'integrations') { loadIntegrationsPanel(); }
+  if (name === 'integrations') { loadConnectorsPanel(); }
   if (name === 'mcp') { loadMcpPanel(); }
   if (name === 'plugins') { loadPluginsPanel(); }
 }
