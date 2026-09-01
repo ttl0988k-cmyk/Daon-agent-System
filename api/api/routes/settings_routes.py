@@ -225,3 +225,32 @@ def handle_post_provider_update_models(handler, body) -> bool:
         return j(handler, result)
     except KeyError as e:
         return bad(handler, str(e), 404)
+
+
+def handle_post_provider_refresh_models(handler, body) -> bool:
+    """POST /api/providers/refresh-models — re-fetch models for an existing provider using stored key."""
+    name = body.get('name', '').strip()
+
+    if not name:
+        return bad(handler, 'name is required')
+
+    try:
+        from api.managers.model_manager import model_manager
+        result = model_manager.refresh_provider_models(name)
+
+        # Refresh model selector profiles
+        try:
+            from api.dynamic.model_selector import get_model_selector
+            selector = get_model_selector()
+            if selector is not None:
+                selector.refresh_profiles()
+        except Exception:
+            pass
+
+        return j(handler, result)
+    except KeyError as e:
+        return bad(handler, str(e), 404)
+    except RuntimeError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        return bad(handler, f'Failed to refresh models: {e}')

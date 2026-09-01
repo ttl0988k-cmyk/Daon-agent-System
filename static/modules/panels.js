@@ -4785,6 +4785,7 @@ async function loadProviderManagement() {
         var pname = btn.getAttribute('data-provider-name') || '';
         if (btn.getAttribute('data-provider-action') === 'edit') editProvider(pname);
         else if (btn.getAttribute('data-provider-action') === 'delete') deleteProvider(pname);
+        else if (btn.getAttribute('data-provider-action') === 'refresh') refreshProviderModels(pname, btn);
       });
     }
 
@@ -4802,6 +4803,7 @@ async function loadProviderManagement() {
           '<span class="provider-models" title="' + esc(modelList) + '">' + esc(modelList) + '</span>' +
           '</div>' +
           '<div class="provider-actions">' +
+          '<button class="provider-btn" data-provider-action="refresh" data-provider-name="' + esc(name) + '" title="저장된 키로 /models 재호출해 모델 목록 갱신">🔄</button>' +
           '<button class="provider-btn" data-provider-action="edit" data-provider-name="' + esc(name) + '" title="편집">✎</button>' +
           '<button class="provider-btn danger" data-provider-action="delete" data-provider-name="' + esc(name) + '" title="삭제">✕</button>' +
           '</div>' +
@@ -4986,6 +4988,32 @@ async function deleteProvider(name) {
     showToast('삭제 실패: ' + e.message);
   } finally {
     _providerActionBusy = false;
+  }
+}
+
+async function refreshProviderModels(name, btn) {
+  if (_providerActionBusy) return;
+  _providerActionBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  try {
+    const data = await api('/api/providers/refresh-models', {
+      method: 'POST',
+      body: { name: name },
+      timeout: 60000
+    });
+
+    if (data.success) {
+      showToast('✅ ' + name + ': 모델 ' + (data.count || (data.models || []).length) + '개 갱신됨');
+      await Promise.all([loadProviderManagement(), refreshAllModelSelects()]);
+    } else {
+      showToast('모델 갱신 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (e) {
+    showToast('모델 갱신 실패: ' + e.message);
+  } finally {
+    _providerActionBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '🔄'; }
   }
 }
 

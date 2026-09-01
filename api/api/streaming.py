@@ -1205,12 +1205,35 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _gw_reg_err:
               _logger.warning("register_gateway_notify failed for session %s: %s", session_id, _gw_reg_err)
 
-          print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_key={'set' if resolved_api_key else 'NONE'}", flush=True)
+          # ── OpenCode Zen/Go 모델별 API 라우팅 ──────────────────────────────
+          # OpenCode Go는 모델마다 API 표면이 다르다(MiniMax→/v1/messages,
+          # GLM/Kimi/Mimo→/v1/chat/completions). AIAgent는 provider 이름만으로
+          # 이를 추론하지 못해 기본 chat_completions로 오라우팅되므로, Daon 쪽에서
+          # 명시적으로 (api_mode, base_url)를 계산해 주입한다. 그 외 프로바이더는
+          # (None, 동일 URL)이 반환되어 기존 동작이 그대로 유지된다.
+          _resolved_api_mode = None
+          try:
+              from api.managers.model_manager import (
+                  normalize_opencode_provider as _oc_norm_p,
+                  normalize_opencode_model_id as _oc_norm_m,
+                  resolve_opencode_route as _oc_route,
+              )
+              resolved_provider = _oc_norm_p(resolved_provider)
+              _resolved_api_mode, _oc_url = _oc_route(resolved_provider, resolved_model, resolved_base_url)
+              if _resolved_api_mode:
+                  resolved_model = _oc_norm_m(resolved_provider, resolved_model)
+                  resolved_base_url = _oc_url
+                  print(f"[webui] OpenCode route: provider={resolved_provider} model={resolved_model} api_mode={_resolved_api_mode} base_url={resolved_base_url}", flush=True)
+          except Exception as _oc_route_e:
+              print(f"[webui] WARNING: opencode route resolution failed: {_oc_route_e}", flush=True)
+
+          print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_mode={_resolved_api_mode} api_key={'set' if resolved_api_key else 'NONE'}", flush=True)
           agent = AIAgent(
               model=resolved_model,
               provider=resolved_provider,
               base_url=resolved_base_url,
               api_key=resolved_api_key,
+              api_mode=_resolved_api_mode,
               platform='webui',
               quiet_mode=True,
               enabled_toolsets=_toolsets,

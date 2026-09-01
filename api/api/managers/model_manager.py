@@ -47,12 +47,16 @@ def _load_custom_providers() -> dict:
                 file_presets = data.get('presets', {})
                 if isinstance(file_presets, dict):
                     result['presets'] = {
-                        pname: pcfg for pname, pcfg in file_presets.items()
+                        normalize_opencode_provider(pname): pcfg for pname, pcfg in file_presets.items()
                         if isinstance(pcfg, dict)
                     }
                 file_providers = data.get('providers', {})
                 if isinstance(file_providers, dict):
-                    result['providers'] = file_providers
+                    # OpenCode 이름 변형('opencode go' 등)을 hermes canonical id로
+                    # 정규화해 이후 모든 조회(모델 해석/키/base_url)가一致하도록 한다.
+                    result['providers'] = {
+                        normalize_opencode_provider(pname): pcfg for pname, pcfg in file_providers.items()
+                    }
         except Exception as e:
             print(f"[ModelManager] Warning: failed to load custom_providers.json: {e}")
     return result
@@ -84,6 +88,97 @@ def _save_custom_providers(providers: dict) -> None:
 # No hardcoded hidden-model list. If a provider's /models endpoint omits
 # models, add them manually via the provider UI — they are persisted in
 # custom_providers.json (the single source of truth) and survive re-fetches.
+
+
+# ── OpenCode (Zen / Go) provider normalization ──────────────────────────
+# hermes-agent의 canonical provider id는 'opencode-go' / 'opencode-zen' (하이픈).
+# 사용자가 UI에 'opencode go'(공백)처럼 등록하거나 CLI 별칭('go', 'zen')을
+# 세팅에 남긴 경우에도 동일하게 라우팅되도록 정규화한다.
+_OPENCODE_PROVIDER_ALIASES = {
+    'go': 'opencode-go',
+    'opencode go': 'opencode-go',
+    'opencode-go-sub': 'opencode-go',
+    'zen': 'opencode-zen',
+    'opencode': 'opencode-zen',
+    'opencode zen': 'opencode-zen',
+}
+
+
+def normalize_opencode_provider(provider: str) -> str:
+    """Map OpenCode name variants (spaces/aliases) to hermes canonical ids."""
+    p = (provider or '').strip().lower()
+    return _OPENCODE_PROVIDER_ALIASES.get(p, p)
+
+
+def normalize_opencode_model_id(provider: str, model_id: str) -> str:
+    """Strip a leading '<provider>/' namespace from an OpenCode model id."""
+    p = normalize_opencode_provider(provider)
+    current = str(model_id or '').strip()
+    if not current or p not in ('opencode-go', 'opencode-zen'):
+        return current
+    prefix = f'{p}/'
+    if current.lower().startswith(prefix):
+        return current[len(prefix):]
+    return current
+
+
+def _env_variants(provider: str) -> List[str]:
+    """Env-var candidates for a provider's API key.
+
+    'opencode-go' (hyphenated id) must also match OPENCODE_GO_API_KEY, which is
+    the name hermes-agent's auth.py advertises. Returns de-duplicated candidates.
+    """
+    base = (provider or '').strip().upper()
+    if not base:
+        return []
+    out = [f'{base}_API_KEY']
+    alt = f"{base.replace('-', '_')}_API_KEY"
+    if alt not in out:
+        out.append(alt)
+    return out
+
+
+def resolve_opencode_route(provider: str, model: str,
+                           base_url: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Compute (api_mode, base_url) for OpenCode Zen/Go providers.
+
+    OpenCode 라우터는 모델마다 다른 API 표면을 노출한다 (2026-09 실측):
+      - Go: GPT/Grok → /v1/responses (chat/messages는 401 "not supported
+        for format" 또는 500), MiniMax → /v1/messages,
+        GLM/Kimi/Mimo 등 → /v1/chat/completions
+      - Zen: Claude → /v1/messages, GPT → /v1/responses, 그 외 → chat/completions
+    다른 프로바이더에는 (None, base_url)를 반환해 호출 측이 그대로
+    AIAgent(api_mode=...)에 넘길 수 있게 한다.
+    """
+    p = normalize_opencode_provider(provider)
+    if p not in ('opencode-go', 'opencode-zen'):
+        return None, base_url
+    # hermes_cli.models.opencode_model_api_mode의 Go 테이블은 구버터(2026-09
+    # 라이브 카탈로그에 gpt-5.6-luna/grok-4.x 추가됨)이므로 실측 결과로 보정한다.
+    m = normalize_opencode_model_id(p, model or '').lower()
+    api_mode = 'chat_completions'
+    if p == 'opencode-go':
+        if m.startswith('minimax-'):
+            api_mode = 'anthropic_messages'
+        elif m.startswith('gpt-') or m.startswith('grok-'):
+            # oa-compat/anthropic 포맷 미지원 — Responses API 전용
+            api_mode = 'codex_responses'
+    elif p == 'opencode-zen':
+        if m.startswith('claude-'):
+            api_mode = 'anthropic_messages'
+        elif m.startswith('gpt-'):
+            api_mode = 'codex_responses'
+    url = (base_url or '').strip().rstrip('/')
+    if not url:
+        url = ('https://opencode.ai/zen/go/v1' if p == 'opencode-go'
+               else 'https://opencode.ai/zen/v1')
+    # Anthropic SDK는 base_url에 자체적으로 /v1/messages를 붙인다.
+    # trailing /v1을 제거해 .../v1/v1/messages 오경로를 방지한다
+    # (hermes runtime_provider.py 동일 로직 미러).
+    if api_mode == 'anthropic_messages':
+        import re as _re
+        url = _re.sub(r'/v1/?$', '', url)
+    return api_mode, url
 
 
 class ModelManager:
@@ -230,6 +325,31 @@ class ModelManager:
         _save_custom_providers(providers)
         return {'ok': True, 'provider': name, 'model_count': len(models)}
 
+    def refresh_provider_models(self, name: str) -> dict:
+        """기존 프로바이더의 저장된 base_url/api_key로 /models를 다시 호출해 모델 목록을 갱신한다.
+
+        자동 감지 실패(Cloudflare 403 등)로 목록이 비었거나 오래된 경우,
+        키를 다시 입력하지 않고도 카탈로그를 최신화할 수 있게 한다.
+        """
+        name = name.strip().lower()
+        data = _load_custom_providers()
+        providers = data.get('providers', {})
+        if name not in providers:
+            raise KeyError(f"Provider '{name}' not found")
+        cfg = providers[name]
+        base_url = (cfg.get('base_url') or '').strip()
+        api_key = (cfg.get('api_key') or '').strip() or self._get_api_key(name)
+        if not base_url:
+            raise RuntimeError(f"프로바이더 '{name}'에 base_url이 저장되어 있지 않습니다")
+        if not api_key:
+            raise RuntimeError(f"프로바이더 '{name}'에 저장된 API 키가 없습니다 — 편집에서 키를 입력하세요")
+        models = self.fetch_models_from_provider(base_url, api_key)
+        if not models:
+            raise RuntimeError("제공자가 0개의 모델을 반환했습니다 — 기존 목록을 유지합니다")
+        cfg['models'] = models
+        _save_custom_providers(providers)
+        return {'success': True, 'provider': name, 'models': models, 'count': len(models)}
+
     # ── Auto-fetch models from provider API ─────────────────────────────
 
     def fetch_models_from_provider(self, base_url: str, api_key: str) -> List[Dict[str, str]]:
@@ -251,6 +371,10 @@ class ModelManager:
         headers = {
             'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
+            # Cloudflare error 1010 차단 회피: urllib 기본 UA(Python-urllib/x.y) 금지.
+            # opencode.ai는 구글 리버스 프록시 뒤에서 비브라우저 UA를 403으로 막는다.
+            'User-Agent': 'DAON-Agent/1.0 (+https://daon.local)',
+            'Accept': 'application/json',
         }
 
         req = urllib.request.Request(url, headers=headers, method='GET')
@@ -367,9 +491,12 @@ class ModelManager:
             if key:
                 return key
 
-        env_key = os.getenv(f'{provider.upper()}_API_KEY', '')
-        if env_key:
-            return env_key
+        # 하이픈이 포함된 프로바이더명(opencode-go 등)은 env 변수로 쓸 수 없으므로
+        # 언더스코어 변형도 함께 탐색한다.
+        for env_name in _env_variants(provider):
+            env_key = os.getenv(env_name, '')
+            if env_key:
+                return env_key
 
         # 프로필 인식 auth.json 탐색 (활성 프로필 → 기본 ~/.hermes 순)
         candidate_homes = []
@@ -490,9 +617,8 @@ class ModelManager:
         for provider in ALLOWED_PRESETS:
             if provider in provider_models:
                 display_name = custom_data.get('presets', {}).get(provider, {}).get('label', provider.capitalize())
-                env_key = f"{provider.upper()}_API_KEY"
                 has_key = bool(
-                    os.environ.get(env_key) or
+                    any(os.environ.get(v) for v in _env_variants(provider)) or
                     auth_keys.get(provider) or
                     custom_data.get('providers', {}).get(provider, {}).get('api_key')
                 )

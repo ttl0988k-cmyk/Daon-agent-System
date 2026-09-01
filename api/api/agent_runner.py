@@ -136,6 +136,23 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
             resolved_model, resolved_provider, resolved_base_url = model_manager.resolve_model_provider(s.model)
             resolved_api_key = None
 
+            # ── OpenCode Zen/Go: 모델별 API 표면(api_mode) 명시 라우팅 ──
+            _resolved_api_mode = None
+            try:
+                from api.managers.model_manager import (
+                    normalize_opencode_provider as _oc_norm_p,
+                    normalize_opencode_model_id as _oc_norm_m,
+                    resolve_opencode_route as _oc_route,
+                )
+                resolved_provider = _oc_norm_p(resolved_provider)
+                _resolved_api_mode, _oc_url = _oc_route(resolved_provider, resolved_model, resolved_base_url)
+                if _resolved_api_mode:
+                    resolved_model = _oc_norm_m(resolved_provider, resolved_model)
+                    resolved_base_url = _oc_url
+                    resolved_api_key = model_manager._get_api_key(resolved_provider) or None
+            except Exception as _oc_e:
+                print(f"[webui] WARNING: opencode route resolution failed: {_oc_e}", flush=True)
+
             if resolved_provider == 'minimax':
                 resolved_api_key = os.getenv('MINIMAX_API_KEY')
             elif resolved_provider == 'deepseek':
@@ -191,6 +208,7 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
                 provider=resolved_provider,
                 base_url=resolved_base_url,
                 api_key=resolved_api_key,
+                api_mode=_resolved_api_mode,
                 platform='cli',
                 quiet_mode=True,
                 session_id=session_id,

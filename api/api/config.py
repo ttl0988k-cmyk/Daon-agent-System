@@ -326,6 +326,7 @@ _PROVIDER_DISPLAY = _load_config_value('provider_display', None, {
     'deepseek': 'DeepSeek', 'nous': 'Nous',
     'minimax': 'MiniMax', 'nvidia': 'NVIDIA NIM', 'meta-llama': 'Meta Llama',
     'huggingface': 'HuggingFace', 'alibaba': 'Alibaba',
+    'opencode-go': 'OpenCode Go', 'opencode-zen': 'OpenCode Zen',
 })
 
 

@@ -250,6 +250,24 @@ def handle_post_chat_sync(handler, body) -> bool:
                     _base_url = rt_base_url
             except Exception as _e:
                 print(f"[webui] WARNING: resolve_runtime_provider failed: {_e}", flush=True)
+            # OpenCode Go/Zen: 모델별 API 표면(api_mode)과 base_url 보정
+            _api_mode = None
+            try:
+                from api.managers.model_manager import (
+                    normalize_opencode_provider as _oc_norm_p,
+                    normalize_opencode_model_id as _oc_norm_m,
+                    resolve_opencode_route as _oc_route,
+                )
+                _provider = _oc_norm_p(_provider)
+                _api_mode, _oc_url = _oc_route(_provider, _model, _base_url)
+                if _api_mode:
+                    _model = _oc_norm_m(_provider, _model)
+                    _base_url = _oc_url
+                    from api.managers.model_manager import model_manager as _mm
+                    _api_key = _mm._get_api_key(_provider) or _api_key
+                    print(f"[webui] OpenCode route (sync): provider={_provider} model={_model} api_mode={_api_mode} base_url={_base_url}", flush=True)
+            except Exception as _oc_route_e:
+                print(f"[webui] WARNING: opencode route resolution failed: {_oc_route_e}", flush=True)
             # 세션에서 ON 된 플러그인의 스킬 컨텐츠를 ephemeral 시스템 프롬프트로 주입
             _plugin_prompt = None
             try:
@@ -269,6 +287,7 @@ def handle_post_chat_sync(handler, body) -> bool:
                 api_key=_api_key, platform='webui', quiet_mode=True,
                 enabled_toolsets=CLI_TOOLSETS, session_id=s.session_id,
                 ephemeral_system_prompt=_plugin_prompt,
+                api_mode=_api_mode,
             )
             workspace_ctx = f"[Workspace: {s.workspace}]\n"
             workspace_system_msg = (

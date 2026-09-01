@@ -707,6 +707,7 @@ from api.routes.settings_routes import (
 
 
     handle_post_provider_update_models,
+    handle_post_provider_refresh_models,
 
 
 
@@ -4129,6 +4130,9 @@ def handle_post(handler, parsed) -> bool:
 
 
         return handle_post_provider_update_models(handler, body)
+
+    if parsed.path == '/api/providers/refresh-models':
+        return handle_post_provider_refresh_models(handler, body)
 
 
 
