@@ -136,7 +136,7 @@ def get_session(sid):
         return s
     raise KeyError(sid)
 
-def new_session(workspace=None, model=None):
+def new_session(workspace=None, model=None, persist=True):
     # Use _cfg.DEFAULT_MODEL (not the import-time snapshot) so save_settings() changes take effect
     try:
         from api.profiles import get_active_profile_name
@@ -149,7 +149,9 @@ def new_session(workspace=None, model=None):
         SESSIONS.move_to_end(s.session_id)
         while len(SESSIONS) > SESSIONS_MAX:
             SESSIONS.popitem(last=False)
-    s.save()
+    # persist=False면 호출자(라우트)가 비동기 저장을 직접 스케줄한다 (#27 fix 확장).
+    if persist:
+        s.save()
     return s
 
 def all_sessions():
@@ -221,9 +223,10 @@ def save_projects(projects) -> None:
     PROJECTS_FILE.write_text(json.dumps(projects, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-def import_cli_session(session_id: str, title: str, messages, model: str='unknown', profile=None):
+def import_cli_session(session_id: str, title: str, messages, model: str='unknown', profile=None, persist=True):
     """Create a new WebUI session populated with CLI messages.
     Returns the Session object.
+    persist=False면 호출자가 비동기 저장을 직접 스케줄한다 (#27 fix 확장).
     """
     s = Session(
         session_id=session_id,
@@ -233,7 +236,8 @@ def import_cli_session(session_id: str, title: str, messages, model: str='unknow
         messages=messages,
         profile=profile,
     )
-    s.save()
+    if persist:
+        s.save()
     return s
 
 

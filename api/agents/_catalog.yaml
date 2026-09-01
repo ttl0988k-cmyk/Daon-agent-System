@@ -1,10 +1,10 @@
 # Agent Template Catalog v1.2
 # CEO 에이전트가 이 카탈로그에서 템플릿 ID를 선택하여 DAG를 구성합니다.
-# 총 100개 템플릿, 9개 카테고리
+# 총 104개 템플릿, 9개 카테고리
 # v1.2: cost_tier 필드 추가 (low/mid/high) — 비용 최적화 의사결정용
 
 version: '1.2'
-total_templates: 100
+total_templates: 104
 categories:
   debugger:
     description: 디버깅 및 문제 진단 전문 에이전트
@@ -1440,6 +1440,27 @@ categories:
   specialist:
     description: 특수 분야 전문 에이전트
     templates:
+    - id: ai-creator
+      display_name: AI 창작 (콘텐츠·기획 전문가)
+      tags:
+      - creative-writing
+      - copywriting
+      - storytelling
+      - content-strategy
+      - korean
+      - brainstorming
+      - project-documentation
+      - scriptwriting
+      - obsidian
+      - daon-vault
+      capability: 콘텐츠 기획, 글쓰기, 카피라이팅, 스토리텔링, 프로젝트 문서, 브레인스토밍
+      domain: creative-content, documentation, korean-writing
+      avoid_when:
+      - pure_data_extraction
+      - ui_implementation
+      - backend_logic
+      - code_review
+      cost_tier: mid
     - id: auth-expert
       display_name: 인증/인가 전문가
       tags:
@@ -1693,6 +1714,27 @@ categories:
       - mobile_app
       - infrastructure_change
       cost_tier: mid
+    - id: slide-master-expert
+      display_name: 슬라이드 마스터 (PPT 전문가)
+      tags:
+      - pptx
+      - presentation
+      - slides
+      - korean
+      - pretendard
+      - svg
+      - drawingml
+      - native-pptx
+      - mckinsey
+      - consulting-deck
+      capability: 네이티브 PPTX 생성, SVG→DrawingML 변환, PPT 템플릿 채우기, 발표자 노트/나레이션, PPTX 품질 검증
+      domain: presentation, document-generation, korean-deck
+      avoid_when:
+      - backend_logic
+      - data_extraction
+      - ui_implementation
+      - pure_research_without_deck
+      cost_tier: high
     - id: terraform-expert
       display_name: Terraform IaC 전문가
       tags:
@@ -1711,6 +1753,28 @@ categories:
       - ui_design
       - database_query
       - content_writing
+      cost_tier: mid
+    - id: web-crawler-expert
+      display_name: 웹 크롤러 (수집 전문가)
+      tags:
+      - web-scraping
+      - crawling
+      - scrapling
+      - playwright
+      - curl_cffi
+      - patchright
+      - excel
+      - xlsx
+      - robots-txt
+      - data-collection
+      - korean
+      capability: 웹 사이트 정찰/대량수집, SPA 인터셉트, 엑셀 출력, 도메인 프로파일링, 봇 탐지 우회(적법 범위 내)
+      domain: web-scraping, data-extraction, automation
+      avoid_when:
+      - presentation_design
+      - content_writing_without_data
+      - backend_api_design
+      - realtime_streaming
       cost_tier: mid
     - id: websocket-expert
       display_name: 실시간 통신 전문가

@@ -3,6 +3,7 @@ Session & Project route helpers for Hermes Web UI.
 Extracted from api/routes.py (Phase 2 — Structuring).
 """
 import json
+import logging
 import os
 import threading
 import time
@@ -26,6 +27,24 @@ from api.workspace import (
     load_workspaces, save_workspaces, get_last_workspace, set_last_workspace,
     list_dir, read_file_content, safe_resolve_ws,
 )
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _save_session_async(s) -> None:
+    """#27 fix 확장: save()를 데몬 스레드로 비동기화하여 HTTP 응답이 즉시 반환되도록 함.
+
+    save() 내부의 _write_session_index() (O(n) I/O — 세션 전체 재읽기) +
+    _save_session_to_db() (sqlite3.connect timeout=10) 때문에 요청 스레드가
+    10초 이상 블로킹되어 프론트엔드 15초 타임아웃("서버 응답 없음")을 유발함.
+    """
+    def _save():
+        try:
+            s.save()
+        except Exception:
+            _logger.warning("Async save failed for session %s", getattr(s, 'session_id', '?'), exc_info=True)
+    threading.Thread(target=_save, daemon=True).start()
 
 
 # ── GET route helpers ─────────────────────────────────────────────────────────
@@ -140,7 +159,9 @@ def handle_get_sessions_search(handler, parsed) -> bool:
 
 def handle_post_session_new(handler, body) -> bool:
     """POST /api/session/new — create a new session."""
-    s = new_session(workspace=body.get('workspace'), model=body.get('model'))
+    # persist=False: 동기 save()를 건너뛰고 아래에서 비동기로 저장 (#27 fix 확장).
+    s = new_session(workspace=body.get('workspace'), model=body.get('model'), persist=False)
+    _save_session_async(s)
     return j(handler, {'session': s.to_response()})
 
 
@@ -177,7 +198,7 @@ def handle_post_session_rename(handler, body) -> bool:
     except KeyError:
         return bad(handler, 'Session not found', 404)
     s.title = str(body['title']).strip()[:80] or 'Untitled'
-    s.save()
+    _save_session_async(s)
     return j(handler, {'session': s.to_response()})
 
 
@@ -194,7 +215,7 @@ def handle_post_session_update(handler, body) -> bool:
     new_ws = body.get('workspace', s.workspace)
     s.workspace = new_ws
     s.model = body.get('model', s.model)
-    s.save()
+    _save_session_async(s)
     set_last_workspace(new_ws)
     return j(handler, {'session': s.to_response()})
 
@@ -236,7 +257,7 @@ def handle_post_session_clear(handler, body) -> bool:
     s.messages = []
     s.tool_calls = []
     s.title = 'Untitled'
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -254,7 +275,7 @@ def handle_post_session_truncate(handler, body) -> bool:
         return bad(handler, 'Session not found', 404)
     keep = int(body['keep_count'])
     s.messages = s.messages[:keep]
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -269,7 +290,7 @@ def handle_post_session_pin(handler, body) -> bool:
     except KeyError:
         return bad(handler, 'Session not found', 404)
     s.pinned = bool(body.get('pinned', True))
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -284,7 +305,7 @@ def handle_post_session_archive(handler, body) -> bool:
     except KeyError:
         return bad(handler, 'Session not found', 404)
     s.archived = bool(body.get('archived', True))
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -299,7 +320,7 @@ def handle_post_session_move(handler, body) -> bool:
     except KeyError:
         return bad(handler, 'Session not found', 404)
     s.project_id = body.get('project_id') or None
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -324,7 +345,7 @@ def handle_post_session_import(handler, body) -> bool:
         SESSIONS.move_to_end(s.session_id)
         while len(SESSIONS) > SESSIONS_MAX:
             SESSIONS.popitem(last=False)
-    s.save()
+    _save_session_async(s)
     return j(handler, {'ok': True, 'session': s.to_response()})
 
 
@@ -364,7 +385,7 @@ def handle_post_session_import_cli(handler, body) -> bool:
     s = import_cli_session(sid, title, msgs, model, profile=profile)
     s.is_cli_session = True
     s._cli_origin = sid
-    s.save()
+    _save_session_async(s)
     result = s.to_response()
     result['is_cli_session'] = True
     return j(handler, {
@@ -442,7 +463,7 @@ def handle_post_project_delete(handler, body) -> bool:
                     try:
                         s = get_session(entry['session_id'])
                         s.project_id = None
-                        s.save()
+                        _save_session_async(s)
                     except Exception:
                         pass
         except Exception:
