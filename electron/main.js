@@ -9,6 +9,7 @@ console.log("[BUILD ID]: cdp-relaunch-guarantee-2026-08-27");
 console.log("[BUILD ID]: tab-bar-ui-2026-08-27");
 console.log("[BUILD ID]: chrome-ua-revert-2026-08-31");
 console.log("[BUILD ID]: tabfail-aborted-skip-2026-09-01");
+console.log("[BUILD ID]: tab-navigate-dead-wc-guard-2026-09-02");
 const { app, BrowserWindow, BaseWindow, WebContentsView, ipcMain, screen, shell, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -1372,6 +1373,26 @@ class TabManager {
     });
     view.webContents.on('page-title-updated', () => { this._notifyTabs(); });
 
+    // [2026-09-02 근본 수정] webContents가 외부(에이전트 CDP page.close, 세션 정리 등)
+    // 에 의해 파괴되면 탭이 맵에 '유령'으로 남아, 이후 navigate()/switchTab()이
+    // view.webContents === undefined 인 상태로 loadURL을 호출해 메인 프로세스
+    // Uncaught Exception(TypeError: Cannot read properties of undefined (reading
+    // 'loadURL'))이 발생했다. destroyed 이벤트에서 즉시 맵을 정리해 lifecycle을
+    // 맞춘다. (closeTab/_recreateTab 이 자체 삭제하므로 가드는 멱등하게 동작)
+    view.webContents.once('destroyed', () => {
+      if (this.tabs.get(tabId) === view) {
+        this.tabs.delete(tabId);
+        this._tabRecovery.delete(tabId);
+        this._recoveringTabs.delete(tabId);
+        try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
+        if (this.activeTabId === tabId) {
+          const next = this.tabs.keys().next();
+          this.activeTabId = next.done ? null : next.value;
+        }
+        this._notifyTabs();
+      }
+    });
+
     // ── 렌더러 크래시/로드 실패 자동 복구 (메인 윈도우와 동일 패턴) ──
     // 렌더러가 죽으면 reload로 살리려 하고, webContents가 파괴됐으면 탭을
     // 재생성한다. 횟수 제한(60초 창 내 3회)으로 크래시 루프를 방지한다.
@@ -1468,14 +1489,22 @@ class TabManager {
   }
 
   switchTab(tabId) {
+    // [2026-09-02 보강] 유령 탭(파괴된 webContents)으로 전환 시 메인 프로세스
+    // 크래시를 막는다 — 파괴된 뷰는 재생성 후 전환한다.
     if (this.activeTabId && this.tabs.has(this.activeTabId)) {
-      this.mainWindow.contentView.removeChildView(this.tabs.get(this.activeTabId));
+      try { this.mainWindow.contentView.removeChildView(this.tabs.get(this.activeTabId)); } catch (e) { }
     }
     this.activeTabId = tabId;
     if (this.isVisible && this.tabs.has(tabId)) {
       const view = this.tabs.get(tabId);
-      this.mainWindow.contentView.addChildView(view);
-      view.setBounds(this.bounds);
+      if (this._isWebContentsAlive(view)) {
+        try {
+          this.mainWindow.contentView.addChildView(view);
+          view.setBounds(this.bounds);
+        } catch (e) { }
+      } else {
+        this._recreateTab(tabId);
+      }
     }
     this._notifyTabs();
   }
@@ -1517,12 +1546,38 @@ class TabManager {
     try { this.mainWindow.webContents.send('browser-tabs-updated', tabs); } catch (e) { }
   }
 
+  // webContents 생존 여부 검사 (destroyed/undefined 모두 방어)
+  _isWebContentsAlive(view) {
+    try {
+      return !!(view && view.webContents && !view.webContents.isDestroyed());
+    } catch (e) {
+      return false;
+    }
+  }
+
   navigate(tabId, url) {
+    // [2026-09-02 수정] 죽은 webContents 가드 — 탭이 맵에는 남아 있어도
+    // webContents가 이미 파괴되면 view.webContents가 undefined가 되어
+    // undefined.loadURL()로 메인 프로세스 크래시가 발생했다(실측 스택:
+    // TabManager.navigate main.js:1525). 파괴된 뷰는 폐기하고 새 뷰로 재생성해
+    // 해당 URL로 탐색한다. 로그인 상태는 앱 기본 세션 공유로 유지된다.
     let view = this.tabs.get(tabId);
+    if (view && !this._isWebContentsAlive(view)) {
+      merr(`[TabManager] navigate: tab=${tabId} webContents destroyed — recreating view.`);
+      try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
+      this.tabs.delete(tabId);
+      this._tabRecovery.delete(tabId);
+      view = null;
+    }
     if (!view) {
       view = this.createTab(tabId, url); // createTab already loads the URL
     } else {
-      view.webContents.loadURL(url);
+      try {
+        view.webContents.loadURL(url);
+      } catch (e) {
+        merr(`[TabManager] navigate: loadURL failed tab=${tabId}: ${e && e.message}`);
+        return;
+      }
     }
     // Ensure visibility — if navigate is called, the user/frontend wants to see it.
     // This also re-attaches the view when it was previously hidden (editor shown),
@@ -1530,7 +1585,7 @@ class TabManager {
     this.isVisible = true;
     this.activeTabId = tabId;
     try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-    view.setBounds(this.bounds);
+    try { view.setBounds(this.bounds); } catch (e) { }
     this._notifyTabs();
   }
 
@@ -1559,7 +1614,13 @@ class TabManager {
 
 // --- IPC Commands ---
 ipcMain.on('browser-navigate', (event, { id, url }) => {
-  if (tabManager) tabManager.navigate(id || 'tab1', url);
+  // [2026-09-02 보강] navigate 내부 오류가 main 프로세스 Uncaught Exception
+  // 다이얼로그(앱 전체 팝업)로 번지지 않게 격리한다.
+  try {
+    if (tabManager) tabManager.navigate(id || 'tab1', url);
+  } catch (e) {
+    merr('[IPC] browser-navigate failed:', (e && e.stack) || e);
+  }
 });
 
 // ── Tab management IPC (2026-08-27) ──
