@@ -190,21 +190,27 @@ class ModelManager:
 
     def _get_all_provider_models(self) -> Dict[str, List[Dict[str, str]]]:
         """Get provider→models mapping from the single source of truth (custom_providers.json).
-        
-        Merges: presets[].models + custom providers[].models
+
+        Merges: custom providers[].models (first) + presets[].models.
+
+        2026-09-03 kimi-k3 사고 대책: merge 순서를 custom-first로 바꾼다.
+        resolve_model_provider의 정확/대소문자 무시 매칭이 이 dict 순서대로
+        돌기 때문에, 프리셋(opencode-go 33모델 — deepseek-v4-flash, minimax-m3
+        등 동명 모델 포함)이 먼저면 사용자가 등록한 프로바이더를 거치지 않고
+        opencode.ai로 라우팅되어 크레딧이 소진되었다.
         """
         data = _load_custom_providers()
         result = {}
 
-        # 1) Models from presets (built-in providers)
-        for pname, pcfg in data.get('presets', {}).items():
-            if isinstance(pcfg, dict) and 'models' in pcfg:
-                result[pname] = list(pcfg['models'])
-
-        # 2) Models from custom providers (user-added, with API keys)
+        # 1) Models from custom providers (user-added, with API keys) — 최우선
         for pname, pcfg in data.get('providers', {}).items():
             if isinstance(pcfg, dict) and 'models' in pcfg:
                 result[pname] = list(pcfg['models'])
+
+        # 2) Models from presets (built-in providers) — 사용자 등록에 없을 때만
+        for pname, pcfg in data.get('presets', {}).items():
+            if isinstance(pcfg, dict) and 'models' in pcfg:
+                result.setdefault(pname, list(pcfg['models']))
 
         return result
 
@@ -527,40 +533,48 @@ class ModelManager:
         if not model_id:
             return model_id, 'custom', None
 
-        # 1) Check preset provider models (from custom_providers.json)
+        # 2026-09-03 kimi-k3 사고 대책: 매칭 우선순위를 사용자 등록(custom) 최우선으로
+        # 바꾼다. 기존엔 프리셋 정확 일치가 custom 대소문자 무시 일치보다 앞서서,
+        # opencode-go 프리셋(33모델 — minimax-m3, deepseek-v4-flash 등 동명 모델 포함)이
+        # 사용자가 등록한 프로바이더의 동일 모델을 선점해 opencode.ai로 라우팅되었다.
+        # 우선순위: custom 정확 > custom 대소문자 무시 > 프리셋 정확 > 프리셋 대소문자 무시
         # When model_id is an exact match in a provider's model list,
         # use the model_id as-is — NEVER strip namespace prefixes.
         # (e.g. NVIDIA NIM needs "z-ai/glm-5.2" in full, OpenRouter needs "tencent/hy3:free")
+        data = _load_custom_providers()
         provider_models = self._get_all_provider_models()
+        _custom = data.get('providers', {})
+        _target = model_id.casefold()
+
+        # 1) Custom provider 정확 일치 — 사용자 등록 최우선
+        for pname, cfg in _custom.items():
+            for m in cfg.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid == model_id:
+                    return model_id, pname, cfg.get('base_url')
+
+        # 2) Custom provider 대소문자 무시 일치 — canonical ID로 정규화
+        # ('minimax-m3' → 'MiniMax-M3') 프론트/세션에 저장된 대소문자 변형 ID를
+        # 등록된 원본 ID로 되돌려 이후 API 호출도 canonical 이름으로 수행한다.
+        for pname, cfg in _custom.items():
+            for m in cfg.get('models', []):
+                mid = m.get('id') if isinstance(m, dict) else str(m)
+                if mid and mid.casefold() == _target:
+                    return mid, pname, cfg.get('base_url')
+
+        # 3) Preset provider 정확 일치
         for p, models in provider_models.items():
             for m in models:
                 mid = m.get('id') if isinstance(m, dict) else str(m)
                 if mid == model_id:
                     return model_id, p, self._get_base_url(p)
 
-        # 2) Check custom provider models
-        data = _load_custom_providers()
-        for pname, cfg in data.get('providers', {}).items():
-            for m in cfg.get('models', []):
-                mid = m.get('id') if isinstance(m, dict) else str(m)
-                if mid == model_id:
-                    return model_id, pname, cfg.get('base_url')
-
-        # 2.5) Case-insensitive fallback — 'minimax-m3' → 'MiniMax-M3' 등.
-        # 프론트/세션에 저장된 대소문자 변형 ID를 등록된 원본(canonical) ID로
-        # 정규화한다. 정확 일치가 없을 때만 도달하며, 매칭 시 등록된 원본 ID를
-        # 반환하므로 이후 API 호출도 canonical 이름으로 수행된다.
-        _target = model_id.casefold()
+        # 4) Preset provider 대소문자 무시 일치
         for p, models in provider_models.items():
             for m in models:
                 mid = m.get('id') if isinstance(m, dict) else str(m)
                 if mid and mid.casefold() == _target:
                     return mid, p, self._get_base_url(p)
-        for pname, cfg in data.get('providers', {}).items():
-            for m in cfg.get('models', []):
-                mid = m.get('id') if isinstance(m, dict) else str(m)
-                if mid and mid.casefold() == _target:
-                    return mid, pname, cfg.get('base_url')
 
         # 3) Check if model_id has a provider/ prefix
         if '/' in model_id:
@@ -608,7 +622,10 @@ class ModelManager:
         custom_providers = custom_data.get('providers', {})
 
         # Show ALL presets that have models defined — API key presence is checked at call time
-        ALLOWED_PRESETS = list(provider_models.keys())
+        # UI 표시 순서는 기존대로 프리셋 먼저 유지한다(라우팅 우선순위와 UI 순서는 분리.
+        # _get_all_provider_models는 라우팅 안전을 위해 custom-first로 바뀌었다).
+        ALLOWED_PRESETS = ([p for p in custom_data.get('presets', {}) if p in provider_models]
+                           + [p for p in provider_models if p not in custom_data.get('presets', {})])
 
         groups = []
         _added_provider_keys = set()  # 중복 방지

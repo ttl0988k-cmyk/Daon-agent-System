@@ -82,6 +82,8 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 if e.code in (429, 503):
                     last_error = RuntimeError(f"MiniMax API HTTP Error {e.code} for model {model}: {err_msg}")
+                    if e.code == 429 and _is_quota_exhausted(err_msg):
+                        raise last_error  # 사용량 소진 — 남은 모델/재시도 모두 중단(크레딧 보호)
                     if attempt < max_retries - 1:
                         sleep_sec = (2 ** attempt) * 3 + random.uniform(0.5, 2.0)
                         _log.info(
@@ -159,6 +161,8 @@ def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None,
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 if e.code in (429, 503):
                     last_error = RuntimeError(f"DeepSeek API HTTP Error {e.code} for model {model}: {err_msg}")
+                    if e.code == 429 and _is_quota_exhausted(err_msg):
+                        raise last_error  # 사용량 소진 — 남은 모델/재시도 모두 중단(크레딧 보호)
                     if attempt < max_retries - 1:
                         sleep_sec = (2 ** attempt) * 3 + random.uniform(0.5, 2.0)
                         _log.info(
@@ -179,6 +183,24 @@ def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None,
     raise last_error
 
 
+_QUOTA_MARKERS = (
+    "usage limit", "limit reached", "resets in", "quota",
+    "monthly usage", "weekly usage", "daily usage",
+)
+
+
+def _is_quota_exhausted(msg: str) -> bool:
+    """429 중에서도 "주간/월간 사용량 소진"류(리셋 대기 필요)를 판정한다.
+
+    순간 RPM 제한(초당 과다 호출)은 잠깐 쉬면 풀리므로 재시도가 유효하지만,
+    opencode.ai의 "Weekly usage limit reached. Resets in 4 days."처럼
+    사용량 소진은 재시도해도 소진만 반복된다. kimi-k3 사고(2026-09-03)에서
+    429를 재시도/폴백하며 1,605건의 소진 호출을 반복한 원인.
+    """
+    low = (msg or "").lower()
+    return any(marker in low for marker in _QUOTA_MARKERS)
+
+
 def _is_permanent_provider_error(e: Exception) -> bool:
     """401/402/403 및 크레딧/인증 오류는 "영구 실패"로 판정한다.
 
@@ -193,6 +215,11 @@ def _is_permanent_provider_error(e: Exception) -> bool:
                    "invalid api key", "unauthorized", "authentication", "payment required"):
         if marker in msg:
             return True
+    # 429라도 사용량 소진이면 재시도/폴백으로 크레딧을 더 태우지 않는다.
+    if status == 429 and _is_quota_exhausted(msg):
+        return True
+    if "http 429" in msg and _is_quota_exhausted(msg):
+        return True
     return False
 
 

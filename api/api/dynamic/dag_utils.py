@@ -105,7 +105,13 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
     # 2. Other models, but ONLY from the anchor provider's group.
     try:
         from api.managers import model_manager as _mm
-        for group in _mm.get_available_models():
+        # kimi-k3 사고 대책(2026-09-03): 프리셋(opencode-go 33모델)이 groups[0]이면
+        # 선호 모델 없는 백그라운드 호출(memory_store 추출/정제)의 앵커가
+        # 사용자가 선택한 적 없는 유료 프로바이더로 정해진다.
+        # 사용자 등록(is_custom) 프로바이더를 프리셋보다 먼저 본다.
+        groups = sorted(_mm.get_available_models(),
+                        key=lambda g: 0 if g.get('is_custom') else 1)
+        for group in groups:
             gprov = group.get('provider_key') or group.get('provider')
             # 기준 프로바이더가 정해졌으면 그 프로바이더 그룹만 본다.
             if anchor_provider and gprov != anchor_provider:
@@ -113,6 +119,9 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             for m in group.get('models', []):
                 mid = m.get('id') if isinstance(m, dict) else str(m)
                 if not mid or mid in seen_models:
+                    continue
+                # 이미지/비디오 모델은 chat 폴백 체인에서 제외 (타입 표기 있을 때만)
+                if isinstance(m, dict) and m.get('type') and m.get('type') != 'chat':
                     continue
                 cfg = build_config(mid)
                 if cfg['api_key'] or cfg['provider'] == 'custom':
