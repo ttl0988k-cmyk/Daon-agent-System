@@ -622,13 +622,18 @@ class ModelManager:
         custom_providers = custom_data.get('providers', {})
 
         # Show ALL presets that have models defined — API key presence is checked at call time
-        # UI 표시 순서는 기존대로 프리셋 먼저 유지한다(라우팅 우선순위와 UI 순서는 분리.
-        # _get_all_provider_models는 라우팅 안전을 위해 custom-first로 바뀌었다).
-        ALLOWED_PRESETS = ([p for p in custom_data.get('presets', {}) if p in provider_models]
-                           + [p for p in provider_models if p not in custom_data.get('presets', {})])
+        # 순서는 custom-first 병합 순서(_get_all_provider_models)를 그대로 따른다:
+        # 사용자 등록 프로바이더가 UI에도 먼저 노출되고, dag_utils의 custom-first
+        # 앵커 정렬(기억 큐 등 미지정 호출 보호)과 그룹 순서가 일치한다.
+        ALLOWED_PRESETS = list(provider_models.keys())
 
         groups = []
         _added_provider_keys = set()  # 중복 방지
+        # is_custom 판정은 "어느 단계에서 추가됐는지"가 아니라
+        # "사용자가 직접 등록한 프로바이더인지" 기준이어야 한다.
+        # (커스텀 병합 순서 변경으로 커스텀 그룹이 1단계에서 추가될 수 있고,
+        #  이 플래그가 틀리면 dag_utils의 custom-first 앵커 정렬이 무력화된다.)
+        _custom_names = set(custom_providers.keys())
 
         # 1) Preset providers (built-in, from custom_providers.json presets)
         for provider in ALLOWED_PRESETS:
@@ -644,7 +649,7 @@ class ModelManager:
                     groups.append({
                         'provider': display_name,
                         'provider_key': provider,
-                        'is_custom': False,
+                        'is_custom': provider in _custom_names,
                         'models': list(provider_models[provider]),
                         'has_api_key': True,
                     })
