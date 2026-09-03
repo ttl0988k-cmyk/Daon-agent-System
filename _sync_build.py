@@ -39,7 +39,6 @@ except Exception as e:
 DIR_PAIRS = [
     ('static', 'dist_new/static'),
     ('api/api', 'dist_new/api/api'),
-    ('data', 'dist_new/data'),
     ('hermes-agent', 'dist_new/hermes-agent'),
     ('skills', 'dist_new/skills'),
 ]
@@ -48,7 +47,6 @@ DIR_PAIRS = [
 FILE_PAIRS = [
     ('config.yaml', 'dist_new/config.yaml'),
     ('index.html', 'dist_new/index.html'),
-    ('.env', 'dist_new/.env'),
 ]
 
 ok, fail = [], []

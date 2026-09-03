@@ -21,7 +21,7 @@ exports.default = async function afterPack(context) {
         '@echo off',
         'rem DAON Agent System launcher',
         'set "ELECTRON_RUN_AS_NODE="',
-        'start "" "%~dp0' + productName + '.exe"',
+        'start "" "%~dp0' + productName + '.exe" --remote-debugging-port=9222',
         '',
     ].join('\r\n');
     fs.writeFileSync(cmdPath, content);

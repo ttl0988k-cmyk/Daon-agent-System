@@ -66,14 +66,6 @@
         "to": "config.yaml"
       },
       {
-        "from": ".env",
-        "to": ".env"
-      },
-      {
-        "from": "data",
-        "to": "data"
-      },
-      {
         "from": "api/agents",
         "to": "agents"
       }
