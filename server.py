@@ -529,6 +529,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/browser/forward': 'handle_post_browser_forward',
                 '/api/browser/tabs': 'handle_post_browser_tabs',
                 '/api/browser/switch_tab': 'handle_post_browser_switch_tab',
+                '/api/browser/batch': 'handle_post_browser_batch',
             }
             if path in browser_post_routes:
                 try:
@@ -544,6 +545,7 @@ class Handler(BaseHTTPRequestHandler):
                         handle_post_browser_forward,
                         handle_post_browser_tabs,
                         handle_post_browser_switch_tab,
+                        handle_post_browser_batch,
                     )
                     func_name = browser_post_routes[path]
                     func = locals()[func_name]

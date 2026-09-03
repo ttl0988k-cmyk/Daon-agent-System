@@ -279,32 +279,32 @@ async function browserTypeText() {
 /**
  * Take a screenshot of the current page.
  */
-async function browserScreenshot() {
+async function browserScreenshot(labeled = false) {
     const resultEl = $('browserResult');
     const screenshotEl = $('browserScreenshot');
 
     if (resultEl) {
         resultEl.style.display = 'block';
-        resultEl.innerHTML = '<span style="color:var(--muted)">⏳ 스크린샷 촬영 중...</span>';
+        resultEl.innerHTML = `<span style="color:var(--muted)">⏳ ${labeled ? '라벨링 스크린샷(Set-of-Marks)' : '스크린샷'} 촬영 중...</span>`;
     }
 
     try {
         const data = await api('/api/browser/screenshot', {
             method: 'POST',
-            body: {}
+            body: { labeled: Boolean(labeled) }
         });
 
-        if (data.ok && (data.png_base64 || data.screenshot)) {
-            const b64 = data.png_base64 || data.screenshot;
+        const b64 = data.image_base64 || data.png_base64 || data.screenshot;
+        if (data.ok && b64) {
             _browserScreenshotData = b64;
             if (screenshotEl) {
                 screenshotEl.innerHTML = `<img src="data:image/png;base64,${esc(b64)}" style="max-width:100%;border-radius:4px" />`;
                 screenshotEl.style.display = 'block';
             }
             if (resultEl) {
-                resultEl.innerHTML = `<span style="color:var(--success)">✅ 스크린샷 촬영 완료 — ${esc(data.title || data.url)}</span>`;
+                resultEl.innerHTML = `<span style="color:var(--success)">✅ ${labeled ? '라벨링 스크린샷' : '스크린샷'} 촬영 완료 — ${esc(data.title || data.url)}</span>`;
             }
-            showToast('스크린샷 촬영 완료');
+            showToast(labeled ? '라벨링 스크린샷 완료' : '스크린샷 촬영 완료');
         } else {
             if (resultEl) {
                 resultEl.innerHTML = `<span style="color:var(--danger)">❌ ${esc(data.error || '스크린샷 실패')}</span>`;
@@ -314,6 +314,23 @@ async function browserScreenshot() {
         if (resultEl) {
             resultEl.innerHTML = `<span style="color:var(--danger)">❌ 오류: ${esc(e.message)}</span>`;
         }
+    }
+}
+
+/**
+ * Execute a batch of browser actions sequentially.
+ */
+async function browserBatch(actions) {
+    if (!Array.isArray(actions) || actions.length === 0) {
+        return { ok: false, error: 'Empty actions array' };
+    }
+    try {
+        return await api('/api/browser/batch', {
+            method: 'POST',
+            body: { actions }
+        });
+    } catch (e) {
+        return { ok: false, error: e.message };
     }
 }
 

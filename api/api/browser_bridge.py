@@ -149,6 +149,24 @@ def _run_browser_command_via_bridge(
         result = _submit_task("record", subcommand=subcommand, path=path)
         return _convert_result(result)
 
+    elif command == "screenshot":
+        labeled = "--labeled" in (args or []) or "-l" in (args or [])
+        result = _submit_task("screenshot", labeled=labeled)
+        return _convert_result(result)
+
+    elif command == "batch":
+        import json as _json
+        actions = []
+        if args and isinstance(args[0], list):
+            actions = args[0]
+        elif args and isinstance(args[0], str):
+            try:
+                actions = _json.loads(args[0])
+            except Exception:
+                actions = []
+        result = _submit_task("batch", actions=actions)
+        return _convert_result(result)
+
     elif command == "close":
         # cleanup_browser가 세션 정리 시 호출 — Playwright 드라이버를 닫고
         # 상태를 리셋한다 (Electron 뷰 자체는 닫지 않는다).

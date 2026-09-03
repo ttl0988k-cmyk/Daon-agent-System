@@ -72,6 +72,134 @@ _IFRAME_DETECT_JS = """
 """
 
 
+_EXTRACT_INTERACTIVE_JS = """
+(() => {
+    const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="menuitem"],[role="tab"],[contenteditable="true"],details,summary';
+    const allEls = document.querySelectorAll(interactive);
+    const results = [];
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+
+    allEls.forEach((el) => {
+        // 1. Basic geometry & size filter
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 2 || rect.height <= 2) return;
+
+        // 2. Computed style checks (Browser-Use Visibility Filter)
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') < 0.05) return;
+        if (style.pointerEvents === 'none') return;
+        if (el.disabled) return;
+
+        // 3. Occlusion check: Is center point of element covered by an overlay/modal?
+        const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), vw - 1);
+        const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), vh - 1);
+        const topEl = document.elementFromPoint(cx, cy);
+        let isVisible = topEl && (el === topEl || el.contains(topEl) || topEl.contains(el));
+
+        // Fallback offset check if center is covered by child icon/badge
+        if (!isVisible && rect.width > 12 && rect.height > 12) {
+            const p2 = document.elementFromPoint(rect.left + 6, rect.top + 6);
+            if (p2 && (el === p2 || el.contains(p2) || p2.contains(el))) {
+                isVisible = true;
+            }
+        }
+        if (!isVisible) return;
+
+        // 4. Extract rich metadata
+        const label = (
+            el.getAttribute('aria-label') ||
+            el.getAttribute('title') ||
+            el.placeholder ||
+            (el.innerText || el.textContent || '').trim().substring(0, 150)
+        );
+
+        results.push({
+            ref: 'e' + results.length,
+            tag: el.tagName.toLowerCase(),
+            text: label,
+            href: el.href || null,
+            type: el.type || null,
+            placeholder: el.placeholder || null,
+            id: el.id || null,
+            name: el.getAttribute('name') || null,
+            className: el.className || null,
+            rect: {
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+            },
+            in_viewport: (rect.bottom > 0 && rect.right > 0 && rect.top < vh && rect.left < vw)
+        });
+    });
+    return results;
+})()
+"""
+
+_SOM_INJECT_JS = """
+(elements) => {
+    const OVERLAY_ID = '__daon_som_overlay__';
+    let existing = document.getElementById(OVERLAY_ID);
+    if (existing) existing.remove();
+
+    const container = document.createElement('div');
+    container.id = OVERLAY_ID;
+    container.style.position = 'fixed';
+    container.style.top = '0';
+    container.style.left = '0';
+    container.style.width = '100vw';
+    container.style.height = '100vh';
+    container.style.pointerEvents = 'none';
+    container.style.zIndex = '2147483647';
+    document.body.appendChild(container);
+
+    const colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6'];
+
+    (elements || []).forEach((item, idx) => {
+        if (!item.in_viewport) return;
+        const r = item.rect;
+        if (!r || r.width <= 0 || r.height <= 0) return;
+        const color = colors[idx % colors.length];
+
+        const box = document.createElement('div');
+        box.style.position = 'fixed';
+        box.style.left = r.x + 'px';
+        box.style.top = r.y + 'px';
+        box.style.width = r.width + 'px';
+        box.style.height = r.height + 'px';
+        box.style.border = '2px solid ' + color;
+        box.style.boxSizing = 'border-box';
+        box.style.pointerEvents = 'none';
+
+        const badge = document.createElement('span');
+        badge.innerText = item.ref;
+        badge.style.position = 'absolute';
+        badge.style.top = '-14px';
+        badge.style.left = '-2px';
+        badge.style.backgroundColor = color;
+        badge.style.color = '#ffffff';
+        badge.style.fontSize = '10px';
+        badge.style.fontWeight = 'bold';
+        badge.style.padding = '0 3px';
+        badge.style.borderRadius = '2px';
+        badge.style.lineHeight = '14px';
+        badge.style.fontFamily = 'monospace, sans-serif';
+
+        box.appendChild(badge);
+        container.appendChild(box);
+    });
+}
+"""
+
+_SOM_CLEANUP_JS = """
+(() => {
+    const existing = document.getElementById('__daon_som_overlay__');
+    if (existing) existing.remove();
+})()
+"""
+
+
 def _detect_iframes(page):
     """페이지의 주요 iframe 목록을 반환한다 (실패 시 빈 리스트 — 순수 부가)."""
     try:
@@ -99,6 +227,8 @@ def _store_refs(elements) -> None:
                     "placeholder": el.get("placeholder"),
                     "id": el.get("id"),
                     "name": el.get("name"),
+                    "rect": el.get("rect"),
+                    "in_viewport": el.get("in_viewport", True),
                 }
             except Exception:
                 continue
@@ -379,6 +509,108 @@ def _browser_worker_loop():
             except Exception as inner_e:
                 return None, f"Failed to connect to Electron CDP: {str(e)} and headless fallback failed: {inner_e}"
 
+    def _worker_click(target_page, target_ref):
+        stored = _get_stored_ref(target_ref)
+        ident_js = _json.dumps(stored or {})
+        click_js = f"""
+        (() => {{
+            const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],details,summary';
+            const stored = {ident_js};
+            let target = null;
+
+            // 1순위: 스냅샷 시점 식별자(id/name/href/텍스트)로 정확히 찾기
+            if (stored && (stored.id || stored.name || stored.href || stored.text)) {{
+                const els = Array.from(document.querySelectorAll(interactive));
+                target = els.find(el => {{
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 && rect.height === 0) return false;
+                    if (stored.id && el.id === stored.id) return true;
+                    if (stored.name && el.getAttribute('name') === stored.name) return true;
+                    if (stored.href && el.href && el.href === stored.href) return true;
+                    if (stored.text && !stored.href &&
+                        (el.getAttribute('aria-label') || el.textContent || '').trim().substring(0, 120) === stored.text) return true;
+                    return false;
+                }}) || null;
+            }}
+
+            // 2순위(폴백): 기존 방식 — 실행 시점 위치 재계산
+            if (!target) {{
+                const els = document.querySelectorAll(interactive);
+                const filtered = [];
+                els.forEach((el) => {{
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 && rect.height === 0) return;
+                    filtered.push({{el, ref: 'e' + filtered.length}});
+                }});
+                target = (filtered.find(f => f.ref === '{target_ref}') || {{}}).el || null;
+            }}
+
+            if (target) {{
+                target.scrollIntoView({{block: 'center'}});
+                target.click();
+                return {{clicked: true, ref: '{target_ref}', tag: target.tagName.toLowerCase(), by: 'stored-or-positional'}};
+            }}
+            return {{clicked: false, ref: '{target_ref}', error: 'Element not found'}};
+        }})()
+        """
+        res = target_page.evaluate(click_js)
+        target_page.wait_for_timeout(300)
+        return res
+
+    def _worker_type(target_page, target_ref, target_text):
+        stored = _get_stored_ref(target_ref)
+        ident_js = _json.dumps(stored or {})
+        type_js = f"""
+        (() => {{
+            const interactive = 'input,textarea,[contenteditable="true"],[role="textbox"]';
+            let target = null;
+            const stored = {ident_js};
+
+            if (stored && (stored.id || stored.name || stored.placeholder)) {{
+                const els = Array.from(document.querySelectorAll(interactive));
+                target = els.find(el => {{
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 && rect.height === 0) return false;
+                    if (stored.id && el.id === stored.id) return true;
+                    if (stored.name && el.getAttribute('name') === stored.name) return true;
+                    if (stored.placeholder && el.placeholder === stored.placeholder) return true;
+                    return false;
+                }}) || null;
+            }}
+
+            if (!target) {{
+                const els = document.querySelectorAll(interactive);
+                const filtered = [];
+                els.forEach((el) => {{
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 && rect.height === 0) return;
+                    filtered.push({{el, ref: 'e' + filtered.length}});
+                }});
+                target = (filtered.find(f => f.ref === '{target_ref}') || {{}}).el || null;
+            }}
+
+            if (target) {{
+                target.scrollIntoView({{block: 'center'}});
+                target.focus();
+                target.value = {_json.dumps(target_text)};
+                target.dispatchEvent(new Event('input', {{bubbles: true}}));
+                target.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return {{typed: true, ref: '{target_ref}', by: 'stored-or-positional'}};
+            }}
+            // Fallback: type into focused element
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {{
+                active.value = {_json.dumps(target_text)};
+                active.dispatchEvent(new Event('input', {{bubbles: true}}));
+                return {{typed: true, ref: 'active', tag: active.tagName.toLowerCase()}};
+            }}
+            return {{typed: false, ref: '{target_ref}', error: 'No editable element found'}};
+        }})()
+        """
+        res = target_page.evaluate(type_js)
+        target_page.wait_for_timeout(200)
+        return res
+
     # ── Main dispatch loop ──
     _logger.info("Browser worker thread started")
     while True:
@@ -527,29 +759,8 @@ def _browser_worker_loop():
                         except Exception:
                             pass
 
-                        # Get interactive elements via JS for refs
-                        elements_js = """
-                        (() => {
-                            const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],details,summary';
-                            const els = document.querySelectorAll(interactive);
-                            const results = [];
-                            els.forEach((el, i) => {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width === 0 && rect.height === 0) return;
-                                const label = el.getAttribute('aria-label') || el.textContent?.trim()?.substring(0, 100) || '';
-                                results.push({
-                                    ref: 'e' + i,
-                                    tag: el.tagName.toLowerCase(),
-                                    text: label,
-                                    href: el.href || null,
-                                    type: el.type || null,
-                                    placeholder: el.placeholder || null,
-                                });
-                            });
-                            return results;
-                        })()
-                        """
-                        elements = page.evaluate(elements_js)
+                        # Get interactive elements via Browser-Use style visibility filter
+                        elements = page.evaluate(_EXTRACT_INTERACTIVE_JS) or []
                         # Build refs dict (agent-browser compatible format)
                         refs = {}
                         for el in elements:
@@ -582,58 +793,15 @@ def _browser_worker_loop():
                             "snapshot_error": str(snap_err),
                         })
 
+
+
             elif action == "click":
                 ref = task.get("ref", "")
                 page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
-                    # 스냅샷 시점 식별자를 우선 사용하고, 실패 시 위치 재계산으로 폴백.
-                    stored = _get_stored_ref(ref)
-                    ident_js = _json.dumps(stored or {})
-                    click_js = f"""
-                    (() => {{
-                        const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],details,summary';
-                        const stored = {ident_js};
-                        let target = null;
-
-                        // 1순위: 스냅샷 시점 식별자(id/name/href/텍스트)로 정확히 찾기
-                        if (stored && (stored.id || stored.name || stored.href || stored.text)) {{
-                            const els = Array.from(document.querySelectorAll(interactive));
-                            target = els.find(el => {{
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width === 0 && rect.height === 0) return false;
-                                if (stored.id && el.id === stored.id) return true;
-                                if (stored.name && el.getAttribute('name') === stored.name) return true;
-                                if (stored.href && el.href && el.href === stored.href) return true;
-                                if (stored.text && !stored.href &&
-                                    (el.getAttribute('aria-label') || el.textContent || '').trim().substring(0, 120) === stored.text) return true;
-                                return false;
-                            }}) || null;
-                        }}
-
-                        // 2순위(폴백): 기존 방식 — 실행 시점 위치 재계산
-                        if (!target) {{
-                            const els = document.querySelectorAll(interactive);
-                            const filtered = [];
-                            els.forEach((el) => {{
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width === 0 && rect.height === 0) return;
-                                filtered.push({{el, ref: 'e' + filtered.length}});
-                            }});
-                            target = (filtered.find(f => f.ref === '{ref}') || {{}}).el || null;
-                        }}
-
-                        if (target) {{
-                            target.scrollIntoView({{block: 'center'}});
-                            target.click();
-                            return {{clicked: true, ref: '{ref}', tag: target.tagName.toLowerCase(), by: 'stored-or-positional'}};
-                        }}
-                        return {{clicked: false, ref: '{ref}', error: 'Element not found'}};
-                    }})()
-                    """
-                    result = page.evaluate(click_js)
-                    page.wait_for_timeout(500)  # Wait for any navigation/update
+                    result = _worker_click(page, ref)
                     _last_url = page.url
                     _browser_result_queue.put({
                         "_result_id": result_id,
@@ -649,57 +817,8 @@ def _browser_worker_loop():
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
-                    # 스냅샷 시점 식별자 우선 → 위치 재계산 폴백 → 포커스 폴백
-                    stored = _get_stored_ref(ref)
-                    ident_js = _json.dumps(stored or {})
-                    type_js = f"""
-                    (() => {{
-                        const interactive = 'input,textarea,[contenteditable="true"],[role="textbox"]';
-                        let target = null;
-                        const stored = {ident_js};
-
-                        if (stored && (stored.id || stored.name || stored.placeholder)) {{
-                            const els = Array.from(document.querySelectorAll(interactive));
-                            target = els.find(el => {{
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width === 0 && rect.height === 0) return false;
-                                if (stored.id && el.id === stored.id) return true;
-                                if (stored.name && el.getAttribute('name') === stored.name) return true;
-                                if (stored.placeholder && el.placeholder === stored.placeholder) return true;
-                                return false;
-                            }}) || null;
-                        }}
-
-                        if (!target) {{
-                            const els = document.querySelectorAll(interactive);
-                            const filtered = [];
-                            els.forEach((el) => {{
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width === 0 && rect.height === 0) return;
-                                filtered.push({{el, ref: 'e' + filtered.length}});
-                            }});
-                            target = (filtered.find(f => f.ref === '{ref}') || {{}}).el || null;
-                        }}
-
-                        if (target) {{
-                            target.scrollIntoView({{block: 'center'}});
-                            target.focus();
-                            target.value = {_json.dumps(text)};
-                            target.dispatchEvent(new Event('input', {{bubbles: true}}));
-                            target.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            return {{typed: true, ref: '{ref}', by: 'stored-or-positional'}};
-                        }}
-                        // Fallback: type into focused element
-                        const active = document.activeElement;
-                        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {{
-                            active.value = {_json.dumps(text)};
-                            active.dispatchEvent(new Event('input', {{bubbles: true}}));
-                            return {{typed: true, ref: 'active', tag: active.tagName.toLowerCase()}};
-                        }}
-                        return {{typed: false, ref: '{ref}', error: 'No editable element found'}};
-                    }})()
-                    """
-                    result = page.evaluate(type_js)
+                    result = _worker_type(page, ref, text)
+                    _last_url = page.url
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
@@ -707,17 +826,83 @@ def _browser_worker_loop():
                     })
 
             elif action == "screenshot":
+                labeled = bool(task.get("labeled", False))
                 page, err = _ensure_browser()
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
-                    screenshot_bytes = page.screenshot(type="png", full_page=False)
-                    image_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+                    try:
+                        if labeled:
+                            # Browser-Use style Set-of-Marks visual overlay
+                            elements = page.evaluate(_EXTRACT_INTERACTIVE_JS) or []
+                            _store_refs(elements)
+                            page.evaluate(_SOM_INJECT_JS, elements)
+
+                        screenshot_bytes = page.screenshot(type="png", full_page=False)
+                        image_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+                        _browser_result_queue.put({
+                            "_result_id": result_id,
+                            "status": "ok",
+                            "url": page.url,
+                            "image_base64": image_b64,
+                            "labeled": labeled,
+                        })
+                    finally:
+                        if labeled:
+                            try:
+                                page.evaluate(_SOM_CLEANUP_JS)
+                            except Exception:
+                                pass
+
+            elif action == "batch":
+                sub_actions = task.get("actions", [])
+                page, err = _ensure_browser()
+                if err:
+                    _browser_result_queue.put({"_result_id": result_id, "error": err})
+                else:
+                    batch_results = []
+                    all_ok = True
+                    for sub in sub_actions:
+                        act = (sub.get("action") or "").lower()
+                        if act == "click":
+                            r = _worker_click(page, sub.get("ref", ""))
+                            batch_results.append({"action": "click", "result": r})
+                            if not r.get("clicked"):
+                                all_ok = False
+                                break
+                        elif act in ("type", "fill"):
+                            r = _worker_type(page, sub.get("ref", ""), sub.get("text", ""))
+                            batch_results.append({"action": act, "result": r})
+                            if not r.get("typed"):
+                                all_ok = False
+                                break
+                        elif act == "wait":
+                            ms = min(max(int(sub.get("ms", 500)), 50), 10000)
+                            page.wait_for_timeout(ms)
+                            batch_results.append({"action": "wait", "ms": ms, "status": "ok"})
+                        elif act == "press":
+                            key = sub.get("key", "Enter")
+                            page.keyboard.press(key)
+                            page.wait_for_timeout(200)
+                            batch_results.append({"action": "press", "key": key, "status": "ok"})
+                        elif act == "scroll":
+                            direction = sub.get("direction", "down")
+                            px = int(sub.get("pixels", 500))
+                            dy = px if direction == "down" else -px
+                            page.evaluate(f"window.scrollBy({{top: {dy}, behavior: 'smooth'}})")
+                            page.wait_for_timeout(300)
+                            batch_results.append({"action": "scroll", "direction": direction, "pixels": px, "status": "ok"})
+                        else:
+                            batch_results.append({"action": act, "error": f"Unsupported batch action: {act}"})
+                            all_ok = False
+                            break
+
+                    _last_url = page.url
                     _browser_result_queue.put({
                         "_result_id": result_id,
-                        "status": "ok",
+                        "status": "ok" if all_ok else "partial",
                         "url": page.url,
-                        "image_base64": image_b64,
+                        "results": batch_results,
                     })
 
             elif action == "execute":
@@ -778,41 +963,15 @@ def _browser_worker_loop():
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
-                    # Get interactive elements for AI recommendations
-                    rec_js = """
-                    (() => {
-                        const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],details,summary';
-                        const els = document.querySelectorAll(interactive);
-                        const results = [];
-                        els.forEach((el, i) => {
-                            const rect = el.getBoundingClientRect();
-                            if (rect.width === 0 && rect.height === 0) return;
-                            const label = el.getAttribute('aria-label') || el.textContent?.trim()?.substring(0, 150) || '';
-                            results.push({
-                                ref: 'e' + i,
-                                tag: el.tagName.toLowerCase(),
-                                text: label,
-                                href: el.href || null,
-                                type: el.type || null,
-                                placeholder: el.placeholder || null,
-                                id: el.id || null,
-                                name: el.getAttribute('name') || null,
-                                className: el.className || null,
-                            });
-                        });
-                        return {url: window.location.href, title: document.title, elements: results};
-                    })()
-                    """
-                    data = page.evaluate(rec_js)
-                    # recommend 결과의 refs도 저장소에 반영 — 이후 click/type/fill이
-                    # 식별자 매칭으로 정확한 요소를 찾도록 한다.
-                    _store_refs(data.get("elements", []))
+                    # Get interactive elements via Browser-Use style visibility filter
+                    elements = page.evaluate(_EXTRACT_INTERACTIVE_JS) or []
+                    _store_refs(elements)
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "ok",
                         "url": page.url,
                         "title": page.title(),
-                        "recommendations": data.get("elements", []),
+                        "recommendations": elements,
                     })
 
             elif action == "scroll":
@@ -1324,13 +1483,30 @@ def handle_post_browser_type(handler, body: dict):
 
 
 def handle_post_browser_screenshot(handler, body: dict):
-    """POST /api/browser/screenshot — capture a screenshot (base64 PNG)."""
-    result = _submit_task("screenshot")
+    """POST /api/browser/screenshot — capture a screenshot (base64 PNG). Supports labeled=True for Set-of-Marks."""
+    labeled = bool((body or {}).get("labeled", False))
+    result = _submit_task("screenshot", labeled=labeled)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
         "url": result.get("url", ""),
         "image_base64": result.get("image_base64", ""),
+        "labeled": result.get("labeled", False),
+    })
+
+
+def handle_post_browser_batch(handler, body: dict):
+    """POST /api/browser/batch — execute a sequence of browser actions sequentially."""
+    actions = (body or {}).get("actions", [])
+    if not isinstance(actions, list) or not actions:
+        return j_err(handler, "Missing or invalid 'actions' list")
+    result = _submit_task("batch", actions=actions)
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "status": result.get("status", "ok"),
+        "url": result.get("url", ""),
+        "results": result.get("results", []),
     })
 
 
