@@ -1226,20 +1226,24 @@ app.whenReady().then(async () => {
     mainWindow.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return;
       const now = Date.now();
+      const isF5 = input.key === 'F5' || input.code === 'F5';
+      const isReload = input.control && (input.key.toLowerCase() === 'r' || input.code === 'KeyR');
+      const isDevTools = input.key === 'F12' || input.code === 'F12' || (input.control && input.shift && (input.key.toLowerCase() === 'i' || input.code === 'KeyI'));
 
-      if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) {
+      if (isF5 || isReload) {
         if (now - _lastF5Time > DEBOUNCE_MS) {
           _lastF5Time = now;
-          // F5 reload 직후 서버가 일시 과부하로 /health에 늦게 응답해도
-          // watchdog이 오탐하지 않도록 90초 보류 구간 설정 (MAX_RESTARTS=3, 30s 간격)
           watchdogSuppressUntil = Date.now() + 3 * WATCHDOG_INTERVAL;
-          mainWindow.webContents.reload();
+          try {
+            mainWindow.webContents.reloadIgnoringCache();
+          } catch (_) {
+            try { mainWindow.webContents.reload(); } catch (__) { }
+          }
         }
         event.preventDefault();
-      } else if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+      } else if (isDevTools) {
         if (now - _lastF12Time > DEBOUNCE_MS) {
           _lastF12Time = now;
-          // Use 'detach' mode to avoid CDP port 9222 lock contention
           mainWindow.webContents.openDevTools({ mode: 'detach' });
         }
         event.preventDefault();

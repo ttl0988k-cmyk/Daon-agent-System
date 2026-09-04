@@ -194,14 +194,20 @@ async function browserGoToAddress() {
 
   if (window.electronAPI) {
     console.log('[BrowserAI] Electron 모드: IPC navigate 호출');
-    // Electron mode: navigate via IPC (WebContentsView shared with AI)
     if (frame) frame.style.display = 'none';
     if (placeholder) placeholder.style.display = 'none';
-    window.electronAPI.navigate(_activeTabId, url);
-    // bounds sync after a short delay to let WebContentsView initialize
-    setTimeout(function () {
-      syncElectronBrowserBounds();
-    }, 150);
+
+    // Ensure we have a valid active tab ID
+    if (!_activeTabId || !_browserTabs.some(function (t) { return t.id === _activeTabId; })) {
+      var newTabId = 'tab' + Date.now();
+      window.electronAPI.newTab(newTabId, url);
+      _activeTabId = newTabId;
+    } else {
+      window.electronAPI.navigate(_activeTabId, url);
+    }
+
+    // Switch to focus mode to display the website in center
+    setBrowserMode('focus', _activeTabId);
 
     // Sync URL to backend only — AI shares the same CDP-connected WebContentsView page.
     // Playwright connects via CDP and sees the same page the user sees.
@@ -830,16 +836,18 @@ function _escTab(s) {
     .replace(/'/g, '\x26#39;');
 }
 
-function browserNewTab() {
+function browserNewTab(initialUrl) {
   if (!window.electronAPI) return;
   var id = 'tab' + Date.now();
-  window.electronAPI.newTab(id, 'about:blank');
+  var url = initialUrl || 'about:blank';
+  window.electronAPI.newTab(id, url);
   _activeTabId = id;
-  // If in grid mode, refresh grid shortly
+
   if (_browserMode === 'grid') {
-    setTimeout(fetchBrowserGrid, 400);
+    window.electronAPI.setVisibility(false);
+    setTimeout(fetchBrowserGrid, 300);
   } else {
-    syncElectronBrowserBounds();
+    setBrowserMode('focus', id);
   }
 }
 
@@ -863,6 +871,12 @@ function browserSwitchTab(id) {
       break;
     }
   }
+
+  if (_browserMode === 'focus') {
+    syncElectronBrowserBounds();
+  } else {
+    window.electronAPI.setVisibility(false);
+  }
 }
 
 function browserCloseTab(id) {
@@ -873,8 +887,21 @@ function browserCloseTab(id) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tab_id: id })
   }).catch(function() { /* ignore */ });
+
+  _browserTabs = _browserTabs.filter(function (t) { return t.id !== id; });
+  if (_activeTabId === id) {
+    _activeTabId = _browserTabs.length > 0 ? _browserTabs[0].id : null;
+  }
+
   if (_browserMode === 'grid') {
+    window.electronAPI.setVisibility(false);
     setTimeout(fetchBrowserGrid, 300);
+  } else {
+    if (_activeTabId) {
+      browserSwitchTab(_activeTabId);
+    } else {
+      setBrowserMode('grid');
+    }
   }
 }
 
@@ -898,12 +925,27 @@ function renderBrowserTabs() {
 if (window.electronAPI && window.electronAPI.onTabsUpdated) {
   window.electronAPI.onTabsUpdated(function (tabs) {
     _browserTabs = tabs || [];
+    var foundActive = false;
     for (var i = 0; i < _browserTabs.length; i++) {
-      if (_browserTabs[i].active) { _activeTabId = _browserTabs[i].id; break; }
+      if (_browserTabs[i].active) {
+        _activeTabId = _browserTabs[i].id;
+        foundActive = true;
+        break;
+      }
     }
+    if (!foundActive && _browserTabs.length > 0) {
+      _activeTabId = _browserTabs[0].id;
+    } else if (_browserTabs.length === 0) {
+      _activeTabId = null;
+    }
+
     renderBrowserTabs();
+
     if (_browserMode === 'grid') {
+      window.electronAPI.setVisibility(false);
       fetchBrowserGrid();
+    } else if (_browserMode === 'focus') {
+      syncElectronBrowserBounds();
     }
   });
 }
