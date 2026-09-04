@@ -857,15 +857,48 @@ function browserNewTab(initialUrl) {
   if (!window.electronAPI) return;
   var id = 'tab' + Date.now();
   var url = initialUrl || 'about:blank';
-  window.electronAPI.newTab(id, url);
-  _activeTabId = id;
 
-  if (_browserMode === 'grid') {
-    window.electronAPI.setVisibility(false);
-    setTimeout(fetchBrowserGrid, 300);
-  } else {
-    setBrowserMode('focus', id);
+  // Optimistically update local tab list and render tab bar instantly
+  var newTabObj = {
+    id: id,
+    title: (url === 'about:blank') ? '새 탭' : url,
+    url: url,
+    active: true,
+    thumbnail: ''
+  };
+  for (var ti = 0; ti < _browserTabs.length; ti++) {
+    _browserTabs[ti].active = false;
   }
+  _browserTabs.push(newTabObj);
+  _activeTabId = id;
+  renderBrowserTabs();
+
+  // Ensure browser view wrap is visible
+  if (!_browserViewVisible) {
+    var browserWrap = document.getElementById('browserViewWrap');
+    if (browserWrap) browserWrap.style.display = 'flex';
+    var monacoContainer = document.getElementById('monacoContainer');
+    var welcomeCanvas = document.getElementById('welcomeCanvas');
+    if (monacoContainer) monacoContainer.style.display = 'none';
+    if (welcomeCanvas) welcomeCanvas.style.display = 'none';
+    _browserViewVisible = true;
+    var toggleBtn = document.getElementById('toggleBrowserBtn');
+    if (toggleBtn) toggleBtn.classList.add('active');
+  }
+
+  window.electronAPI.newTab(id, url);
+
+  // Always switch to focus mode so user can immediately type a URL in the address bar
+  setBrowserMode('focus', id, { skipUrlInputUpdate: true });
+
+  // Auto-focus the URL input box
+  setTimeout(function () {
+    var input = document.getElementById('browserCanvasUrlInput');
+    if (input) {
+      input.value = (url === 'about:blank') ? '' : url;
+      input.focus();
+    }
+  }, 150);
 }
 
 function browserSwitchTab(id, options) {
