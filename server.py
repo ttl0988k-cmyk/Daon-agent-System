@@ -235,6 +235,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             # ── Browser Automation API (GET) — direct dispatch ──
+            if path in ('/api/browser/grid', '/api/browser/sessions'):
+                try:
+                    from api.routes.browser_routes import handle_get_browser_grid
+                    if handle_get_browser_grid(self, parsed):
+                        return
+                except Exception:
+                    traceback.print_exc()
+                    self.send_error_json("Browser grid error", 500)
+                    return
+
             if path == '/api/browser/status':
                 try:
                     from api.routes.browser_routes import handle_get_browser_status
@@ -530,6 +540,9 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/browser/tabs': 'handle_post_browser_tabs',
                 '/api/browser/switch_tab': 'handle_post_browser_switch_tab',
                 '/api/browser/batch': 'handle_post_browser_batch',
+                '/api/browser/focus': 'handle_post_browser_focus',
+                '/api/browser/close_tab': 'handle_post_browser_close_tab',
+                '/api/browser/sync_url': 'handle_post_browser_sync_url',
             }
             if path in browser_post_routes:
                 try:
@@ -546,6 +559,9 @@ class Handler(BaseHTTPRequestHandler):
                         handle_post_browser_tabs,
                         handle_post_browser_switch_tab,
                         handle_post_browser_batch,
+                        handle_post_browser_focus,
+                        handle_post_browser_close_tab,
+                        handle_post_browser_sync_url,
                     )
                     func_name = browser_post_routes[path]
                     func = locals()[func_name]

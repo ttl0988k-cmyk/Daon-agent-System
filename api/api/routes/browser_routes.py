@@ -350,29 +350,111 @@ def _browser_worker_loop():
         except Exception:
             return False
 
-    def _ensure_browser():
-        """Connect to Electron's WebContentsView via CDP.
+    # ── Session & Tab Page Mapping ──
+    _session_pages = {}  # session_id -> Page
+    _tab_pages = {}      # tab_id -> Page
 
-        (8월 3일 정상 빌드 복원) 앱 시작 시 CDP 9222가 항상 ON이므로 연결만 하면
-        된다. 사용자가 본 내부 WebContentsView(기본 세션) 페이지를 그대로 공유·
-        제어한다 — new_page()는 절대 호출하지 않는다(Electron에서 새 BrowserWindow
-        를 만들어 화면을 가로채므로). 브라우저 패널을 열지 않았으면 "탭 없음"으로
-        응답하고, frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
+    def _get_valid_pages():
+        """Return all valid (non-UI, non-DevTools) pages from browser contexts."""
+        if browser is None:
+            return []
+        pages = []
+        try:
+            for ctx in browser.contexts:
+                for p in ctx.pages:
+                    try:
+                        if p.is_closed():
+                            continue
+                        u = (p.url or "").strip()
+                        if u.startswith("http://127.0.0.1") or u.startswith("devtools://") or u.startswith("chrome://") or u.startswith("devtools:"):
+                            continue
+                        pages.append(p)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return pages
+
+    def _clean_stale_pages():
+        """Remove closed or invalid pages from mapping dictionaries."""
+        dead_sessions = [sid for sid, p in _session_pages.items() if not p or p.is_closed()]
+        for sid in dead_sessions:
+            _session_pages.pop(sid, None)
+        dead_tabs = [tid for tid, p in _tab_pages.items() if not p or p.is_closed()]
+        for tid in dead_tabs:
+            _tab_pages.pop(tid, None)
+
+    def _ensure_browser(session_id: str = None, tab_id: str = None):
+        """Connect to Electron's WebContentsView via CDP and return the appropriate Page.
+
+        Supports multi-session isolation: if session_id is provided, routes to that
+        session's designated page. Background agents running in separate sessions
+        control separate tabs simultaneously without interference.
         """
         nonlocal browser, browser_page, pw
         global _last_cdp_attempt, _cdp_fail_streak
-        if browser is not None:
+
+        _clean_stale_pages()
+
+        # Check if requested session already has a live page
+        if session_id and session_id in _session_pages:
+            p = _session_pages[session_id]
             try:
-                browser_page.title()
-                return browser_page, None
+                if not p.is_closed():
+                    p.title()
+                    return p, None
             except Exception:
+                _session_pages.pop(session_id, None)
+
+        # Check if requested tab already has a live page
+        if tab_id and tab_id in _tab_pages:
+            p = _tab_pages[tab_id]
+            try:
+                if not p.is_closed():
+                    p.title()
+                    return p, None
+            except Exception:
+                _tab_pages.pop(tab_id, None)
+
+        # Check existing connection
+        if browser is not None:
+            valid_pages = _get_valid_pages()
+            if valid_pages:
+                chosen = None
+                if session_id:
+                    # Find a page not yet assigned to another session
+                    assigned_pages = set(_session_pages.values())
+                    for p in valid_pages:
+                        if p not in assigned_pages:
+                            chosen = p
+                            break
+                    if not chosen:
+                        chosen = valid_pages[-1]  # fallback: use last page
+                    _session_pages[session_id] = chosen
+                elif tab_id:
+                    assigned_tabs = set(_tab_pages.values())
+                    for p in valid_pages:
+                        if p not in assigned_tabs:
+                            chosen = p
+                            break
+                    if not chosen:
+                        chosen = valid_pages[0]
+                    _tab_pages[tab_id] = chosen
+                else:
+                    if browser_page and not browser_page.is_closed() and browser_page in valid_pages:
+                        chosen = browser_page
+                    else:
+                        # Pick first page with real URL, else fallback
+                        real = [p for p in valid_pages if (p.url or "").strip() not in ("about:blank", "")]
+                        chosen = real[0] if real else valid_pages[0]
+                    browser_page = chosen
+
+                return chosen, None
+            else:
                 browser = None
                 browser_page = None
 
-        # CDP 재연결 백오프: 최근 실패 후 쿨다운 동안에는 연결 시도를 건너뛰고
-        # 즉시 "준비 안 됨"으로 응답한다. 그래야 /api/browser/status 폴링이
-        # 반복적인 connect_over_cdp 실패(asyncio socket.send 예외)로 서버를
-        # 압박하지 않는다.
+        # CDP retry cooldown
         now = time.time()
         if now - _last_cdp_attempt < _CDP_RETRY_COOLDOWN:
             return None, "Electron CDP not ready yet (cooldown). 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
@@ -389,70 +471,31 @@ def _browser_worker_loop():
                 return None, f"Failed to start Playwright: {str(e)}"
 
         try:
-            # Connect to DAON 전용 Chrome / 내부 WebContentsView remote debugging port
-            # 127.0.0.1 명시: Windows가 localhost를 IPv6(::1)로 우선 해석해 CDP
-            # 리스너(IPv4)와 불일치하면 ECONNREFUSED ::1:9222 로 연결이 실패한다.
-            # 사전 점검: 엔드포인트가 무응답이면 connect 자체를 건너뛰고 실패 처리로
-            # 우회한다(드라이버 비정상 시 hang 방지).
             if not _cdp_endpoint_ready():
                 raise ConnectionError("CDP endpoint 127.0.0.1:9222 not reachable (pre-check)")
             _logger.info("Attempting CDP connection to DAON browser at 127.0.0.1:9222")
-            # timeout 필수: 없으면 드라이버 비정상 시 _sync()가 GIL을 쥔 채 무한
-            # spin한다(py-spy로 확인). 타임아웃이 있으면 드라이버가 10초 후 예외 반환.
             browser = pw.chromium.connect_over_cdp("http://127.0.0.1:9222", timeout=_CDP_CONNECT_TIMEOUT_MS)
-            _cdp_fail_streak = 0  # 연결 성공 → 연속 실패 카운트 리셋
+            _cdp_fail_streak = 0
 
-            # Find a usable browser page.
-            # DAON 내부 공유 브라우저(WebContentsView, 파티션 persist:daon-shared-browser)
-            # 는 브라우저 패널이 열리면 실제 URL(예: https://www.google.com)로 CDP 타겟이
-            # 노출된다. Electron CDP에는 여러 context(파티션)가 있을 수 있으므로 모든
-            # context 를 순회하며, 메인 UI(http://127.0.0.1:xxxx)와 about:blank(기본 빈
-            # 페이지)는 건너뛰고 실제 URL을 가진 페이지를 우선 선택한다.
-            # IMPORTANT (구버전 Electron BrowserView): NEVER call new_page() —
-            # it spawned a new BrowserWindow taking over the screen.
-            # 현재는 DAON 전용 Chrome.exe(CDP 9222) 방식이면 new_page()가 Chrome의
-            # 실제 새 탭을 만들어 같은 프로필/세션을 공유한다. 단, Electron 모드
-            # (BROWSER_CDP_URL 설정, 내부 WebContentsView)에서는 new_page()가 새
-            # BrowserWindow를 만들어 화면을 가로채므로 절대 호출하지 않는다 — 이때는
-            # frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
-            contexts = browser.contexts
-            target_page = None
-            fallback_page = None  # 실 URL이 없어도 쓸 수 있는 마지막 비-UI 페이지
-            for ctx in contexts:
-                for p in ctx.pages:
-                    url = (p.url or "").strip()
-                    _logger.debug("CDP page: %s", url)
-                    if url.startswith("http://127.0.0.1"):
-                        continue  # skip main UI
-                    if url.startswith("devtools://") or url.startswith("chrome://") or url.startswith("devtools:"):
-                        # Electron/Chromium 내부 DevTools 페이지는 절대 공유 페이지로
-                        # 선택하지 않는다(F12로 연 devtools:// 타깃이 target_page 로
-                        # 잡히면 에이전트가 DevTools 화면을 제어하는 오동작 발생).
-                        _logger.debug("Skipping internal DevTools page: %s", url)
-                        continue
-                    if url == "about:blank" or url == "":
-                        fallback_page = fallback_page or p
-                        continue  # remember but don't stop — keep looking for a real URL
-                    target_page = p
-                    break
-                if target_page:
-                    break
-
-            if target_page:
-                browser_page = target_page
-                _last_cdp_attempt = time.time()  # 연결 성공 → 백오프 기준 리셋
-                _logger.info("Connected to existing browser tab: %s", browser_page.url)
-            elif fallback_page:
-                browser_page = fallback_page
-                _last_cdp_attempt = time.time()
-                _logger.info("Using fallback CDP page (about:blank): %s", browser_page.url)
-            else:
-                # Electron 모드(내부 WebContentsView): new_page()는 새 BrowserWindow를
-                # 만들어 화면을 가로채므로 절대 금지(8월 3일 방식).
-                # frontend가 pending_url 로 내부 패널을 자동 생성하도록 안내한다.
+            valid_pages = _get_valid_pages()
+            if not valid_pages:
                 return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
 
-            return browser_page, None
+            chosen = None
+            if session_id:
+                _session_pages[session_id] = valid_pages[-1]
+                chosen = valid_pages[-1]
+            elif tab_id:
+                _tab_pages[tab_id] = valid_pages[0]
+                chosen = valid_pages[0]
+            else:
+                real = [p for p in valid_pages if (p.url or "").strip() not in ("about:blank", "")]
+                chosen = real[0] if real else valid_pages[0]
+                browser_page = chosen
+
+            _last_cdp_attempt = time.time()
+            _logger.info("Connected to browser tab (total: %d): %s", len(valid_pages), chosen.url)
+            return chosen, None
         except Exception as e:
             _logger.warning("Electron CDP connection failed: %s", str(e))
             # CDP 연결 실패 시각 기록 → 다음 _CDP_RETRY_COOLDOWN 초간 재시도 방지
@@ -625,6 +668,8 @@ def _browser_worker_loop():
 
         action = task.get("action", "")
         result_id = task.get("_result_id", -1)
+        req_sid = task.get("session_id")
+        req_tid = task.get("tab_id")
 
         # 만료된 status 태스크: 요청자가 이미 타임아웃으로 포기하고 떠났으므로
         # 실행을 건너뛴다. (워커가 일시 정체됐다가 복구된 후, 쌓인 status 폴링을
@@ -636,7 +681,7 @@ def _browser_worker_loop():
         _worker_task_start_ts = time.time()
         try:
             if action == "status":
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err, "status": "disconnected"})
                 else:
@@ -668,7 +713,7 @@ def _browser_worker_loop():
                 # 자동으로 앞으로 가져온다. (이전엔 탭 없음 분기에서만 설정되어, 이미 뷰가 존재하지만
                 # 숨겨진 경우 폴링이 토글을 잡지 못하는 race가 있었다.)
                 _set_pending(url)
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     # In Electron mode, no browser tab yet — signal frontend to auto-open.
                     # 백엔드 블로킹 제거: 이전엔 10초 대기 루프(20×0.5s)가 _CDP_RETRY_COOLDOWN(5s)과
@@ -704,7 +749,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "snapshot":
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -797,7 +842,7 @@ def _browser_worker_loop():
 
             elif action == "click":
                 ref = task.get("ref", "")
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -813,7 +858,7 @@ def _browser_worker_loop():
             elif action == "type":
                 ref = task.get("ref", "")
                 text = task.get("text", "")
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -827,7 +872,7 @@ def _browser_worker_loop():
 
             elif action == "screenshot":
                 labeled = bool(task.get("labeled", False))
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -856,7 +901,7 @@ def _browser_worker_loop():
 
             elif action == "batch":
                 sub_actions = task.get("actions", [])
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -907,7 +952,7 @@ def _browser_worker_loop():
 
             elif action == "execute":
                 expression = task.get("expression", "")
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1107,7 +1152,7 @@ def _browser_worker_loop():
 
             elif action == "press":
                 key = task.get("key", "")
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1121,7 +1166,7 @@ def _browser_worker_loop():
             elif action == "fill":
                 ref = task.get("ref", "")
                 text = task.get("text", "")
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1183,7 +1228,7 @@ def _browser_worker_loop():
                 url = task.get("url", "about:blank")
                 # TTL pending: navigate와 동일하게 탭 유무와 무관하게 항상 설정
                 _set_pending(url)
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     # navigate와 동일: 10초 블로킹 루프 제거, 즉시 pending 응답.
                     # pending_url은 TTL 동안 유지되고 프론트 5초 폴링이 뷰를 자동 생성/이동한다.
@@ -1213,7 +1258,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "get_images":
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1236,7 +1281,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "console":
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1247,7 +1292,7 @@ def _browser_worker_loop():
                     })
 
             elif action == "errors":
-                page, err = _ensure_browser()
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
                     _browser_result_queue.put({"_result_id": result_id, "error": err})
                 else:
@@ -1262,6 +1307,113 @@ def _browser_worker_loop():
                     "_result_id": result_id,
                     "status": "ok",
                 })
+
+            elif action in ("grid", "sessions"):
+                _ensure_browser()
+                valid_pages = _get_valid_pages()
+                tab_list = []
+                for idx, p in enumerate(valid_pages):
+                    try:
+                        p_url = (p.url or "").strip()
+                        p_title = ""
+                        try:
+                            p_title = p.title() or p_url or f"Tab {idx+1}"
+                        except Exception:
+                            p_title = p_url or f"Tab {idx+1}"
+                        matching_sid = ""
+                        for sid, sp in _session_pages.items():
+                            if sp == p:
+                                matching_sid = sid
+                                break
+                        thumb_b64 = ""
+                        try:
+                            thumb_bytes = p.screenshot(type="jpeg", quality=40)
+                            thumb_b64 = "data:image/jpeg;base64," + base64.b64encode(thumb_bytes).decode("utf-8")
+                        except Exception:
+                            pass
+                        tab_list.append({
+                            "id": f"tab{idx+1}",
+                            "index": idx,
+                            "session_id": matching_sid,
+                            "url": p_url,
+                            "title": p_title,
+                            "thumbnail": thumb_b64,
+                            "active": (p is browser_page),
+                        })
+                    except Exception as pe:
+                        _logger.debug("Error inspecting page %d: %s", idx, pe)
+                _browser_result_queue.put({
+                    "_result_id": result_id,
+                    "status": "ok",
+                    "tabs": tab_list,
+                    "count": len(tab_list),
+                })
+
+            elif action == "focus":
+                target_idx = task.get("index")
+                target_sid = task.get("session_id")
+                target_tid = task.get("tab_id")
+                target_url = (task.get("url") or "").strip()
+                _ensure_browser()
+                valid_pages = _get_valid_pages()
+                target_p = None
+                if target_sid and target_sid in _session_pages:
+                    target_p = _session_pages[target_sid]
+                elif target_idx is not None:
+                    try:
+                        idx_num = int(target_idx)
+                        if 0 <= idx_num < len(valid_pages):
+                            target_p = valid_pages[idx_num]
+                    except Exception:
+                        pass
+                elif target_url:
+                    for p in valid_pages:
+                        if (p.url or "").strip() == target_url:
+                            target_p = p
+                            break
+                if target_p and not target_p.is_closed():
+                    browser_page = target_p
+                    _last_url = target_p.url
+                    try:
+                        f_title = target_p.title()
+                    except Exception:
+                        f_title = ""
+                    _browser_result_queue.put({
+                        "_result_id": result_id,
+                        "status": "ok",
+                        "url": target_p.url,
+                        "title": f_title,
+                    })
+                else:
+                    _browser_result_queue.put({
+                        "_result_id": result_id,
+                        "error": "대상 탭을 찾을 수 없습니다.",
+                    })
+
+            elif action == "close_tab":
+                target_idx = task.get("index")
+                target_sid = task.get("session_id")
+                _ensure_browser()
+                valid_pages = _get_valid_pages()
+                target_p = None
+                if target_sid and target_sid in _session_pages:
+                    target_p = _session_pages.pop(target_sid, None)
+                elif target_idx is not None:
+                    try:
+                        idx_num = int(target_idx)
+                        if 0 <= idx_num < len(valid_pages):
+                            target_p = valid_pages[idx_num]
+                    except Exception:
+                        pass
+                if target_p:
+                    try:
+                        target_p.close()
+                    except Exception:
+                        pass
+                    _clean_stale_pages()
+                    _browser_result_queue.put({"_result_id": result_id, "status": "ok"})
+                else:
+                    _browser_result_queue.put({"_result_id": result_id, "error": "닫을 탭을 찾을 수 없습니다."})
 
             else:
                 _browser_result_queue.put({
@@ -1317,11 +1469,7 @@ def _start_browser_worker():
 
 
 def _submit_task(action: str, wait_timeout: float = 35.0, **kwargs) -> dict:
-    """Submit a task to the browser worker and wait for the result.
-
-    wait_timeout: 결과 대기 최대 초. status 폴링은 짧은 값을 전달해 워커가
-    정체됐을 때 서버 스레드가 35초씩 블로킹되지 않도록 한다.
-    """
+    """Submit a task to the browser worker and wait for the result."""
     _start_browser_worker()
 
     result_id = int(time.time() * 1000000)  # unique ID
@@ -1349,12 +1497,7 @@ def _submit_task(action: str, wait_timeout: float = 35.0, **kwargs) -> dict:
 # ── Route Handlers ──
 
 def handle_get_browser_status(handler, parsed):
-    """GET /api/browser/status — return current browser status.
-
-    적체 방지: 워커가 정체 중(현재 태스크가 _WORKER_STUCK_THRESHOLD 초과)이거나
-    이미 status 태스크가 대기 중이면 큐에 중복 투입하지 않고 캐시 상태를 즉시
-    반환한다. 프론트 5초 폴링이 큐에 쌓여 스레드당 35초씩 블로킹되는 것을 막는다.
-    """
+    """GET /api/browser/status — return current browser status."""
     global _pending_status_tasks
     now = time.time()
     worker_stuck = _worker_task_start_ts > 0 and (now - _worker_task_start_ts) > _WORKER_STUCK_THRESHOLD
@@ -1404,6 +1547,44 @@ def handle_get_browser_recommend(handler, parsed):
     })
 
 
+def handle_get_browser_grid(handler, parsed):
+    """GET /api/browser/grid (or /api/browser/sessions) — return all open tabs with thumbnails and session info."""
+    result = _submit_task("grid", wait_timeout=15.0)
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "tabs": result.get("tabs", []),
+        "count": result.get("count", 0),
+    })
+
+
+def handle_post_browser_focus(handler, body: dict):
+    """POST /api/browser/focus — focus a specific tab/session."""
+    body = body or {}
+    index = body.get("index")
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
+    url = (body.get("url") or "").strip()
+    result = _submit_task("focus", index=index, session_id=session_id, tab_id=tab_id, url=url)
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {
+        "url": result.get("url", ""),
+        "title": result.get("title", ""),
+    })
+
+
+def handle_post_browser_close_tab(handler, body: dict):
+    """POST /api/browser/close_tab — close a specific tab/session."""
+    body = body or {}
+    index = body.get("index")
+    session_id = body.get("session_id")
+    result = _submit_task("close_tab", index=index, session_id=session_id)
+    if "error" in result:
+        return j_err(handler, result["error"], status=500)
+    return j_ok(handler, {"status": "ok"})
+
+
 def handle_post_browser_sync_url(handler, body: dict):
     """POST /api/browser/sync_url — sync URL (Electron: IPC already navigated)."""
     url = (body or {}).get("url", "")
@@ -1418,18 +1599,19 @@ def handle_post_browser_sync_url(handler, body: dict):
 
 def handle_post_browser_navigate(handler, body: dict):
     """POST /api/browser/navigate — navigate browser to a URL."""
-    url = (body or {}).get("url", "")
+    body = body or {}
+    url = body.get("url", "")
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
     if not url:
         return j_err(handler, "Missing 'url' field")
-    result = _submit_task("navigate", url=url)
+    result = _submit_task("navigate", url=url, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     resp = {
         "url": result.get("url", ""),
         "title": result.get("title", ""),
     }
-    # 큰 iframe이 있으면 에이전트/사용자에게 힌트 — upsampler.co처럼 생성기가
-    # iframe으로 임베드된 사이트에서 iframe URL을 직접 열면 전체 화면으로 쓸 수 있다.
     iframes = result.get("iframes") or []
     if iframes:
         resp["iframes"] = iframes
@@ -1442,7 +1624,10 @@ def handle_post_browser_navigate(handler, body: dict):
 
 def handle_post_browser_snapshot(handler, body: dict):
     """POST /api/browser/snapshot — get accessibility snapshot + interactive elements."""
-    result = _submit_task("snapshot")
+    body = body or {}
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
+    result = _submit_task("snapshot", session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1456,10 +1641,13 @@ def handle_post_browser_snapshot(handler, body: dict):
 
 def handle_post_browser_click(handler, body: dict):
     """POST /api/browser/click — click an element by ref."""
-    ref = (body or {}).get("ref", "")
+    body = body or {}
+    ref = body.get("ref", "")
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
     if not ref:
         return j_err(handler, "Missing 'ref' field")
-    result = _submit_task("click", ref=ref)
+    result = _submit_task("click", ref=ref, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1470,11 +1658,14 @@ def handle_post_browser_click(handler, body: dict):
 
 def handle_post_browser_type(handler, body: dict):
     """POST /api/browser/type — type text into an element."""
-    ref = (body or {}).get("ref", "")
-    text = (body or {}).get("text", "")
+    body = body or {}
+    ref = body.get("ref", "")
+    text = body.get("text", "")
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
     if not ref:
         return j_err(handler, "Missing 'ref' field")
-    result = _submit_task("type", ref=ref, text=text)
+    result = _submit_task("type", ref=ref, text=text, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1484,8 +1675,11 @@ def handle_post_browser_type(handler, body: dict):
 
 def handle_post_browser_screenshot(handler, body: dict):
     """POST /api/browser/screenshot — capture a screenshot (base64 PNG). Supports labeled=True for Set-of-Marks."""
-    labeled = bool((body or {}).get("labeled", False))
-    result = _submit_task("screenshot", labeled=labeled)
+    body = body or {}
+    labeled = bool(body.get("labeled", False))
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
+    result = _submit_task("screenshot", labeled=labeled, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1497,10 +1691,13 @@ def handle_post_browser_screenshot(handler, body: dict):
 
 def handle_post_browser_batch(handler, body: dict):
     """POST /api/browser/batch — execute a sequence of browser actions sequentially."""
-    actions = (body or {}).get("actions", [])
+    body = body or {}
+    actions = body.get("actions", [])
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
     if not isinstance(actions, list) or not actions:
         return j_err(handler, "Missing or invalid 'actions' list")
-    result = _submit_task("batch", actions=actions)
+    result = _submit_task("batch", actions=actions, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1512,10 +1709,13 @@ def handle_post_browser_batch(handler, body: dict):
 
 def handle_post_browser_execute(handler, body: dict):
     """POST /api/browser/execute — execute arbitrary JavaScript in the page."""
-    expression = (body or {}).get("expression", "")
+    body = body or {}
+    expression = body.get("expression", "")
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
     if not expression:
         return j_err(handler, "Missing 'expression' field")
-    result = _submit_task("execute", expression=expression)
+    result = _submit_task("execute", expression=expression, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1533,7 +1733,10 @@ def handle_post_browser_close(handler, body: dict):
 
 def handle_post_browser_back(handler, body: dict):
     """POST /api/browser/back — go back in browser history."""
-    result = _submit_task("back")
+    body = body or {}
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
+    result = _submit_task("back", session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {
@@ -1543,7 +1746,10 @@ def handle_post_browser_back(handler, body: dict):
 
 def handle_post_browser_forward(handler, body: dict):
     """POST /api/browser/forward — go forward in browser history."""
-    result = _submit_task("forward")
+    body = body or {}
+    session_id = body.get("session_id")
+    tab_id = body.get("tab_id")
+    result = _submit_task("forward", session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {

@@ -7,6 +7,8 @@ var _browserCurrentUrl = '';
 var _browserViewVisible = false;
 var _browserHistory = [];       // {url, title} stack
 var _browserHistoryIdx = -1;    // current position in stack
+var _browserMode = 'grid';      // 'grid' (mini view overview) | 'focus' (full browser control)
+var _gridPollTimer = null;
 
 // ── Domain → Skill Mapping (Phase 2) ──
 var DOMAIN_SKILL_MAP = {
@@ -100,12 +102,10 @@ function toggleBrowserView() {
     // Show browser view
     if (browserWrap) browserWrap.style.display = 'flex';
     if (toggleBtn) toggleBtn.classList.add('active');
-    // Sync Electron browser bounds
-    syncElectronBrowserBounds();
-    // Re-attach the Electron WebContentsView (it may have been detached when hidden)
-    if (window.electronAPI) {
-      window.electronAPI.setVisibility(true);
-    }
+
+    // Switch to active browser mode (grid or focus)
+    setBrowserMode(_browserMode || 'grid');
+
     // Show default BrowserAI recommendations
     if (typeof onBrowserUrlChange === 'function') {
       onBrowserUrlChange(_browserCurrentUrl || '');
@@ -114,21 +114,20 @@ function toggleBrowserView() {
     // Hide browser view
     if (browserWrap) browserWrap.style.display = 'none';
     if (toggleBtn) toggleBtn.classList.remove('active');
+    if (_gridPollTimer) {
+      clearInterval(_gridPollTimer);
+      _gridPollTimer = null;
+    }
     // Restore monaco (default editor view)
     if (monacoContainer) monacoContainer.style.display = 'flex';
-    // 브라우저 뷰를 열 때 남긴 인라인 display:none 잔재를 반드시 회수한다.
-    // 인라인 스타일은 #htmlPreviewContainer.active 같은 CSS 규칙보다 우선하므로,
-    // 이걸 지우지 않으면 이후 미리보기 버튼을 눌러도 화면이 안 뜬다.
-    // 표시 여부는 각자의 원래 메커니즘(CSS 규칙 또는 togglePreview)에 맡긴다.
     if (htmlPreview) htmlPreview.style.display = '';
     if (imgPreview) imgPreview.style.display = '';
     if (mdPreview) mdPreview.style.display = '';
     if (welcomeCanvas) {
-      // Show welcome only if no file is open
       var activeFile = document.getElementById('activeFilePath');
       welcomeCanvas.style.display = (activeFile && activeFile.textContent !== '파일을 탐색기에서 선택하세요') ? 'none' : 'flex';
     }
-    // Hide Electron browser
+    // Hide Electron browser overlay
     if (window.electronAPI) {
       window.electronAPI.setVisibility(false);
     }
@@ -626,18 +625,22 @@ function _escBai(str) {
 // ═══════════════════════════════════════════
 // Electron IPC Bounds Sync
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// Electron IPC Bounds Sync
+// ═══════════════════════════════════════════
 function syncElectronBrowserBounds() {
   if (!window.electronAPI) {
-    console.log('[BrowserAI] syncElectronBrowserBounds: electronAPI 없음, 건너뜀');
     return;
   }
+  // Only show Electron WebContentsView when browser view is visible AND in focus mode
+  if (!_browserViewVisible || _browserMode !== 'focus') {
+    window.electronAPI.setVisibility(false);
+    return;
+  }
+
   var container = document.getElementById('browserFrameWrap');
-  console.log('[BrowserAI] syncElectronBrowserBounds: container=', !!container,
-    'offsetParent=', container ? (container.offsetParent !== null) : 'N/A',
-    'display=', container ? container.style.display : 'N/A');
   if (container && container.offsetParent !== null) {
     var rect = container.getBoundingClientRect();
-    console.log('[BrowserAI] bounds:', rect.x, rect.y, rect.width, rect.height);
     window.electronAPI.setBounds({
       x: Math.round(rect.x),
       y: Math.round(rect.y),
@@ -645,9 +648,7 @@ function syncElectronBrowserBounds() {
       height: Math.round(rect.height)
     });
     window.electronAPI.setVisibility(true);
-    console.log('[BrowserAI] setBounds + setVisibility(true) 호출됨');
   } else {
-    console.log('[BrowserAI] offsetParent null → setVisibility(false)');
     window.electronAPI.setVisibility(false);
   }
 }
@@ -669,10 +670,6 @@ setInterval(syncElectronBrowserBounds, 500);
     fetch('/api/browser/status')
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        // ── 에이전트 탭 전환 동기화 (2026-08-27) ──
-        // 백엔드 _last_url은 에이전트의 navigate/back/forward/switch_tab 으로만
-        // 변한다(사용자가 Electron 탭을 전환해도 백엔드 page 객체는 불변).
-        // status.url 변화를 감지해 같은 URL의 Electron 탭으로 탭 바를 전환한다.
         var agentUrl = data.url || '';
         if (agentUrl && agentUrl !== _lastAgentUrl) {
           var hadPrev = !!_lastAgentUrl;
@@ -691,22 +688,18 @@ setInterval(syncElectronBrowserBounds, 500);
         var pending = data.pending_url || '';
         if (pending) {
           if (pending !== _lastPending) {
-            // 새 pending URL — 브라우저 뷰를 앞으로 가져오고 해당 URL로 이동
             _lastPending = pending;
             _lastPendingTs = Date.now();
             console.log('[BrowserAI] AI requested navigate to:', pending, '- auto-opening browser view');
             if (!_browserViewVisible) {
               toggleBrowserView();
-            } else {
-              // 이미 표시 중이면 바운드만 재동기화 (뷰를 앞으로 유지)
-              syncElectronBrowserBounds();
             }
-            // Navigate to the pending URL
+            // If in grid mode, switch to focus mode to see the agent's work
+            setBrowserMode('focus');
             var input = document.getElementById('browserCanvasUrlInput') || document.getElementById('browserUrlInput');
             if (input) input.value = pending;
             browserGoToAddress();
           } else if (!_browserViewVisible) {
-            // 동일 URL이지만 사용자가 수동으로 브라우저 뷰를 숨긴 경우 — 재이동 없이 뷰만 복원
             console.log('[BrowserAI] Same pending URL, browser view hidden — restoring view');
             toggleBrowserView();
           }
@@ -716,21 +709,119 @@ setInterval(syncElectronBrowserBounds, 500);
         }
       })
       .catch(function () { /* ignore poll errors */ });
-  }, 3000); // [2026-08-31] 3초 폴링 — 즉시 오픈(SSE tool 이벤트)의 백업 경로 반응성 개선.
-  // 서버 측 안전장치(status 게이트 + CDP 사전 점검 + 5초 쿨다운 백오프)가 있어
-  // 과거 1초 폴링의 서버 스레드 소진 문제는 재발하지 않는다.
+  }, 3000);
 })();
+
+// ═══════════════════════════════════════════
+// Browser Mini View Grid & Focus Mode Controller
+// ═══════════════════════════════════════════
+
+function setBrowserMode(mode, targetTabId) {
+  _browserMode = mode || 'grid';
+  var gridContainer = document.getElementById('browserGridContainer');
+  var focusContainer = document.getElementById('browserFocusContainer');
+  var btnGrid = document.getElementById('btnBrowserGridMode');
+  var btnFocus = document.getElementById('btnBrowserFocusMode');
+
+  if (btnGrid) btnGrid.classList.toggle('active', _browserMode === 'grid');
+  if (btnFocus) btnFocus.classList.toggle('active', _browserMode === 'focus');
+
+  if (_browserMode === 'grid') {
+    if (focusContainer) focusContainer.style.display = 'none';
+    if (gridContainer) gridContainer.style.display = 'flex';
+    // Hide Electron WebContentsView overlay so HTML cards are clickable & visible
+    if (window.electronAPI) {
+      window.electronAPI.setVisibility(false);
+    }
+    fetchBrowserGrid();
+    if (!_gridPollTimer) {
+      _gridPollTimer = setInterval(fetchBrowserGrid, 2500);
+    }
+  } else {
+    // Focus Mode (Full Browser in center)
+    if (_gridPollTimer) {
+      clearInterval(_gridPollTimer);
+      _gridPollTimer = null;
+    }
+    if (gridContainer) gridContainer.style.display = 'none';
+    if (focusContainer) focusContainer.style.display = 'flex';
+    if (targetTabId) {
+      browserSwitchTab(targetTabId);
+    }
+    // Let DOM layout update, then sync bounds & attach Electron WebContentsView
+    setTimeout(function() {
+      syncElectronBrowserBounds();
+    }, 100);
+  }
+}
+
+async function fetchBrowserGrid() {
+  var cardsContainer = document.getElementById('browserGridCards');
+  if (!cardsContainer) return;
+
+  try {
+    var res = await fetch('/api/browser/grid');
+    var data = await res.json();
+    var tabs = (data && data.tabs) || [];
+
+    if (tabs.length === 0) {
+      cardsContainer.innerHTML =
+        '<div class="browser-grid-empty">' +
+          '<div class="bge-icon">🌐</div>' +
+          '<div class="bge-title">현재 열려있는 에이전트 브라우저가 없습니다</div>' +
+          '<div class="bge-sub">새 에이전트 브라우저를 열거나, 채팅창에서 에이전트에게 작업을 지시하세요.</div>' +
+          '<button class="bgh-btn bgh-btn-primary" onclick="browserNewTab()" style="margin-top:12px;">＋ 새 브라우저 열기</button>' +
+        '</div>';
+      return;
+    }
+
+    var html = '';
+    tabs.forEach(function(tab, idx) {
+      var tabId = tab.id || ('tab' + (idx + 1));
+      var title = tab.title || tab.url || ('브라우저 ' + (idx + 1));
+      var url = tab.url || 'about:blank';
+      var sessionLabel = tab.session_id ? ('Agent: ' + tab.session_id.substring(0, 8)) : ('Session ' + (idx + 1));
+      var isBlank = (!tab.url || tab.url === 'about:blank');
+      var thumbImg = tab.thumbnail ?
+        ('<img class="bmc-thumb-img" src="' + tab.thumbnail + '" alt="preview" />') :
+        ('<div class="bmc-thumb-blank"><span>' + (isBlank ? '📄 빈 페이지' : '⏳ 미리보기 준비 중...') + '</span></div>');
+      var activeClass = tab.active ? ' is-active' : '';
+
+      html +=
+        '<div class="browser-mini-card' + activeClass + '" onclick="setBrowserMode(\'focus\', \'' + _escTab(tabId) + '\')">' +
+          '<div class="bmc-header">' +
+            '<span class="bmc-session-badge">' + _escTab(sessionLabel) + '</span>' +
+            '<span class="bmc-status-dot" title="' + (tab.active ? '현재 활성' : '백그라운드 실행 중') + '"></span>' +
+            '<button class="bmc-close-btn" onclick="event.stopPropagation();browserCloseTab(\'' + _escTab(tabId) + '\');setTimeout(fetchBrowserGrid, 350);" title="탭 닫기">✕</button>' +
+          '</div>' +
+          '<div class="bmc-thumb-wrap">' +
+            thumbImg +
+            '<div class="bmc-hover-overlay">' +
+              '<span class="bmc-overlay-text">🔍 클릭하여 전체 화면 제어</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="bmc-footer">' +
+            '<div class="bmc-title" title="' + _escTab(title) + '">' + _escTab(title) + '</div>' +
+            '<div class="bmc-url" title="' + _escTab(url) + '">' + _escTab(url) + '</div>' +
+          '</div>' +
+        '</div>';
+    });
+
+    cardsContainer.innerHTML = html;
+  } catch (e) {
+    console.debug('[BrowserAI] fetchBrowserGrid error:', e);
+  }
+}
 
 // ═══════════════════════════════════════════
 // Tab management (2026-08-27)
 // Electron TabManager와 동기화되는 다중 탭 UI.
-// _activeTabId: 현재 활성 탭 — navigate/goBack 등이 'tab1' 고정 대신 이 값을 쓴다.
+// _activeTabId: 현재 활성 탭
 // ═══════════════════════════════════════════
 var _browserTabs = [];
 var _activeTabId = 'tab1';
 
 function _escTab(s) {
-  // \x26 = '&' — HTML 엔티티를 리터럴로 쓰면 저장 시 디코딩되는 사고 방지
   return String(s == null ? '' : s)
     .replace(/&/g, '\x26amp;')
     .replace(/</g, '\x26lt;')
@@ -744,17 +835,47 @@ function browserNewTab() {
   var id = 'tab' + Date.now();
   window.electronAPI.newTab(id, 'about:blank');
   _activeTabId = id;
+  // If in grid mode, refresh grid shortly
+  if (_browserMode === 'grid') {
+    setTimeout(fetchBrowserGrid, 400);
+  } else {
+    syncElectronBrowserBounds();
+  }
 }
 
 function browserSwitchTab(id) {
   if (!window.electronAPI || !id) return;
   _activeTabId = id;
   window.electronAPI.switchTab(id);
+  // Also notify backend to focus this tab
+  fetch('/api/browser/focus', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab_id: id })
+  }).catch(function() { /* ignore */ });
+
+  // Update URL input if url is known
+  for (var i = 0; i < _browserTabs.length; i++) {
+    if (_browserTabs[i].id === id && _browserTabs[i].url) {
+      _browserCurrentUrl = _browserTabs[i].url;
+      var input = document.getElementById('browserCanvasUrlInput');
+      if (input) input.value = _browserCurrentUrl;
+      break;
+    }
+  }
 }
 
 function browserCloseTab(id) {
   if (!window.electronAPI || !id) return;
   window.electronAPI.closeTab(id);
+  fetch('/api/browser/close_tab', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab_id: id })
+  }).catch(function() { /* ignore */ });
+  if (_browserMode === 'grid') {
+    setTimeout(fetchBrowserGrid, 300);
+  }
 }
 
 function renderBrowserTabs() {
@@ -781,5 +902,8 @@ if (window.electronAPI && window.electronAPI.onTabsUpdated) {
       if (_browserTabs[i].active) { _activeTabId = _browserTabs[i].id; break; }
     }
     renderBrowserTabs();
+    if (_browserMode === 'grid') {
+      fetchBrowserGrid();
+    }
   });
 }

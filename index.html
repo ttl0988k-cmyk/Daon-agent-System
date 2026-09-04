@@ -979,40 +979,69 @@
                 <div class="browser-tab-bar" id="browserTabBar">
                   <div class="browser-tabs" id="browserTabs"></div>
                   <button class="browser-tab-new" onclick="browserNewTab()" title="새 탭">＋</button>
+                  <div class="browser-mode-controls" style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+                    <button class="browser-mode-btn" id="btnBrowserGridMode" onclick="setBrowserMode('grid')" title="미니뷰 그리드로 축소">⊞ 미니뷰 그리드</button>
+                    <button class="browser-mode-btn" id="btnBrowserFocusMode" onclick="setBrowserMode('focus')" title="현재 탭 전체화면 제어">🔍 확대 제어</button>
+                    <button class="browser-nav-btn" onclick="toggleBrowserView()" title="브라우저 닫기" style="color:var(--danger); font-size:14px; margin-left:4px;">✖</button>
+                  </div>
                 </div>
-                <div class="browser-url-bar">
-                  <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
-                  <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
-                  <button class="browser-nav-btn" onclick="browserReload()" title="새로고침">⟳</button>
-                  <input type="text" id="browserCanvasUrlInput" class="browser-url-input"
-                    placeholder="주소 입력 후 Enter..." />
-                  <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="이동">↵</button>
-                  <button class="browser-nav-btn" onclick="browserClosePage()" title="페이지 닫기"
-                    style="color:var(--warning);">✕</button>
-                  <button class="browser-nav-btn" onclick="toggleBrowserView()" title="브라우저 뷰 닫기"
-                    style="margin-left:auto; color:var(--danger); font-size: 14px;">✖</button>
-                </div>
-                <div class="browser-main-area">
-                  <div class="browser-frame-wrap" id="browserFrameWrap">
-                    <iframe id="browserFrame" class="browser-frame" style="display:none"
-                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
-                    <div id="browserPlaceholder" class="browser-placeholder">
-                      <div class="browser-placeholder-icon">🌐</div>
-                      <div class="browser-placeholder-text">위에 URL을 입력하고 Enter 를 누르면 브라우저가 열립니다</div>
+
+                <!-- 1. 미니뷰 그리드 관제 모드 (#browserGridContainer) -->
+                <div id="browserGridContainer" class="browser-grid-container" style="display:flex; flex-direction:column; flex:1; overflow-y:auto;">
+                  <div class="browser-grid-header">
+                    <div class="bgh-title-wrap">
+                      <span class="bgh-icon">🌐</span>
+                      <div>
+                        <div class="bgh-title">에이전트 브라우저 관제 센터 (Agent Browser Grid)</div>
+                        <div class="bgh-sub">각 에이전트의 브라우저를 실시간 모니터링합니다. 카드를 클릭하면 중앙 전체화면으로 확대되어 직접 조작할 수 있습니다.</div>
+                      </div>
                     </div>
-                    <div id="browserFrameError" class="browser-frame-error" style="display:none">
-                      <span>⚠️ 이 사이트는 iframe으로 표시할 수 없습니다 (X-Frame-Options)</span>
+                    <div class="bgh-actions">
+                      <button class="bgh-btn" onclick="fetchBrowserGrid()" title="화면 새로고침">🔄 새로고침</button>
+                      <button class="bgh-btn bgh-btn-primary" onclick="browserNewTab()" title="새 브라우저 탭 추가">＋ 새 브라우저</button>
                     </div>
                   </div>
-                  <div class="browserai-sidebar" id="browseraiSidebar">
-                    <div id="browseraiContext" class="browserai-context"></div>
-                    <div id="browseraiSkillsSection" style="display:none">
-                      <div class="browserai-section-title">🧩 추천 스킬</div>
-                      <div id="browseraiSkills" class="browserai-list"></div>
+                  <div id="browserGridCards" class="browser-grid-cards">
+                    <!-- 미니뷰 카드들이 동적으로 생성됨 -->
+                  </div>
+                </div>
+
+                <!-- 2. 포커스(전체 브라우저) 모드 (#browserFocusContainer) -->
+                <div id="browserFocusContainer" style="display:none; flex-direction:column; flex:1; height:100%; min-height:0;">
+                  <div class="browser-url-bar">
+                    <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
+                    <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
+                    <button class="browser-nav-btn" onclick="browserReload()" title="새로고침">⟳</button>
+                    <input type="text" id="browserCanvasUrlInput" class="browser-url-input"
+                      placeholder="주소 입력 후 Enter..." />
+                    <button class="browser-nav-btn browser-nav-go" onclick="browserGoToAddress()" title="이동">↵</button>
+                    <button class="browser-nav-btn" onclick="browserClosePage()" title="페이지 닫기"
+                      style="color:var(--warning);">✕</button>
+                    <button class="browser-nav-btn" onclick="setBrowserMode('grid')" title="미니뷰 목록으로 축소"
+                      style="margin-left:auto; color:var(--primary); font-weight:600;">⊞ 미니뷰 그리드</button>
+                  </div>
+                  <div class="browser-main-area">
+                    <div class="browser-frame-wrap" id="browserFrameWrap">
+                      <iframe id="browserFrame" class="browser-frame" style="display:none"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+                      <div id="browserPlaceholder" class="browser-placeholder">
+                        <div class="browser-placeholder-icon">🌐</div>
+                        <div class="browser-placeholder-text">위에 URL을 입력하고 Enter 를 누르면 브라우저가 열립니다</div>
+                      </div>
+                      <div id="browserFrameError" class="browser-frame-error" style="display:none">
+                        <span>⚠️ 이 사이트는 iframe으로 표시할 수 없습니다 (X-Frame-Options)</span>
+                      </div>
                     </div>
-                    <div id="browseraiActionsSection" style="display:none">
-                      <div class="browserai-section-title">⚡ 빠른 행동</div>
-                      <div id="browseraiActions" class="browserai-list"></div>
+                    <div class="browserai-sidebar" id="browseraiSidebar">
+                      <div id="browseraiContext" class="browserai-context"></div>
+                      <div id="browseraiSkillsSection" style="display:none">
+                        <div class="browserai-section-title">🧩 추천 스킬</div>
+                        <div id="browseraiSkills" class="browserai-list"></div>
+                      </div>
+                      <div id="browseraiActionsSection" style="display:none">
+                        <div class="browserai-section-title">⚡ 빠른 행동</div>
+                        <div id="browseraiActions" class="browserai-list"></div>
+                      </div>
                     </div>
                   </div>
                 </div>

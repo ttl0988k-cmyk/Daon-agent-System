@@ -48,12 +48,12 @@ def _run_browser_command_via_bridge(
 
     if command == "open":
         url = args[0] if args else "about:blank"
-        result = _submit_task("open", url=url)
+        result = _submit_task("open", session_id=task_id, url=url)
         return _convert_result(result)
 
     elif command == "snapshot":
         compact = "-c" in args
-        result = _submit_task("snapshot", compact=compact)
+        result = _submit_task("snapshot", session_id=task_id, compact=compact)
         converted = _convert_result(result)
         if converted.get("success"):
             data = converted.get("data", {})
@@ -72,31 +72,31 @@ def _run_browser_command_via_bridge(
     elif command == "click":
         ref = args[0] if args else ""
         ref = ref.lstrip("@")  # strip agent-browser @ prefix
-        result = _submit_task("click", ref=ref)
+        result = _submit_task("click", session_id=task_id, ref=ref)
         return _convert_result(result)
 
     elif command == "fill":
         ref = args[0].lstrip("@") if args else ""
         text = args[1] if len(args) > 1 else ""
-        result = _submit_task("fill", ref=ref, text=text)
+        result = _submit_task("fill", session_id=task_id, ref=ref, text=text)
         return _convert_result(result)
 
     elif command == "scroll":
         direction = args[0] if args else "down"
         pixels = args[1] if len(args) > 1 else "500"
-        result = _submit_task("scroll", direction=direction, pixels=pixels)
+        result = _submit_task("scroll", session_id=task_id, direction=direction, pixels=pixels)
         return _convert_result(result)
 
     elif command == "back":
-        result = _submit_task("back")
+        result = _submit_task("back", session_id=task_id)
         return _convert_result(result)
 
     elif command == "forward":
-        result = _submit_task("forward")
+        result = _submit_task("forward", session_id=task_id)
         return _convert_result(result)
 
     elif command == "tabs":
-        result = _submit_task("tabs")
+        result = _submit_task("tabs", session_id=task_id)
         return _convert_result(result)
 
     elif command == "tab":
@@ -106,9 +106,9 @@ def _run_browser_command_via_bridge(
                 idx = int(args[1]) if len(args) > 1 else 0
             except (ValueError, TypeError):
                 return {"success": False, "error": f"Invalid tab index: {args[1] if len(args) > 1 else ''}"}
-            result = _submit_task("switch_tab", index=idx)
+            result = _submit_task("switch_tab", session_id=task_id, index=idx)
             return _convert_result(result)
-        result = _submit_task("tabs")
+        result = _submit_task("tabs", session_id=task_id)
         return _convert_result(result)
 
     elif command == "switch_tab":
@@ -120,38 +120,38 @@ def _run_browser_command_via_bridge(
                 index = int(args[0])
             except (ValueError, TypeError):
                 url = args[0]
-        result = _submit_task("switch_tab", index=index, url=url)
+        result = _submit_task("switch_tab", session_id=task_id, index=index, url=url)
         return _convert_result(result)
 
     elif command == "press":
         key = args[0] if args else ""
-        result = _submit_task("press", key=key)
+        result = _submit_task("press", session_id=task_id, key=key)
         return _convert_result(result)
 
     elif command == "console":
         clear = "--clear" in args
-        result = _submit_task("console", clear=clear)
+        result = _submit_task("console", session_id=task_id, clear=clear)
         return _convert_result(result)
 
     elif command == "errors":
         clear = "--clear" in args
-        result = _submit_task("errors", clear=clear)
+        result = _submit_task("errors", session_id=task_id, clear=clear)
         return _convert_result(result)
 
     elif command == "eval":
         expression = args[0] if args else ""
-        result = _submit_task("evaluate", expression=expression)
+        result = _submit_task("evaluate", session_id=task_id, expression=expression)
         return _convert_result(result)
 
     elif command == "record":
         subcommand = args[0] if args else "start"
         path = args[1] if len(args) > 1 else None
-        result = _submit_task("record", subcommand=subcommand, path=path)
+        result = _submit_task("record", session_id=task_id, subcommand=subcommand, path=path)
         return _convert_result(result)
 
     elif command == "screenshot":
         labeled = "--labeled" in (args or []) or "-l" in (args or [])
-        result = _submit_task("screenshot", labeled=labeled)
+        result = _submit_task("screenshot", session_id=task_id, labeled=labeled)
         return _convert_result(result)
 
     elif command == "batch":
@@ -164,13 +164,13 @@ def _run_browser_command_via_bridge(
                 actions = _json.loads(args[0])
             except Exception:
                 actions = []
-        result = _submit_task("batch", actions=actions)
+        result = _submit_task("batch", session_id=task_id, actions=actions)
         return _convert_result(result)
 
     elif command == "close":
         # cleanup_browser가 세션 정리 시 호출 — Playwright 드라이버를 닫고
         # 상태를 리셋한다 (Electron 뷰 자체는 닫지 않는다).
-        result = _submit_task("close")
+        result = _submit_task("close", session_id=task_id)
         return _convert_result(result)
 
     else:
