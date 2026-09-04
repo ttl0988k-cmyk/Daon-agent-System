@@ -766,22 +766,26 @@ async function fetchBrowserGrid() {
   if (!cardsContainer) return;
 
   try {
-    var res = await fetch('/api/browser/grid');
-    var data = await res.json();
-    var tabs = (data && data.tabs) || [];
+    var tabs = [];
 
-    // Fallback: If backend CDP returns empty list but Electron has open tabs, render _browserTabs
-    if (tabs.length === 0 && _browserTabs && _browserTabs.length > 0) {
-      tabs = _browserTabs.map(function(t, idx) {
+    if (window.electronAPI) {
+      // Electron 모드: Electron TabManager의 _browserTabs가 실제 열린 탭의 단일 진실 원천이다.
+      tabs = (_browserTabs || []).map(function(t, idx) {
         return {
           id: t.id,
           index: idx,
           url: t.url || 'about:blank',
           title: t.title || t.url || ('브라우저 ' + (idx + 1)),
+          thumbnail: t.thumbnail || '',
           active: !!t.active,
           session_id: ''
         };
       });
+    } else {
+      // 비-Electron(웹/개발) 모드: 백엔드 CDP 엔드포인트 폴링
+      var res = await fetch('/api/browser/grid');
+      var data = await res.json();
+      tabs = (data && data.tabs) || [];
     }
 
     if (tabs.length === 0) {

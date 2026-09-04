@@ -1175,6 +1175,12 @@ app.whenReady().then(async () => {
         _rendererRecovering = false;
         _failLoadRetryCount = 0;
         _failLoadWindowStart = 0;
+        if (tabManager) {
+          try { tabManager.setVisibility(false); } catch (_) { }
+          setTimeout(() => {
+            try { tabManager._notifyTabs(); } catch (_) { }
+          }, 300);
+        }
       });
       mainWindow.webContents.on('responsive', () => {
         mlog('[RendererHang] mainWindow responsive again.');
@@ -1234,8 +1240,13 @@ app.whenReady().then(async () => {
         if (now - _lastF5Time > DEBOUNCE_MS) {
           _lastF5Time = now;
           watchdogSuppressUntil = Date.now() + 3 * WATCHDOG_INTERVAL;
+          if (tabManager) {
+            try { tabManager.setVisibility(false); } catch (_) { }
+          }
           try {
-            mainWindow.webContents.reloadIgnoringCache();
+            mainWindow.loadURL(`http://127.0.0.1:${serverPort}`, {
+              extraHeaders: 'pragma: no-cache\r\nCache-Control: no-cache\r\n'
+            });
           } catch (_) {
             try { mainWindow.webContents.reload(); } catch (__) { }
           }
@@ -1297,6 +1308,13 @@ class TabManager {
     // 탭에는 없었음). 탭별 크래시 카운터로 복구 루프를 방지한다.
     this._tabRecovery = new Map();   // tabId → { count, windowStart }
     this._recoveringTabs = new Set(); // 복구 진행 중인 탭
+
+    // 미니뷰 그리드용 주기적 썸네일/탭 동기화 (3초 간격)
+    this._notifyTimer = setInterval(() => {
+      if (this.tabs.size > 0 && this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this._notifyTabs();
+      }
+    }, 3000);
   }
 
   static get MAX_TAB_RECOVERY() { return 5; }
@@ -1352,17 +1370,30 @@ class TabManager {
       + 'try{Object.defineProperty(navigator,"vendor",{get:()=>"Google Inc."})}catch(e){};'
       + 'try{delete navigator.webdriver}catch(e){};'
       + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};';
+    const notifyThrottled = () => { try { this._notifyTabs(); } catch (_) { } };
     view.webContents.on('did-finish-load', () => {
       // 성공 로드 시 크래시 복구 카운터 리셋 (페이지가 살아났음).
       this._tabRecovery.delete(tabId);
       view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
+      setTimeout(notifyThrottled, 300);
     });
+    view.webContents.on('did-navigate', notifyThrottled);
+    view.webContents.on('did-navigate-in-page', notifyThrottled);
     // [2026-08-31 캡챠/로그인 차단 완화] SPA 네비게이션 대응 — dom-ready마다도
     // 동일 지문 완화를 주입한다 (did-finish-load는 SPA 라우팅에서 스킵될 수 있음).
     view.webContents.on('dom-ready', () => {
       view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
     });
-    view.webContents.on('page-title-updated', () => { this._notifyTabs(); });
+    view.webContents.on('page-title-updated', notifyThrottled);
+    view.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const isF5 = input.key === 'F5' || input.code === 'F5';
+      const isReload = input.control && (input.key.toLowerCase() === 'r' || input.code === 'KeyR');
+      if (isF5 || isReload) {
+        try { view.webContents.reload(); } catch (_) { }
+        event.preventDefault();
+      }
+    });
 
     // [2026-09-02 근본 수정] webContents가 외부(에이전트 CDP page.close, 세션 정리 등)
     // 에 의해 파괴되면 탭이 맵에 '유령'으로 남아, 이후 navigate()/switchTab()이
@@ -1520,21 +1551,36 @@ class TabManager {
     this._notifyTabs();
   }
 
-  // 프론트엔드 탭 바 동기화: 탭 목록(id/제목/URL/활성)을 renderer로 브로드캐스트.
-  _notifyTabs() {
+  // 프론트엔드 탭 바 & 미니뷰 그리드 동기화: 탭 목록(id/제목/URL/활성/실시간 썸네일)을 renderer로 브로드캐스트.
+  async _notifyTabs() {
     const tabs = [];
     for (const [id, view] of this.tabs) {
       let title = id;
       let url = '';
+      let thumbnail = '';
       try {
         if (view.webContents && !view.webContents.isDestroyed()) {
           title = view.webContents.getTitle() || id;
           url = view.webContents.getURL() || '';
+          if (url && url !== 'about:blank') {
+            try {
+              const img = await view.webContents.capturePage();
+              if (img && !img.isEmpty()) {
+                const resized = img.resize({ width: 320 });
+                const buf = resized.toJPEG(60);
+                thumbnail = 'data:image/jpeg;base64,' + buf.toString('base64');
+              }
+            } catch (_) { }
+          }
         }
       } catch (e) { }
-      tabs.push({ id, title, url, active: id === this.activeTabId });
+      tabs.push({ id, title, url, active: id === this.activeTabId, thumbnail });
     }
-    try { this.mainWindow.webContents.send('browser-tabs-updated', tabs); } catch (e) { }
+    try {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('browser-tabs-updated', tabs);
+      }
+    } catch (e) { }
   }
 
   // webContents 생존 여부 검사 (destroyed/undefined 모두 방어)

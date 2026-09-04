@@ -26,4 +26,24 @@ exports.default = async function afterPack(context) {
     ].join('\r\n');
     fs.writeFileSync(cmdPath, content);
     console.log('[afterPack] launcher cmd ensured: ' + cmdPath);
+
+    // ── 자동 동기화: 빌드 직후 설치본 및 포터블 경로로 app.asar 자동 복사 ──
+    const targets = [
+        'C:\\daon\\DAON-Portable',
+        path.join(process.env.LOCALAPPDATA || 'C:\\Users\\ttl09\\AppData\\Local', 'Programs', productName)
+    ];
+    const srcAsar = path.join(context.appOutDir, 'resources', 'app.asar');
+    if (fs.existsSync(srcAsar)) {
+        for (const targetDir of targets) {
+            try {
+                const targetRes = path.join(targetDir, 'resources');
+                if (fs.existsSync(targetRes)) {
+                    fs.copyFileSync(srcAsar, path.join(targetRes, 'app.asar'));
+                    console.log('[afterPack] Auto-synced app.asar -> ' + targetRes);
+                }
+            } catch (e) {
+                console.warn('[afterPack] Auto-sync failed for ' + targetDir + ':', e && e.message);
+            }
+        }
+    }
 };
