@@ -914,21 +914,8 @@ app.whenReady().then(async () => {
       // Adopt the running server so quit / watchdog cleanup can still target it.
       pythonProcess = { pid: healthProbe.pid, _adopted: true };
     } else {
-      // [근본 수정 2026-08-28] probe 실패 = 서버 죽음이 아니다. 서버가 무거운
-      // 작업(Whisper 추론, 이미지 생성 등) 중이면 /health 응답이 수 초 지연된다.
-      // 이전 로직은 probe 실패 → taskkill /IM 으로 살아있는 서버를 죽였고,
-      // 그 결과 매 앱 시작마다 서버 재시작 + 세션 유실 + 수십 초 응답 지연이
-      // 반복됐다. 이제 TCP LISTENING 여부로 프로세스 생존을 먼저 확정한다.
-      const portAlive = await isPortListening(DEFAULT_PORT, 2000);
-      if (portAlive) {
-        mlog(`[Electron] /health probe failed but port ${DEFAULT_PORT} is LISTENING — server is ALIVE (busy). Adopting instead of killing; STEP 3 health wait will confirm.`);
-        // taskkill 금지 — 기존 서버를 그대로 두고 STEP 3의 health 대기가
-        // 응답 복구를 확인한다. pid는 이 시점에 알 수 없으므로 null로 adopt.
-        pythonProcess = { pid: null, _adopted: true, _busy: true };
-        reusedServer = true;
-      } else {
-        merr(`[Electron] No server on ${DEFAULT_PORT} (probe failed + port closed) — will taskkill + spawn fresh. probe=`, healthProbe);
-      }
+      mlog(`[Electron] No healthy server on ${DEFAULT_PORT} — killing any unresponsive/zombie server.exe before fresh spawn.`);
+      reusedServer = false;
     }
 
     if (!reusedServer) {
