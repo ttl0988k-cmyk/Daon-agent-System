@@ -206,8 +206,8 @@ async function browserGoToAddress() {
       window.electronAPI.navigate(_activeTabId, url);
     }
 
-    // Switch to focus mode to display the website in center
-    setBrowserMode('focus', _activeTabId);
+    // Switch to focus mode to display the website in center (preserve typed URL input value)
+    setBrowserMode('focus', _activeTabId, { skipUrlInputUpdate: true });
 
     // Sync URL to backend only — AI shares the same CDP-connected WebContentsView page.
     // Playwright connects via CDP and sees the same page the user sees.
@@ -359,10 +359,9 @@ function browserRefresh() {
  * (Electron: navigate to about:blank, iframe: clear src)
  */
 function browserClosePage() {
-  if (window.electronAPI) {
-    window.electronAPI.navigate(_activeTabId, 'about:blank');
-    // CRITICAL: Hide the Electron WebContentsView overlay to prevent white screen
-    window.electronAPI.setVisibility(false);
+  if (window.electronAPI && _activeTabId) {
+    browserCloseTab(_activeTabId);
+    return;
   }
   // Clear iframe
   var frame = document.getElementById('browserFrame');
@@ -722,7 +721,7 @@ setInterval(syncElectronBrowserBounds, 500);
 // Browser Mini View Grid & Focus Mode Controller
 // ═══════════════════════════════════════════
 
-function setBrowserMode(mode, targetTabId) {
+function setBrowserMode(mode, targetTabId, options) {
   _browserMode = mode || 'grid';
   var gridContainer = document.getElementById('browserGridContainer');
   var focusContainer = document.getElementById('browserFocusContainer');
@@ -752,7 +751,7 @@ function setBrowserMode(mode, targetTabId) {
     if (gridContainer) gridContainer.style.display = 'none';
     if (focusContainer) focusContainer.style.display = 'flex';
     if (targetTabId) {
-      browserSwitchTab(targetTabId);
+      browserSwitchTab(targetTabId, options);
     }
     // Let DOM layout update, then sync bounds & attach Electron WebContentsView
     setTimeout(function() {
@@ -869,7 +868,7 @@ function browserNewTab(initialUrl) {
   }
 }
 
-function browserSwitchTab(id) {
+function browserSwitchTab(id, options) {
   if (!window.electronAPI || !id) return;
   _activeTabId = id;
   window.electronAPI.switchTab(id);
@@ -880,13 +879,20 @@ function browserSwitchTab(id) {
     body: JSON.stringify({ tab_id: id })
   }).catch(function() { /* ignore */ });
 
-  // Update URL input if url is known
-  for (var i = 0; i < _browserTabs.length; i++) {
-    if (_browserTabs[i].id === id && _browserTabs[i].url) {
-      _browserCurrentUrl = _browserTabs[i].url;
-      var input = document.getElementById('browserCanvasUrlInput');
-      if (input) input.value = _browserCurrentUrl;
-      break;
+  // Update URL input if url is known and real (not about:blank) unless skipped
+  var skipInput = options && options.skipUrlInputUpdate;
+  if (!skipInput) {
+    for (var i = 0; i < _browserTabs.length; i++) {
+      if (_browserTabs[i].id === id) {
+        var tabUrl = _browserTabs[i].url || '';
+        if (tabUrl && tabUrl !== 'about:blank') {
+          _browserCurrentUrl = tabUrl;
+          var input = document.getElementById('browserCanvasUrlInput');
+          if (input) input.value = _browserCurrentUrl;
+          if (typeof onBrowserUrlChange === 'function') onBrowserUrlChange(_browserCurrentUrl);
+        }
+        break;
+      }
     }
   }
 
@@ -958,6 +964,19 @@ if (window.electronAPI && window.electronAPI.onTabsUpdated) {
     }
 
     renderBrowserTabs();
+
+    // Active tab URL sync (only if user is not actively typing in the address bar)
+    var activeTab = _browserTabs.find(function (t) { return t.id === _activeTabId; });
+    if (activeTab && activeTab.url && activeTab.url !== 'about:blank') {
+      var input = document.getElementById('browserCanvasUrlInput');
+      if (input && document.activeElement !== input) {
+        input.value = activeTab.url;
+        _browserCurrentUrl = activeTab.url;
+        if (typeof onBrowserUrlChange === 'function') {
+          onBrowserUrlChange(activeTab.url);
+        }
+      }
+    }
 
     if (_browserMode === 'grid') {
       window.electronAPI.setVisibility(false);
