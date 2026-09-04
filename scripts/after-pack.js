@@ -20,7 +20,6 @@ exports.default = async function afterPack(context) {
     const content = [
         '@echo off',
         'rem DAON Agent System launcher',
-        'taskkill /F /IM server.exe >nul 2>&1',
         'set "ELECTRON_RUN_AS_NODE="',
         'start "" "%~dp0' + productName + '.exe" --remote-debugging-port=9222',
         '',
