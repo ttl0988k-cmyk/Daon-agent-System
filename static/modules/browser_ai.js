@@ -209,9 +209,22 @@ async function browserGoToAddress() {
     // Ensure we have a valid active tab ID
     if (!_activeTabId || !_browserTabs.some(function (t) { return t.id === _activeTabId; })) {
       var newTabId = 'tab' + Date.now();
-      window.electronAPI.newTab(newTabId, url);
+      for (var ti = 0; ti < _browserTabs.length; ti++) {
+        _browserTabs[ti].active = false;
+      }
+      _browserTabs.push({ id: newTabId, title: url, url: url, active: true, thumbnail: '' });
       _activeTabId = newTabId;
+      renderBrowserTabs();
+      window.electronAPI.newTab(newTabId, url);
     } else {
+      for (var ti = 0; ti < _browserTabs.length; ti++) {
+        if (_browserTabs[ti].id === _activeTabId) {
+          _browserTabs[ti].url = url;
+          _browserTabs[ti].title = url;
+          break;
+        }
+      }
+      renderBrowserTabs();
       window.electronAPI.navigate(_activeTabId, url);
     }
 

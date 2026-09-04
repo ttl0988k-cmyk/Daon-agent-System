@@ -1554,6 +1554,24 @@ class TabManager {
 
   // 크래시로 webContents가 파괴된 탭을 새 WebContentsView로 재생성한다.
   // 세션/쿠키는 앱 기본 세션을 공유하므로 로그인 상태는 유지된다.
+  _getEffectiveBounds() {
+    if (this.bounds && this.bounds.width > 0 && this.bounds.height > 0) {
+      return this.bounds;
+    }
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      try {
+        const cb = this.mainWindow.getContentBounds();
+        return {
+          x: 240,
+          y: 70,
+          width: Math.max(400, cb.width - 250),
+          height: Math.max(300, cb.height - 75)
+        };
+      } catch (_) { }
+    }
+    return { x: 240, y: 70, width: 1000, height: 700 };
+  }
+
   _recreateTab(tabId) {
     const old = this.tabs.get(tabId);
     let url = 'about:blank';
@@ -1568,17 +1586,18 @@ class TabManager {
     if (this.activeTabId === tabId && this.isVisible && view) {
       try {
         this.mainWindow.contentView.addChildView(view);
-        view.setBounds(this.bounds);
+        view.setBounds(this._getEffectiveBounds());
       } catch (_) { }
     }
     this._notifyTabs();
   }
 
   switchTab(tabId) {
-    // [2026-09-02 보강] 유령 탭(파괴된 webContents)으로 전환 시 메인 프로세스
-    // 크래시를 막는다 — 파괴된 뷰는 재생성 후 전환한다.
     if (this.activeTabId && this.tabs.has(this.activeTabId)) {
-      try { this.mainWindow.contentView.removeChildView(this.tabs.get(this.activeTabId)); } catch (e) { }
+      const oldView = this.tabs.get(this.activeTabId);
+      if (oldView !== this.tabs.get(tabId)) {
+        try { this.mainWindow.contentView.removeChildView(oldView); } catch (e) { }
+      }
     }
     this.activeTabId = tabId;
     if (this.isVisible && this.tabs.has(tabId)) {
@@ -1586,7 +1605,7 @@ class TabManager {
       if (this._isWebContentsAlive(view)) {
         try {
           this.mainWindow.contentView.addChildView(view);
-          view.setBounds(this.bounds);
+          view.setBounds(this._getEffectiveBounds());
         } catch (e) { }
       } else {
         this._recreateTab(tabId);
@@ -1608,14 +1627,13 @@ class TabManager {
       const next = this.tabs.keys().next();
       if (!next.done) {
         this.switchTab(next.value);
-        return; // switchTab already notifies
+        return;
       }
       this.isVisible = false;
     }
     this._notifyTabs();
   }
 
-  // 프론트엔드 탭 바 & 미니뷰 그리드 동기화: 탭 목록(id/제목/URL/활성/실시간 썸네일)을 renderer로 브로드캐스트.
   async _notifyTabs() {
     const tabs = [];
     for (const [id, view] of this.tabs) {
@@ -1626,7 +1644,7 @@ class TabManager {
         if (view.webContents && !view.webContents.isDestroyed()) {
           title = view.webContents.getTitle() || id;
           url = view.webContents.getURL() || '';
-          if (url && url !== 'about:blank') {
+          if (url && url !== 'about:blank' && !view.webContents.isLoading()) {
             try {
               const img = await view.webContents.capturePage();
               if (img && !img.isEmpty()) {
@@ -1647,7 +1665,6 @@ class TabManager {
     } catch (e) { }
   }
 
-  // webContents 생존 여부 검사 (destroyed/undefined 모두 방어)
   _isWebContentsAlive(view) {
     try {
       return !!(view && view.webContents && !view.webContents.isDestroyed());
@@ -1657,11 +1674,6 @@ class TabManager {
   }
 
   navigate(tabId, url) {
-    // [2026-09-02 수정] 죽은 webContents 가드 — 탭이 맵에는 남아 있어도
-    // webContents가 이미 파괴되면 view.webContents가 undefined가 되어
-    // undefined.loadURL()로 메인 프로세스 크래시가 발생했다(실측 스택:
-    // TabManager.navigate main.js:1525). 파괴된 뷰는 폐기하고 새 뷰로 재생성해
-    // 해당 URL로 탐색한다. 로그인 상태는 앱 기본 세션 공유로 유지된다.
     let view = this.tabs.get(tabId);
     if (view && !this._isWebContentsAlive(view)) {
       merr(`[TabManager] navigate: tab=${tabId} webContents destroyed — recreating view.`);
@@ -1671,7 +1683,7 @@ class TabManager {
       view = null;
     }
     if (!view) {
-      view = this.createTab(tabId, url); // createTab already loads the URL
+      view = this.createTab(tabId, url);
     } else {
       try {
         view.webContents.loadURL(url);
@@ -1680,18 +1692,17 @@ class TabManager {
         return;
       }
     }
-    // Ensure visibility — if navigate is called, the user/frontend wants to see it.
-    // This also re-attaches the view when it was previously hidden (editor shown),
-    // fixing the case where a hidden WebContentsView never returned to the screen.
     this.isVisible = true;
     this.activeTabId = tabId;
-    try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-    try { view.setBounds(this.bounds); } catch (e) { }
+    if (view && this._isWebContentsAlive(view)) {
+      try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
+      try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
+    }
     this._notifyTabs();
   }
 
   setBounds(bounds) {
-    if (bounds && (bounds.width > 0 || bounds.height > 0)) {
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
       this.bounds = bounds;
     }
     this.resize();
@@ -1703,7 +1714,7 @@ class TabManager {
       const view = this.tabs.get(this.activeTabId);
       if (this._isWebContentsAlive(view)) {
         try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-        if (this.bounds) view.setBounds(this.bounds);
+        try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
       }
     } else if (!visible) {
       for (const [_, view] of this.tabs) {
@@ -1717,7 +1728,7 @@ class TabManager {
       const view = this.tabs.get(this.activeTabId);
       if (this._isWebContentsAlive(view)) {
         try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-        if (this.bounds) view.setBounds(this.bounds);
+        try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
       }
     }
   }
