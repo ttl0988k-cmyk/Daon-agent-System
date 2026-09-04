@@ -535,6 +535,16 @@ function killProcessTree(pid) {
   }
 }
 
+function isProcessAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return !!(e && e.code === 'EPERM');
+  }
+}
+
 // ── Helper: Unified Server EXE Path Resolution ──
 function findServerExe() {
   const candidates = [
@@ -805,6 +815,14 @@ function startWatchdog(port) {
 
   watchdogTimer = setInterval(() => {
     if (isQuitting) return;
+
+    // If server process was adopted, check if PID is still alive
+    if (pythonProcess && pythonProcess._adopted && pythonProcess.pid && !isProcessAlive(pythonProcess.pid)) {
+      merr(`[Watchdog] Adopted server PID ${pythonProcess.pid} died — spawning new server...`);
+      pythonProcess = null;
+      startPythonProcess(port);
+      return;
+    }
 
     const req = http.get({ host: '127.0.0.1', port: port, path: '/health', family: 4 }, (res) => {
       if (res.statusCode === 200) {
@@ -1148,22 +1166,27 @@ app.whenReady().then(async () => {
       mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame) return; // ignore subframe failures
         merr(`[RendererFail] did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
-        // Retry loading the UI after a short delay (server may be restarting),
-        // with a retry limit to avoid infinite fail→retry loops.
-        const now = Date.now();
-        if (now - _failLoadWindowStart > FAILLOAD_WINDOW_MS) {
-          _failLoadRetryCount = 0;
-          _failLoadWindowStart = now;
+
+        // ECONNREFUSED (-102 / -105): Server is dead or unreachable — trigger emergency server restart
+        if (errorCode === -102 || errorCode === -105) {
+          merr('[RendererFail] Server connection refused — triggering instant emergency server restart...');
+          if (pythonProcess && pythonProcess.pid && !pythonProcess._adopted) {
+            killProcessTree(pythonProcess.pid);
+          }
+          pythonProcess = null;
+          startPythonProcess(serverPort);
         }
-        if (_failLoadRetryCount >= MAX_FAILLOAD_RETRY) {
-          merr(`[RendererFail] retry limit reached (${MAX_FAILLOAD_RETRY} per ${FAILLOAD_WINDOW_MS / 1000}s) — giving up.`);
-          return;
-        }
-        _failLoadRetryCount++;
-        mlog(`[RendererFail] retry loadURL attempt ${_failLoadRetryCount}/${MAX_FAILLOAD_RETRY}`);
-        setTimeout(() => {
-          try { mainWindow.loadURL(`http://127.0.0.1:${serverPort}`); } catch (_) { }
-        }, 3000);
+
+        // Wait for server health, then load URL as soon as ready
+        checkServerHealth(serverPort, 30, 1000).then(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.loadURL(`http://127.0.0.1:${serverPort}`); } catch (_) { }
+          }
+        }).catch(() => {
+          setTimeout(() => {
+            try { mainWindow.loadURL(`http://127.0.0.1:${serverPort}`); } catch (_) { }
+          }, 3000);
+        });
       });
       mainWindow.webContents.on('unresponsive', () => {
         merr('[RendererHang] mainWindow unresponsive detected.');
