@@ -366,7 +366,9 @@ def _browser_worker_loop():
                         if p.is_closed():
                             continue
                         u = (p.url or "").strip()
-                        if u.startswith("http://127.0.0.1") or u.startswith("devtools://") or u.startswith("chrome://") or u.startswith("devtools:"):
+                        if u.startswith("devtools://") or u.startswith("chrome://") or u.startswith("devtools:"):
+                            continue
+                        if u.startswith("http://127.0.0.1:9090") or u.startswith("http://localhost:9090"):
                             continue
                         pages.append(p)
                     except Exception:

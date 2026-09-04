@@ -770,6 +770,20 @@ async function fetchBrowserGrid() {
     var data = await res.json();
     var tabs = (data && data.tabs) || [];
 
+    // Fallback: If backend CDP returns empty list but Electron has open tabs, render _browserTabs
+    if (tabs.length === 0 && _browserTabs && _browserTabs.length > 0) {
+      tabs = _browserTabs.map(function(t, idx) {
+        return {
+          id: t.id,
+          index: idx,
+          url: t.url || 'about:blank',
+          title: t.title || t.url || ('브라우저 ' + (idx + 1)),
+          active: !!t.active,
+          session_id: ''
+        };
+      });
+    }
+
     if (tabs.length === 0) {
       cardsContainer.innerHTML =
         '<div class="browser-grid-empty">' +
