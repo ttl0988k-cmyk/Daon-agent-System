@@ -1691,7 +1691,9 @@ class TabManager {
   }
 
   setBounds(bounds) {
-    this.bounds = bounds;
+    if (bounds && (bounds.width > 0 || bounds.height > 0)) {
+      this.bounds = bounds;
+    }
     this.resize();
   }
 
@@ -1699,16 +1701,24 @@ class TabManager {
     this.isVisible = visible;
     if (visible && this.activeTabId && this.tabs.has(this.activeTabId)) {
       const view = this.tabs.get(this.activeTabId);
-      try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-      view.setBounds(this.bounds);
-    } else if (!visible && this.activeTabId && this.tabs.has(this.activeTabId)) {
-      try { this.mainWindow.contentView.removeChildView(this.tabs.get(this.activeTabId)); } catch (e) { }
+      if (this._isWebContentsAlive(view)) {
+        try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
+        if (this.bounds) view.setBounds(this.bounds);
+      }
+    } else if (!visible) {
+      for (const [_, view] of this.tabs) {
+        try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
+      }
     }
   }
 
   resize() {
     if (this.isVisible && this.activeTabId && this.tabs.has(this.activeTabId)) {
-      this.tabs.get(this.activeTabId).setBounds(this.bounds);
+      const view = this.tabs.get(this.activeTabId);
+      if (this._isWebContentsAlive(view)) {
+        try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
+        if (this.bounds) view.setBounds(this.bounds);
+      }
     }
   }
 }

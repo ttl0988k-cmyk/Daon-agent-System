@@ -103,8 +103,17 @@ function toggleBrowserView() {
     if (browserWrap) browserWrap.style.display = 'flex';
     if (toggleBtn) toggleBtn.classList.add('active');
 
+    // If no tabs exist, default to grid mode
+    if (!_browserTabs || _browserTabs.length === 0) {
+      _browserMode = 'grid';
+    }
+
     // Switch to active browser mode (grid or focus)
-    setBrowserMode(_browserMode || 'grid');
+    setBrowserMode(_browserMode || 'grid', _activeTabId);
+
+    // Sync bounds after layout reflow
+    setTimeout(syncElectronBrowserBounds, 50);
+    setTimeout(syncElectronBrowserBounds, 200);
 
     // Show default BrowserAI recommendations
     if (typeof onBrowserUrlChange === 'function') {
@@ -750,13 +759,17 @@ function setBrowserMode(mode, targetTabId, options) {
     }
     if (gridContainer) gridContainer.style.display = 'none';
     if (focusContainer) focusContainer.style.display = 'flex';
+
     if (targetTabId) {
       browserSwitchTab(targetTabId, options);
+    } else if (_activeTabId) {
+      browserSwitchTab(_activeTabId, options);
     }
+
     // Let DOM layout update, then sync bounds & attach Electron WebContentsView
-    setTimeout(function() {
-      syncElectronBrowserBounds();
-    }, 100);
+    syncElectronBrowserBounds();
+    setTimeout(syncElectronBrowserBounds, 50);
+    setTimeout(syncElectronBrowserBounds, 250);
   }
 }
 
@@ -886,6 +899,9 @@ function browserNewTab(initialUrl) {
     if (toggleBtn) toggleBtn.classList.add('active');
   }
 
+  // Instantly update Grid mode cards as well
+  fetchBrowserGrid();
+
   window.electronAPI.newTab(id, url);
 
   // Always switch to focus mode so user can immediately type a URL in the address bar
@@ -897,8 +913,9 @@ function browserNewTab(initialUrl) {
     if (input) {
       input.value = (url === 'about:blank') ? '' : url;
       input.focus();
+      if (input.value) input.select();
     }
-  }, 150);
+  }, 100);
 }
 
 function browserSwitchTab(id, options) {
