@@ -604,24 +604,47 @@ function startPythonProcess(port) {
   const env = { ...process.env, BROWSER_CDP_URL: 'ws://127.0.0.1:9222' };
   const exePath = findServerExe();
 
-  if (exePath) {
-    console.log(`[Electron] Spawning server executable: ${exePath}`);
-    const cwd = path.dirname(exePath);
-    pythonProcess = spawn(exePath, ['--no-browser', '--port', port.toString()], {
-      cwd,
-      env,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-  } else {
-    console.log(`[Electron] server.exe not found. Falling back to python server.py...`);
-    pythonProcess = spawn('python', ['server.py', '--no-browser', '--port', port.toString()], {
-      cwd: path.join(__dirname, '..'),
-      env,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+  try {
+    if (exePath) {
+      console.log(`[Electron] Spawning server executable: ${exePath}`);
+      const cwd = path.dirname(exePath);
+      pythonProcess = spawn(exePath, ['--no-browser', '--port', port.toString()], {
+        cwd,
+        env,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+    } else {
+      console.log(`[Electron] server.exe not found. Falling back to python server.py...`);
+      pythonProcess = spawn('python', ['server.py', '--no-browser', '--port', port.toString()], {
+        cwd: path.join(__dirname, '..'),
+        env,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+    }
+  } catch (err) {
+    console.error(`[Electron] startPythonProcess spawn failed (EBUSY/lock): ${err.message}`);
+    pythonProcess = null;
+    if (!isQuitting) {
+      setTimeout(() => {
+        if (!isQuitting && !pythonProcess) startPythonProcess(port);
+      }, 1500);
+    }
+    return;
   }
+
+  if (!pythonProcess) return;
+
+  pythonProcess.on('error', (err) => {
+    console.error(`[Electron] Python process error: ${err && err.message}`);
+    pythonProcess = null;
+    if (!isQuitting) {
+      setTimeout(() => {
+        if (!isQuitting && !pythonProcess) startPythonProcess(port);
+      }, 1500);
+    }
+  });
 
   const serverLogPath = path.join(app.getPath('userData'), 'server.log');
   const serverLogStream = fs.createWriteStream(serverLogPath, { flags: 'a' });
@@ -668,21 +691,39 @@ function startTtsProcess(port) {
   if (isQuitting) return;
   const isPackaged = app.isPackaged;
 
-  if (isPackaged) {
-    const ttsExePath = findServerExe();
-    const cwd = path.dirname(ttsExePath);
-    ttsProcess = spawn(ttsExePath, ['--tts-mode', '--tts-port', port.toString()], {
-      cwd,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-  } else {
-    ttsProcess = spawn('python', ['server.py', '--tts-mode', '--tts-port', port.toString()], {
-      cwd: path.join(__dirname, '..'),
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+  try {
+    if (isPackaged) {
+      const ttsExePath = findServerExe();
+      const cwd = path.dirname(ttsExePath);
+      ttsProcess = spawn(ttsExePath, ['--tts-mode', '--tts-port', port.toString()], {
+        cwd,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+    } else {
+      ttsProcess = spawn('python', ['server.py', '--tts-mode', '--tts-port', port.toString()], {
+        cwd: path.join(__dirname, '..'),
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+    }
+  } catch (err) {
+    console.error(`[Electron] startTtsProcess spawn failed (EBUSY/lock): ${err.message}`);
+    ttsProcess = null;
+    if (!isQuitting && !selfModifyRestartActive) {
+      setTimeout(() => {
+        if (!isQuitting && !ttsProcess) startTtsProcess(port);
+      }, 1500);
+    }
+    return;
   }
+
+  if (!ttsProcess) return;
+
+  ttsProcess.on('error', (err) => {
+    console.error(`[Electron] TTS process error: ${err && err.message}`);
+    ttsProcess = null;
+  });
 
   ttsProcess.stdout.on('data', (data) => console.log(`[TTS]: ${data}`));
   ttsProcess.stderr.on('data', (data) => console.error(`[TTS Error]: ${data}`));
