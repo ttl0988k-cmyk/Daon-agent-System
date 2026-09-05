@@ -161,13 +161,25 @@ cfg = _cfg_cache
 # Config helper: config.yaml → env var → hardcoded default
 # =============================================================================
 
-# Load profile/user environment from ~/.hermes/.env
+# Load profile/user environment from ~/.hermes/.env and project root .env
 import dotenv
 from pathlib import Path
 _hermes_env = Path.home() / '.hermes' / '.env'
 if _hermes_env.exists():
     try:
         dotenv.load_dotenv(_hermes_env, override=True)
+    except Exception:
+        pass
+_proj_env = Path(__file__).resolve().parents[2] / '.env'
+if _proj_env.exists():
+    try:
+        dotenv.load_dotenv(_proj_env, override=False)
+    except Exception:
+        pass
+_parent_env = Path(__file__).resolve().parents[3] / '.env'
+if _parent_env.exists():
+    try:
+        dotenv.load_dotenv(_parent_env, override=False)
     except Exception:
         pass
 def _load_config_value(key_path, env_var=None, default=None):

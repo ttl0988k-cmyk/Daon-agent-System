@@ -37,7 +37,7 @@ def _registered_models_for(provider: str) -> list[str]:
     return []
 
 
-def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None) -> str:
+def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 8192) -> str:
     """Call MiniMax Anthropic-compatible API directly, falling back to other
     MiniMax models registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
@@ -59,7 +59,7 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
     for model in models_to_try:
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
 
-        payload = {"model": model, "max_tokens": 4096, "messages": [{"role": "user", "content": prompt}]}
+        payload = {"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
 
         if system_instruction:
             payload["system"] = system_instruction
@@ -104,7 +104,7 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
     raise last_error
 
 
-def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None) -> str:
+def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 8192) -> str:
     """Call DeepSeek API directly, falling back to other DeepSeek models
     registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
@@ -139,7 +139,7 @@ def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None,
             messages.append({"role": "system", "content": system_instruction})
         messages.append({"role": "user", "content": prompt})
 
-        payload = {"model": model, "messages": messages}
+        payload = {"model": model, "messages": messages, "max_tokens": max_tokens}
 
         req_body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
@@ -223,7 +223,7 @@ def _is_permanent_provider_error(e: Exception) -> bool:
     return False
 
 
-def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None) -> str:
+def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None, max_tokens: Optional[int] = 8192) -> str:
     """Wrapper that dynamically routes meta-agents (Planner/Merger) using AIAgent with robust fallback retry logic."""
     agent_path = str(Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent")
     if agent_path not in sys.path:
@@ -253,6 +253,7 @@ def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferre
                     base_url=base_url,
                     enabled_toolsets=[],  # Prevent meta-agents from bypassing delegation
                     quiet_mode=True,
+                    max_tokens=max_tokens,
                 )
                 res = agent.run_conversation(
                     user_message=prompt,

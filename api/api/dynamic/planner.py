@@ -65,6 +65,7 @@ def _build_mcp_catalog_block() -> str:
         "- mcp_servers omitted or null → ALL connected MCP servers are injected (default).\n"
         "- mcp_servers: [] → NO MCP tools for this node.\n"
         '- mcp_servers: ["id1", "id2"] → ONLY those servers\' tools are available to the node.\n'
+        "- Skill-Embedded MCP: If a chosen skill specifies required MCP servers, they are auto-injected dynamically.\n"
         "Prefer SELECTIVE binding: give each node only the MCP servers its subtask actually needs — "
         "fewer tools means less confusion and lower token cost. Only CONNECTED servers are injected at runtime.\n"
         + "\n".join(lines) + "\n"
@@ -130,7 +131,6 @@ class HermesPlanner:
 
         # --- Skill Registry Integration ---
         skill_registry = get_skill_registry()
-        skill_catalog = skill_registry.get_catalog_text()
 
         # --- Semantic Skill Retriever (Embedding-based) ---
         try:
@@ -141,6 +141,17 @@ class HermesPlanner:
         except Exception as e:
             _log.info("SemanticSkillRetriever unavailable, using Rule-based only: %s", e)
             semantic_skill_block = ""
+
+        # Avoid dumping the massive 1,200+ skill catalog (99k characters / 25k tokens) when Top-K is already selected
+        if semantic_skill_block:
+            skill_catalog_block = (
+                "\n[SKILL CATALOG NOTE]\n"
+                "Top relevant skills are listed above. Additional skills are in the registry and injected on demand.\n"
+                "[End Skill Catalog Note]\n\n"
+            )
+        else:
+            skill_catalog = skill_registry.get_catalog_text()
+            skill_catalog_block = f"{skill_catalog}\n\n"
 
         # --- Skill History (Context-aware Success Rates) ---
         try:
@@ -290,7 +301,7 @@ class HermesPlanner:
             "[End Retriever ≠ Auto-Select]\n\n"
             + semantic_skill_block + "\n"
             + skill_history_block + "\n"
-            + f"{skill_catalog}\n\n"
+            + skill_catalog_block
             + skill_graph_block + "\n"
             + forced_skills_block
             + _build_mcp_catalog_block()
@@ -476,7 +487,11 @@ class HermesPlanner:
                 "2. Then add the plan.md writing node using template_id 'task-decomposer' (the DEFAULT for turning requirements into an executable plan). Name it 'plan_planner'. Use 'architect' instead ONLY for genuinely large/complex systems needing module boundaries, tech-stack trade-offs, or scalability analysis (e.g. multi-service backends, microservices) — do NOT use architect for a typical single website/app/agent build, that is overkill.\n"
                 "3. Wire them so the PRD feeds the plan: set plan_planner.input = prd_planner.output, and add edge ['prd_planner', 'plan_planner'].\n"
                 "4. The 'plan_planner' node MUST physically write a detailed `plan.md` file in the workspace using the `write_file` tool, BASED ON the PRD it receives as input. Do NOT just output text without saving the file.\n"
-                "5. Implementation agents (Developer, QA, etc.) come AFTER, depending on plan_planner.\n"
+                "[HYPERPLAN RED-TEAMING — PRE-CODE DEBATE]\n"
+                "For complex, architectural, or security-sensitive tasks, you SHOULD insert a pre-code red-teaming node using template_id 'hyperplan-reviewer' (name it 'hyperplan_reviewer').\n"
+                "- Wire: edge ['plan_planner', 'hyperplan_reviewer'].\n"
+                "- Input: plan_planner.output. The hyperplan reviewer stress-tests plan.md across 3 perspectives (Architecture, Security vulnerabilities, Edge cases/Failure modes) and enriches plan.md with mitigation strategies before user approval.\n"
+                "- Implementation agents (Developer, QA, etc.) come AFTER, depending on hyperplan_reviewer (or plan_planner if hyperplan is omitted).\n"
                 "[QA / REVIEW NODE — MANDATORY]\n"
                 "You MUST always end the implementation phase with at least one verification agent. Do NOT ship code without review.\n"
                 "- Add a code review node using template_id 'code-review' (name it e.g. 'code_reviewer') that depends on the Developer node(s).\n"
@@ -484,8 +499,8 @@ class HermesPlanner:
                 "- Wire the edges so implementation -> code_reviewer (and -> qa_tester when applicable). The reviewer/tester must run AFTER the code is written.\n"
                 "A plan with implementation agents but NO review/QA node is INVALID and will be rejected.\n"
                 "Skip the PRD node ONLY for trivial tasks matching prd-writer's AVOID conditions (simple_bug_fix, single_file_change, refactoring, ui_styling, content_writing).\n"
-                "The orchestrator will automatically execute the pre-approval planning agents (prd_planner -> plan_planner) first, display `plan.md` to the user, pause for their approval, and then execute the remaining implementation agents.\n"
-                "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> Developer -> code_reviewer / qa_tester) now in your response."
+                "The orchestrator will automatically execute the pre-approval planning agents (prd_planner -> plan_planner -> hyperplan_reviewer) first, display `plan.md` to the user, pause for their approval, and then execute the remaining implementation agents.\n"
+                "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> hyperplan_reviewer -> Developer -> code_reviewer / qa_tester) now in your response."
             )
 
 
@@ -521,16 +536,33 @@ class HermesPlanner:
                     f"Please analyze the failure, adjust the DAG logic or format, and output a corrected, fully compliant JSON plan."
                 )
 
-            buffer = StreamLogBuffer(f"CEO ({preferred_model or 'default'})", log_callback)
+            # CEO reasoning model defaults to deepseek-v4-flash
+            planner_model = preferred_model if (preferred_model and "minimax" not in preferred_model.lower()) else "deepseek-v4-flash"
+
+            buffer = StreamLogBuffer(f"CEO ({planner_model})", log_callback)
             def stream_cb(chunk):
                 buffer.write(chunk)
 
-            raw_response = _call_direct(current_prompt, system_instruction, preferred_model=preferred_model, stream_callback=stream_cb)
+            raw_response = _call_direct(
+                current_prompt,
+                system_instruction,
+                preferred_model=planner_model,
+                stream_callback=stream_cb,
+                max_tokens=8192,
+            )
             buffer.flush()
             if log_callback:
-                log_callback(f"CEO ({preferred_model or 'default'})", "\n", "done")
+                log_callback(f"CEO ({planner_model})", "\n", "done")
 
             clean_text = raw_response.strip()
+            # Strip reasoning/thought blocks so internal JSON-like text in thinking doesn't corrupt DAG parsing
+            clean_text = re.sub(r'<think>.*?</think>', '', clean_text, flags=re.DOTALL | re.IGNORECASE)
+            clean_text = re.sub(r'<thinking>.*?</thinking>', '', clean_text, flags=re.DOTALL | re.IGNORECASE)
+            clean_text = re.sub(r'<thought>.*?</thought>', '', clean_text, flags=re.DOTALL | re.IGNORECASE)
+            clean_text = re.sub(r'<reasoning>.*?</reasoning>', '', clean_text, flags=re.DOTALL | re.IGNORECASE)
+            clean_text = re.sub(r'(?:^|\n)[ \t]*<(?:think|thinking|reasoning|thought)\b[^>]*>.*$', '', clean_text, flags=re.DOTALL | re.IGNORECASE)
+            clean_text = clean_text.strip()
+
             if "```" in clean_text:
                 match = re.search(r"```(?:json)?\s*(.*?)\s*```", clean_text, re.DOTALL)
                 if match:
@@ -542,7 +574,13 @@ class HermesPlanner:
                 clean_text = clean_text[start:end]
 
             try:
-                plan_dict = json.loads(clean_text)
+                try:
+                    plan_dict = json.loads(clean_text)
+                except json.JSONDecodeError:
+                    # Trailing comma auto-repair fallback: e.g. ", }" -> " }" or ", ]" -> " ]"
+                    repaired = re.sub(r',\s*([\}\]])', r'\1', clean_text)
+                    plan_dict = json.loads(repaired)
+
                 errors = validate_plan_schema(plan_dict)
                 if not errors:
                     errors = semantic_validate(plan_dict)

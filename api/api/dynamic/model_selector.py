@@ -50,7 +50,7 @@ class ModelProfile:
     context_window: int                 # max tokens
     avg_latency_rank: int              # 1=fastest, 5=slowest (relative)
     strengths: list[str] = field(default_factory=list)  # ["code", "reasoning", "creative", "vision", "fast"]
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 8192
     supports_streaming: bool = True
     supports_tool_calling: bool = True
     base_json_reliability: float = 0.9
@@ -577,10 +577,10 @@ class DynamicModelSelector:
                     strengths.append('code')
                 if any(k in mid_lower for k in ('reason', 'think', 'r1', 'o1', 'o3')):
                     strengths.append('reasoning')
+                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus', 'deepseek', 'gpt', 'claude', 'gemini', 'qwen', 'kimi')):
+                    strengths.extend(['code', 'reasoning'])
                 if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'mini', 'free')):
                     strengths.append('fast')
-                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus')):
-                    strengths.extend(['code', 'reasoning'])
                 if any(k in mid_lower for k in ('creative', 'art', 'image', 'vision', 'vl')):
                     strengths.append('creative')
                 if not strengths:

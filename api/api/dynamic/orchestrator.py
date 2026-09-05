@@ -691,7 +691,7 @@ class HermesDynamicRunner:
             # (3) subtask의 plan.md/prd 언급  (4) 매칭 노드로 흘러들어가는 upstream 엣지 폐로.
             planner_nodes = []
             if planning_mode:
-                _PLANNING_TEMPLATES = {"prd-writer", "task-decomposer"}
+                _PLANNING_TEMPLATES = {"prd-writer", "task-decomposer", "hyperplan-reviewer"}
                 all_nodes = plan.get("nodes", [])
                 matched_names = set()
                 for n in all_nodes:
@@ -704,6 +704,8 @@ class HermesDynamicRunner:
                         or "planner" in _name or "planner" in _role
                         or "plan" in _name
                         or "prd" in _name
+                        or "hyperplan" in _name or "hyperplan" in _role or "hyperplan" in _tid
+                        or "redteam" in _name or "redteam" in _role
                         or "plan.md" in _subtask
                         or "제품 기획" in _subtask or "prd" in _subtask
                     ):

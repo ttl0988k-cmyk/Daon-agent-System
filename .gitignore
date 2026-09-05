@@ -64,3 +64,6 @@ release/_stage/
 
 # Electron builder config (duplicated from package.json)
 electron-builder.yml
+
+# Scratch
+scratch/

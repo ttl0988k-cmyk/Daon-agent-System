@@ -166,7 +166,13 @@ def all_sessions():
                     index_map[s.session_id] = s.compact()
             result = sorted(index_map.values(), key=lambda s: (s.get('pinned', False), s['updated_at']), reverse=True)
             # Hide empty Untitled sessions from the UI (created by tests, page refreshes, etc.)
-            result = [s for s in result if not (s.get('title','Untitled')=='Untitled' and s.get('message_count',0)==0)]
+            # and filter out subagent/child sessions created during multi-agent delegation.
+            result = [
+                s for s in result
+                if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
+                and not s.get('parent_session_id')
+                and s.get('source') not in ('subagent', 'delegate', 'child')
+            ]
             # Backfill: sessions created before Sprint 22 have no profile tag.
             # Attribute them to 'default' so the client profile filter works correctly.
             for s in result:
@@ -187,7 +193,12 @@ def all_sessions():
     for s in SESSIONS.values():
         if all(s.session_id != x.session_id for x in out): out.append(s)
     out.sort(key=lambda s: (getattr(s, 'pinned', False), s.updated_at), reverse=True)
-    result = [s.compact() for s in out if not (s.title=='Untitled' and len(s.messages)==0)]
+    result = [
+        s.compact() for s in out
+        if not (s.title == 'Untitled' and len(s.messages) == 0)
+        and not getattr(s, 'parent_session_id', None)
+        and getattr(s, 'source', None) not in ('subagent', 'delegate', 'child')
+    ]
     for s in result:
         if not s.get('profile'):
             s['profile'] = 'default'
@@ -295,6 +306,8 @@ def get_cli_sessions() -> list:
                        MAX(m.timestamp) AS last_activity
                 FROM sessions s
                 LEFT JOIN messages m ON m.session_id = s.id
+                WHERE (s.parent_session_id IS NULL OR s.parent_session_id = '')
+                  AND (s.source IS NULL OR s.source NOT IN ('subagent', 'delegate', 'child'))
                 GROUP BY s.id
                 ORDER BY COALESCE(MAX(m.timestamp), s.started_at) DESC
                 LIMIT 200

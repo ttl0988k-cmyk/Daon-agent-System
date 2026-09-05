@@ -123,9 +123,10 @@ def _popen_bash(
     Backends with special Popen needs (e.g. local's ``preexec_fn``) can bypass
     this and call :func:`_pipe_stdin` directly.
     """
+    default_flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if _IS_WINDOWS else 0
     proc = subprocess.Popen(
         cmd,
-        creationflags=kwargs.pop("creationflags", subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0),
+        creationflags=kwargs.pop("creationflags", default_flags),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
@@ -677,6 +678,16 @@ class BaseEnvironment(ABC):
     def _kill_process(self, proc: ProcessHandle):
         """Terminate a process. Subclasses may override for process-group kill."""
         try:
+            if _IS_WINDOWS and hasattr(proc, 'pid') and proc.pid:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        check=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
+                    )
+                except Exception:
+                    pass
             proc.kill()
         except (ProcessLookupError, PermissionError, OSError):
             pass

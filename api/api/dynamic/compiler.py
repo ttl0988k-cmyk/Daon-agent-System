@@ -138,14 +138,27 @@ class AgentCompiler:
                 # Agent 폭발 방지는 delegate_team 도구의 깊이/예산/사유 가드가 담당한다.
                 if "delegation" not in enabled_toolsets:
                     enabled_toolsets.append("delegation")
-                # Inject MCP tools (갭 B: 노드별 선택 바인딩)
+                # Skill-Embedded MCP: dynamically collect MCP servers declared by node skills
+                embedded_mcp = AgentCompiler._resolve_skill_embedded_mcp(node_skills, skill_registry)
+                node_mcp = resolved.get("mcp_servers")
+                if node_mcp is not None:
+                    combined_mcp = list(node_mcp)
+                    for srv in embedded_mcp:
+                        if srv not in combined_mcp:
+                            combined_mcp.append(srv)
+                elif embedded_mcp:
+                    combined_mcp = embedded_mcp
+                else:
+                    combined_mcp = None
+
+                # Inject MCP tools (갭 B: 노드별 선택 바인딩 + Skill-Embedded MCP)
                 enabled_toolsets = AgentCompiler._inject_mcp_tools(
-                    enabled_toolsets, resolved.get("mcp_servers")
+                    enabled_toolsets, combined_mcp
                 )
 
                 if node_skills:
-                    _log.info("Injected skills into '%s' (template: %s): %s",
-                              name, resolved.get("template_id"), node_skills)
+                    _log.info("Injected skills into '%s' (template: %s): %s (embedded MCPs: %s)",
+                              name, resolved.get("template_id"), node_skills, embedded_mcp)
 
                 compiled_nodes.append({
                     "name": name,
@@ -158,7 +171,7 @@ class AgentCompiler:
                     "output": resolved.get("output") or (name + "_output"),
                     "model": resolved.get("model") or "",
                     "skills": node_skills,
-                    "mcp_servers": resolved.get("mcp_servers"),
+                    "mcp_servers": combined_mcp,
                     "environment": str(resolved.get("environment") or "local").strip().lower(),
                     "template_id": resolved.get("template_id"),
                     "_display_name": resolved.get("_display_name", ""),
@@ -181,15 +194,10 @@ class AgentCompiler:
             enabled_toolsets.append("browser")
             # 갭 D: 레거시 경로에도 위임 toolset 부여 (가드가 깊이/예산 강제).
             enabled_toolsets.append("delegation")
-            enabled_toolsets = AgentCompiler._inject_mcp_tools(
-                enabled_toolsets, n.get("mcp_servers")
-            )
-
             if "web_search" in node_type:
                 enabled_toolsets.append("web_search")
             if "image_tool" in node_type or "image_gen" in node_type:
                 enabled_toolsets.append("image_gen")
-
             # Merge plan-level skills with node-level skills (deduplicated)
             node_skills = list(plan_level_skills)
             for s in (n.get("skills") or []):
@@ -200,6 +208,23 @@ class AgentCompiler:
             for s in AgentCompiler._resolve_plugin_skills(n.get("plugins")):
                 if s not in node_skills:
                     node_skills.append(s)
+
+            # Skill-Embedded MCP (레거시 경로)
+            embedded_mcp = AgentCompiler._resolve_skill_embedded_mcp(node_skills, skill_registry)
+            node_mcp = n.get("mcp_servers")
+            if node_mcp is not None:
+                combined_mcp = list(node_mcp)
+                for srv in embedded_mcp:
+                    if srv not in combined_mcp:
+                        combined_mcp.append(srv)
+            elif embedded_mcp:
+                combined_mcp = embedded_mcp
+            else:
+                combined_mcp = None
+
+            enabled_toolsets = AgentCompiler._inject_mcp_tools(
+                enabled_toolsets, combined_mcp
+            )
 
             # Build system_prompt: original + env/messaging + injected skill content
             # NOTE: get_integrated_persona() 호출 제거 — 정적 에이전트(Bill/Tony/Prada/Sherlock)
@@ -296,6 +321,25 @@ class AgentCompiler:
             "browser_navigate first; the returned snapshot lists interactive elements as @eN "
             "refs — use those refs with browser_click/browser_type.\n"
         )
+
+    @staticmethod
+    def _resolve_skill_embedded_mcp(skill_names: list[str], skill_registry) -> list[str]:
+        """Collect MCP server IDs declared by the node's assigned skills (Skill-Embedded MCP)."""
+        embedded = []
+        if not skill_names or not skill_registry:
+            return embedded
+        for sname in skill_names:
+            sk = None
+            if hasattr(skill_registry, "get_skill"):
+                sk = skill_registry.get_skill(sname)
+            elif hasattr(skill_registry, "get"):
+                sk = skill_registry.get(sname)
+            if sk and getattr(sk, "mcp_servers", None):
+                for srv in sk.mcp_servers:
+                    srv_clean = str(srv).strip()
+                    if srv_clean and srv_clean not in embedded:
+                        embedded.append(srv_clean)
+        return embedded
 
     @staticmethod
     def _inject_mcp_tools(toolsets: list[str], mcp_servers: list[str] | None = None) -> list[str]:

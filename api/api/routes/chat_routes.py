@@ -164,6 +164,10 @@ def handle_get_sse_stream(handler, parsed) -> bool:
 
 # ── POST route helpers ────────────────────────────────────────────────────────
 
+_START_LOCK = threading.Lock()
+_RECENT_STARTS = {}  # session_id -> (timestamp, stream_id)
+
+
 def handle_post_chat_start(handler, body) -> bool:
     """POST /api/chat/start — start a streaming chat."""
     try:
@@ -177,6 +181,18 @@ def handle_post_chat_start(handler, body) -> bool:
     msg = str(body.get('message', '')).strip()
     if not msg:
         return bad(handler, 'message is required')
+
+    # Dedup guard: if a start request for this session was processed within the last 2.5s,
+    # reuse the existing stream instead of launching duplicate agent threads.
+    sid = s.session_id
+    now = time.time()
+    with _START_LOCK:
+        if sid in _RECENT_STARTS:
+            last_ts, existing_stream_id = _RECENT_STARTS[sid]
+            if now - last_ts < 2.5:
+                _logger.warning("Duplicate /api/chat/start blocked for session %s (%.3fs ago). Reusing stream %s", sid, now - last_ts, existing_stream_id)
+                return j(handler, {'stream_id': existing_stream_id, 'session_id': sid, 'deduped': True})
+
     attachments = [str(a) for a in (body.get('attachments') or [])][:20]
     workspace = str(Path(body.get('workspace') or s.workspace).expanduser().resolve())
     model = body.get('model') or s.model
@@ -197,6 +213,8 @@ def handle_post_chat_start(handler, body) -> bool:
     from api.streaming import cancel_session_streams
     cancelled_previous = cancel_session_streams(s.session_id)
     stream_id = uuid.uuid4().hex
+    with _START_LOCK:
+        _RECENT_STARTS[sid] = (now, stream_id)
     q = queue.Queue()
     if cancelled_previous:
         # 이전 실행 중이던 작업이 자동 취소되었음을 새 스트림으로 안내해,

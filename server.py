@@ -78,13 +78,19 @@ import logging.handlers
 import concurrent.futures
 import base64
 import tempfile
-# Load profile/user environment from ~/.hermes/.env
+# Load profile/user environment from ~/.hermes/.env and project root .env
 try:
     import dotenv
     from pathlib import Path
     _hermes_env = Path.home() / '.hermes' / '.env'
     if _hermes_env.exists():
         dotenv.load_dotenv(_hermes_env, override=True)
+    _proj_env = Path(__file__).resolve().parent / '.env'
+    if _proj_env.exists():
+        dotenv.load_dotenv(_proj_env, override=False)
+    _parent_env = Path(__file__).resolve().parent.parent / '.env'
+    if _parent_env.exists():
+        dotenv.load_dotenv(_parent_env, override=False)
 except Exception:
     pass
 

@@ -1831,6 +1831,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   f"tools — the internal browser shares the app window and is always available.\n"
               )
 
+          # Clean up any trailing interrupted assistant messages from a previous cancelled run
+          while s.messages and s.messages[-1].get('role') == 'assistant':
+              _last_c = str(s.messages[-1].get('content') or '')
+              if any(p in _last_c for p in ('Operation interrupted', 'Cancelled by user', 'Cancelled before', '작업이 중지', '이전 작업이 자동 취소')):
+                  s.messages.pop()
+              else:
+                  break
+
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
           if not any(m.get('role') == 'user' and m.get('content') == msg_text for m in s.messages[-2:]):
                user_msg = {'role': 'user', 'content': msg_text, 'timestamp': int(time.time())}
@@ -1954,10 +1962,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           print(f"[webui-debug] run_conversation completed for session={session_id}", flush=True)
           _result_msgs = result.get('messages')
           if _result_msgs:
-              # 모델 ?환 ???전 ?스???롬?트가 ?적?는 것을 방?:
-              # ?이?트가 반환??메시지 목록?서??system 메시지??거?고 ??한??
               s.messages = [m for m in _result_msgs if m.get('role') != 'system']
-          # (결과가 ?으?기존 s.messages ??)
+          if cancel_event.is_set():
+              while s.messages and s.messages[-1].get('role') == 'assistant':
+                  _lc = str(s.messages[-1].get('content') or '')
+                  if any(p in _lc for p in ('Operation interrupted', 'Cancelled by user', 'Cancelled before', '작업이 중지', '이전 작업이 자동 취소')):
+                      s.messages.pop()
+                  else:
+                      break
 
           # ==== [NEW] Attach model attribution metadata for UI ====
           actual_model = getattr(agent, 'model', resolved_model)
@@ -2255,6 +2267,16 @@ def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
     새 스트림이 _ACTIVE_SESSION_STREAMS[session_id]를 덮어쓴 뒤에도
     (역방향 조회 실패로 인한) 락 누수가 발생하지 않는다.
     """
+    # 0) 즉시 _CANCELLED_STREAMS에 등록:
+    # 브라우저 EventSource가 끊어지고 즉시 재연결할 때 404가 발생하지 않고
+    # 클린한 'cancel' 이벤트를 받아 UI가 에러 없이 정상 종료되도록 한다.
+    with _CANCELLED_STREAMS_LOCK:
+        _CANCELLED_STREAMS[stream_id] = time.time()
+        _now = time.time()
+        _stale = [sid for sid, ts in _CANCELLED_STREAMS.items() if _now - ts > 60]
+        for sid in _stale:
+            del _CANCELLED_STREAMS[sid]
+
     # NEW: Tell the AIAgent to stop its in-flight HTTP request immediately.
     # Without this, cancel_event.set() has no way to reach the agent thread —
     # the HTTP request keeps running until its own 120s timeout.
@@ -2281,24 +2303,16 @@ def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
         # 3초 만에 강제 제거하던 기존 동작은 SSE 재연결이 404를 받게 만들어
         # 사용자에게 "에이전트 연결 끊김"으로 보였다. 정상 경로에서는 워커의
         # finally 블록이 STREAMS를 제거하므로 이곳은 안전장치다.
-        #
-        # 추가: 도구(terminal 등)가 인터럽트를 반영하지 못하고 계속 실행 중이면
-        # 세션 락(_agent_lock)이 풀리지 않아 새 메시지가 "이전 작업이 아직
-        # 종료되지 않았습니다"로 거부될 수 있다. 인터럽트가 도구에 전파될 시간
-        # (3초)을 기다린 뒤에도 락이 잠겨 있으면 강제로 해제해, 취소 후 즉시
-        # 다음 메시지를 보낼 수 있게 한다.
         def _force_cleanup():
             with _STREAM_THREADS_LOCK:
                 worker = _STREAM_THREADS.get(stream_id)
-            # 1) 도구가 인터럽트를 반영해 스스로 종료되기를 잠시 기다린다.
-            _grace_deadline = time.time() + 3
+            # 1) 도구가 인터럽트를 반영해 스스로 종료되기를 잠시 기다린다. (1.5초)
+            _grace_deadline = time.time() + 1.5
             while worker is not None and worker.is_alive() and time.time() < _grace_deadline:
-                time.sleep(0.5)
+                time.sleep(0.3)
             # 2) 인터럽트 전파 후에도 워커가 계속 실행 중이면(도구가 인터럽트를
             #    반영하지 못해 run_conversation()이 아직 반환하지 않은 경우)
             #    세션 락을 강제 해제해 다음 메시지가 즉시 진행될 수 있게 한다.
-            #    (워커가 이미 종료됐다면 finally 블록이 락을 해제했으므로 이
-            #    호출은 lock.locked()==False라서 no-op이다.)
             if worker is not None and worker.is_alive():
                 _force_release_session_lock(stream_id, session_id=session_id)
             # 3) STREAMS 정리 안전장치 (최대 20초 대기)

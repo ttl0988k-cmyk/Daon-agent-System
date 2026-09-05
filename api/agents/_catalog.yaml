@@ -1,10 +1,10 @@
 # Agent Template Catalog v1.2
 # CEO 에이전트가 이 카탈로그에서 템플릿 ID를 선택하여 DAG를 구성합니다.
-# 총 104개 템플릿, 9개 카테고리
+# 총 105개 템플릿, 9개 카테고리
 # v1.2: cost_tier 필드 추가 (low/mid/high) — 비용 최적화 의사결정용
 
 version: '1.2'
-total_templates: 104
+total_templates: 105
 categories:
   debugger:
     description: 디버깅 및 문제 진단 전문 에이전트
@@ -1385,6 +1385,23 @@ categories:
       - ui_design
       - performance_tuning
       cost_tier: low
+    - id: hyperplan-reviewer
+      display_name: 하이퍼플랜 검증가 (Pre-Code Red Team)
+      tags:
+      - hyperplan
+      - redteam
+      - architecture
+      - security
+      - failure-modes
+      - pre-code
+      - debate
+      capability: 사전 코드 작성 전 계획/설계 다각도 레드팀 분석 및 취약점/결함 보강
+      domain: architecture, security, risk-assessment, planning
+      avoid_when:
+      - simple_bug_fix
+      - ui_styling
+      - documentation_only
+      cost_tier: mid
     - id: performance-review
       display_name: 성능 분석가
       tags:

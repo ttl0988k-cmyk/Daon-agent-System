@@ -657,6 +657,9 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             if not patch:
                 return tool_error("patch content required")
             result = file_ops.patch_v4a(patch)
+        elif mode == "hashline":
+            from tools.hashline_editor import hashline_edit_tool
+            return hashline_edit_tool(path=path, operations=patch or new_string or old_string, task_id=task_id)
         else:
             return tool_error(f"Unknown mode: {mode}")
         
@@ -788,16 +791,16 @@ WRITE_FILE_SCHEMA = {
 
 PATCH_SCHEMA = {
     "name": "patch",
-    "description": "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Returns a unified diff. Auto-runs syntax checks after editing.\n\nReplace mode (default): find a unique string and replace it.\nPatch mode: apply V4A multi-file patches for bulk changes.",
+    "description": "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Returns a unified diff. Auto-runs syntax checks after editing.\n\nReplace mode (default): find a unique string and replace it.\nPatch mode: apply V4A multi-file patches for bulk changes.\nHashline mode: content-addressed safe edits anchored by line#checksum.",
     "parameters": {
         "type": "object",
         "properties": {
-            "mode": {"type": "string", "enum": ["replace", "patch"], "description": "Edit mode: 'replace' for targeted find-and-replace, 'patch' for V4A multi-file patches", "default": "replace"},
-            "path": {"type": "string", "description": "File path to edit (required for 'replace' mode)"},
+            "mode": {"type": "string", "enum": ["replace", "patch", "hashline"], "description": "Edit mode: 'replace' for targeted find-and-replace, 'patch' for V4A multi-file patches, 'hashline' for checksum-verified line anchors", "default": "replace"},
+            "path": {"type": "string", "description": "File path to edit (required for 'replace' and 'hashline' modes)"},
             "old_string": {"type": "string", "description": "Text to find in the file (required for 'replace' mode). Must be unique in the file unless replace_all=true. Include enough surrounding context to ensure uniqueness."},
-            "new_string": {"type": "string", "description": "Replacement text (required for 'replace' mode). Can be empty string to delete the matched text."},
+            "new_string": {"type": "string", "description": "Replacement text (required for 'replace' mode). Can be empty string to delete the matched text. For 'hashline' mode, pass DSL text or JSON operations here if 'patch' is omitted."},
             "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring a unique match (default: false)", "default": False},
-            "patch": {"type": "string", "description": "V4A format patch content (required for 'patch' mode). Format:\n*** Begin Patch\n*** Update File: path/to/file\n@@ context hint @@\n context line\n-removed line\n+added line\n*** End Patch"}
+            "patch": {"type": "string", "description": "V4A format patch content for 'patch' mode, or Hashline DSL / operations JSON for 'hashline' mode."}
         },
         "required": ["mode"]
     }

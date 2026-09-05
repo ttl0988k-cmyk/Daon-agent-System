@@ -111,9 +111,9 @@ function renderMd(text) {
 
   // ── Phase 2: HTML escape remaining text ──
   var html = text
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 
   // Headings
   html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
@@ -125,7 +125,9 @@ function renderMd(text) {
   html = html.replace(/^\- (.*?)$/gm, '<li>$1</li>');
   // Paragraphs (split by double newlines)
   html = html.split('\n\n').map(function (p) {
-    if (p.trim().startsWith('<h') || p.trim().startsWith('<pre') || p.trim().startsWith('<li>')) return p;
+    var trimmed = p.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('<h') || trimmed.startsWith('<pre') || trimmed.startsWith('<li>')) return p;
     return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
   }).join('');
 

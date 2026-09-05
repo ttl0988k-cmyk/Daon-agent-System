@@ -35,14 +35,19 @@ _logger = logging.getLogger(__name__)
 _MOBILE_HTML = Path(__file__).resolve().parents[3] / "static" / "m.html"
 _MOBILE_JS   = Path(__file__).resolve().parents[3] / "static" / "modules" / "mobile.js"
 
-_SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-_SUPABASE_ANON = os.environ.get("SUPABASE_ANON_KEY", "")
-_SUPABASE_SERVICE = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+def _sb_url_val() -> str:
+    return os.environ.get("SUPABASE_URL", "").rstrip("/")
+
+def _sb_anon_val() -> str:
+    return os.environ.get("SUPABASE_ANON_KEY", "")
+
+def _sb_service_val() -> str:
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 
 def _sb_headers(service: bool = True) -> dict:
     """Supabase REST 헤더. service_role 이면 RLS 우회, anon 이면 RLS 적용."""
-    key = _SUPABASE_SERVICE if service else _SUPABASE_ANON
+    key = _sb_service_val() if service else _sb_anon_val()
     if not key:
         raise RuntimeError("Supabase key missing in env (SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY)")
     return {
@@ -55,7 +60,7 @@ def _sb_headers(service: bool = True) -> dict:
 
 def _sb_url(table: str, query: str = "") -> str:
     """PostgREST URL 빌더."""
-    base = f"{_SUPABASE_URL}/rest/v1/{table}"
+    base = f"{_sb_url_val()}/rest/v1/{table}"
     return f"{base}?{query}" if query else base
 
 
@@ -110,15 +115,15 @@ def handle_post_mobile_login(handler, body: dict) -> bool:
     email = require(body, "email", str)
     password = require(body, "password", str)
 
-    if not _SUPABASE_URL or not _SUPABASE_ANON:
+    if not _sb_url_val() or not _sb_anon_val():
         return j_err(handler, "Supabase not configured on server", 500)
 
-    url = f"{_SUPABASE_URL}/auth/v1/token?grant_type=password"
+    url = f"{_sb_url_val()}/auth/v1/token?grant_type=password"
     payload = json.dumps({"email": email, "password": password}).encode("utf-8")
     req = urllib.request.Request(
         url, data=payload, method="POST",
         headers={
-            "apikey": _SUPABASE_ANON,
+            "apikey": _sb_anon_val(),
             "Content-Type": "application/json",
         },
     )
@@ -159,7 +164,7 @@ def handle_post_mobile_conversations(handler, body: dict) -> bool:
     device = require(body, "device", str)
     title = body.get("title")
 
-    if not _SUPABASE_SERVICE:
+    if not _sb_service_val():
         return j_err(handler, "Supabase service key not configured", 500)
 
     # 1) JWT에서 user_id 추출 (service_role은 auth API로 verify)
@@ -177,7 +182,7 @@ def handle_post_mobile_conversations(handler, body: dict) -> bool:
     }
     payload = json.dumps([row]).encode("utf-8")
     req = urllib.request.Request(
-        f"{_SUPABASE_URL}/rest/v1/conversations",
+        f"{_sb_url_val()}/rest/v1/conversations",
         data=payload, method="POST",
         headers=_sb_headers(service=True),
     )
@@ -292,7 +297,7 @@ def handle_post_mobile_messages(handler, body: dict) -> bool:
     }
     payload = json.dumps([row]).encode("utf-8")
     req = urllib.request.Request(
-        f"{_SUPABASE_URL}/rest/v1/messages",
+        f"{_sb_url_val()}/rest/v1/messages",
         data=payload, method="POST",
         headers=_sb_headers(service=True),
     )
@@ -324,13 +329,13 @@ def _verify_supabase_jwt(access_token: str) -> str | None:
     """Supabase JWT 의 user_id (sub) 반환. 검증 실패 시 None."""
     import urllib.request
 
-    if not _SUPABASE_URL:
+    if not _sb_url_val():
         return None
-    url = f"{_SUPABASE_URL}/auth/v1/user"
+    url = f"{_sb_url_val()}/auth/v1/user"
     req = urllib.request.Request(
         url, method="GET",
         headers={
-            "apikey": _SUPABASE_ANON,
+            "apikey": _sb_anon_val(),
             "Authorization": f"Bearer {access_token}",
         },
     )

@@ -1363,8 +1363,27 @@
 
     /* renderMd('')가 만드는 빈 문단도 잔상이 되므로 함께 숨긴다 */
     .message-bubble p:empty {
-      display: none;
-      margin: 0;
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      height: 0 !important;
+    }
+
+    /* 모바일/모바일 앱 화면(<=768px): 도구 카드/추론 카드를 깔끔히 숨겨 여백이나 공백 잔상이 생기지 않도록 함 */
+    @media (max-width: 768px) {
+      .tool-group-card,
+      .tool-announce,
+      .reasoning-card,
+      .terminal-live-card {
+        display: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        max-height: 0 !important;
+        border: none !important;
+        overflow: hidden !important;
+      }
     }
 
     /* Roo-style transient agent state, rendered inside the existing DAON
@@ -1694,15 +1713,23 @@
     /* Cancel stream */
     #cancelStreamBtn {
       display: none;
-      margin: 4px 12px;
-      background: rgba(239, 68, 68, .12);
-      border: 1px solid rgba(239, 68, 68, .3);
-      color: var(--danger);
-      border-radius: 5px;
-      padding: 4px 12px;
-      font-size: 11px;
+      margin: 6px 12px;
+      background: rgba(239, 68, 68, .15);
+      border: 1px solid rgba(239, 68, 68, .4);
+      color: #ef4444;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 12px;
       cursor: pointer;
       font-weight: 600;
+      touch-action: manipulation;
+      transition: background 0.15s ease, transform 0.1s ease;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #cancelStreamBtn:active {
+      background: rgba(239, 68, 68, .3);
+      transform: scale(0.98);
     }
 
     /* Prompt input area */

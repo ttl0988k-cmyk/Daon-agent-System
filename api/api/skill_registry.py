@@ -94,6 +94,7 @@ class SkillEntry:
         "graph_requires", "graph_compatible", "graph_conflicts",
         "style_card_refs",
         "trigger", "capabilities", "enabled",
+        "mcp_servers",
     )
 
     def __init__(
@@ -109,6 +110,7 @@ class SkillEntry:
         style_card_refs: list = None,
         trigger: list = None, capabilities: list = None,
         enabled: bool = True,
+        mcp_servers: list = None,
     ):
         self.name = name
         self.label = label
@@ -137,6 +139,7 @@ class SkillEntry:
         self.trigger = trigger or []
         self.capabilities = capabilities or []
         self.enabled = enabled
+        self.mcp_servers = mcp_servers or []
 
     def to_catalog_line(self) -> str:
         """Return a one-line summary for the CEO skill catalog."""
@@ -320,7 +323,8 @@ class SkillRegistry:
                             "capabilities", "trigger", "tags", "knowledge", "enabled",
                             "when_to_use", "when_not_to_use", "inputs", "outputs",
                             "constraints", "success_criteria",
-                            "graph_requires", "graph_compatible", "graph_conflicts"):
+                            "graph_requires", "graph_compatible", "graph_conflicts",
+                            "mcp_servers", "mcp"):
                     if key in yaml_meta and yaml_meta[key]:
                         meta[key] = yaml_meta[key]
 
@@ -357,6 +361,10 @@ class SkillRegistry:
             # regardless of the SKILL.md frontmatter's own name field.
             entry_name = name if source == "plugin" else meta.get("name", name)
 
+            mcp_srv = meta.get("mcp_servers") or meta.get("mcp") or []
+            if isinstance(mcp_srv, str):
+                mcp_srv = [s.strip() for s in mcp_srv.split(",") if s.strip()]
+
             entry = SkillEntry(
                 name=entry_name,
                 label=meta.get("label", ""),
@@ -385,6 +393,7 @@ class SkillRegistry:
                 trigger=meta.get("trigger", []),
                 capabilities=meta.get("capabilities", []),
                 enabled=True,
+                mcp_servers=mcp_srv,
             )
             self._all_entries.append(entry)
         except Exception as e:
@@ -705,6 +714,11 @@ class SkillRegistry:
     def get_skill(self, name: str) -> Optional[SkillEntry]:
         """Get a single skill entry by name."""
         return self._skills.get(name.strip().lower().replace(" ", "-"))
+
+    def get(self, name: str, default=None) -> Optional[SkillEntry]:
+        """Dict-like access alias for get_skill."""
+        res = self.get_skill(name)
+        return res if res is not None else default
 
     def list_skill_names(self) -> list[str]:
         """Return a sorted list of all registered skill names."""

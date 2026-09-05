@@ -665,7 +665,8 @@ function _isInternalNudgeMessage(content) {
 // 원문 그대로 저장하므로, 렌더링 시점에서도 제거해야 챗창에 노출되지 않는다.
 function stripThinkBlocks(text) {
   if (!text || typeof text !== 'string') return text || '';
-  return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
+  var cleaned = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function renderMessages(messages, toolCalls) {
@@ -807,8 +808,12 @@ function scrollToChatBottom() {
   }, 30);
 }
 async function sendPrompt() {
-  // Bugfix #1: prevent duplicate sends while stream is already active
-  if ($('sendPromptBtn').disabled) return;
+  // Bugfix #1: prevent duplicate sends while stream is starting or active
+  if (State._isSendingPrompt || State.currentStreamId || ($('sendPromptBtn') && $('sendPromptBtn').disabled)) {
+    console.warn('[chat] sendPrompt blocked: prompt sending or stream already in progress');
+    return;
+  }
+  State._isSendingPrompt = true;
 
   const input = $('promptInput');
   const text = input.value.trim();
@@ -823,11 +828,18 @@ async function sendPrompt() {
   } catch (err) {
     showToast("파일 업로드 실패: " + err.message);
     setChatStatus('idle', '대기 중');
+    State._isSendingPrompt = false;
     return;
   }
 
-  if (!text && uploaded.length === 0) return;
-  if (!State.activeSessionId) return;
+  if (!text && uploaded.length === 0) {
+    State._isSendingPrompt = false;
+    return;
+  }
+  if (!State.activeSessionId) {
+    State._isSendingPrompt = false;
+    return;
+  }
 
   // ── 환영/마법사 카드 제거: 첫 유효 전송 시 일회성으로 치움 (일반 대화는 영향 없음) ──
   if (typeof window._dismissBeginnerWelcome === 'function') {
@@ -1293,6 +1305,12 @@ async function _executeAgentStream(displayText, uploaded) {
       console.log('[SSE-DIAG] 🔍 idle timeout — recovering session result');
       let recovered = false;
       try {
+        // 스트림이나 도구가 진행 중이면 mid-stream renderMessages() 호출로 화면이 지워지는 것(깜빡임/텍스트 유실)을 방지
+        if (!_streamFinished && (State.currentStreamId || _activeTools > 0)) {
+          console.log('[SSE-DIAG] ⏳ active stream/tool in progress — skipping mid-stream screen wipe');
+          resetIdleTimer();
+          return;
+        }
         const sessRes = await api('/api/sessions');
         const sessions = sessRes.sessions || [];
         const found = sessions.find(function (s) { return s.session_id === State.activeSessionId; });
@@ -2594,6 +2612,7 @@ async function cancelActiveStream() {
 
 function cleanupStreamState() {
   console.log('[SSE-DIAG] 🧹 cleanupStreamState called');
+  State._isSendingPrompt = false;
   // Cleanup is called from several asynchronous SSE/error paths.  Each UI
   // operation must be isolated so one missing/replaced DOM node cannot leave
   // the composer permanently disabled.
@@ -2614,6 +2633,13 @@ function cleanupStreamState() {
     const cancelBtn = $('cancelStreamBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
   } catch (err) { console.warn('[SSE-DIAG] cancel button reset failed:', err); }
+  try {
+    const promptInput = $('promptInput');
+    if (promptInput) {
+      promptInput.disabled = false;
+      promptInput.focus();
+    }
+  } catch (err) { }
   // [I] 취소 버튼이 사라지며 가시 영역이 다시 늘어나면 마지막 메시지가
   // 완전히 보이도록 재스크롤.
   try { scrollToChatBottom(); } catch (err) { }
