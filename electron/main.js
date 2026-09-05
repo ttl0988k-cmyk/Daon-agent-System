@@ -780,9 +780,6 @@ let _watchdogReloadPending = false;
 
 async function handleWatchdogFailure(port) {
   // [Self-Update 근본 수정 ①] 자가수정 재시작 구간 전체에서 watchdog 리스폰 금지.
-  // 기존 watchdogSuppressUntil(2분)은 재빌드(실측 7분)보다 짧아, 재빌드 도중
-  // watchdog 이 OLD exe를 리스폰해 resources\server.exe 락을 홀드 → 스왑 EBUSY.
-  // selfModifyRestartActive 플래그는 재빌드 시간과 무관하게 구간 전체를 커버한다.
   if (selfModifyRestartActive) {
     return;
   }
@@ -790,16 +787,31 @@ async function handleWatchdogFailure(port) {
   if (Date.now() < watchdogSuppressUntil) {
     return;
   }
+
+  // [Watchdog 보호 장치]: HTTP /health 타임아웃 발생 시에도 TCP 포트가 살아있는지 먼저 확인.
+  // 커널 백로그 TCP 응답 = 서버 프로세스가 존재함을 의미하므로 오탐으로 인한 taskkill 차단.
+  const listeningNow = await isPortListening(port, 3000);
+  if (listeningNow) {
+    mlog(`[Watchdog] Health check /health probe failed but TCP port ${port} is LISTENING — server process is alive (false positive). Resetting counter.`);
+    watchdogRestartCount = 0;
+    return;
+  }
+
   watchdogRestartCount++;
   merr(`[Watchdog] Health check failure (${watchdogRestartCount}/${MAX_RESTARTS})`);
   if (watchdogRestartCount < MAX_RESTARTS) {
     return;
   }
   // [stability] 3회 연속 실패해도 즉시 kill하지 않고, 실제 서버 생존 여부를 2차 확인한다.
-  // watchdog probe 오탐(일시 과부하/타임아웃)으로 healthy 서버를 taskkill로 죽이는 사고를 차단.
   const confirm = await probeServerHealthStable(port);
   if (confirm && confirm.healthy && confirm.pid) {
     mlog(`[Watchdog] ${MAX_RESTARTS} failures but server is ALIVE (pid=${confirm.pid}) — false positive, resetting counter (no kill).`);
+    watchdogRestartCount = 0;
+    return;
+  }
+  // 파괴적 taskkill 전 TCP 포트 생존 여부 최종 확인
+  if (await isPortListening(port, 3000)) {
+    mlog(`[Watchdog] Final check: TCP port ${port} is LISTENING — refusing to kill server process.`);
     watchdogRestartCount = 0;
     return;
   }
@@ -810,12 +822,6 @@ async function handleWatchdogFailure(port) {
     pythonProcess = null;
   }
   startPythonProcess(port);
-  // After server restart, reload mainWindow once server is healthy again.
-  // Without this, mainWindow stays white (old dead page) after watchdog restart.
-  // NOTE: this runs ONLY on the confirmed-dead path (3 consecutive failures +
-  // secondary probe). Normal/intentional restarts go through
-  // restartOrchestrator.afterCycle which does its own reload — so this does
-  // NOT blow away the UI on every routine restart.
   if (_watchdogReloadPending) return;
   _watchdogReloadPending = true;
   checkServerHealth(port, 30, 2000).then(() => {

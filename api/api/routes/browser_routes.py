@@ -386,7 +386,7 @@ def _browser_worker_loop():
         for tid in dead_tabs:
             _tab_pages.pop(tid, None)
 
-    def _ensure_browser(session_id: str = None, tab_id: str = None):
+    def _ensure_browser(session_id: str = None, tab_id: str = None, force_cdp: bool = False):
         """Connect to Electron's WebContentsView via CDP and return the appropriate Page.
 
         Supports multi-session isolation: if session_id is provided, routes to that
@@ -394,7 +394,7 @@ def _browser_worker_loop():
         control separate tabs simultaneously without interference.
         """
         nonlocal browser, browser_page, pw
-        global _last_cdp_attempt, _cdp_fail_streak
+        global _last_cdp_attempt, _cdp_fail_streak, _browser_active
 
         _clean_stale_pages()
 
@@ -404,6 +404,7 @@ def _browser_worker_loop():
             try:
                 if not p.is_closed():
                     p.title()
+                    _browser_active = True
                     return p, None
             except Exception:
                 _session_pages.pop(session_id, None)
@@ -414,6 +415,7 @@ def _browser_worker_loop():
             try:
                 if not p.is_closed():
                     p.title()
+                    _browser_active = True
                     return p, None
             except Exception:
                 _tab_pages.pop(tab_id, None)
@@ -422,6 +424,7 @@ def _browser_worker_loop():
         if browser is not None:
             valid_pages = _get_valid_pages()
             if valid_pages:
+                _browser_active = True
                 chosen = None
                 if session_id:
                     # Find a page not yet assigned to another session
@@ -455,21 +458,27 @@ def _browser_worker_loop():
             else:
                 browser = None
                 browser_page = None
+                _browser_active = False
 
         # CDP retry cooldown
         now = time.time()
-        if now - _last_cdp_attempt < _CDP_RETRY_COOLDOWN:
+        if not force_cdp and (now - _last_cdp_attempt < _CDP_RETRY_COOLDOWN):
+            _browser_active = False
             return None, "Electron CDP not ready yet (cooldown). 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
+
+        _last_cdp_attempt = now
 
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
+            _browser_active = False
             return None, "Playwright not installed. Run: pip install playwright && playwright install chromium"
 
         if pw is None:
             try:
                 pw = sync_playwright().start()
             except Exception as e:
+                _browser_active = False
                 return None, f"Failed to start Playwright: {str(e)}"
 
         try:
@@ -481,8 +490,10 @@ def _browser_worker_loop():
 
             valid_pages = _get_valid_pages()
             if not valid_pages:
+                _browser_active = False
                 return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
 
+            _browser_active = True
             chosen = None
             if session_id:
                 _session_pages[session_id] = valid_pages[-1]
@@ -495,7 +506,6 @@ def _browser_worker_loop():
                 chosen = real[0] if real else valid_pages[0]
                 browser_page = chosen
 
-            _last_cdp_attempt = time.time()
             _logger.info("Connected to browser tab (total: %d): %s", len(valid_pages), chosen.url)
             return chosen, None
         except Exception as e:
@@ -711,11 +721,8 @@ def _browser_worker_loop():
 
             elif action == "navigate":
                 url = task.get("url", "about:blank")
-                # TTL pending: 탭 유무와 무관하게 항상 설정 → 프론트 폴링이 에디터 뒤 브라우저 뷰를
-                # 자동으로 앞으로 가져온다. (이전엔 탭 없음 분기에서만 설정되어, 이미 뷰가 존재하지만
-                # 숨겨진 경우 폴링이 토글을 잡지 못하는 race가 있었다.)
                 _set_pending(url)
-                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid, force_cdp=True)
                 if err:
                     # In Electron mode, no browser tab yet — signal frontend to auto-open.
                     # 백엔드 블로킹 제거: 이전엔 10초 대기 루프(20×0.5s)가 _CDP_RETRY_COOLDOWN(5s)과
@@ -1228,9 +1235,8 @@ def _browser_worker_loop():
 
             elif action == "open":
                 url = task.get("url", "about:blank")
-                # TTL pending: navigate와 동일하게 탭 유무와 무관하게 항상 설정
                 _set_pending(url)
-                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
+                page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid, force_cdp=True)
                 if err:
                     # navigate와 동일: 10초 블로킹 루프 제거, 즉시 pending 응답.
                     # pending_url은 TTL 동안 유지되고 프론트 5초 폴링이 뷰를 자동 생성/이동한다.
@@ -1502,6 +1508,16 @@ def handle_get_browser_status(handler, parsed):
     """GET /api/browser/status — return current browser status."""
     global _pending_status_tasks
     now = time.time()
+
+    # Fast path: If browser is disconnected, return immediately without enqueuing task
+    if not _browser_active:
+        return j_ok(handler, {
+            "status": "disconnected",
+            "url": _last_url or "",
+            "title": "",
+            "pending_url": _get_pending(),
+        })
+
     worker_stuck = _worker_task_start_ts > 0 and (now - _worker_task_start_ts) > _WORKER_STUCK_THRESHOLD
     with _status_gate_lock:
         if worker_stuck or _pending_status_tasks > 0:
@@ -1551,6 +1567,11 @@ def handle_get_browser_recommend(handler, parsed):
 
 def handle_get_browser_grid(handler, parsed):
     """GET /api/browser/grid (or /api/browser/sessions) — return all open tabs with thumbnails and session info."""
+    if not _browser_active:
+        return j_ok(handler, {
+            "tabs": [],
+            "count": 0,
+        })
     result = _submit_task("grid", wait_timeout=15.0)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
