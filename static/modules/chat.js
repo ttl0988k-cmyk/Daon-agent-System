@@ -421,12 +421,17 @@ async function _reattachSessionStream(sid, streamId) {
 
 // ── Re-entrancy guard for selectSession ──
 let _selectSessionLock = false;
+let _selectSessionLockTs = 0;
 
 async function selectSession(sid) {
   if (!sid) return;
+  // If lock is held for > 3000ms, force auto-release it as stale to prevent UI freezing
+  if (_selectSessionLock && Date.now() - _selectSessionLockTs > 3000) {
+    console.warn('[selectSession] Lock held for >3s, force releasing stale lock for:', sid);
+    _selectSessionLock = false;
+  }
   // Prevent concurrent selectSession calls from cascading
   if (_selectSessionLock) {
-    // Bugfix #2: show user feedback instead of silently ignoring
     console.warn('[selectSession] Already switching session, ignoring duplicate call for:', sid);
     showToast('세션 전환 중입니다. 잠시만 기다려주세요.', 1500);
     return;
@@ -434,6 +439,7 @@ async function selectSession(sid) {
   if (State.activeSessionId === sid) return;
 
   _selectSessionLock = true;
+  _selectSessionLockTs = Date.now();
   const previousSessionId = State.activeSessionId;
 
   // Bugfix #2: show loading indicator so the user knows work is happening
@@ -441,7 +447,7 @@ async function selectSession(sid) {
 
   try {
     // ── Phase 1: Fetch new session data FIRST (before any state changes) ──
-    const res = await api(`/api/session?session_id=${encodeURIComponent(sid)}`);
+    const res = await api(`/api/session?session_id=${encodeURIComponent(sid)}`, { timeout: 10000 });
     const session = res.session;
 
     // ── Phase 2: Only after API success, commit state changes ──
@@ -488,7 +494,7 @@ async function selectSession(sid) {
     if (resumedStreamId) {
       let stillActive = false;
       try {
-        const st = await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(resumedStreamId)}`);
+        const st = await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(resumedStreamId)}`, { timeout: 3000 });
         stillActive = !!(st && st.active);
       } catch (_) { /* 조회 실패 시 비활성으로 간주 */ }
       if (stillActive) {
@@ -498,7 +504,7 @@ async function selectSession(sid) {
       // 이미 끝난 스트림 — 기록 정리 후 최종 결과가 반영된 세션 데이터로 렌더링
       _forgetSessionStream(sid, resumedStreamId);
       try {
-        const fresh = await api(`/api/session?session_id=${encodeURIComponent(sid)}`);
+        const fresh = await api(`/api/session?session_id=${encodeURIComponent(sid)}`, { timeout: 5000 });
         if (fresh && fresh.session && fresh.session.messages) {
           renderMessages(fresh.session.messages, fresh.session.tool_calls);
           const localSess = State.sessions.find(x => x.session_id === sid);
@@ -539,14 +545,19 @@ async function selectSession(sid) {
 
 async function createNewSession() {
   try {
+    if (_selectSessionLock && Date.now() - _selectSessionLockTs > 3000) {
+      _selectSessionLock = false;
+    }
     const res = await api('/api/session/new', {
       method: 'POST',
       body: { workspace: State.activeWorkspacePath, model: State.activeModelId }
     });
     State.sessions.unshift(res.session);
+    _selectSessionLock = false; // ensure selectSession can run for the new session
     await selectSession(res.session.session_id);
   } catch (e) {
     console.error("New session failed:", e);
+    showToast("새 세션 생성 실패: " + (e.message || '알 수 없는 오류'));
   }
 }
 
