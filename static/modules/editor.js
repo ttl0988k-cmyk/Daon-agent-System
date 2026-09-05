@@ -265,6 +265,13 @@ function showCanvas(canvasName) {
   $('mdPreviewContainer').style.display = canvasName === 'markdown' ? 'block' : 'none';
   $('welcomeCanvas').style.display = canvasName === 'welcome' ? 'flex' : 'none';
 
+  if (canvasName !== 'browser' && window.electronAPI) {
+    try {
+      window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      window.electronAPI.setVisibility(false);
+    } catch (_) { }
+  }
+
   // Close HTML toggle-preview overlay when switching away from monaco.
   // Image and MD canvases are set directly above, so only clean up the
   // htmlPreview overlay + preview-active state (don't touch img/md display).

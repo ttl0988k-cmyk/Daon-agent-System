@@ -453,6 +453,14 @@ async function selectSession(sid) {
     // ── Phase 2: Only after API success, commit state changes ──
     State.activeSessionId = sid;
 
+    // Detach any native browser overlay during session switch
+    if (window.electronAPI) {
+      try {
+        window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        window.electronAPI.setVisibility(false);
+      } catch (_) { }
+    }
+
     // [세션 동시 작업] 현재 세션에 실행 중 스트림이 있으면 백그라운드로 넘긴다.
     // SSE 연결과 감시 타이머만 정리하고 백엔드 작업은 계속 진행된다.
     // (_suspendActiveStream은 sendPrompt의 finishStream 경로에서 설정됨)

@@ -1364,12 +1364,9 @@ class TabManager {
     this.mainWindow = mainWindow;
     this.tabs = new Map();
     this.activeTabId = null;
-    this.bounds = { x: 300, y: 50, width: 800, height: 600 };
+    this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     this.isVisible = false;
     // ── 탭 렌더러 크래시 자동 복구 상태 (2026-08-28) ──
-    // wan2.video 같은 무거운 미디어 페이지에서 WebContentsView 렌더러가 죽으면
-    // 하얀 화면 + CDP 타겟 소멸로 이어졌다(메인 윈도우에는 복구 핸들러가 있지만
-    // 탭에는 없었음). 탭별 크래시 카운터로 복구 루프를 방지한다.
     this._tabRecovery = new Map();   // tabId → { count, windowStart }
     this._recoveringTabs = new Set(); // 복구 진행 중인 탭
 
@@ -1384,10 +1381,51 @@ class TabManager {
   static get MAX_TAB_RECOVERY() { return 5; }
   static get TAB_RECOVERY_WINDOW_MS() { return 300000; }
 
+  // ── Single Source of Truth for Native View Clipping & Attachment ──
+  _syncViewState() {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    const contentView = this.mainWindow.contentView;
+    if (!contentView) return;
+
+    const validBounds = this.bounds && typeof this.bounds.width === 'number' && typeof this.bounds.height === 'number' && this.bounds.width > 0 && this.bounds.height > 0;
+    const shouldShow = this.isVisible && !!this.activeTabId && this.tabs.has(this.activeTabId) && validBounds;
+
+    if (shouldShow) {
+      const activeView = this.tabs.get(this.activeTabId);
+      if (this._isWebContentsAlive(activeView)) {
+        // Detach all inactive views first so they never intercept clicks or linger
+        for (const [id, view] of this.tabs) {
+          if (id !== this.activeTabId) {
+            try { contentView.removeChildView(view); } catch (_) { }
+          }
+        }
+        // Attach active view with strict container bounds
+        try {
+          contentView.addChildView(activeView);
+          activeView.setBounds(this.bounds);
+        } catch (e) {
+          merr('[TabManager] _syncViewState addChildView failed:', e && e.message);
+        }
+      } else {
+        this._recreateTab(this.activeTabId);
+      }
+    } else {
+      // Completely detach ALL native browser views from window layer
+      this._detachAllViews();
+    }
+  }
+
+  _detachAllViews() {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    const contentView = this.mainWindow.contentView;
+    if (!contentView) return;
+
+    for (const [_, view] of this.tabs) {
+      try { contentView.removeChildView(view); } catch (_) { }
+    }
+  }
+
   createTab(tabId, url) {
-    // 8월 3일 정상 빌드 구조: 기본 세션(partition 없음) WebContentsView.
-    // 앱 기본 세션과 동일한 세션/쿠키를 써서 내부 패널에서 구글 로그인이
-    // 가능하고, 에이전트(browser_*)가 CDP 9222로 이 동일한 뷰를 공유·조작한다.
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true,
@@ -1398,12 +1436,6 @@ class TabManager {
     });
     this.tabs.set(tabId, view);
 
-    // ── 구글 로그인 신뢰 신호: UA를 Chrome 138로 재정의 (2026-08-31 재전환) ──
-    // Electron 기본 UA는 임베디드 감지 → 거부. 이전 Chrome 위장은 UA-CH 정합성
-    // 검사에 걸렸으나(실측: 암호 키 강제 + "안전하지 않은 브라우저"), 이번엔
-    // Sec-CH-UA* 헤더 + navigator.userAgentData를 Chrome 정합 값으로 재작성하고
-    // disable-features=WebAuthentication 으로 패스키 강제를 원천 차단한다.
-    // javascript:true 는 명시적 선언으로, Google의 JS 지원 검사 신호를 보장한다.
     try {
       view.webContents.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
@@ -1412,18 +1444,6 @@ class TabManager {
       console.warn('[TabManager] Failed to set Chrome user agent:', e && e.message);
     }
 
-    // JS 측 navigator.userAgentData도 Chrome 138 정합 값으로 맞춘다 — setUserAgent
-    // 만으로는 UA-CH API/헤더의 brands가 Electron 기본값으로 남아 정합성 검사에
-    // 걸린다(이전 Chrome 시도 실패 원인).
-    // [2026-08-27 실측 결함 수정] debugger.attach('1.3')는 always-on CDP 9222와
-    // 락 경합을 일으켜 CDP 서버를 응답불능으로 만든다(에이전트 connect_over_cdp
-    // 실패 → 에이전트 응답 정지). 07e9750 시절엔 CDP가 기본 OFF(9a52070)라
-    // 충돌이 없었지만, 24aab44 이후 always-on 구조에서는 debugger.attach 금지.
-    // UA는 setUserAgent + executeJavaScript(did-finish-load)로만 처리한다.
-    // Chrome 정합 지문 주입 스크립트: userAgentData brands를 Chrome 138로,
-    // vendor를 "Google Inc."로, webdriver는 숨김 유지. oscpu/productSub는
-    // Firefox 전용 필드라 Chrome 모드에서는 건드리지 않는다(Chromium 기본값이
-    // 이미 Chrome 정합).
     const CHROME_FP_PATCH =
       'try{Object.defineProperty(navigator,"userAgentData",{get:()=>({'
       + 'brands:[{brand:"Chromium",version:"138"},{brand:"Google Chrome",version:"138"},{brand:"Not)A;Brand",version:"99"}],'
@@ -1436,15 +1456,12 @@ class TabManager {
       + 'try{Object.defineProperty(navigator,"webdriver",{get:()=>undefined})}catch(e){};';
     const notifyThrottled = () => { try { this._notifyTabs(); } catch (_) { } };
     view.webContents.on('did-finish-load', () => {
-      // 성공 로드 시 크래시 복구 카운터 리셋 (페이지가 살아났음).
       this._tabRecovery.delete(tabId);
       view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
       setTimeout(notifyThrottled, 300);
     });
     view.webContents.on('did-navigate', notifyThrottled);
     view.webContents.on('did-navigate-in-page', notifyThrottled);
-    // [2026-08-31 캡챠/로그인 차단 완화] SPA 네비게이션 대응 — dom-ready마다도
-    // 동일 지문 완화를 주입한다 (did-finish-load는 SPA 라우팅에서 스킵될 수 있음).
     view.webContents.on('dom-ready', () => {
       view.webContents.executeJavaScript(CHROME_FP_PATCH).catch(() => { });
     });
@@ -1459,12 +1476,6 @@ class TabManager {
       }
     });
 
-    // [2026-09-02 근본 수정] webContents가 외부(에이전트 CDP page.close, 세션 정리 등)
-    // 에 의해 파괴되면 탭이 맵에 '유령'으로 남아, 이후 navigate()/switchTab()이
-    // view.webContents === undefined 인 상태로 loadURL을 호출해 메인 프로세스
-    // Uncaught Exception(TypeError: Cannot read properties of undefined (reading
-    // 'loadURL'))이 발생했다. destroyed 이벤트에서 즉시 맵을 정리해 lifecycle을
-    // 맞춘다. (closeTab/_recreateTab 이 자체 삭제하므로 가드는 멱등하게 동작)
     view.webContents.once('destroyed', () => {
       if (this.tabs.get(tabId) === view) {
         this.tabs.delete(tabId);
@@ -1475,16 +1486,12 @@ class TabManager {
           const next = this.tabs.keys().next();
           this.activeTabId = next.done ? null : next.value;
         }
+        this._syncViewState();
         this._notifyTabs();
       }
     });
 
-    // ── 렌더러 크래시/로드 실패 자동 복구 (메인 윈도우와 동일 패턴) ──
-    // 렌더러가 죽으면 reload로 살리려 하고, webContents가 파괴됐으면 탭을
-    // 재생성한다. 횟수 제한(60초 창 내 3회)으로 크래시 루프를 방지한다.
     view.webContents.on('render-process-gone', (event, details) => {
-      // mlog/merr 사용 — console.log만 쓰면 패키지 빌드에서 파일 로그(daon-main.log)에
-      // 아무것도 남지 않아 크래시/닫힘 구분이 불가능했다 (2026-08-29 실측 결함).
       merr(`[TabCrash] tab=${tabId} render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
       const now = Date.now();
       let st = this._tabRecovery.get(tabId) || { count: 0, windowStart: 0 };
@@ -1503,17 +1510,12 @@ class TabManager {
       this._tabRecovery.set(tabId, st);
       this._recoveringTabs.add(tabId);
       mlog(`[TabCrash] tab=${tabId} auto-recovery attempt ${st.count}/${TabManager.MAX_TAB_RECOVERY} — recreating view.`);
-      // 크래시 후 reload는 백지 재발이 잦다(실측) — 즉시 재생성이 확실하다.
-      // 세션/쿠키는 앱 기본 세션을 공유하므로 로그인 상태는 유지된다.
       this._recreateTab(tabId);
       setTimeout(() => { this._recoveringTabs.delete(tabId); }, 5000);
     });
+
     view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame) return; // 서브프레임 실패는 무시
-      // [2026-09-01 튕김 방지] -3(ERR_ABORTED)는 리다이렉트·사용자 중단 등
-      // "탐색이 대체됨" 신호일 뿐 실제 로드 실패가 아니다. 구글 검색결과 클릭
-      // 시 이 신호가 뜨고, 3초 후 강제 재시도가 화면을 되돌려 "튕김"을
-      // 만들었다(실측). 실제 실패(네트워크/DNS 등)만 재시도한다.
+      if (!isMainFrame) return;
       if (errorCode === -3) {
         mlog(`[TabFail] tab=${tabId} aborted navigation ignored (code=-3) url=${validatedURL}`);
         return;
@@ -1538,9 +1540,6 @@ class TabManager {
       }, 3000);
     });
 
-    // Prevent new BrowserWindows from opening — navigate in the same view instead
-    // (뷰 단위 팝업 억제: 외부 창 튀어나옴을 막되, 구글 OAuth 팝업/리다이렉트는
-    //  같은 뷰 내 탐색으로 처리되어 로그인 흐름이 끊기지 않는다 — 8월 3일 방식)
     view.webContents.setWindowOpenHandler(({ url: newUrl }) => {
       if (newUrl && newUrl !== 'about:blank') {
         view.webContents.loadURL(newUrl);
@@ -1550,26 +1549,6 @@ class TabManager {
 
     view.webContents.loadURL(url);
     return view;
-  }
-
-  // 크래시로 webContents가 파괴된 탭을 새 WebContentsView로 재생성한다.
-  // 세션/쿠키는 앱 기본 세션을 공유하므로 로그인 상태는 유지된다.
-  _getEffectiveBounds() {
-    if (this.bounds && this.bounds.width > 0 && this.bounds.height > 0) {
-      return this.bounds;
-    }
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      try {
-        const cb = this.mainWindow.getContentBounds();
-        return {
-          x: 240,
-          y: 70,
-          width: Math.max(400, cb.width - 250),
-          height: Math.max(300, cb.height - 75)
-        };
-      } catch (_) { }
-    }
-    return { x: 240, y: 70, width: 1000, height: 700 };
   }
 
   _recreateTab(tabId) {
@@ -1582,55 +1561,33 @@ class TabManager {
       this.tabs.delete(tabId);
     }
     mlog(`[TabCrash] tab=${tabId} recreating WebContentsView (url=${url})`);
-    const view = this.createTab(tabId, url);
-    if (this.activeTabId === tabId && this.isVisible && view) {
-      try {
-        this.mainWindow.contentView.addChildView(view);
-        view.setBounds(this._getEffectiveBounds());
-      } catch (_) { }
-    }
+    this.createTab(tabId, url);
+    this._syncViewState();
     this._notifyTabs();
   }
 
   switchTab(tabId) {
-    if (this.activeTabId && this.tabs.has(this.activeTabId)) {
-      const oldView = this.tabs.get(this.activeTabId);
-      if (oldView !== this.tabs.get(tabId)) {
-        try { this.mainWindow.contentView.removeChildView(oldView); } catch (e) { }
-      }
+    if (this.tabs.has(tabId)) {
+      this.activeTabId = tabId;
+      this._syncViewState();
+      this._notifyTabs();
     }
-    this.activeTabId = tabId;
-    if (this.isVisible && this.tabs.has(tabId)) {
-      const view = this.tabs.get(tabId);
-      if (this._isWebContentsAlive(view)) {
-        try {
-          this.mainWindow.contentView.addChildView(view);
-          view.setBounds(this._getEffectiveBounds());
-        } catch (e) { }
-      } else {
-        this._recreateTab(tabId);
-      }
-    }
-    this._notifyTabs();
   }
 
   closeTab(tabId) {
     const view = this.tabs.get(tabId);
     if (!view) return;
+    try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
     try { view.webContents.close(); } catch (e) { }
     this.tabs.delete(tabId);
     this._tabRecovery.delete(tabId);
     this._recoveringTabs.delete(tabId);
-    try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
+
     if (this.activeTabId === tabId) {
-      this.activeTabId = null;
       const next = this.tabs.keys().next();
-      if (!next.done) {
-        this.switchTab(next.value);
-        return;
-      }
-      this.isVisible = false;
+      this.activeTabId = next.done ? null : next.value;
     }
+    this._syncViewState();
     this._notifyTabs();
   }
 
@@ -1692,45 +1649,32 @@ class TabManager {
         return;
       }
     }
-    this.isVisible = true;
     this.activeTabId = tabId;
-    if (view && this._isWebContentsAlive(view)) {
-      try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-      try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
-    }
+    this._syncViewState();
     this._notifyTabs();
   }
 
   setBounds(bounds) {
-    if (bounds && bounds.width > 0 && bounds.height > 0) {
-      this.bounds = bounds;
+    if (bounds && typeof bounds.width === 'number' && typeof bounds.height === 'number') {
+      this.bounds = {
+        x: Math.max(0, Math.round(bounds.x || 0)),
+        y: Math.max(0, Math.round(bounds.y || 0)),
+        width: Math.max(0, Math.round(bounds.width || 0)),
+        height: Math.max(0, Math.round(bounds.height || 0))
+      };
+    } else {
+      this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     }
-    this.resize();
+    this._syncViewState();
   }
 
   setVisibility(visible) {
-    this.isVisible = visible;
-    if (visible && this.activeTabId && this.tabs.has(this.activeTabId)) {
-      const view = this.tabs.get(this.activeTabId);
-      if (this._isWebContentsAlive(view)) {
-        try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-        try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
-      }
-    } else if (!visible) {
-      for (const [_, view] of this.tabs) {
-        try { this.mainWindow.contentView.removeChildView(view); } catch (e) { }
-      }
-    }
+    this.isVisible = !!visible;
+    this._syncViewState();
   }
 
   resize() {
-    if (this.isVisible && this.activeTabId && this.tabs.has(this.activeTabId)) {
-      const view = this.tabs.get(this.activeTabId);
-      if (this._isWebContentsAlive(view)) {
-        try { this.mainWindow.contentView.addChildView(view); } catch (e) { }
-        try { view.setBounds(this._getEffectiveBounds()); } catch (e) { }
-      }
-    }
+    this._syncViewState();
   }
 }
 

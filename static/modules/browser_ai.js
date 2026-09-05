@@ -661,6 +661,7 @@ function syncElectronBrowserBounds() {
   }
   // Only show Electron WebContentsView when browser view is visible AND in focus mode
   if (!_browserViewVisible || _browserMode !== 'focus') {
+    window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     window.electronAPI.setVisibility(false);
     return;
   }
@@ -668,16 +669,21 @@ function syncElectronBrowserBounds() {
   var container = document.getElementById('browserFrameWrap');
   if (container && container.offsetParent !== null) {
     var rect = container.getBoundingClientRect();
-    window.electronAPI.setBounds({
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    });
-    window.electronAPI.setVisibility(true);
-  } else {
-    window.electronAPI.setVisibility(false);
+    var w = Math.round(rect.width);
+    var h = Math.round(rect.height);
+    if (w > 10 && h > 10) {
+      window.electronAPI.setBounds({
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: w,
+        height: h
+      });
+      window.electronAPI.setVisibility(true);
+      return;
+    }
   }
+  window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+  window.electronAPI.setVisibility(false);
 }
 
 window.addEventListener('resize', syncElectronBrowserBounds);
