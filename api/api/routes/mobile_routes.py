@@ -233,7 +233,7 @@ def handle_get_mobile_conversations(handler, body_or_parsed) -> bool:
     if not user_id:
         return j_err(handler, "invalid access_token", 401)
 
-    if not _SUPABASE_SERVICE:
+    if not _sb_service_val():
         return j_err(handler, "Supabase service key not configured", 500)
 
     # 본인 세션만 (RLS 우회이지만 명시적 필터)
@@ -284,7 +284,7 @@ def handle_post_mobile_messages(handler, body: dict) -> bool:
     if not user_id:
         return j_err(handler, "invalid access_token", 401)
 
-    if not _SUPABASE_SERVICE:
+    if not _sb_service_val():
         return j_err(handler, "Supabase service key not configured", 500)
 
     # 1) 메시지 저장
