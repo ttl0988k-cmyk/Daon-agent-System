@@ -177,6 +177,7 @@ class MCPServerConnection:
             self._send_notification('notifications/initialized', {})
             with self._lock:
                 self.connected = True
+                self.error = ""
 
             # Discover tools & resources (outside lock since it sends requests)
             self._discover_tools()
@@ -391,14 +392,13 @@ class MCPServerConnection:
             _logger.debug("MCP read loop ended: %s", e)
         finally:
             # 루프 종료 = stdout EOF 또는 프로세스 사망.
-            # disconnect()에 의한 종료라면 process가 이미 None이므로 스킵.
-            # process가 남아있다면 자연 사망 → 좀비 연결 방지 위해 상태 전환.
-            self._mark_disconnected_if_dead()
+            # stdout EOF는 파이프가 닫힌 것이므로 force=True로 확실하게 연결 해제 상태로 전이.
+            self._mark_disconnected_if_dead(force=True)
 
-    def _mark_disconnected_if_dead(self):
-        """프로세스가 사망했는데 connected가 True로 남은 경우 상태를 정리한다.
+    def _mark_disconnected_if_dead(self, force: bool = False):
+        """프로세스가 사망했거나 stdout 파이프가 닫혀 통신 불능인 경우 상태를 정리한다.
 
-        _read_loop/_stderr_loop 종료 시 호출되어, subprocess가 비정상 종료된
+        _read_loop/_stderr_loop 종료 시 호출되어, subprocess 또는 파이프가 비정상 종료된
         뒤에도 connected=True가 유지되어 call_tool이 'No response'를 반환하는
         좀비 연결 상태를 방지한다.
         """
@@ -408,20 +408,25 @@ class MCPServerConnection:
                 return
             if self.transport == TRANSPORT_HTTP:
                 return
-            # 프로세스가 아직 살아있으면(일시적 루프 종료) 상태 유지
-            try:
-                if self.process.poll() is None:
-                    return
-            except Exception:
-                pass
+            # force가 아니면 프로세스 생존 여부 확인
+            if not force:
+                try:
+                    if self.process.poll() is None:
+                        return
+                except Exception:
+                    pass
             _logger.warning(
-                "MCP server '%s' process died; marking disconnected", self.label)
+                "MCP server '%s' process or stream ended; marking disconnected", self.label)
             self.connected = False
             self.error = "Server process exited unexpectedly"
             # 대기 중인 요청이 무한 대기하지 않도록 해제
             for evt in self._pending.values():
                 evt.set()
             self._pending.clear()
+            try:
+                self.process.terminate()
+            except Exception:
+                pass
 
     def _stderr_loop(self):
         """Read stderr in background to prevent pipe buffer deadlock on Windows."""
@@ -474,6 +479,8 @@ class MCPServerConnection:
             if self.process is None or self.process.poll() is not None:
                 with self._lock:
                     self._pending.pop(str(rid), None)
+                    self.connected = False
+                    self.error = "Process died while waiting for response"
                 _logger.error("MCP process died while waiting for response to %s", method)
                 return None
             if time.time() > end_time:
@@ -521,12 +528,42 @@ class MCPServerConnection:
 
     def call_tool(self, tool_name: str, arguments: dict, timeout: float = 30.0) -> dict:
         """Execute a tool on the MCP server."""
+        # 1) 연결이 끊어진 상태면 1회 자동 재연결 시도
         if not self.connected:
-            return {'error': 'MCP server not connected'}
+            _logger.info("MCP server '%s' disconnected; attempting auto-reconnect before call_tool...", self.label)
+            if not self.connect():
+                return {'ok': False, 'error': f'MCP server {self.server_id} is not connected'}
+
+        # 2) 파일시스템 도구의 상대 경로 보정 (에이전트가 상대 경로 전달 시 현재 워크스페이스 기준 절대 경로로 확장)
+        if self.server_id == 'filesystem' and isinstance(arguments, dict) and 'path' in arguments:
+            path_val = arguments.get('path', '')
+            if path_val and not os.path.isabs(path_val):
+                try:
+                    import os as _os
+                    from api.config import LAST_WORKSPACE_FILE
+                    ws = None
+                    if LAST_WORKSPACE_FILE.exists():
+                        ws = LAST_WORKSPACE_FILE.read_text('utf-8').strip()
+                    if not ws or not _os.path.isdir(ws):
+                        ws = _os.getcwd()
+                    arguments['path'] = _os.path.normpath(_os.path.join(ws, path_val))
+                except Exception:
+                    pass
+
         result = self._send_request('tools/call', {
             'name': tool_name,
             'arguments': arguments,
         }, timeout=timeout)
+
+        # 3) 호출 중 프로세스가 사망하여 실패한 경우 1회 재연결 및 재시도
+        if result is None and not self.connected:
+            _logger.info("MCP server '%s' died during call; reconnecting and retrying once...", self.label)
+            if self.connect():
+                result = self._send_request('tools/call', {
+                    'name': tool_name,
+                    'arguments': arguments,
+                }, timeout=timeout)
+
         if result and 'result' in result:
             return {'ok': True, 'result': result['result']}
         elif result and 'error' in result:
@@ -542,7 +579,7 @@ class MCPServerConnection:
             'command': self.command,
             'transport': self.transport,
             'connected': self.connected,
-            'error': self.error,
+            'error': '' if self.connected else self.error,
             'expired': getattr(self, 'expired', False),
             'tools_count': len(self.tools),
             'tools': self.tools,

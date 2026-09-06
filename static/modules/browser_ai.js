@@ -5,6 +5,7 @@
 // ── State ──
 var _browserCurrentUrl = '';
 var _browserViewVisible = false;
+var _userDismissedPending = false;
 var _browserHistory = [];       // {url, title} stack
 var _browserHistoryIdx = -1;    // current position in stack
 var _browserMode = 'grid';      // 'grid' (mini view overview) | 'focus' (full browser control)
@@ -138,8 +139,15 @@ function toggleBrowserView() {
     }
     // Hide Electron browser overlay
     if (window.electronAPI) {
+      window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       window.electronAPI.setVisibility(false);
     }
+    _userDismissedPending = true;
+    fetch('/api/browser/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    }).catch(function () {});
   }
 }
 
@@ -691,18 +699,21 @@ window.addEventListener('resize', syncElectronBrowserBounds);
 setInterval(syncElectronBrowserBounds, 500);
 
 // ═══════════════════════════════════════════
-// Auto-open browser view when AI triggers navigate
+// Sync browser view URL/tab when AI navigates in background
 // ═══════════════════════════════════════════
-(function _autoOpenBrowserPoll() {
+(function _syncBrowserTabPoll() {
   if (!window.electronAPI) return; // Electron-only feature
 
-  var _lastPending = '';
-  var _lastPendingTs = 0;
   var _lastAgentUrl = '';
   setInterval(function () {
+    // 사용자가 브라우저를 열어두었을 때만 URL/탭 동기화 수행.
+    // 사용자가 닫은 브라우저를 타이머가 강제로 다시 여는 로직은 완전히 제거됨.
+    if (!_browserViewVisible) return;
+
     fetch('/api/browser/status')
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        if (!_browserViewVisible) return;
         var agentUrl = data.url || '';
         if (agentUrl && agentUrl !== _lastAgentUrl) {
           var hadPrev = !!_lastAgentUrl;
@@ -716,29 +727,6 @@ setInterval(syncElectronBrowserBounds, 500);
               }
             }
           }
-        }
-
-        var pending = data.pending_url || '';
-        if (pending) {
-          if (pending !== _lastPending) {
-            _lastPending = pending;
-            _lastPendingTs = Date.now();
-            console.log('[BrowserAI] AI requested navigate to:', pending, '- auto-opening browser view');
-            if (!_browserViewVisible) {
-              toggleBrowserView();
-            }
-            // If in grid mode, switch to focus mode to see the agent's work
-            setBrowserMode('focus');
-            var input = document.getElementById('browserCanvasUrlInput') || document.getElementById('browserUrlInput');
-            if (input) input.value = pending;
-            browserGoToAddress();
-          } else if (!_browserViewVisible) {
-            console.log('[BrowserAI] Same pending URL, browser view hidden — restoring view');
-            toggleBrowserView();
-          }
-        } else {
-          _lastPending = '';
-          _lastPendingTs = 0;
         }
       })
       .catch(function () { /* ignore poll errors */ });
@@ -986,6 +974,18 @@ function browserCloseTab(id) {
     _activeTabId = _browserTabs.length > 0 ? _browserTabs[0].id : null;
   }
 
+  if (_browserTabs.length === 0 || !_activeTabId) {
+    _userDismissedPending = true;
+    _lastPending = '';
+    window.electronAPI.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    window.electronAPI.setVisibility(false);
+    fetch('/api/browser/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    }).catch(function() { /* ignore */ });
+  }
+
   if (_browserMode === 'grid') {
     window.electronAPI.setVisibility(false);
     setTimeout(fetchBrowserGrid, 300);
@@ -993,6 +993,7 @@ function browserCloseTab(id) {
     if (_activeTabId) {
       browserSwitchTab(_activeTabId);
     } else {
+      window.electronAPI.setVisibility(false);
       setBrowserMode('grid');
     }
   }

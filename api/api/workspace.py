@@ -286,20 +286,48 @@ def safe_resolve_ws(root: Path, requested: str) -> Path:
     return resolved
 
 
+_SYSTEM_SKIP_NAMES = {
+    '$recycle.bin', '$sysreset', 'system volume information',
+    'pagefile.sys', 'hiberfil.sys', 'swapfile.sys', 'dumpstack.log', 'dumpstack.log.tmp',
+}
+
+
 def list_dir(workspace: Path, rel: str='.'):
     target = safe_resolve_ws(workspace, rel)
     if not target.is_dir():
         raise FileNotFoundError(f"Not a directory: {rel}")
     entries = []
-    for item in sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
-        entries.append({
-            'name': item.name,
-            'path': str(item.relative_to(workspace)),
-            'type': 'dir' if item.is_dir() else 'file',
-            'size': item.stat().st_size if item.is_file() else None,
-        })
-        if len(entries) >= 200:
-            break
+    try:
+        raw_items = list(target.iterdir())
+    except (PermissionError, OSError):
+        return []
+
+    filtered_items = []
+    for p in raw_items:
+        if p.name.lower() in _SYSTEM_SKIP_NAMES:
+            continue
+        filtered_items.append(p)
+
+    def _safe_sort_key(p: Path):
+        try:
+            return (p.is_file(), p.name.lower())
+        except (PermissionError, OSError):
+            return (True, p.name.lower())
+
+    for item in sorted(filtered_items, key=_safe_sort_key):
+        try:
+            is_f = item.is_file()
+            size = item.stat().st_size if is_f else None
+            entries.append({
+                'name': item.name,
+                'path': str(item.relative_to(workspace)),
+                'type': 'file' if is_f else 'dir',
+                'size': size,
+            })
+            if len(entries) >= 200:
+                break
+        except (PermissionError, OSError):
+            continue
     return entries
 
 

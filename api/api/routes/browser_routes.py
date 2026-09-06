@@ -32,10 +32,46 @@ _logger = logging.getLogger(__name__)
 # Playwright Page objects are bound to the thread that created them.
 # We run ALL browser operations on a single dedicated thread.
 
+class ResultDispatcherQueue:
+    """Thread-safe response dispatcher.
+
+    Prevents multiple concurrent HTTP handler threads from stealing and discarding
+    each other's task results from a single FIFO queue.
+    """
+    def __init__(self):
+        self._waiters = {}  # result_id -> queue.Queue
+        self._lock = threading.Lock()
+        self._fallback = queue.Queue()
+
+    def register_waiter(self, result_id: int) -> queue.Queue:
+        q = queue.Queue(maxsize=1)
+        with self._lock:
+            self._waiters[result_id] = q
+        return q
+
+    def unregister_waiter(self, result_id: int) -> None:
+        with self._lock:
+            self._waiters.pop(result_id, None)
+
+    def put(self, item, *args, **kwargs):
+        rid = item.get("_result_id") if isinstance(item, dict) else None
+        with self._lock:
+            q = self._waiters.get(rid)
+        if q is not None:
+            try:
+                q.put_nowait(item)
+                return
+            except Exception:
+                pass
+        self._fallback.put(item, *args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        return self._fallback.get(*args, **kwargs)
+
 _browser_worker = None
 _browser_worker_lock = threading.Lock()
 _browser_task_queue = queue.Queue()
-_browser_result_queue = queue.Queue()
+_browser_result_queue = ResultDispatcherQueue()
 _BROWSER_WORKER_STOP = object()  # sentinel to stop the worker thread
 
 # Cached state accessible from any thread (read-only after worker sets them)
@@ -354,16 +390,33 @@ def _browser_worker_loop():
     _session_pages = {}  # session_id -> Page
     _tab_pages = {}      # tab_id -> Page
 
+    def _is_page_alive(p) -> bool:
+        """Playwright Page가 살아있는지 안전하게 검사.
+
+        p.title()이나 p.evaluate() 같은 CDP 라운드트립은 Electron이 탭을
+        이미 닫은 경우 30초간 블로킹(hang)되므로 절대 호출하지 않는다.
+        p.is_closed() 및 p.url(로컬 캐시 프로퍼티)만 확인하여 즉시 판정한다.
+        """
+        if not p:
+            return False
+        try:
+            if p.is_closed():
+                return False
+            _ = p.url
+            return True
+        except Exception:
+            return False
+
     def _get_valid_pages():
         """Return all valid (non-UI, non-DevTools) pages from browser contexts."""
         if browser is None:
             return []
         pages = []
         try:
-            for ctx in browser.contexts:
-                for p in ctx.pages:
+            for ctx in list(browser.contexts):
+                for p in list(ctx.pages):
                     try:
-                        if p.is_closed():
+                        if not _is_page_alive(p):
                             continue
                         u = (p.url or "").strip()
                         if u.startswith("devtools://") or u.startswith("chrome://") or u.startswith("devtools:"):
@@ -379,10 +432,10 @@ def _browser_worker_loop():
 
     def _clean_stale_pages():
         """Remove closed or invalid pages from mapping dictionaries."""
-        dead_sessions = [sid for sid, p in _session_pages.items() if not p or p.is_closed()]
+        dead_sessions = [sid for sid, p in list(_session_pages.items()) if not _is_page_alive(p)]
         for sid in dead_sessions:
             _session_pages.pop(sid, None)
-        dead_tabs = [tid for tid, p in _tab_pages.items() if not p or p.is_closed()]
+        dead_tabs = [tid for tid, p in list(_tab_pages.items()) if not _is_page_alive(p)]
         for tid in dead_tabs:
             _tab_pages.pop(tid, None)
 
@@ -401,23 +454,19 @@ def _browser_worker_loop():
         # Check if requested session already has a live page
         if session_id and session_id in _session_pages:
             p = _session_pages[session_id]
-            try:
-                if not p.is_closed():
-                    p.title()
-                    _browser_active = True
-                    return p, None
-            except Exception:
+            if _is_page_alive(p):
+                _browser_active = True
+                return p, None
+            else:
                 _session_pages.pop(session_id, None)
 
         # Check if requested tab already has a live page
         if tab_id and tab_id in _tab_pages:
             p = _tab_pages[tab_id]
-            try:
-                if not p.is_closed():
-                    p.title()
-                    _browser_active = True
-                    return p, None
-            except Exception:
+            if _is_page_alive(p):
+                _browser_active = True
+                return p, None
+            else:
                 _tab_pages.pop(tab_id, None)
 
         # Check existing connection
@@ -456,6 +505,11 @@ def _browser_worker_loop():
 
                 return chosen, None
             else:
+                try:
+                    if browser is not None:
+                        browser.close()
+                except Exception:
+                    pass
                 browser = None
                 browser_page = None
                 _browser_active = False
@@ -490,6 +544,13 @@ def _browser_worker_loop():
 
             valid_pages = _get_valid_pages()
             if not valid_pages:
+                try:
+                    if browser is not None:
+                        browser.close()
+                except Exception:
+                    pass
+                browser = None
+                browser_page = None
                 _browser_active = False
                 return None, "Electron 내부 브라우저 탭이 아직 없습니다. 브라우저 뷰를 열고 페이지를 로드한 후 다시 시도하세요."
 
@@ -695,15 +756,21 @@ def _browser_worker_loop():
             if action == "status":
                 page, err = _ensure_browser(session_id=req_sid, tab_id=req_tid)
                 if err:
+                    _browser_active = False
                     _browser_result_queue.put({"_result_id": result_id, "error": err, "status": "disconnected"})
                 else:
                     _browser_active = True
                     _last_url = page.url
+                    f_title = ""
+                    try:
+                        f_title = page.title()
+                    except Exception:
+                        f_title = ""
                     _browser_result_queue.put({
                         "_result_id": result_id,
                         "status": "connected",
                         "url": page.url,
-                        "title": page.title(),
+                        "title": f_title,
                     })
 
             elif action == "sync_url":
@@ -1007,6 +1074,7 @@ def _browser_worker_loop():
                     pw = None
                 _browser_active = False
                 _last_url = ""
+                _clear_pending()
                 _browser_result_queue.put({
                     "_result_id": result_id,
                     "status": "ok",
@@ -1401,27 +1469,57 @@ def _browser_worker_loop():
             elif action == "close_tab":
                 target_idx = task.get("index")
                 target_sid = task.get("session_id")
-                _ensure_browser()
-                valid_pages = _get_valid_pages()
+                target_tid = task.get("tab_id")
+
+                # 탭 닫기는 _ensure_browser()를 절대 호출하지 않는다!
+                # Electron이 이미 view.webContents.close()로 탭을 파괴했을 수 있으므로
+                # CDP 재연결이나 30초 블로킹 없이 매핑 정리 및 잔여 탭 정리만 수행한다.
                 target_p = None
+                if target_tid and target_tid in _tab_pages:
+                    target_p = _tab_pages.pop(target_tid, None)
                 if target_sid and target_sid in _session_pages:
                     target_p = _session_pages.pop(target_sid, None)
-                elif target_idx is not None:
+
+                if target_p is None and target_idx is not None and browser is not None:
+                    valid_pages = _get_valid_pages()
                     try:
                         idx_num = int(target_idx)
                         if 0 <= idx_num < len(valid_pages):
                             target_p = valid_pages[idx_num]
                     except Exception:
                         pass
+
                 if target_p:
                     try:
-                        target_p.close()
+                        if not target_p.is_closed():
+                            target_p.close()
                     except Exception:
                         pass
-                    _clean_stale_pages()
-                    _browser_result_queue.put({"_result_id": result_id, "status": "ok"})
+
+                _clean_stale_pages()
+
+                # 활성/잔여 탭 상태 동기화
+                remaining = _get_valid_pages() if browser is not None else []
+                if not remaining:
+                    try:
+                        if browser is not None:
+                            browser.close()
+                    except Exception:
+                        pass
+                    browser = None
+                    browser_page = None
+                    _browser_active = False
+                    _last_url = ""
+                    _clear_pending()
                 else:
-                    _browser_result_queue.put({"_result_id": result_id, "error": "닫을 탭을 찾을 수 없습니다."})
+                    if browser_page is None or browser_page.is_closed() or browser_page == target_p:
+                        browser_page = remaining[0]
+                        try:
+                            _last_url = browser_page.url or ""
+                        except Exception:
+                            _last_url = ""
+
+                _browser_result_queue.put({"_result_id": result_id, "status": "ok"})
 
             else:
                 _browser_result_queue.put({
@@ -1481,25 +1579,16 @@ def _submit_task(action: str, wait_timeout: float = 35.0, **kwargs) -> dict:
     _start_browser_worker()
 
     result_id = int(time.time() * 1000000)  # unique ID
+    resp_q = _browser_result_queue.register_waiter(result_id)
     task = {"action": action, "_result_id": result_id, **kwargs}
     _browser_task_queue.put(task)
 
     try:
-        result = _browser_result_queue.get(timeout=wait_timeout)
-        # Drain any stale results that don't match our ID
-        attempts = 0
-        while result.get("_result_id") != result_id and attempts < 20:
-            _logger.debug("Discarding stale result (expected %s, got %s)", result_id, result.get("_result_id"))
-            try:
-                result = _browser_result_queue.get(timeout=2)
-            except queue.Empty:
-                return {"error": "Timeout waiting for matching result"}
-            attempts += 1
-        if result.get("_result_id") != result_id:
-            return {"error": "Failed to get matching result from browser worker"}
-        return result
+        return resp_q.get(timeout=wait_timeout)
     except queue.Empty:
         return {"error": f"Browser operation timed out ({wait_timeout:.0f}s)"}
+    finally:
+        _browser_result_queue.unregister_waiter(result_id)
 
 
 # ── Route Handlers ──
@@ -1599,10 +1688,12 @@ def handle_post_browser_focus(handler, body: dict):
 
 def handle_post_browser_close_tab(handler, body: dict):
     """POST /api/browser/close_tab — close a specific tab/session."""
+    _clear_pending()
     body = body or {}
     index = body.get("index")
     session_id = body.get("session_id")
-    result = _submit_task("close_tab", index=index, session_id=session_id)
+    tab_id = body.get("tab_id")
+    result = _submit_task("close_tab", index=index, session_id=session_id, tab_id=tab_id, wait_timeout=5.0)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {"status": "ok"})
@@ -1748,7 +1839,8 @@ def handle_post_browser_execute(handler, body: dict):
 
 def handle_post_browser_close(handler, body: dict):
     """POST /api/browser/close — close the browser and stop Playwright."""
-    result = _submit_task("close")
+    _clear_pending()
+    result = _submit_task("close", wait_timeout=5.0)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
     return j_ok(handler, {"status": "closed"})

@@ -174,7 +174,11 @@ function _forgetSessionStream(sid, streamId) {
 async function _reattachSessionStream(sid, streamId) {
   console.log('[SessionStream] 🔌 reattaching to stream', streamId, 'for session', sid);
   setChatStatus('thinking', '작업 진행 중... (백그라운드 작업 재접속)');
-  $('sendPromptBtn').disabled = true;
+  const _sendBtn = $('sendPromptBtn');
+  if (_sendBtn) {
+    _sendBtn.disabled = false;
+    _sendBtn.title = '새 메시지 전송 (현재 작업 자동 중지)';
+  }
   $('cancelStreamBtn').style.display = 'block';
 
   const box = $('chatMessages');
@@ -808,15 +812,33 @@ function scrollToChatBottom() {
   }, 30);
 }
 async function sendPrompt() {
-  // Bugfix #1: prevent duplicate sends while stream is starting or active
-  if (State._isSendingPrompt || State.currentStreamId || ($('sendPromptBtn') && $('sendPromptBtn').disabled)) {
-    console.warn('[chat] sendPrompt blocked: prompt sending or stream already in progress');
+  // 네트워크 요청 처리(디스패치) 중 중복 클릭 방지
+  if (State._isSendingPrompt) {
+    console.warn('[chat] sendPrompt blocked: prompt sending already in progress');
     return;
   }
-  State._isSendingPrompt = true;
 
   const input = $('promptInput');
   const text = input.value.trim();
+
+  // ⚡ [자동 중지 & 즉시 전환]: 이전 작업이 진행 중일 때 새 메시지 전송 시,
+  // 사용자가 일일이 [중지] 버튼을 누르지 않아도 기존 작업을 자동 인터럽트하고 새 메시지 실행
+  if (State.currentStreamId) {
+    if (!text && (!State.pendingFiles || State.pendingFiles.length === 0)) {
+      return; // 내용이 없으면 아무 동작 안 함
+    }
+    console.log('[chat] ⚡ Active stream in progress — auto-cancelling before sending new message');
+    setChatStatus('thinking', '이전 작업 중지 및 새 지시 전송 중...');
+    try {
+      await cancelActiveStream();
+      // 백엔드 소켓/세션 락 정리 여유 시간
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } catch (e) {
+      console.warn('[chat] Auto-cancel prior stream failed (proceeding):', e);
+    }
+  }
+
+  State._isSendingPrompt = true;
 
   // 1. Upload attachments first if any
   let uploaded = [];
@@ -1514,6 +1536,13 @@ async function _executeAgentStream(displayText, uploaded) {
     // Connect to SSE endpoint
     sse = new EventSource(`/api/chat/stream?stream_id=${streamId}`);
     State.currentEventSource = sse;
+    // 프롬프트 디스패치 완료 — 스트리밍 중에도 새 메시지를 즉시 전송할 수 있도록 플래그 및 버튼 활성화
+    State._isSendingPrompt = false;
+    const sendBtn = $('sendPromptBtn');
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.title = '새 메시지 전송 (현재 작업 자동 중지)';
+    }
     // Start the no-event watchdog immediately.  Previously it was only
     // started after the first token/tool/reasoning event, so a backend run
     // that produced no SSE event could leave the input locked forever.
@@ -2962,11 +2991,8 @@ function setupEventListeners() {
   promptInput.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      // Bugfix #1: guard against Enter sending while a stream is already active.
-      // Even though sendPrompt() checks the button disabled state, this
-      // provides an early exit and avoids any race between keydown and the
-      // button state toggle.
-      if (State.currentStreamId || $('sendPromptBtn').disabled) return;
+      // 네트워크 디스패치 중이 아니면 엔터로 전송 허용 (스트림 진행 중이면 sendPrompt에서 자동 인터럽트)
+      if (State._isSendingPrompt) return;
       sendPrompt();
     }
   };
