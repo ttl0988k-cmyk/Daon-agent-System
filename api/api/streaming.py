@@ -1820,6 +1820,9 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _sevo_prompt = _sevo_block_fn()
               if _sevo_prompt:
                   workspace_system_msg += "\n\n" + _sevo_prompt
+          except Exception as _sevo_prompt_e:
+              print(f"[webui] WARNING: self-evolution prompt injection failed: {_sevo_prompt_e}", flush=True)
+
           # ── Evolution Ledger: 자가 진화 / 재기동 기억 핸드오버 주입 ──
           # 직전에 자가 수리/코드 수정/재빌드로 재기동된 경우, 에이전트가 그 수정 내역과
           # 사유를 스스로 기억하고 대화를 이어가도록 핸드오버 맥락을 주입한다.
