@@ -221,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             # Delegate to standard api.routes.handle_get
             from api.routes import handle_get
             
-            # Preview Workspace Static Files
+            # Preview Workspace Static Files (Path Traversal Protected)
             if path.startswith('/preview/'):
                 parts = path.strip('/').split('/', 2)
                 if len(parts) >= 2:
@@ -231,11 +231,18 @@ class Handler(BaseHTTPRequestHandler):
                     from api.models import get_session
                     try:
                         s = get_session(sess_id)
-                        target_file = Path(s.workspace) / rel_path
+                        ws_path = Path(s.workspace).resolve()
+                        target_file = (ws_path / rel_path).resolve()
+                        try:
+                            target_file.relative_to(ws_path)
+                        except ValueError:
+                            self.send_error_json("Access denied: path traversal attempt", 403)
+                            return
                         self.serve_file(target_file)
                         return
                     except KeyError:
-                        pass # Session not found, fall through to 404/500
+                        self.send_error_json("Session not found", 404)
+                        return
                         
             if handle_get(self, parsed):
                 return

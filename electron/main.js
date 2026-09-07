@@ -71,12 +71,13 @@ function cleanupOrphanedTemp() {
     // Find which _MEI folders are currently in use by running server.exe processes
     let activeMEIs = new Set();
     try {
-      const wmicOut = execSync(
-        'wmic process where "name=\'server.exe\'" get ExecutablePath /FORMAT:LIST 2>nul',
+      // Use PowerShell Get-CimInstance instead of deprecated wmic
+      const psOut = execSync(
+        'powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \\"name=\'server.exe\'\\" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ExecutablePath"',
         { windowsHide: true, encoding: 'utf-8', timeout: 5000 }
       );
-      for (const line of wmicOut.split('\n')) {
-        const match = line.match(/(_MEI\d+)/i);
+      for (const line of psOut.split(/\\r?\\n/)) {
+        const match = line.match(/(_MEI\\d+)/i);
         if (match) activeMEIs.add(match[1]);
       }
     } catch (_) { }
@@ -1097,7 +1098,11 @@ app.whenReady().then(async () => {
         const h = await probeServerHealthGrace(serverPort, {
           maxWaitMs: POST_SWAP_HEALTH_GRACE_MS,
           stableHits: 3,
-          isAlive: () => !!pythonProcess && pythonProcess.exitCode === null && pythonProcess.signalCode === undefined,
+          isAlive: () => {
+            if (!pythonProcess) return false;
+            if (pythonProcess._adopted && pythonProcess.pid) return isProcessAlive(pythonProcess.pid);
+            return pythonProcess.exitCode === null && pythonProcess.signalCode === undefined;
+          },
         });
         return !!(h && h.healthy);
       },
