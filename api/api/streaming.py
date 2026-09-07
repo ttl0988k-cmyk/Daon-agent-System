@@ -65,6 +65,35 @@ _STREAM_THREADS_LOCK = threading.Lock()
 _thread_put = threading.local()
 
 
+class StreamEmitter:
+    """Manages SSE event emission for an agent stream with cancellation filtering,
+    terminal event caching, and thread-local routing.
+    Can be invoked directly as emitter(event, data) or emitter.emit(event, data).
+    """
+
+    def __init__(self, stream_id: str, queue_obj, cancel_event):
+        self.stream_id = stream_id
+        self.queue = queue_obj
+        self.cancel_event = cancel_event
+        self.terminal_done_data = None
+        self._emitted_count = 0
+
+    def __call__(self, event: str, data=None) -> None:
+        self.emit(event, data)
+
+    def emit(self, event: str, data=None) -> None:
+        # If cancelled, drop all further events except terminal cancel and error events
+        if self.cancel_event.is_set() and event not in ('cancel', 'error'):
+            return
+        if event == 'done':
+            self.terminal_done_data = data
+        try:
+            self.queue.put_nowait((event, data))
+            self._emitted_count += 1
+        except Exception as e:
+            _logger.warning("Failed to enqueue SSE event %s for stream %s: %s", event, self.stream_id, e)
+
+
 def get_current_thread_put():
     """Return the put() callable bound to the current stream thread, or None."""
     return getattr(_thread_put, 'put', None)
@@ -364,28 +393,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     with STREAMS_LOCK:
         CANCEL_FLAGS[stream_id] = cancel_event
 
-    # Keep the terminal payload outside the queue-draining cleanup path below.
-    # The SSE handler and this worker consume the same queue concurrently.  If
-    # the worker removes/drains the queue immediately after putting ``done``,
-    # the SSE handler can miss the terminal event and wait forever on its local
-    # queue reference, leaving the WebUI input locked until its watchdog fires.
-    _terminal_done_data = None
-
-    def put(event, data):
-        nonlocal _terminal_done_data
-        # If cancelled, drop all further events except the cancel event itself
-        if cancel_event.is_set() and event not in ('cancel', 'error'):
-            return
-        if event == 'done':
-            _terminal_done_data = data
-        try:
-            q.put_nowait((event, data))
-        except Exception:
-            _logger.warning("Failed to enqueue SSE event %s for stream %s", event, stream_id, exc_info=True)
-
-    # Expose put() to tool handlers running in this agent thread so they can
-    # push extra SSE events (e.g. 'agent_log' from the Dynamic Harness tool).
-    _thread_put.put = put
+    # Sprint 10: StreamEmitter encapsulates event queueing, cancellation, and terminal done caching
+    emitter = StreamEmitter(stream_id, q, cancel_event)
+    put = emitter
+    _thread_put.put = emitter
 
     # Whether we registered the dangerous-command approval gateway callback for
     # this session (must be unregistered in the outer finally block).
@@ -669,8 +680,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           _p6_p = args.get('path') or args.get('file_path') or ''
                           if _p6_p:
                               _p6_pending_artifacts[tool_name] = _p6_p
-                  except Exception:
-                      pass
+                  except Exception as _p6_err:
+                      _logger.debug("Phase 6 artifact tracking failed: %s", _p6_err)
               elif event_type == 'tool.completed':
                   is_error = kwargs.get('is_error', False)
                   duration = kwargs.get('duration', 0)
@@ -695,8 +706,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                                   workspace=(getattr(s, 'workspace', '') or ''),
                                   direct_fact_ids=_p6_turn_injected_facts,
                               )
-                  except Exception:
-                      pass
+                  except Exception as _p6_rec_err:
+                      _logger.debug("Phase 6 artifact recording failed: %s", _p6_rec_err)
                   # ── File edit finalization ──
                   # tool.completed receives args=None, so re-read the written file
                   # from disk and push the authoritative content to the editor.
@@ -743,8 +754,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           from api.routes.mode_routes import get_session_mode
                           _current_mode = get_session_mode(session_id)
                           _architect_approval = (_current_mode == 'architect')
-                      except Exception:
-                          pass
+                      except Exception as _mode_err:
+                          _logger.debug("Session mode check failed: %s", _mode_err)
 
                       try:
                           from api.routes.diff_routes import _compute_line_changes as _calc_lc
@@ -938,8 +949,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                               resolved_api_key = _cp2[_k][0].get('access_token')
                               if resolved_api_key:
                                   break
-              except Exception:
-                  pass
+              except Exception as _auth_e:
+                  _logger.debug("auth.json lookup failed: %s", _auth_e)
 
           if resolved_provider in ('zai', 'ollama-cloud') and not resolved_api_key:
               resolved_api_key = os.getenv('OLLAMA_API_KEY')
@@ -1023,8 +1034,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       try:
                           from api.managers.model_manager import model_manager as _mm2
                           _media_base_url = _mm2._get_base_url(resolved_provider) or ''
-                      except Exception:
-                          pass
+                      except Exception as _bu_err:
+                          _logger.debug("Media base_url lookup failed: %s", _bu_err)
                   print(f"[webui] Media: base_url={_media_base_url or 'EMPTY'}", flush=True)
                   if not _media_base_url:
                       raise RuntimeError(f"프로바이더 '{resolved_provider}'의 base_url을 찾을 수 없습니다.")
@@ -1123,8 +1134,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               from api.routes.browser_routes import _browser_active, _last_url
               if _browser_active and _last_url:
                   _ephemeral_prompt = f"[System Note: The user currently has a browser tab open viewing URL: {_last_url}. If they ask to analyze or interact with the page, use your browser-agent skill to assist them.]"
-          except Exception:
-              pass
+          except Exception as _br_err:
+              _logger.debug("Browser context active check failed: %s", _br_err)
 
           # ── Inject active plugin skills for this session ──
           # 세션에서 ON 된 플러그인의 SKILL.md 컨텐츠를 ephemeral 시스템
@@ -1253,625 +1264,26 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           with _ACTIVE_AGENTS_LOCK:
               _ACTIVE_AGENTS[stream_id] = agent
 
-          # === [NEW] Inject MCP tools into the Hermes Registry ===
-          # A 시스템(MCPManager)에서 연결된 MCP 서버들의 도구를
-          # hermes-agent 의 tools.registry.registry 에 정식 등록한다.
-          # 등록된 도구는 handle_function_call → registry.dispatch 경로로
-          # 정상 실행된다.
-          try:
-              from api.mcp_client import get_mcp_manager
-              from tools.registry import registry
-              import re as _mcp_re
-              
-              mcp_manager = get_mcp_manager()
-              
-              # FORCE SYNC: Wait up to 5 seconds for MCP servers (was 30s — too slow after cancel)
-              mcp_tools = []
-              for _ in range(25):
-                  # Bail out immediately if this stream was cancelled while waiting
-                  if cancel_event.is_set():
-                      print(f"[webui] MCP sync aborted — stream cancelled for session {session_id}", flush=True)
-                      break
-                  mcp_tools = mcp_manager.get_all_tools()
-                  pending = sum(1 for c in mcp_manager._connections.values() if not c.connected and not c.error)
-                  if pending == 0:
-                      break
-                  time.sleep(0.2)
-              
-              # Inline equivalents of tools.mcp_tool helpers (avoid import side-effects)
-              def _safe_name(raw: str) -> str:
-                  # 하이픈(-) 보존: PlayMCP 등 외부 게이트웨이에서 하이픈을
-                  # 사용하는 도구 이름이 언더스코어로 변환되지 않도록 방지.
-                  return _mcp_re.sub(r'[^A-Za-z0-9_-]', '_', str(raw or ''))
-              
-              def _normalize_input_schema(schema):
-                  if not schema:
-                      return {"type": "object", "properties": {}}
-                  if schema.get("type") == "object" and "properties" not in schema:
-                      return {**schema, "properties": {}}
-                  return schema
-              
-              injected_count = 0
-              registered_toolsets = set()
-              
-              for t in mcp_tools:
-                  server_id = t.get('_mcp_server', 'unknown')
-                  orig_name = t.get('name', '')
-                  
-                  safe_srv = _safe_name(server_id)
-                  safe_tool = _safe_name(orig_name)
-                  mcp_func_name = f"mcp_{safe_srv}_{safe_tool}"
-                  toolset_name = f"mcp-{safe_srv}"
-                  
-                  # 1) OpenAI-format schema for agent.tools (model visibility)
-                  # NOTE: inputSchema가 비어 있거나 properties가 빠져 있으면 일부 모델 API가
-                  # "invalid params, function parameters is empty" 400을 반환하므로 반드시 정규화한다.
-                  api_schema = {
-                      "type": "function",
-                      "function": {
-                          "name": mcp_func_name,
-                          "description": t.get('description', f"MCP tool {orig_name} from {server_id}"),
-                          "parameters": _normalize_input_schema(t.get('inputSchema'))
-                      }
-                  }
-                  agent.tools.append(api_schema)
-                  agent.valid_tool_names.add(mcp_func_name)
-                  
-                  # 2) Flat registry schema for dispatch
-                  registry_schema = {
-                      "name": mcp_func_name,
-                      "description": api_schema["function"]["description"],
-                      "parameters": _normalize_input_schema(t.get('inputSchema')),
-                  }
-                  
-                  # 3) Handler: A 시스템의 mcp_manager.call_tool() 사용
-                  #    registry.dispatch 는 handler(args_dict, **kwargs) → str 시그니처를 요구
-                  def _make_handler(sid, tname):
-                      def _handler(args: dict, **kwargs) -> str:
-                          import json as _json
-                          print(f"[mcp-debug] tools/call → server={sid} tool_name={tname} args_keys={list(args.keys()) if args else 'none'}", flush=True)
-                          result = mcp_manager.call_tool(sid, tname, args)
-                          if result.get('ok'):
-                              payload = result.get('result', 'Success')
-                              if isinstance(payload, str):
-                                  return _json.dumps({"result": payload}, ensure_ascii=False)
-                              return _json.dumps({"result": _json.dumps(payload, ensure_ascii=False, default=str)}, ensure_ascii=False)
-                          else:
-                              return _json.dumps({"error": result.get('error', 'Unknown error')}, ensure_ascii=False)
-                      return _handler
-                  
-                  # 4) check_fn: 서버 연결 상태 확인 (A 시스템 기준)
-                  def _make_check_fn(sid):
-                      def _check() -> bool:
-                          conn = mcp_manager._connections.get(sid)
-                          return conn is not None and conn.connected
-                      return _check
-                  
-                  registry.register(
-                      name=mcp_func_name,
-                      toolset=toolset_name,
-                      schema=registry_schema,
-                      handler=_make_handler(server_id, orig_name),
-                      check_fn=_make_check_fn(server_id),
-                      is_async=False,
-                      description=registry_schema["description"],
-                  )
-                  registered_toolsets.add(toolset_name)
-                  injected_count += 1
-              
-              # toolset alias 등록: "filesystem" → "mcp-filesystem" 매핑
-              for ts in registered_toolsets:
-                  alias = ts.replace("mcp-", "", 1)
-                  registry.register_toolset_alias(alias, ts)
-              
-              if injected_count > 0:
-                  print(f"[webui-debug] Registered {injected_count} MCP tools into Hermes registry + agent.tools.", flush=True)
-          except Exception as e:
-              import traceback as _tb
-              print(f"[webui-debug] Failed to inject MCP tools: {e}", flush=True)
-              _tb.print_exc()
-          # ========================================================
+          # ── Dynamic Streaming Tools Injection ──
+          # Injects MCP tools, Patch Registry, Memory Forget, Media generation,
+          # Self-Update, and Self-Evolution tools into Hermes registry and agent.tools.
+          from api.streaming_tools import register_all_streaming_tools
+          injected_count = register_all_streaming_tools(agent, s, session_id, cancel_event)
 
-          # === [Patch Registry] 에이전트 도구 주입: query_patches / register_patch ===
-          try:
-              from api.patch_registry import query_patches as _pr_query, register_patch as _pr_register, query_all_patches as _pr_query_all
-              from tools.registry import registry as _pr_registry
+          # ── System Prompt & Multimodal Message Composition ──
+          from api.streaming_prompts import compose_system_message, build_user_payload
 
-              # 1) query_patches 도구
-              _pr_query_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "query_patches",
-                      "description": "Query registered load-bearing patches for a file. Returns warnings about code that must NOT be reverted. Use before editing any file to check for protected patches.",
-                      "parameters": {
-                          "type": "object",
-                          "properties": {
-                              "file_path": {"type": "string", "description": "Relative file path to query patches for (e.g. 'api/api/streaming.py')"},
-                          },
-                          "required": ["file_path"]
-                      }
-                  }
-              }
-              agent.tools.append(_pr_query_schema)
-              agent.valid_tool_names.add("query_patches")
-
-              def _pr_query_handler(args: dict, **kwargs) -> str:
-                  import json as _json
-                  fp = args.get('file_path', '')
-                  results = _pr_query(fp)
-                  if not results:
-                      return _json.dumps({"patches": [], "message": f"No registered patches for {fp}"}, ensure_ascii=False)
-                  return _json.dumps({"patches": results, "count": len(results)}, ensure_ascii=False)
-
-              _pr_registry.register(
-                  name="query_patches",
-                  toolset="patch-registry",
-                  schema={"name": "query_patches", "description": "Query registered patches for a file", "parameters": _pr_query_schema["function"]["parameters"]},
-                  handler=_pr_query_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Query registered load-bearing patches for a file",
-              )
-
-              # 2) register_patch 도구
-              _pr_register_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "register_patch",
-                      "description": "Register a load-bearing patch that must NOT be reverted. Call this after making an important fix so future edits are warned.",
-                      "parameters": {
-                          "type": "object",
-                          "properties": {
-                              "file_path": {"type": "string", "description": "Relative file path the patch applies to"},
-                              "description": {"type": "string", "description": "What the patch does (e.g. 'str type guard for models list')"},
-                              "reason": {"type": "string", "description": "Why this patch exists and why reverting it would break things"},
-                              "commit_hash": {"type": "string", "description": "Git commit hash if available"},
-                          },
-                          "required": ["file_path", "description"]
-                      }
-                  }
-              }
-              agent.tools.append(_pr_register_schema)
-              agent.valid_tool_names.add("register_patch")
-
-              def _pr_register_handler(args: dict, **kwargs) -> str:
-                  import json as _json
-                  fp = args.get('file_path', '')
-                  desc = args.get('description', '')
-                  reason = args.get('reason', '')
-                  commit = args.get('commit_hash', '')
-                  if not fp or not desc:
-                      return _json.dumps({"error": "file_path and description are required"}, ensure_ascii=False)
-                  pid = _pr_register(fp, desc, commit_hash=commit, reason=reason)
-                  if pid:
-                      return _json.dumps({"ok": True, "patch_id": pid, "message": f"Patch registered for {fp}"}, ensure_ascii=False)
-                  return _json.dumps({"error": "Failed to register patch"}, ensure_ascii=False)
-
-              _pr_registry.register(
-                  name="register_patch",
-                  toolset="patch-registry",
-                  schema={"name": "register_patch", "description": "Register a load-bearing patch", "parameters": _pr_register_schema["function"]["parameters"]},
-                  handler=_pr_register_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Register a load-bearing patch that must not be reverted",
-              )
-
-              _pr_registry.register_toolset_alias("patches", "patch-registry")
-              print(f"[PatchRegistry] ✅ Injected query_patches + register_patch tools into agent.", flush=True)
-          except Exception as _pr_inj_e:
-              print(f"[PatchRegistry] WARNING: tool injection failed: {_pr_inj_e}", flush=True)
-          # ========================================================
-
-          # === [Memory Forget] 에이전트 도구 주입: memory_forget ===
-          # 사용자가 "그 사실 잊어줘"라고 하면 장기 기억의 fact를 삭제한다.
-          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
-          try:
-              from api import memory_store as _mf_store
-              from tools.registry import registry as _mf_registry
-
-              _mf_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "memory_forget",
-                      "description": "Delete a fact from the user's long-term memory. Use when the user asks to forget/remove a remembered fact. Provide fact_id if known; otherwise provide query to search matching facts first.",
-                      "parameters": {
-                          "type": "object",
-                          "properties": {
-                              "fact_id": {"type": "integer", "description": "Numeric id of the fact to delete"},
-                              "query": {"type": "string", "description": "Text to search matching facts when fact_id is unknown"},
-                          },
-                      }
-                  }
-              }
-              agent.tools.append(_mf_schema)
-              agent.valid_tool_names.add("memory_forget")
-
-              def _mf_handler(args: dict, **kwargs) -> str:
-                  import json as _json
-                  fact_id = args.get('fact_id')
-                  query = (args.get('query') or '').strip()
-                  # 1) id 직접 삭제
-                  if fact_id is not None:
-                      try:
-                          result = _mf_store.delete_fact(fact_id)
-                      except Exception as _e:
-                          return _json.dumps({"ok": False, "error": str(_e)}, ensure_ascii=False)
-                      if result and result.get('ok'):
-                          return _json.dumps({"ok": True, "deleted_fact_id": fact_id,
-                                              "impact": result.get('impact', {})}, ensure_ascii=False)
-                      return _json.dumps({"ok": False,
-                                          "error": f"Fact {fact_id} not found or delete failed"}, ensure_ascii=False)
-                  # 2) id 없음: 검색 후보 반환 (실수 방지 위해 자동 삭제 안 함)
-                  if query:
-                      try:
-                          facts = _mf_store.list_facts(limit=100)
-                      except Exception:
-                          facts = []
-                      q = query.lower()
-                      matches = [f for f in facts if q in str(f.get('content', '')).lower()]
-                      if not matches:
-                          return _json.dumps({"ok": False,
-                                              "error": f"No facts matching '{query}'"}, ensure_ascii=False)
-                      candidates = [{"id": f.get('id'), "content": f.get('content')} for f in matches[:10]]
-                      return _json.dumps({"ok": False, "need_fact_id": True, "candidates": candidates,
-                                          "message": "Multiple matches found. Confirm with the user which fact to delete, then call memory_forget again with the exact fact_id."}, ensure_ascii=False)
-                  return _json.dumps({"ok": False, "error": "Provide fact_id or query"}, ensure_ascii=False)
-
-              _mf_registry.register(
-                  name="memory_forget",
-                  toolset="memory-store",
-                  schema={"name": "memory_forget", "description": "Delete a fact from long-term memory",
-                          "parameters": _mf_schema["function"]["parameters"]},
-                  handler=_mf_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Forget (delete) a fact from the user's long-term memory",
-              )
-              _mf_registry.register_toolset_alias("forget", "memory-store")
-              print("[MemoryForget] ✅ Injected memory_forget tool into agent.", flush=True)
-          except Exception as _mf_inj_e:
-              print(f"[MemoryForget] WARNING: tool injection failed: {_mf_inj_e}", flush=True)
-          # ========================================================
-
-          # ── Media generation tools (generate_image / generate_video) ──
-          # Lets the LLM agent generate images/videos on demand by calling a
-          # tool — the user does NOT need to switch to an image model in the
-          # dropdown. The agent picks the model via the `model` parameter
-          # (enum populated dynamically from registered image/video models).
-          try:
-              from api.media_generation import register_media_generation_tools as _mg_register
-              from tools.registry import registry as _mg_registry
-
-              # 공용 등록 함수가 registry에 media-generation toolset을 멱등 등록하고,
-              # 채팅 에이전트 주입용 OpenAI 스키마를 반환한다. save_path 파일 저장 포함.
-              _mg_img_schema, _mg_vid_schema = _mg_register(_mg_registry)
-              agent.tools.append(_mg_img_schema)
-              agent.valid_tool_names.add("generate_image")
-              agent.tools.append(_mg_vid_schema)
-              agent.valid_tool_names.add("generate_video")
-              print("[MediaTools] Injected generate_image + generate_video tools (shared registry).", flush=True)
-          except Exception as _mg_inj_e:
-              print(f"[MediaTools] WARNING: tool injection failed: {_mg_inj_e}", flush=True)
-          # ========================================================
-
-          # === [Self-Update] 에이전트 도구 주입: request_server_update ===
-          # Gap E-3 배선 완성: 서버는 스스로 재시작하지 않고(감시자/피감시자 분리),
-          # STATE_DIR/restart-request.json을 기록하면 Electron 감시자가
-          # kill → (재빌드·교체) → 재기동 → 헬스체크 → 실패 시 롤백을 수행한다.
-          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
-          try:
-              from api.dynamic.restart_request import request_restart as _rr_request, RestartRequestError as _RR_Error
-              from tools.registry import registry as _su_registry
-
-              _su_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "request_server_update",
-                      "description": "Request a server restart so backend changes take effect. The Electron supervisor kills the server, optionally rebuilds/replaces server.exe, respawns it, health-checks it, and rolls back on failure. Refused while dynamic harness jobs are still running.",
-                      "parameters": {
-                          "type": "object",
-                          "properties": {
-                              "reason": {"type": "string", "description": "Why the restart is needed (e.g. 'backend patch applied to config.py')"},
-                              "checkpoint_ref": {"type": "string", "description": "Git ref (commit hash) to roll back to if the restarted server fails its health check"},
-                              "rebuild": {"type": "boolean", "description": "True when backend Python source changed and server.exe must be rebuilt before respawn"},
-                          },
-                          "required": ["reason"]
-                      }
-                  }
-              }
-              agent.tools.append(_su_schema)
-              agent.valid_tool_names.add("request_server_update")
-
-              def _su_handler(args: dict, **kwargs) -> str:
-                  import json as _json
-                  reason = (args.get('reason') or '').strip()
-                  if not reason:
-                      return _json.dumps({"ok": False, "error": "reason is required"}, ensure_ascii=False)
-                  try:
-                      rebuild_flag = bool(args.get('rebuild'))
-                      rebuild_notice = " (server.exe 바이너리 재빌드 포함)" if rebuild_flag else ""
-                      
-                      # ── Checkpoint turn to disk before server is killed ──
-                      # Electron 감시자가 서버를 종료하기 전에 현재 대화 상태를
-                      # 디스크에 원자적으로 저장하여 턴 데이터 유실을 완벽 방지.
-                      try:
-                          checkpoint_msg = {
-                              "role": "assistant",
-                              "content": (
-                                  f"🔄 **[자가 수리/확장 재기동 안내]**\n\n"
-                                  f"대표님, 작업하신 변경 사항을 시스템에 안전하게 적용하기 위해 서버 재기동{rebuild_notice}을 시작합니다.\n\n"
-                                  f"- **재기동 사유**: {reason}\n"
-                                  f"- **체크포인트**: `{args.get('checkpoint_ref') or '현재 작업 상태'}`\n\n"
-                                  f"재기동 완료 후 이 세션에서 작업을 그대로 이어가며, 제가 수정한 모든 내역을 기억하고 있겠습니다."
-                              ),
-                              "timestamp": int(time.time()),
-                              "is_checkpoint": True,
-                          }
-                          if not any(m.get('content') == checkpoint_msg['content'] for m in s.messages[-2:]):
-                              s.messages.append(checkpoint_msg)
-                              s.save()
-                              from api.models import _write_session_index
-                              _write_session_index()
-                      except Exception as _cp_save_e:
-                          print(f"[SelfUpdate] WARNING: turn checkpoint save failed: {_cp_save_e}", flush=True)
-
-                      payload = _rr_request(
-                          reason,
-                          checkpoint_ref=args.get('checkpoint_ref'),
-                          rebuild=rebuild_flag,
-                          session_id=session_id,
-                          files_modified=args.get('files_modified'),
-                          summary=reason,
-                      )
-                      return _json.dumps({"ok": True, **payload,
-                                          "message": "Restart request recorded. The supervisor will restart the server within ~5s."}, ensure_ascii=False)
-                  except _RR_Error as _e:
-                      return _json.dumps({"ok": False, "error": str(_e)}, ensure_ascii=False)
-
-              _su_registry.register(
-                  name="request_server_update",
-                  toolset="self-update",
-                  schema={"name": "request_server_update", "description": "Request supervised server restart (optionally rebuild) to apply backend changes",
-                          "parameters": _su_schema["function"]["parameters"]},
-                  handler=_su_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Record a self-update restart request for the Electron supervisor",
-              )
-              _su_registry.register_toolset_alias("update", "self-update")
-              print("[SelfUpdate] ✅ Injected request_server_update tool into agent.", flush=True)
-          except Exception as _su_inj_e:
-              print(f"[SelfUpdate] WARNING: tool injection failed: {_su_inj_e}", flush=True)
-          # ========================================================
-
-          # === [Self-Evolution] 에이전트 도구 주입: propose_self_evolution ===
-          # 갭 E-4b: 채팅 에이전트가 결핍 능력을 감지하면 Builder 제작 파이프라인
-          # (E-L2 스폰 게이트 -> E-L4 편입 거버넌스)을 백그라운드로 가동한다.
-          # 순수 부가: 주입 실패 시 이 도구만 없을 뿐 기존 흐름은 영향 없음.
-          try:
-              from api.dynamic.self_evolution import start_proposal as _sevo_start
-              from tools.registry import registry as _sevo_registry
-
-              _sevo_schema = {
-                  "type": "function",
-                  "function": {
-                      "name": "propose_self_evolution",
-                      "description": "Propose building a MISSING capability (skill/plugin) via the Builder sub-team. Use ONLY when no existing tool or skill can accomplish the task. The system runs the immutable order: create -> isolate -> verify -> approve -> incorporate -> use. The user approves each step.",
-                      "parameters": {
-                          "type": "object",
-                          "properties": {
-                              "capability": {"type": "string", "description": "Short name of the missing capability (e.g. 'pdf-form-filler')"},
-                              "description": {"type": "string", "description": "What the capability must do and how success can be verified (acceptance criteria)"},
-                          },
-                          "required": ["capability"]
-                      }
-                  }
-              }
-              agent.tools.append(_sevo_schema)
-              agent.valid_tool_names.add("propose_self_evolution")
-
-              def _sevo_handler(args: dict, **kwargs) -> str:
-                  import json as _json
-                  cap = (args.get('capability') or '').strip()
-                  if not cap:
-                      return _json.dumps({"ok": False, "status": "invalid",
-                                          "error": "capability is required"}, ensure_ascii=False)
-                  result = _sevo_start(cap, args.get('description') or '',
-                                       session_id=session_id)
-                  return _json.dumps(result, ensure_ascii=False)
-
-              _sevo_registry.register(
-                  name="propose_self_evolution",
-                  toolset="self-evolution",
-                  schema={"name": "propose_self_evolution", "description": "Propose building a missing capability via the Builder sub-team",
-                          "parameters": _sevo_schema["function"]["parameters"]},
-                  handler=_sevo_handler,
-                  check_fn=lambda: True,
-                  is_async=False,
-                  description="Start a self-evolution build proposal (Builder spawn + incorporation governance)",
-              )
-              _sevo_registry.register_toolset_alias("evolution", "self-evolution")
-              print("[SelfEvolution] ✅ Injected propose_self_evolution tool into agent.", flush=True)
-          except Exception as _sevo_inj_e:
-              print(f"[SelfEvolution] WARNING: tool injection failed: {_sevo_inj_e}", flush=True)
-          # ========================================================
-
-          # Prepend workspace context so the agent always knows which directory
-          # to use for file operations, regardless of session age or AGENTS.md defaults.
-          import platform as _platform
-          _is_windows = _platform.system() == 'Windows'
-          _os_ctx = (
-              "\n\nOperating System: Windows (bash shell available via Git Bash / WSL). "
-              "PREFER built-in file tools (read_file, search_files, write_to_file, apply_diff) "
-              "over terminal commands whenever possible — they are safer and more reliable. "
-              "When terminal commands are necessary: bash-style commands (ls, cat, grep, cp, mv, rm) "
-              "work because the terminal runs bash, not cmd.exe. "
-              "File paths accept both forward slashes and backslashes."
-          ) if _is_windows else ""
-
-          # ── Build open-tabs context for the agent ──
-          _open_tabs = open_tabs or []
-          _tabs_ctx = ""
-          _tabs_sys = ""
-          if _open_tabs:
-              _active_tab = None
-              for _t in _open_tabs:
-                  if _t.get('active'):
-                      _active_tab = _t
-                      break
-              _tab_paths = [_t['path'] for _t in _open_tabs]
-              _tabs_sys = (
-                  f"[OPEN EDITOR TABS]\n"
-                  f"  Files: {', '.join(_tab_paths)}\n"
-              )
-              if _active_tab:
-                  _tabs_sys += f"  Active (focused) tab: {_active_tab['path']}\n"
-              _tabs_sys += (
-                  "  These files are OPEN in the user's editor RIGHT NOW. "
-                  "When the user asks you to modify / fix / improve \"this\" file without specifying a path, "
-                  "infer they mean the active tab or one of the open tabs.\n"
-              )
-
-          workspace_ctx = ""
-          workspace_system_msg = (
-              f"Active workspace: {s.workspace}\n"
-              "Use this directory for ALL file operations unless the user specifies otherwise.\n\n"
-              + _tabs_sys +
-              "[LANGUAGE — CRITICAL]\n"
-              "Always think (reasoning) and respond in Korean (한국어). Your internal\n"
-              "thinking/reasoning output is displayed to the user in a '💭 생각 중' panel —\n"
-              "write it in Korean too, never in English. All user-facing text, tool call\n"
-              "previews, and reasoning must be in Korean.\n"
-              "HARD RULE — 도구 실행 전 고지: 반드시 도구 호출 직전에 지금 무엇을 하려는지 한국어 한 문장으로 먼저 쓴 뒤 호출할 것 (예: '브라우저로 example.com을 열어보겠습니다.', '설치본 chat.js에서 카드 렌더링 코드를 확인하겠습니다.'). 연속 호출이면 첫 회만 고지하고 작업 방향이 바뀌면 다시 고지. 설명 없는 침묵 도구 호출은 금지 — 사용자가 화면에서 현재 작업의 목적을 항상 따라갈 수 있어야 함.\n\n"
-              "[WEBUI ENVIRONMENT]\n"
-              "You are running in the Daon WebUI — a rich web-based chat interface.\n"
-              "You CAN and MUST use Markdown formatting directly in your text responses.\n"
-              "DO NOT use browser tools (browser_navigate, execute_command with curl, etc.) to \"verify\" "
-              "whether markdown works — it ALREADY works. Just output the markdown and it will render.\n\n"
-              "Supported Markdown features:\n"
-              "- **bold**, *italic*, `inline code`, ```code blocks```, lists, headers\n"
-              "- Images: ![alt text](image_url) — renders inline. Use https:// URLs for web images.\n"
-              "  For local workspace files, use: /api/file/raw?session_id={s.session_id}&path=RELATIVE_PATH\n"
-              "  Example: ![chart](/api/file/raw?session_id={s.session_id}&path=output/chart.png)\n"
-              "- Links: [link text](url) — rendered as clickable hyperlinks\n\n"
-              "IMPORTANT: When you want to show an image, simply write ![description](url) in your response.\n"
-              "The frontend already has a working markdown-to-HTML renderer that converts this to an <img> tag.\n"
-              "You do NOT need to test, verify, or debug image rendering — just use the markdown syntax.\n\n"
-              "[BUILT-IN BROWSER]\n"
-              "This app has a built-in shared browser: an in-app tab driven over CDP that the user can see.\n"
-              "When a task requires viewing, scraping, or interacting with a web page, use the browser tools\n"
-              "(browser_navigate, browser_snapshot, browser_click, browser_type, browser_scroll, browser_press,\n"
-              "browser_console) — they operate this built-in tab. Do NOT launch external browsers, and do NOT\n"
-              "use curl/wget for pages that need rendering or interaction. Workflow: call browser_navigate\n"
-              "first; the returned snapshot lists interactive elements as @eN refs — use those refs with\n"
-              "browser_click/browser_type. (This does NOT override the markdown rule above — never use the\n"
-              "browser just to verify rendering.)\n\n"
-              "[MEMORY POLICY]\n"
-              "You have access to Memory MCP tools (mcp_memory_*) for long-term knowledge storage.\n"
-              "CRITICAL: Do NOT automatically save information to memory. Only use memory tools when:\n"
-              "1. The user explicitly asks you to remember/save/store something, OR\n"
-              "2. The user asks you to recall/search previously stored memories.\n"
-              "Do not proactively create entities or relations. Memory is on-demand only.\n"
-              "Never store transient tool-state as durable memory: MCP server connection errors "
-              "('server is not connected / unreachable / dead'), API outages, timeouts, or failed "
-              "tool calls are momentary states, not lasting facts. If an MCP server call fails, "
-              "re-check the server's live status (status / reconnect) before concluding anything; "
-              "a liveness assumption about a server is never a memory-worthy fact.\n\n"
-              f"You are running as model: {resolved_model}."
-          ) + _os_ctx
-
-          # ── Always-on Wake-up Hook: 장기 기억(facts/profile) 주입 ──
-          # 매 채팅마다 마지막 활동 시각을 갱신하고, 8시간 이상 경과 후 재개 시
-          # 'Wake-up' 강조 헤더와 함께 이전 맥락을 시스템 프롬프트에 주입한다.
-          try:
-              from api.memory_store import build_memory_prompt
-              _memory_prompt = build_memory_prompt(
-                  query_text=msg_text or '',
-                  session_id=session_id or '',
-              )
-              if _memory_prompt:
-                  workspace_system_msg += "\n\n" + _memory_prompt
-          except Exception as _mem_e:
-              print(f"[webui] WARNING: memory prompt injection failed: {_mem_e}", flush=True)
-
-          # ── Phase 6: 이번 턴에 주입된 fact id 보관 (인과 그래프 직접 영향 후보) ──
-          try:
-              from api.memory_store import get_last_injected_fact_ids as _p6_get_injected
-              _p6_turn_injected_facts = _p6_get_injected(session_id or '')
-          except Exception:
-              _p6_turn_injected_facts = []
-
-          # ── Patch Registry: 시스템 프롬프트에 패치 인식 블록 주입 ──
-          try:
-              from api.patch_registry import get_system_prompt_block
-              _patch_prompt = get_system_prompt_block()
-              if _patch_prompt:
-                  workspace_system_msg += "\n\n" + _patch_prompt
-          except Exception as _pr_prompt_e:
-              print(f"[webui] WARNING: patch registry prompt injection failed: {_pr_prompt_e}", flush=True)
-
-          # ── Self-Evolution: 자가 진화 인지 블록 주입 (갭 E-4b) ──
-          # 에이전트가 결핍 능력 감지 시 propose_self_evolution 툴로 Builder
-          # 제작 파이프라인을 트리거할 수 있음을 인지시킨다. auto_mode 와 무관하게
-          # 항상 주입(인지는 무료) — 실제 스폰은 승인 게이트가 통제한다.
-          try:
-              from api.dynamic.self_evolution import get_self_evolution_prompt_block as _sevo_block_fn
-              _sevo_prompt = _sevo_block_fn()
-              if _sevo_prompt:
-                  workspace_system_msg += "\n\n" + _sevo_prompt
-          except Exception as _sevo_prompt_e:
-              print(f"[webui] WARNING: self-evolution prompt injection failed: {_sevo_prompt_e}", flush=True)
-
-          # ── Evolution Ledger: 자가 진화 / 재기동 기억 핸드오버 주입 ──
-          # 직전에 자가 수리/코드 수정/재빌드로 재기동된 경우, 에이전트가 그 수정 내역과
-          # 사유를 스스로 기억하고 대화를 이어가도록 핸드오버 맥락을 주입한다.
-          try:
-              from api.dynamic.evolution_ledger import get_handover_prompt_block as _ev_handover_fn
-              _handover_prompt = _ev_handover_fn()
-              if _handover_prompt:
-                  workspace_system_msg += "\n\n" + _handover_prompt
-                  print(f"[webui] Injected self-evolution restart handover context into system prompt.", flush=True)
-          except Exception as _ev_prompt_e:
-              print(f"[webui] WARNING: evolution handover prompt injection failed: {_ev_prompt_e}", flush=True)
-
-          # ── 에이전트 간 메시징: 활성 프로필(페르소나)의 수신함을 주입 ──
-          # 다른 에이전트(Dynamic Harness 노드 또는 채팅)가 이 프로필 앞으로 보낸
-          # 읽지 않은 메시지를 시스템 프롬프트에 주입한다. 수신자 = 활성 프로필 이름.
-          try:
-              from api.profiles import get_active_profile_name
-              from api.memory_store import format_inbox_prompt
-              _chat_agent_name = get_active_profile_name() or 'default'
-              _inbox_prompt = format_inbox_prompt(_chat_agent_name)
-              if _inbox_prompt:
-                  workspace_system_msg += "\n\n" + _inbox_prompt
-          except Exception as _inbox_e:
-              print(f"[webui] WARNING: agent inbox injection failed: {_inbox_e}", flush=True)
-
-          if planning_mode:
-              workspace_system_msg += (
-                  "\n\n[PLANNING MODE ENABLED]\n"
-                  "The user has enabled Planning Mode. You must act carefully before making code changes.\n"
-                  "If the request requires significant logic, major changes, or is complex:\n"
-                  "1. Research and understand the codebase first.\n"
-                  "2. Create a detailed `plan.md` in the workspace outlining your proposed changes.\n"
-                  "3. Stop execution and explicitly ask the user for approval.\n"
-                  "4. Only proceed with actual modifications after the user approves the plan.\n"
-                  "If the request is trivial, you may execute it directly without a plan."
-              )
-
-          if injected_count > 0:
-              workspace_system_msg += (
-                  f"\n\n[MCP INJECTION ACTIVE]\n"
-                  f"You have been dynamically injected with {injected_count} MCP tools from the WebUI.\n"
-                  f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
-                  f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
-                  f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
-                  f"They are fully registered in your environment; just call them directly!\n"
-                  f"IMPORTANT: For ANY browser/web-page work, use the dedicated browser tools "
-                  f"(browser_navigate, browser_snapshot, browser_click, etc.) instead of mcp_playwright_* "
-                  f"tools — the internal browser shares the app window and is always available.\n"
-              )
+          workspace_system_msg, _p6_turn_injected_facts = compose_system_message(
+              session_id=session_id,
+              workspace=s.workspace,
+              resolved_model=resolved_model,
+              msg_text=msg_text or '',
+              planning_mode=planning_mode,
+              open_tabs=open_tabs,
+              injected_mcp_count=injected_count,
+          )
+          if _ephemeral_prompt:
+              workspace_system_msg += "\n\n" + _ephemeral_prompt
 
           # Clean up any trailing interrupted assistant messages from a previous cancelled run
           while s.messages and s.messages[-1].get('role') == 'assistant':
@@ -1883,82 +1295,22 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
           if not any(m.get('role') == 'user' and m.get('content') == msg_text for m in s.messages[-2:]):
-               user_msg = {'role': 'user', 'content': msg_text, 'timestamp': int(time.time())}
-               # P6: Validate message shape against shared schema before persisting
-               if _SCHEMA_AVAILABLE:
-                   ok, err = _validate_msg(user_msg)
-                   if not ok:
-                       _logger.warning("Schema validation for user message failed: %s", err)
-               s.messages.append(user_msg)
-               s.save()
+              user_msg = {'role': 'user', 'content': msg_text, 'timestamp': int(time.time())}
+              # P6: Validate message shape against shared schema before persisting
+              if _SCHEMA_AVAILABLE:
+                  ok, err = _validate_msg(user_msg)
+                  if not ok:
+                      _logger.warning("Schema validation for user message failed: %s", err)
+              s.messages.append(user_msg)
+              s.save()
 
           # Process attachments to base64 images if present for multimodal models
-          user_message_payload = workspace_ctx + msg_text
-          if attachments:
-              import base64
-              import mimetypes
-              multimodal_content = [{"type": "text", "text": workspace_ctx + msg_text}]
-              has_images = False
-
-              # Helper: resize image via Pillow (max 2048px on longest edge, JPEG quality 75)
-              def _resize_image_bytes(raw_bytes: bytes, mime: str) -> bytes:
-                  try:
-                      from PIL import Image
-                      import io as _io
-                      img = Image.open(_io.BytesIO(raw_bytes))
-                      fmt = img.format or ('PNG' if 'png' in mime else 'JPEG')
-                      w, h = img.size
-                      max_dim = 2048
-                      if max(w, h) > max_dim:
-                          ratio = max_dim / max(w, h)
-                          new_size = (int(w * ratio), int(h * ratio))
-                          img = img.resize(new_size, Image.LANCZOS)
-                      # Convert to RGB for JPEG output (avoids RGBA issues)
-                      if fmt == 'JPEG' and img.mode in ('RGBA', 'P'):
-                          img = img.convert('RGB')
-                      buf = _io.BytesIO()
-                      save_kwargs = {}
-                      if fmt == 'JPEG':
-                          save_kwargs = {'quality': 75, 'optimize': True}
-                      elif fmt == 'PNG':
-                          save_kwargs = {'optimize': True}
-                      elif fmt == 'WEBP':
-                          save_kwargs = {'quality': 75}
-                      img.save(buf, format=fmt, **save_kwargs)
-                      return buf.getvalue()
-                  except Exception:
-                      return raw_bytes  # fallback to original
-
-              for filename in attachments:
-                  file_path = Path(s.workspace) / filename
-                  if file_path.exists() and file_path.is_file():
-                      mime_type, _ = mimetypes.guess_type(str(file_path))
-                      if not mime_type:
-                          ext = file_path.suffix.lower().lstrip('.')
-                          if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'):
-                              mime_type = f"image/{ext}"
-                              if ext == 'svg':
-                                  mime_type = "image/svg+xml"
-
-                      if mime_type and (mime_type.startswith('image/') or mime_type == 'image/svg+xml'):
-                          try:
-                              img_bytes = file_path.read_bytes()
-                              # Resize/compress for non-SVG images (SVG is vector, skip Pillow)
-                              if mime_type != 'image/svg+xml' and not mime_type.startswith('image/gif'):
-                                  img_bytes = _resize_image_bytes(img_bytes, mime_type)
-                              b64_data = base64.b64encode(img_bytes).decode('utf-8')
-                              multimodal_content.append({
-                                  "type": "image_url",
-                                  "image_url": {
-                                      "url": f"data:{mime_type};base64,{b64_data}"
-                                  }
-                              })
-                              has_images = True
-                              print(f"[webui] Image '{filename}' encoded ({len(b64_data)} chars base64)", flush=True)
-                          except Exception as img_err:
-                              print(f"[webui] Failed to read image {filename}: {img_err}", flush=True)
-              if has_images:
-                  user_message_payload = multimodal_content
+          user_message_payload = build_user_payload(
+              workspace=s.workspace,
+              msg_text=msg_text,
+              workspace_ctx="",
+              attachments=attachments,
+          )
 
           # Cancel gate: if user cancelled during setup (MCP injection, prompt build, etc.),
           # skip the expensive run_conversation() call entirely.
@@ -2281,7 +1633,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
         # put().  Draining it here creates a race where the browser remains in
         # the "cancel"/busy state forever.  The captured payload is sufficient
         # for late EventSource reconnects.
-        _cached_done = _terminal_done_data
+        _cached_done = emitter.terminal_done_data
         if _cached_done is not None:
             with _COMPLETED_STREAMS_LOCK:
                 _COMPLETED_STREAMS[stream_id] = (_cached_done, time.time())
@@ -2327,8 +1679,8 @@ def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
     if agent:
         try:
             agent.interrupt("User cancelled")
-        except Exception:
-            pass
+        except Exception as _intr_err:
+            _logger.debug("agent.interrupt failed during cancel: %s", _intr_err)
 
     with STREAMS_LOCK:
         if stream_id not in STREAMS:
