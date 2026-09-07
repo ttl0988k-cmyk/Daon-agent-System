@@ -247,57 +247,6 @@ class Handler(BaseHTTPRequestHandler):
             if handle_get(self, parsed):
                 return
 
-            # ── Browser Automation API (GET) — direct dispatch ──
-            if path in ('/api/browser/grid', '/api/browser/sessions'):
-                try:
-                    from api.routes.browser_routes import handle_get_browser_grid
-                    if handle_get_browser_grid(self, parsed):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Browser grid error", 500)
-                    return
-
-            if path == '/api/browser/status':
-                try:
-                    from api.routes.browser_routes import handle_get_browser_status
-                    if handle_get_browser_status(self, parsed):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Browser status error", 500)
-                    return
-
-            if path == '/api/browser/proxy':
-                try:
-                    from api.routes.browser_routes import handle_get_browser_proxy
-                    if handle_get_browser_proxy(self, parsed):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Browser proxy error", 500)
-                    return
-
-            # ── Demo-to-Skill API (GET) — direct dispatch ──
-            demo_get_routes = {
-                '/api/demo/status': 'handle_get_demo_status',
-                '/api/demo/events': 'handle_get_demo_events',
-            }
-            if path in demo_get_routes:
-                try:
-                    from api.routes.demo_to_skill_routes import (
-                        handle_get_demo_status,
-                        handle_get_demo_events,
-                    )
-                    func_name = demo_get_routes[path]
-                    func = locals()[func_name]
-                    if func(self, query):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Demo-to-Skill GET error", 500)
-                    return
-
             # Native Fallback Endpoints — delegated to api/native_dialogs.py
             if path == '/api/workspaces/select':
                 try:
@@ -490,104 +439,10 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             
-            # ── Demo-to-Skill API (POST) — direct dispatch ──
-            demo_post_routes = {
-                '/api/demo/start': 'handle_post_demo_start',
-                '/api/demo/stop': 'handle_post_demo_stop',
-                '/api/demo/cancel': 'handle_post_demo_cancel',
-                '/api/demo/text-workflow': 'handle_post_demo_text_workflow',
-                '/api/demo/add-event': 'handle_post_demo_add_event',
-            }
-            if path in demo_post_routes:
-                try:
-                    from api.routes.demo_to_skill_routes import (
-                        handle_post_demo_start,
-                        handle_post_demo_stop,
-                        handle_post_demo_cancel,
-                        handle_post_demo_text_workflow,
-                        handle_post_demo_add_event,
-                    )
-                    func_name = demo_post_routes[path]
-                    func = locals()[func_name]
-                    # Read body
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body_bytes = self.rfile.read(content_length) if content_length > 0 else b''
-                    body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
-                    if func(self, body):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Demo-to-Skill POST error", 500)
-                    return
-
-            # ── Setup Generator (POST) ──
-            if path == '/api/setup/generate':
-                try:
-                    from api.routes.setup_routes import handle_post_setup_generate
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body_bytes = self.rfile.read(content_length) if content_length > 0 else b''
-                    body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
-                    if handle_post_setup_generate(self, body):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Setup generate error", 500)
-                    return
-
             # Delegate to standard api.routes.handle_post
             from api.routes import handle_post
             if handle_post(self, parsed):
                 return
-
-            # ── Browser Automation API (POST) — direct dispatch ──
-            browser_post_routes = {
-                '/api/browser/navigate': 'handle_post_browser_navigate',
-                '/api/browser/snapshot': 'handle_post_browser_snapshot',
-                '/api/browser/click': 'handle_post_browser_click',
-                '/api/browser/type': 'handle_post_browser_type',
-                '/api/browser/screenshot': 'handle_post_browser_screenshot',
-                '/api/browser/execute': 'handle_post_browser_execute',
-                '/api/browser/close': 'handle_post_browser_close',
-                '/api/browser/back': 'handle_post_browser_back',
-                '/api/browser/forward': 'handle_post_browser_forward',
-                '/api/browser/tabs': 'handle_post_browser_tabs',
-                '/api/browser/switch_tab': 'handle_post_browser_switch_tab',
-                '/api/browser/batch': 'handle_post_browser_batch',
-                '/api/browser/focus': 'handle_post_browser_focus',
-                '/api/browser/close_tab': 'handle_post_browser_close_tab',
-                '/api/browser/sync_url': 'handle_post_browser_sync_url',
-            }
-            if path in browser_post_routes:
-                try:
-                    from api.routes.browser_routes import (
-                        handle_post_browser_navigate,
-                        handle_post_browser_snapshot,
-                        handle_post_browser_click,
-                        handle_post_browser_type,
-                        handle_post_browser_screenshot,
-                        handle_post_browser_execute,
-                        handle_post_browser_close,
-                        handle_post_browser_back,
-                        handle_post_browser_forward,
-                        handle_post_browser_tabs,
-                        handle_post_browser_switch_tab,
-                        handle_post_browser_batch,
-                        handle_post_browser_focus,
-                        handle_post_browser_close_tab,
-                        handle_post_browser_sync_url,
-                    )
-                    func_name = browser_post_routes[path]
-                    func = locals()[func_name]
-                    # Read body
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body_bytes = self.rfile.read(content_length) if content_length > 0 else b''
-                    body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
-                    if func(self, body):
-                        return
-                except Exception:
-                    traceback.print_exc()
-                    self.send_error_json("Browser POST error", 500)
-                    return
 
             # Native Fallback Endpoints for Daon Agent System
             if hasattr(self, 'body'):

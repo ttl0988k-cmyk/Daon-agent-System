@@ -140,10 +140,53 @@ def handle_get_health(handler, parsed) -> bool:
     """GET /health — server health check."""
     with STREAMS_LOCK:
         n_streams = len(STREAMS)
+    uptime_sec = int(time.time() - SERVER_START_TIME)
+    h, m, s = uptime_sec // 3600, (uptime_sec % 3600) // 60, uptime_sec % 60
+
+    active_agents_count = 0
+    try:
+        from api.streaming import _ACTIVE_AGENTS
+        active_agents_count = len(_ACTIVE_AGENTS)
+    except Exception:
+        pass
+
+    session_status = "ok"
+    try:
+        if not SESSION_DIR.exists():
+            session_status = "dir_missing"
+    except Exception as e:
+        session_status = f"error: {str(e)}"
+
+    skill_status = "ok"
+    try:
+        from api.skill_registry import _resolve_skills_dir
+        s_dir = _resolve_skills_dir()
+        if not s_dir.exists():
+            skill_status = "dir_missing"
+    except Exception as e:
+        skill_status = f"error: {str(e)}"
+
+    thread_cnt = threading.active_count()
+    is_healthy = (thread_cnt < 200 and n_streams < 50)
+    warnings = []
+    if session_status != "ok":
+        warnings.append(f"session_store: {session_status}")
+    if skill_status != "ok":
+        warnings.append(f"skill_registry: {skill_status}")
+
     return j(handler, {
-        'status': 'ok', 'sessions': len(SESSIONS),
+        'status': 'ok',
+        'healthy': is_healthy,
+        'warnings': warnings,
+        'uptime_seconds': uptime_sec,
+        'uptime_display': f'{h:02d}:{m:02d}:{s:02d}',
+        'thread_count': thread_cnt,
         'active_streams': n_streams,
-        'uptime_seconds': round(time.time() - SERVER_START_TIME, 1),
+        'active_agents': active_agents_count,
+        'session_store': session_status,
+        'skill_registry': skill_status,
+        'sessions': len(SESSIONS),
+        'pid': os.getpid(),
     })
 
 
