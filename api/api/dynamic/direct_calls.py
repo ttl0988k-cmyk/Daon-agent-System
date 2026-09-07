@@ -37,7 +37,7 @@ def _registered_models_for(provider: str) -> list[str]:
     return []
 
 
-def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 8192) -> str:
+def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 16384) -> str:
     """Call MiniMax Anthropic-compatible API directly, falling back to other
     MiniMax models registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
@@ -104,7 +104,7 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
     raise last_error
 
 
-def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 8192) -> str:
+def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, max_tokens: int = 16384) -> str:
     """Call DeepSeek API directly, falling back to other DeepSeek models
     registered in custom_providers.json if needed.
     Includes robust retry handling for 429 and 503 errors.
@@ -223,7 +223,7 @@ def _is_permanent_provider_error(e: Exception) -> bool:
     return False
 
 
-def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None, max_tokens: Optional[int] = 8192) -> str:
+def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None, max_tokens: Optional[int] = 16384) -> str:
     """Wrapper that dynamically routes meta-agents (Planner/Merger) using AIAgent with robust fallback retry logic."""
     agent_path = str(Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent")
     if agent_path not in sys.path:

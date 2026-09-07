@@ -300,6 +300,19 @@ def set_job_running(run_id: str):
         _job_store.save_job(run_id, job_copy)
 
 
+def set_job_recovering(run_id: str, reason: str = ''):
+    """Mark a job as recovering from a planner or node failure (memory + SQLite)."""
+    job_copy = None
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]['status'] = 'recovering'
+            _DYNAMIC_JOBS[run_id]['recovery_reason'] = reason
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
+    append_job_log(run_id, "System", f"🔄 복구 진행 중: {reason}", "warning")
+
+
 def set_job_awaiting_approval(run_id: str, message: str = ''):
     """Mark a job as waiting for user approval (memory + SQLite)."""
     job_copy = None
@@ -379,6 +392,8 @@ def get_job_status_response(run_id: str) -> dict | None:
         resp['result'] = job['result']
     elif job['status'] == 'error':
         resp['error'] = job['error']
+    elif job['status'] == 'recovering':
+        resp['recovery_reason'] = job.get('recovery_reason', '')
     return resp
 
 

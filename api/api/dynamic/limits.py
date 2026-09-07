@@ -19,7 +19,7 @@ def _load_harness_limits() -> dict:
     """Load limits from config/harness_limits.yaml or fallback to default values."""
     default_limits = {
         "node": {"max_retries": 3, "max_wall_time_seconds": 3600},
-        "plan": {"max_attempts": 5},
+        "plan": {"max_attempts": 5, "max_tokens": 16384},
         "mission": {"max_total_wall_time_seconds": 10800, "max_total_tokens": 2000000, "max_recovery_attempts": 5, "max_acceptance_retries": 2},
         "scoring": {"pass_threshold": 80, "max_score": 100},
         # 갭 D: 재귀적 위임(recursive delegation) 예산

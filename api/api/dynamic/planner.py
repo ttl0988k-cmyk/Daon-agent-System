@@ -13,6 +13,8 @@ Provides:
 import json
 import re
 import time
+from pathlib import Path
+from typing import Optional
 
 from api.skill_registry import get_skill_registry
 from api.dynamic.limits import _load_harness_limits
@@ -115,16 +117,179 @@ def _build_environment_options_block() -> str:
     )
 
 
+def _resolve_planner_model_chain(preferred_model: Optional[str] = None, task: str = "") -> list[str]:
+    """Resolve an ordered fallback chain of candidate models for the CEO Planner.
+
+    Priority order:
+    1. preferred_model (if valid and not 'minimax')
+    2. DynamicModelSelector recommended reasoning models for role='planner'
+    3. Registered models in model_manager matching reasoning/fast patterns
+    4. Reliable standard fallback models
+    """
+    candidates: list[str] = []
+    if preferred_model and "minimax" not in preferred_model.lower():
+        candidates.append(preferred_model)
+
+    # 1. Query DynamicModelSelector for reasoning models
+    try:
+        from api.dynamic.model_selector import DynamicModelSelector
+        selector = DynamicModelSelector()
+        chain, _ = selector.select_for_node(
+            role="planner",
+            task=task or "planning",
+            preferred_model=preferred_model or None,
+            required_strength="reasoning",
+            required_context=64000,
+            top_k=5,
+        )
+        for item in (chain or []):
+            m_id = item.get("model")
+            if m_id and m_id not in candidates and "minimax" not in m_id.lower():
+                candidates.append(m_id)
+    except Exception as _e:
+        _log.debug("DynamicModelSelector error during planner chain resolution: %s", _e)
+
+    # 2. Query model_manager for available models with active keys
+    try:
+        from api.managers import model_manager
+        available_groups = model_manager.get_available_models()
+        for g in available_groups:
+            for m in g.get("models", []):
+                mid = m.get("id") if isinstance(m, dict) else str(m)
+                if not mid or "minimax" in mid.lower():
+                    continue
+                mid_low = mid.lower()
+                if any(k in mid_low for k in ("deepseek", "gemini", "glm", "gpt", "claude", "qwen", "r1", "o1", "o3", "flash", "chat")):
+                    if mid not in candidates:
+                        candidates.append(mid)
+    except Exception as _e:
+        _log.debug("model_manager error during planner chain resolution: %s", _e)
+
+    # 3. Standard fallback defaults
+    standard_defaults = [
+        "deepseek-v4-flash",
+        "gemini-2.5-flash",
+        "glm-4-flash",
+        "gpt-4o-mini",
+        "claude-3-5-haiku",
+        "deepseek-chat",
+    ]
+    for d in standard_defaults:
+        if d not in candidates:
+            candidates.append(d)
+
+    return candidates
+
+
 class HermesPlanner:
     """Master Orchestrator that analyzes a task and generates a valid DAG plan."""
+
+    @staticmethod
+    def generate_fallback_dag(task: str, run_dir=None, planning_mode: bool = False, error_context: str = "") -> dict:
+        """Construct a minimal, schema-valid and semantically valid fallback DAG when planner generation fails.
+
+        Guarantees that harness execution is never interrupted by planner failure (removes SPOF).
+        """
+        _log.warning(
+            "Generating Minimal Fallback DAG for task: '%s' (planning_mode=%s, error_context=%s)",
+            task[:80], planning_mode, error_context[:100]
+        )
+        task_clean = (task or "Execute required task").strip()
+        workspace_note = f" Workspace: {run_dir}." if run_dir else ""
+
+        if planning_mode:
+            nodes = [
+                {
+                    "name": "plan_planner",
+                    "template_id": "task-decomposer",
+                    "role": "Planner / Architect",
+                    "type": "llm",
+                    "system_prompt": (
+                        "You are a master planner. Analyze the user task thoroughly, inspect workspace files, "
+                        "and write a complete, detailed plan.md in the workspace covering architecture, implementation, and testing."
+                    ),
+                    "subtask": f"Analyze requirements and generate a comprehensive plan.md in the workspace for: {task_clean}.{workspace_note}",
+                    "input": None,
+                    "output": "execution_plan",
+                },
+                {
+                    "name": "developer",
+                    "template_id": "fullstack-developer",
+                    "role": "Fullstack Developer",
+                    "type": "llm",
+                    "system_prompt": (
+                        "You are an expert developer. Read the execution plan (plan.md) and implement all required "
+                        "features, bug fixes, or modifications cleanly and correctly in the workspace."
+                    ),
+                    "subtask": f"Implement all required code and file changes according to the execution plan for: {task_clean}.{workspace_note}",
+                    "input": "execution_plan",
+                    "output": "implementation_output",
+                },
+                {
+                    "name": "code_reviewer",
+                    "template_id": "code-review",
+                    "role": "Code Reviewer",
+                    "type": "llm",
+                    "system_prompt": (
+                        "You are a senior code reviewer and QA engineer. Thoroughly inspect all created and modified files, "
+                        "verify syntax and runtime correctness, and compile a clear final summary report."
+                    ),
+                    "subtask": f"Review all implemented changes, verify code quality and functionality, and generate a final completion report for: {task_clean}.{workspace_note}",
+                    "input": "implementation_output",
+                    "output": "review_summary",
+                },
+            ]
+            edges = [["plan_planner", "developer"], ["developer", "code_reviewer"]]
+            summary = f"[Minimal Fallback DAG (Planning Mode)] 3-node pipeline for: {task_clean[:60]}"
+        else:
+            nodes = [
+                {
+                    "name": "developer",
+                    "template_id": "fullstack-developer",
+                    "role": "Fullstack Developer",
+                    "type": "llm",
+                    "system_prompt": (
+                        "You are an expert developer. Analyze the task and implement all necessary "
+                        "code changes, files, or solutions cleanly and robustly in the workspace."
+                    ),
+                    "subtask": f"Implement the requested solution in the workspace for: {task_clean}.{workspace_note}",
+                    "input": None,
+                    "output": "implementation_output",
+                },
+                {
+                    "name": "code_reviewer",
+                    "template_id": "code-review",
+                    "role": "Code Reviewer",
+                    "type": "llm",
+                    "system_prompt": (
+                        "You are a senior code reviewer. Review all modified code and files, "
+                        "verify functionality, and summarize completed work."
+                    ),
+                    "subtask": f"Review all implemented code, verify correctness, and generate the final report for: {task_clean}.{workspace_note}",
+                    "input": "implementation_output",
+                    "output": "review_summary",
+                },
+            ]
+            edges = [["developer", "code_reviewer"]]
+            summary = f"[Minimal Fallback DAG] 2-node pipeline for: {task_clean[:60]}"
+
+        return {
+            "plan_summary": summary,
+            "skills": [],
+            "nodes": nodes,
+            "edges": edges,
+            "is_fallback": True,
+            "error_context": error_context,
+        }
 
     def plan(self, task: str, mission_tracker: dict = None, preferred_model: str = None,
              log_callback=None, run_dir=None, planning_mode: bool = False,
              forced_skills: list = None) -> dict:
         """Analyze the task and break it down into a Node-Edge DAG of specialized subtasks,
-        with retry and schema validation."""
+        with retry, multi-model fallback, and schema validation."""
         limits = _load_harness_limits()
-        max_attempts = limits["plan"]["max_attempts"]
+        max_attempts = int(limits.get("plan", {}).get("max_attempts", 5))
+        max_tokens = int(limits.get("plan", {}).get("max_tokens", 16384))
 
         if mission_tracker and "check_timeout" in mission_tracker:
             mission_tracker["check_timeout"]()
@@ -514,10 +679,15 @@ class HermesPlanner:
 
         prompt = f"User Task: {task}"
         last_error_msg = ""
+        planner_models = _resolve_planner_model_chain(preferred_model, task)
+        model_idx = 0
+        attempts_per_model = 0
 
         for attempt in range(max_attempts):
             if mission_tracker and "check_timeout" in mission_tracker:
                 mission_tracker["check_timeout"]()
+
+            current_model = planner_models[model_idx % len(planner_models)]
 
             current_prompt = prompt
             if last_error_msg:
@@ -536,23 +706,34 @@ class HermesPlanner:
                     f"Please analyze the failure, adjust the DAG logic or format, and output a corrected, fully compliant JSON plan."
                 )
 
-            # CEO reasoning model defaults to deepseek-v4-flash
-            planner_model = preferred_model if (preferred_model and "minimax" not in preferred_model.lower()) else "deepseek-v4-flash"
-
-            buffer = StreamLogBuffer(f"CEO ({planner_model})", log_callback)
+            buffer = StreamLogBuffer(f"CEO ({current_model})", log_callback)
             def stream_cb(chunk):
                 buffer.write(chunk)
 
-            raw_response = _call_direct(
-                current_prompt,
-                system_instruction,
-                preferred_model=planner_model,
-                stream_callback=stream_cb,
-                max_tokens=8192,
-            )
-            buffer.flush()
-            if log_callback:
-                log_callback(f"CEO ({planner_model})", "\n", "done")
+            try:
+                raw_response = _call_direct(
+                    current_prompt,
+                    system_instruction,
+                    preferred_model=current_model,
+                    stream_callback=stream_cb,
+                    max_tokens=max_tokens,
+                )
+                buffer.flush()
+                if log_callback:
+                    log_callback(f"CEO ({current_model})", "\n", "done")
+            except Exception as e:
+                buffer.flush()
+                last_error_msg = f"Model call failed ({current_model}): {e}"
+                _log.warning("Planner model %s call failed (Attempt %d/%d): %s", current_model, attempt + 1, max_attempts, e)
+                # On API/network failure, rotate to next fallback model immediately
+                if len(planner_models) > 1:
+                    next_model = planner_models[(model_idx + 1) % len(planner_models)]
+                    if log_callback:
+                        log_callback("CEO", f"⚠️ 플래너 모델 ({current_model}) 호출 실패 -> 대체 플래너 ({next_model})로 전환합니다.", "warning")
+                    model_idx += 1
+                    attempts_per_model = 0
+                time.sleep(1)
+                continue
 
             clean_text = raw_response.strip()
             # Strip reasoning/thought blocks so internal JSON-like text in thinking doesn't corrupt DAG parsing
@@ -588,13 +769,36 @@ class HermesPlanner:
                     return plan_dict
 
                 last_error_msg = "\n".join(errors)
-                _log.info("Validation failed (Attempt %d/%d):\n%s", attempt + 1, max_attempts, last_error_msg)
+                _log.info("Validation failed on model %s (Attempt %d/%d):\n%s", current_model, attempt + 1, max_attempts, last_error_msg)
             except json.JSONDecodeError as e:
                 last_error_msg = f"JSON Decode Error: {e}"
-                _log.info("JSON parsing failed (Attempt %d/%d):\n%s", attempt + 1, max_attempts, last_error_msg)
+                _log.info("JSON parsing failed on model %s (Attempt %d/%d):\n%s", current_model, attempt + 1, max_attempts, last_error_msg)
+
+            attempts_per_model += 1
+            # If current model failed 2 times, switch to next fallback model
+            if attempts_per_model >= 2 and len(planner_models) > 1:
+                next_model = planner_models[(model_idx + 1) % len(planner_models)]
+                if log_callback:
+                    log_callback("CEO", f"⚠️ 플래너 모델 ({current_model}) 계획 수립 실패 -> 대체 플래너 ({next_model})로 전환합니다.", "warning")
+                model_idx += 1
+                attempts_per_model = 0
 
             time.sleep(1)
 
-        raise ValueError(
-            f"Planner failed to generate a valid plan conforming to the schema after {max_attempts} attempts. Last error: {last_error_msg}"
+        # All attempts exhausted across all models — NEVER raise ValueError!
+        _log.error(
+            "Planner exhausted all %d attempts across models %s. Activating Minimal Fallback DAG. Last error: %s",
+            max_attempts, planner_models, last_error_msg
+        )
+        if log_callback:
+            log_callback(
+                "CEO",
+                "⚠️ 모든 플래너 모델 시도 실패 — 3단 방어 체계에 따라 최소 실행 DAG(안전 기본 파이프라인)를 활성화하여 실행을 계속합니다.",
+                "warning"
+            )
+        return self.generate_fallback_dag(
+            task=task,
+            run_dir=run_dir,
+            planning_mode=planning_mode,
+            error_context=last_error_msg
         )

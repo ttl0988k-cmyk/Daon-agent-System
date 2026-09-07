@@ -61,6 +61,36 @@ class HermesDynamicRunner:
         # 갭 E-L4: Builder 제작 초안의 편입 승인자 (기본 None = 편입 거부 — 리스크 5 안전 기본값)
         self.builder_incorporation_approver = None
 
+    def _generate_fallback_recovery_plan(self, failed_nodes: list[dict], task: str) -> dict:
+        """Create a targeted direct-recovery plan for failed nodes without calling the LLM planner."""
+        _log.warning("Generating targeted fallback recovery plan for %d failed node(s)", len(failed_nodes))
+        rec_nodes = []
+        rec_edges = []
+        for i, fn in enumerate(failed_nodes):
+            orig_name = fn.get("name", f"node_{i}")
+            node_name = f"fix_{orig_name}"
+            err_msg = str(fn.get("output", "Unknown execution failure"))[:200]
+            rec_nodes.append({
+                "name": node_name,
+                "template_id": fn.get("template_id") or "code-review",
+                "role": fn.get("role", "Developer"),
+                "type": "llm",
+                "system_prompt": f"You are tasked with fixing issues from failed node '{orig_name}': {err_msg}",
+                "subtask": f"Fix the failure in node '{orig_name}' ({err_msg}) and complete the assigned task: {task}",
+                "input": fn.get("input") or "",
+                "output": fn.get("output_key") or fn.get("output") or f"{node_name}_output",
+            })
+            if i > 0:
+                rec_edges.append([rec_nodes[i - 1]["name"], node_name])
+
+        return {
+            "plan_summary": f"[Targeted Recovery Plan] Direct fix for {len(failed_nodes)} failed node(s)",
+            "skills": [],
+            "nodes": rec_nodes,
+            "edges": rec_edges,
+            "is_recovery": True,
+        }
+
     def _run_recovery_plan(
         self,
         failed_nodes: list[dict],
@@ -80,6 +110,13 @@ class HermesDynamicRunner:
             "Failure detected in nodes: %s. Triggering dynamic re-planning...",
             [f['name'] for f in failed_nodes],
         )
+        if run_id:
+            try:
+                from api.dynamic_jobs import set_job_recovering
+                set_job_recovering(run_id, f"Recovery attempt for {len(failed_nodes)} failed node(s): {[f['name'] for f in failed_nodes]}")
+            except Exception as _jre:
+                _log.warning("Failed to set job recovering: %s", _jre)
+
         successful_outputs = state_manager.get_all_success_values()
         initial_outputs = [
             {
@@ -114,31 +151,48 @@ class HermesDynamicRunner:
             "You MUST use the already successfully generated outputs as input keys where appropriate.\n"
             "Return a valid JSON object matching the standard Nodes and Edges schema."
         )
-        _log.info("Calling Planner for dynamic rerouting plan...")
-        replan = self.planner.plan(replan_prompt, mission_tracker=mission_tracker)
-        _log.info("Generated recovery plan. Summary: %s", replan.get('plan_summary'))
 
-        combined_nodes = [
-            {
-                "name": out["name"],
-                "type": "llm",
-                "role": out["role"],
-                "system_prompt": "",
-                "subtask": "",
-                "input": "",
-                "output": out["output_key"],
-            }
-            for out in initial_outputs
-        ]
-        combined_nodes.extend(replan.get("nodes", []))
+        replan = None
+        try:
+            _log.info("Calling Planner for dynamic rerouting plan...")
+            replan = self.planner.plan(replan_prompt, mission_tracker=mission_tracker)
+            _log.info("Generated recovery plan. Summary: %s", replan.get('plan_summary'))
 
-        from api.dynamic.plan_validator import semantic_validate
-        cycle_errors = semantic_validate({"nodes": combined_nodes, "edges": list(replan.get("edges", []))})
-        if cycle_errors:
-            raise ValueError(f"JIT Re-planning generated a cyclic or invalid cumulative DAG: {cycle_errors}")
+            combined_nodes = [
+                {
+                    "name": out["name"],
+                    "type": "llm",
+                    "role": out["role"],
+                    "system_prompt": "",
+                    "subtask": "",
+                    "input": "",
+                    "output": out["output_key"],
+                }
+                for out in initial_outputs
+            ]
+            combined_nodes.extend(replan.get("nodes", []))
+
+            from api.dynamic.plan_validator import semantic_validate
+            cycle_errors = semantic_validate({"nodes": combined_nodes, "edges": list(replan.get("edges", []))})
+            if cycle_errors:
+                _log.warning("JIT Re-planning generated a cyclic or invalid cumulative DAG: %s. Using targeted fallback recovery plan.", cycle_errors)
+                replan = self._generate_fallback_recovery_plan(failed_nodes, task)
+        except Exception as _replan_err:
+            _log.warning("Dynamic re-planning failed with error: %s. Using targeted fallback recovery plan.", _replan_err)
+            replan = self._generate_fallback_recovery_plan(failed_nodes, task)
+
+        if not replan or not replan.get("nodes"):
+            replan = self._generate_fallback_recovery_plan(failed_nodes, task)
 
         recompiled_agents = self.compiler.compile(replan)
         _log.info("Recompiled %d agents for recovery.", len(recompiled_agents))
+
+        if run_id:
+            try:
+                from api.dynamic_jobs import set_job_running
+                set_job_running(run_id)
+            except Exception:
+                pass
         recovery_results = self.runner.run(
             recompiled_agents,
             replan.get("edges", []),
@@ -678,9 +732,15 @@ class HermesDynamicRunner:
             if log_callback:
                 log_callback("CEO", f"Planning task: '{task}'...", "running")
             check_timeout()
-            plan = self.planner.plan(task, mission_tracker=mission_tracker, preferred_model=preferred_model,
-                                     log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode,
-                                     forced_skills=forced_skills)
+            try:
+                plan = self.planner.plan(task, mission_tracker=mission_tracker, preferred_model=preferred_model,
+                                         log_callback=log_callback, run_dir=run_dir, planning_mode=planning_mode,
+                                         forced_skills=forced_skills)
+            except Exception as _plan_err:
+                _log.error("Unhandled exception from planner: %s. Using Minimal Fallback DAG.", _plan_err)
+                if log_callback:
+                    log_callback("CEO", f"⚠️ 플래너 예외 발생 ({_plan_err}) — 최소 실행 DAG로 복구합니다.", "warning")
+                plan = self.planner.generate_fallback_dag(task, run_dir=run_dir, planning_mode=planning_mode, error_context=str(_plan_err))
 
             if log_callback:
                 log_callback("CEO", f"Generated plan: {plan.get('plan_summary')}", "running")
@@ -760,10 +820,53 @@ class HermesDynamicRunner:
                 # Verify that the planner completed successfully
                 failed_planners = [r for r in planner_results if r["status"] == "failed"]
                 if failed_planners:
-                    return {
-                        "status": "failed",
-                        "error": f"Planner node failed: {failed_planners[0].get('output')}"
-                    }
+                    # ── P0 FIX: Do NOT return {"status": "failed"} here! ──
+                    # Instead, recover by synthesizing a default plan.md and proceeding
+                    # to the approval gate so implementation agents can still run.
+                    _fail_detail = failed_planners[0].get("output", "Unknown planner error")
+                    _log.warning(
+                        "Planning mode: %d planner node(s) failed (%s). "
+                        "Recovering with fallback plan.md instead of aborting mission.",
+                        len(failed_planners), _fail_detail
+                    )
+                    if log_callback:
+                        log_callback(
+                            "CEO",
+                            f"⚠️ 기획 에이전트 실패 ({len(failed_planners)}건) — 기본 실행 계획서를 자동 생성하여 복구합니다.",
+                            "warning"
+                        )
+                    if run_id:
+                        try:
+                            from api.dynamic_jobs import set_job_recovering
+                            set_job_recovering(run_id, f"Planning node failed: {str(_fail_detail)[:200]}")
+                        except Exception:
+                            pass
+
+                    # Synthesize a fallback plan.md in the workspace
+                    if run_dir:
+                        _fallback_plan_path = run_dir / "plan.md"
+                        if not _fallback_plan_path.exists():
+                            _fallback_plan_content = (
+                                f"# 실행 계획서 (자동 복구)\n\n"
+                                f"## 작업\n{task}\n\n"
+                                f"## 참고\n기획 에이전트가 실패하여 자동 생성된 기본 계획서입니다.\n"
+                                f"아래 구현 에이전트들이 이 계획서를 기반으로 작업을 수행합니다.\n\n"
+                                f"## 구현 단계\n1. 요구사항 분석 및 환경 파악\n2. 핵심 기능 구현\n3. 테스트 및 검증\n4. 최종 결과물 정리\n\n"
+                                f"---\n_복구 사유: {str(_fail_detail)[:300]}_\n"
+                            )
+                            try:
+                                _fallback_plan_path.write_text(_fallback_plan_content, encoding="utf-8")
+                                _log.info("Wrote fallback plan.md to %s", _fallback_plan_path)
+                            except Exception as _wp_err:
+                                _log.warning("Failed to write fallback plan.md: %s", _wp_err)
+
+                    # Restore job status to running
+                    if run_id:
+                        try:
+                            from api.dynamic_jobs import set_job_running
+                            set_job_running(run_id)
+                        except Exception:
+                            pass
                 
                 # Find if a plan.md file was created in run_dir
                 plan_file_path = "plan.md"
