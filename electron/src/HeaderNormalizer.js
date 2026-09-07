@@ -4,8 +4,12 @@
  * Normalizes Sec-CH-UA* and Accept-Language headers to match Chrome 138 fingerprint.
  */
 const FULL_ACCEPT_LANG = 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7';
-const CHROME_UA_HEADER = '"Chromium";v="138", "Google Chrome";v="138", "Not)A;Brand";v="99"';
-const CHROME_UA_FULL_LIST = '"Chromium";v="138.0.0.0", "Google Chrome";v="138.0.0.0", "Not)A;Brand";v="99.0.0.0"';
+
+// Dynamically extract Chromium version from process.versions.chrome to guarantee exact fingerprint alignment
+const chromeVersion = (typeof process !== 'undefined' && process.versions && process.versions.chrome) || '138.0.0.0';
+const majorVersion = chromeVersion.split('.')[0] || '138';
+const CHROME_UA_HEADER = `"Chromium";v="${majorVersion}", "Google Chrome";v="${majorVersion}", "Not)A;Brand";v="99"`;
+const CHROME_UA_FULL_LIST = `"Chromium";v="${chromeVersion}", "Google Chrome";v="${chromeVersion}", "Not)A;Brand";v="99.0.0.0"`;
 
 function normalizeChromeHeaders(headers, url) {
   const h = { ...headers };

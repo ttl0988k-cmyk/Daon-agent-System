@@ -19,6 +19,7 @@ from api.routes.admin_routes import (
     handle_get_health,
     handle_get_models,
     handle_serve_static,
+    handle_serve_assets,
     handle_get_approval_pending,
     handle_get_approval_inject,
     handle_get_crons,
@@ -103,6 +104,10 @@ from api.routes.file_routes import (
     handle_post_workspace_add,
     handle_post_workspace_remove,
     handle_post_workspace_rename,
+    handle_get_fs_list,
+    handle_get_workspace_select,
+    handle_get_file_select,
+    handle_get_preview,
 )
 from api.routes.settings_routes import (
     handle_get_settings,
@@ -192,10 +197,15 @@ from api.routes.browser_routes import (
     handle_post_browser_focus,
     handle_post_browser_close_tab,
 )
-from api.routes.setup_routes import handle_post_setup_generate
+from api.routes.setup_routes import (
+    handle_post_setup_generate,
+    handle_get_setup_preview,
+    handle_get_setup_detect,
+)
 from api.routes.mcp_routes import (
     handle_get_mcp_servers,
     handle_get_mcp_presets,
+    handle_get_mcp_recommend,
     handle_get_capability_diagnose,
     handle_get_capability_tests,
     handle_get_capability_mappings,
@@ -208,6 +218,8 @@ from api.routes.mcp_routes import (
     handle_post_mcp_tool_call,
     handle_post_mcp_exchange_ott,
 )
+from api.routes.score_routes import handle_get_score_evaluate
+from api.routes.speak_routes import handle_tts
 from api.routes.demo_to_skill_routes import (
     handle_get_demo_status,
     handle_get_demo_events,
@@ -368,8 +380,11 @@ GET_EXACT_ROUTES = {
     '/api/diff/preview': handle_get_diff_preview,
     '/api/docs/list': handle_get_docs_list,
     '/api/docs/status': handle_get_docs_status,
+    '/api/dynamic/status': handle_get_dynamic_status,
     '/api/file': handle_get_file_read,
     '/api/file/raw': handle_get_file_raw,
+    '/api/file/select': handle_get_file_select,
+    '/api/fs/list': handle_get_fs_list,
     '/api/git-info': handle_get_git_info,
     '/api/git/conflicts': handle_get_git_conflict,
     '/api/git/diff': handle_get_git_diff,
@@ -379,6 +394,7 @@ GET_EXACT_ROUTES = {
     '/api/kakao/status': handle_get_kakao_status,
     '/api/list': handle_get_list_dir,
     '/api/mcp/presets': handle_get_mcp_presets,
+    '/api/mcp/recommend': handle_get_mcp_recommend,
     '/api/mcp/servers': handle_get_mcp_servers,
     '/api/memory': handle_get_memory,
     '/api/memory/facts': handle_get_memory_facts,
@@ -398,14 +414,20 @@ GET_EXACT_ROUTES = {
     '/api/profiles': handle_get_profiles,
     '/api/projects': handle_get_projects,
     '/api/providers': handle_get_providers,
+    '/api/score/evaluate': handle_get_score_evaluate,
     '/api/session': handle_get_session,
     '/api/session/export': handle_get_session_export,
     '/api/sessions': handle_get_sessions,
     '/api/sessions/search': handle_get_sessions_search,
     '/api/settings': handle_get_settings,
+    '/api/setup/detect': handle_get_setup_detect,
+    '/api/setup/preview': handle_get_setup_preview,
     '/api/skills': handle_get_skills,
     '/api/skills/content': handle_get_skill_content,
     '/api/skills/hub/sources': handle_get_skills_hub_sources,
+    '/api/skills/recommend': handle_get_skills_hub_recommend,
+    '/api/skills/search': handle_get_skills_hub_search,
+    '/api/speak/tts': handle_tts,
     '/api/style-cards': handle_get_style_cards,
     '/api/style-cards/categories': handle_get_style_cards_categories,
     '/api/style-cards/content': handle_get_style_card_content,
@@ -414,6 +436,7 @@ GET_EXACT_ROUTES = {
     '/api/system/last-restart': handle_get_last_restart,
     '/api/system/status': handle_get_system_status,
     '/api/workspaces': handle_get_workspaces,
+    '/api/workspaces/select': handle_get_workspace_select,
     '/favicon.ico': handle_get_favicon,
     '/health': handle_get_health,
     '/index.html': handle_get_index,
@@ -424,8 +447,8 @@ GET_EXACT_ROUTES = {
 
 GET_PREFIX_ROUTES = [
     ('/static/', handle_serve_static),
-    ('/api/skills/search', handle_get_skills_hub_search),
-    ('/api/skills/recommend', handle_get_skills_hub_recommend),
+    ('/assets/', handle_serve_assets),
+    ('/preview/', handle_get_preview),
     ('/api/dynamic/status/', handle_get_dynamic_status),
     ('/api/plugins/', _handle_get_plugin_credentials_subpath),
 ]
@@ -554,6 +577,8 @@ POST_EXACT_ROUTES = {
     '/api/session/update': handle_post_session_update,
     '/api/sessions/cleanup': handle_post_sessions_cleanup,
     '/api/sessions/cleanup_zero_message': handle_post_sessions_cleanup,
+    '/api/dynamic/cancel': lambda h, b: handle_post_dynamic_cancel(h, b),
+    '/api/dynamic/run': handle_post_dynamic_run,
     '/api/settings': handle_post_settings,
     '/api/setup/generate': handle_post_setup_generate,
     '/api/skills/delete': handle_post_skill_delete,
@@ -577,9 +602,9 @@ POST_EXACT_ROUTES = {
 }
 
 POST_PREFIX_ROUTES = [
-    ('/api/dynamic/approve', lambda h, b, p: handle_post_dynamic_approve(h, b, p)),
-    ('/api/dynamic/answer', lambda h, b, p: handle_post_dynamic_answer(h, b, p)),
-    ('/api/dynamic/cancel', lambda h, b, p: handle_post_dynamic_cancel(h, b, p)),
+    ('/api/dynamic/approve/', lambda h, b, p: handle_post_dynamic_approve(h, b, p)),
+    ('/api/dynamic/answer/', lambda h, b, p: handle_post_dynamic_answer(h, b, p)),
+    ('/api/dynamic/cancel/', lambda h, b, p: handle_post_dynamic_cancel(h, b, p)),
     ('/api/plugins/', _handle_post_plugin_subpath),
 ]
 
@@ -587,7 +612,7 @@ POST_PREFIX_ROUTES = [
 # ── Core Dispatchers ──
 
 def handle_get(handler, parsed) -> bool:
-    """Handle all GET routes via O(1) exact lookup or prefix match."""
+    """Handle all GET routes via O(1) exact lookup or directory-prefix match."""
     path = parsed.path
     
     # 1. Exact match (O(1))
@@ -595,9 +620,9 @@ def handle_get(handler, parsed) -> bool:
     if func is not None:
         return func(handler, parsed)
         
-    # 2. Prefix match
+    # 2. Directory prefix match (strictly boundary-delimited)
     for prefix, pfunc in GET_PREFIX_ROUTES:
-        if path.startswith(prefix):
+        if path == prefix.rstrip('/') or path.startswith(prefix):
             return pfunc(handler, parsed)
             
     _logger.debug("No GET route matched for: %s", path)
@@ -605,7 +630,7 @@ def handle_get(handler, parsed) -> bool:
 
 
 def handle_post(handler, parsed) -> bool:
-    """Handle all POST routes via O(1) exact lookup or prefix match."""
+    """Handle all POST routes via O(1) exact lookup or directory-prefix match."""
     path = parsed.path
     
     # 1. Raw endpoint (before reading JSON body)
@@ -627,10 +652,11 @@ def handle_post(handler, parsed) -> bool:
     if func is not None:
         return func(handler, body)
         
-    # 5. Prefix match
+    # 5. Directory prefix match (strictly boundary-delimited)
     for prefix, pfunc in POST_PREFIX_ROUTES:
-        if path.startswith(prefix):
+        if path == prefix.rstrip('/') or path.startswith(prefix):
             return pfunc(handler, body, parsed)
             
     _logger.debug("No POST route matched for: %s", path)
     return False
+

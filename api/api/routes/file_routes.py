@@ -315,3 +315,120 @@ def handle_post_workspace_rename(handler, body) -> bool:
         return bad(handler, 'Workspace not found', 404)
     save_workspaces(wss)
     return j(handler, {'ok': True, 'workspaces': wss})
+
+
+def handle_get_workspace_select(handler, parsed) -> bool:
+    """GET /api/workspaces/select — open native folder browser dialog."""
+    try:
+        from api.native_dialogs import select_workspace_dialog
+        selected = select_workspace_dialog()
+        return j(handler, {'path': selected})
+    except Exception as e:
+        return bad(handler, str(e), 500)
+
+
+def handle_get_file_select(handler, parsed) -> bool:
+    """GET /api/file/select — open native file browser dialog."""
+    try:
+        from api.native_dialogs import select_file_dialog
+        query = parse_qs(parsed.query)
+        ws_dir = query.get('workspace', [''])[0]
+        selected = select_file_dialog(ws_dir)
+        return j(handler, {'path': selected})
+    except Exception as e:
+        return bad(handler, str(e), 500)
+
+
+def handle_get_fs_list(handler, parsed) -> bool:
+    """GET /api/fs/list?path=... — browse local filesystem drives/directories."""
+    try:
+        query = parse_qs(parsed.query)
+        dir_path = query.get('path', [''])[0]
+        # If empty path, list root drives on Windows
+        if not dir_path:
+            import string
+            from ctypes import windll
+            drives = []
+            try:
+                bitmask = windll.kernel32.GetLogicalDrives()
+                for letter in string.ascii_uppercase:
+                    if bitmask & 1:
+                        drives.append(f"{letter}:/")
+                    bitmask >>= 1
+            except Exception:
+                drives = ["C:/"]
+            return j(handler, {
+                'current': '',
+                'parent': '',
+                'drives': drives,
+                'entries': [{'name': d, 'path': d, 'type': 'drive'} for d in drives]
+            })
+
+        # Otherwise, list directories and files in dir_path
+        p = Path(dir_path)
+        if not p.exists() or not p.is_dir():
+            return bad(handler, f"Directory not found: {dir_path}", 404)
+
+        entries = []
+        parent_path = str(p.parent).replace('\\', '/') if p.parent != p else ''
+
+        for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            try:
+                if item.name.startswith('.'):
+                    continue
+                entries.append({
+                    'name': item.name,
+                    'path': str(item).replace('\\', '/'),
+                    'type': 'dir' if item.is_dir() else 'file'
+                })
+            except Exception:
+                pass
+
+        return j(handler, {
+            'current': str(p).replace('\\', '/'),
+            'parent': parent_path,
+            'entries': entries
+        })
+    except Exception as e:
+        return bad(handler, str(e), 500)
+
+
+def handle_get_preview(handler, parsed) -> bool:
+    """GET /preview/{session_id}/{rel_path} — serve preview files with path traversal protection."""
+    path = parsed.path
+    parts = path.strip('/').split('/', 2)
+    if len(parts) < 2:
+        return bad(handler, "Invalid preview URL", 400)
+    sess_id = parts[1]
+    rel_path = parts[2] if len(parts) > 2 else 'index.html'
+
+    try:
+        s = get_session(sess_id)
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+
+    ws_path = Path(s.workspace).resolve()
+    target_file = (ws_path / rel_path).resolve()
+    try:
+        target_file.relative_to(ws_path)
+    except ValueError:
+        return bad(handler, "Access denied: path traversal attempt", 403)
+
+    if not target_file.exists() or not target_file.is_file():
+        return bad(handler, "File not found", 404)
+
+    ext = target_file.suffix.lower()
+    ct = MIME_MAP.get(ext, 'application/octet-stream')
+    raw = target_file.read_bytes()
+    handler.send_response(200)
+    handler.send_header('Content-Type', ct)
+    handler.send_header('Content-Length', str(len(raw)))
+    handler.send_header('Cache-Control', 'no-store')
+    _security_headers(handler)
+    handler.end_headers()
+    try:
+        handler.wfile.write(raw)
+    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
+        pass
+    return True
+

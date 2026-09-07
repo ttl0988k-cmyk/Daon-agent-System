@@ -13,19 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def handle_post_dynamic_run(handler, body: dict) -> bool:
-    """POST /api/dynamic/run — Start a dynamic harness run.
-
-    Body: {
-        "task": "카페 랜딩페이지를 만들어줘",
-        "session_id": "abc123",
-        "workspace": "/path/to/workspace",
-        "model": "gpt-4o",
-        "planning_mode": false,
-        "allowedProviders": [...]
-    }
-
-    Response: { "run_id": "a1b2c3d4e5f6..." }
-    """
+    """POST /api/dynamic/run — Start a dynamic harness run."""
     from api.dynamic_jobs import start_harness_job
 
     task = body.get("task", "").strip()
@@ -35,7 +23,7 @@ def handle_post_dynamic_run(handler, body: dict) -> bool:
 
     try:
         run_id = start_harness_job(body)
-        handler.send_json({"ok": True, "run_id": run_id})
+        handler.send_json({"ok": True, "run_id": run_id, "status": "running"})
     except ValueError as e:
         handler.send_json({"ok": False, "error": str(e)}, 400)
     except Exception as e:
@@ -46,92 +34,57 @@ def handle_post_dynamic_run(handler, body: dict) -> bool:
 
 
 def handle_get_dynamic_status(handler, parsed) -> bool:
-    """GET /api/dynamic/status/{run_id} — Poll run status.
+    """GET /api/dynamic/status?run_id=...&log_cursor=... OR GET /api/dynamic/status/{run_id} — Poll run status."""
+    from urllib.parse import parse_qs
+    import time
+    import api.dynamic_jobs as dj
 
-    Response: {
-        "run_id": "...",
-        "status": "running" | "completed" | "failed",
-        "elapsed": 12.3,
-        "logs": [ {"message": "[CEO] 작업 시작", "type": "info"}, ... ],
-        "agent_cards": { "ceo": {"status": "..."}, ... },
-        "result": "...",       // when completed
-        "error": "..."         // when failed
-    }
-    """
-    from api.dynamic_jobs import get_job
+    qs = parse_qs(parsed.query) if parsed.query else {}
+    run_id = qs.get('run_id', [''])[0].strip()
+    try:
+        log_cursor = int(qs.get('log_cursor', ['0'])[0])
+    except (ValueError, TypeError):
+        log_cursor = 0
 
-    # Extract run_id from path: /api/dynamic/status/{run_id}
     path = parsed.path
-    prefix = "/api/dynamic/status/"
-    if not path.startswith(prefix):
-        handler.send_json({"error": "invalid path"}, 400)
-        return True
-
-    run_id = path[len(prefix):].strip().rstrip("/")
     if not run_id:
-        handler.send_json({"error": "run_id is required"}, 400)
+        prefix = "/api/dynamic/status/"
+        if path.startswith(prefix):
+            run_id = path[len(prefix):].strip().rstrip("/")
+
+    if not run_id:
+        handler.send_json({"ok": False, "error": "run_id is required"}, 400)
         return True
 
-    job = get_job(run_id)
+    job = dj.get_job(run_id)
     if job is None:
-        handler.send_json({"error": "Not found"}, 404)
+        handler.send_json({"ok": False, "error": f"run_id not found: {run_id}"}, 404)
         return True
 
-    # Map internal status → frontend status
-    internal_status = job.get("status", "running")
-    status_map = {
-        "running": "running",
-        "done": "completed",
-        "error": "failed",
-        "cancelled": "cancelled",
-        "awaiting_approval": "awaiting_approval",
-        "clarifying": "clarifying",
-    }
-    frontend_status = status_map.get(internal_status, internal_status)
+    resp = dj.get_job_status_response(run_id)
+    if resp is None:
+        handler.send_json({"ok": False, "error": f"run_id not found: {run_id}"}, 404)
+        return True
 
-    # Build logs array: transform {agent_id, content, status} → {message, type}
+    new_logs, next_cursor = dj.get_job_logs_since(run_id, log_cursor)
+    resp['logs'] = new_logs
+    resp['next_cursor'] = next_cursor
+
+    # Build agent_cards from all logs
     raw_logs = job.get("logs", [])
-    logs = []
-    for entry in raw_logs:
-        agent_id = entry.get("agent_id", "")
-        content = entry.get("content", "")
-        entry_status = entry.get("status", "running")
-        # Map entry status to log type
-        log_type = "info"
-        if entry_status == "error":
-            log_type = "error"
-        elif entry_status == "done" or entry_status == "completed":
-            log_type = "success"
-        elif entry_status == "warning":
-            log_type = "warning"
-
-        message = f"[{agent_id}] {content}" if agent_id else content
-        logs.append({"message": message, "type": log_type})
-
-    # Build agent_cards from logs: group by agent_id, keep latest content
     agent_cards = {}
     for entry in raw_logs:
         aid = entry.get("agent_id", "")
-        if not aid:
-            continue
-        agent_cards[aid] = {"status": entry.get("content", ""), "log_status": entry.get("status", "running")}
+        if aid:
+            agent_cards[aid] = {"status": entry.get("content", ""), "log_status": entry.get("status", "running")}
+    if agent_cards:
+        resp['agent_cards'] = agent_cards
 
-    resp = {
-        "run_id": run_id,
-        "status": frontend_status,
-        "elapsed": round(__import__("time").time() - job.get("started_at", 0), 1),
-        "logs": logs,
-        "agent_cards": agent_cards,
-    }
-
-    # ── 갭 D-3: 위임 트리 (활성 서브트리) ──
-    # 자식 실행은 별도 잡이 아니라 부모 노드 스레드 안에서 동기 실행되므로
-    # 혈통 등록 존재 자체가 "실행 중"을 의미한다 (종료 시 finally에서 정리됨).
-    delegation_tree = []
+    # Build delegation_tree if any
     try:
-        from api.dynamic_jobs import get_descendants, get_lineage
-        for desc_id in get_descendants(run_id):
-            lin = get_lineage(desc_id) or {}
+        delegation_tree = []
+        for desc_id in dj.get_descendants(run_id):
+            lin = dj.get_lineage(desc_id) or {}
             delegation_tree.append({
                 "run_id": desc_id,
                 "parent_run_id": lin.get("parent_run_id", ""),
@@ -139,23 +92,14 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
                 "spawn_reason": lin.get("spawn_reason", ""),
                 "status": "running",
             })
+        if delegation_tree:
+            resp["delegation_tree"] = delegation_tree
     except Exception:
-        delegation_tree = []
-    if delegation_tree:
-        resp["delegation_tree"] = delegation_tree
-
-    if frontend_status == "completed":
-        resp["result"] = job.get("result", "")
-    elif frontend_status == "failed":
-        resp["error"] = job.get("error", "알 수 없는 오류")
-    elif frontend_status == "awaiting_approval":
-        resp["approval_message"] = job.get("approval_message", "작업 승인이 필요합니다.")
-        resp["available_actions"] = job.get("available_actions", ["approve", "reject"])
-    elif frontend_status == "clarifying":
-        resp["clarification"] = job.get("clarification", {})
+        pass
 
     handler.send_json(resp)
     return True
+
 
 
 def handle_post_dynamic_approve(handler, body: dict, parsed=None) -> bool:
@@ -259,5 +203,9 @@ def handle_post_dynamic_cancel(handler, body: dict, parsed=None) -> bool:
         return True
 
     cancelled = cancel_job(run_id)
-    handler.send_json({"ok": cancelled})
+    if cancelled:
+        handler.send_json({"ok": True, "message": "Job cancelled"})
+    else:
+        handler.send_json({"ok": False, "error": "Job not found or already completed"}, 404)
     return True
+

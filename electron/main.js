@@ -90,7 +90,9 @@ app.whenReady().then(async () => {
   windowManager = new WindowManager({ mlog, merr });
   windowManager.createSplashWindow();
 
-  // Clean orphaned temp files asynchronously
+  // Clean orphaned temp files (_MEI* and playwright-artifacts-*).
+  // Note: TempCleaner has a 5-second internal delay and actively skips in-use _MEI folders,
+  // making early background execution safe. Port-specific zombie servers are killed below via killPortOwner.
   cleanupOrphanedTemp();
 
   // Server Supervisor
@@ -123,18 +125,14 @@ app.whenReady().then(async () => {
       mlog(`[Startup] Reusing existing healthy server PID: ${existingServer.pid} on port ${DEFAULT_PORT}`);
       supervisor.adoptRunningServer(existingServer.pid, DEFAULT_PORT);
     } else {
-      mlog(`[Startup] No healthy server on port ${DEFAULT_PORT}. Cleaning old processes and starting fresh...`);
-      // Kill old server processes synchronously before spawning new
-      try {
-        if (process.platform === 'win32') {
-          execSync('taskkill /F /IM server.exe /T 2>nul', { windowsHide: true });
-        }
-      } catch (_) { }
+      mlog(`[Startup] No healthy server on port ${DEFAULT_PORT}. Terminating port-owner process if any and starting fresh...`);
+      // Targeted kill: only kill the process occupying DEFAULT_PORT (prevents killing unrelated server.exe processes)
+      supervisor.killPortOwner(DEFAULT_PORT);
 
       supervisor.startPythonProcess(DEFAULT_PORT);
 
-      // Wait for server health
-      const healthy = await supervisor.checkServerHealth(DEFAULT_PORT, 60, 1000);
+      // Wait for server health (180s timeout accommodates PyInstaller onefile _MEI extraction on slow machines)
+      const healthy = await supervisor.checkServerHealth(DEFAULT_PORT, 180, 1000);
       if (!healthy) {
         throw new Error(`Server failed to become healthy on port ${DEFAULT_PORT}`);
       }

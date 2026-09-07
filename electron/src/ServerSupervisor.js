@@ -209,6 +209,35 @@ class ServerSupervisor {
     } catch (_) { }
   }
 
+  findPortOwnerPid(port) {
+    if (process.platform !== 'win32') return null;
+    try {
+      const out = execSync(`netstat -ano -p TCP`, { encoding: 'utf-8', windowsHide: true });
+      const lines = out.split(/\r?\n/);
+      for (const line of lines) {
+        if (line.includes(`:${port}`) && line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parseInt(parts[parts.length - 1], 10);
+          if (pid && !isNaN(pid) && pid > 0) {
+            return pid;
+          }
+        }
+      }
+    } catch (_) { }
+    return null;
+  }
+
+  killPortOwner(port) {
+    const pid = this.findPortOwnerPid(port);
+    if (pid && pid > 0) {
+      this.mlog(`[ServerSupervisor] Found process PID ${pid} listening on port ${port}. Terminating...`);
+      this.killProcessTree(pid);
+      return true;
+    }
+    return false;
+  }
+
+
   isProcessAlive(pid) {
     if (!pid) return false;
     try {

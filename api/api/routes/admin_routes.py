@@ -223,6 +223,37 @@ def handle_serve_static(handler, parsed) -> bool:
     return True
 
 
+def handle_serve_assets(handler, parsed) -> bool:
+    """GET /assets/* — serve webview assets."""
+    from api.config import RESOURCE_DIR, MIME_MAP
+    webview_dir = RESOURCE_DIR / 'webview'
+    if not webview_dir.exists():
+        return j(handler, {'error': 'not found'}, status=404)
+    assets_root = (webview_dir / 'assets').resolve()
+    rel = parsed.path[len('/assets/'):]
+    asset_file = (assets_root / rel).resolve()
+    try:
+        asset_file.relative_to(assets_root)
+    except ValueError:
+        return j(handler, {'error': 'not found'}, status=404)
+    if not asset_file.exists() or not asset_file.is_file():
+        return j(handler, {'error': 'not found'}, status=404)
+    ext = asset_file.suffix.lower()
+    ct = MIME_MAP.get(ext, 'application/octet-stream')
+    handler.send_response(200)
+    handler.send_header('Content-Type', ct)
+    handler.send_header('Cache-Control', 'no-store')
+    raw = asset_file.read_bytes()
+    handler.send_header('Content-Length', str(len(raw)))
+    handler.end_headers()
+    try:
+        handler.wfile.write(raw)
+    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
+        pass
+    return True
+
+
+
 # ── Approval (GET) ────────────────────────────────────────────────────────────
 
 def handle_get_approval_pending(handler, parsed) -> bool:
