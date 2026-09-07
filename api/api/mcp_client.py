@@ -13,6 +13,7 @@ Supports:
 import base64
 import json as _json
 import logging
+import os
 import subprocess
 import sys
 import threading

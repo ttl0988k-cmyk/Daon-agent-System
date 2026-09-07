@@ -30,6 +30,15 @@ function getModelDisplayName(modelId) {
 
 async function loadInitialData() {
   try {
+    // 0. 서버 부팅 대기 (재기동 / PyInstaller 압축해제 중 404 방지)
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        const h = await api('/health', { timeout: 1500 });
+        if (h && (h.status === 'ok' || h.healthy !== false)) break;
+      } catch (_) { }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
     // 1. Models
     const modelsData = await api('/api/models');
     State.models = modelsData.groups || [];
@@ -49,16 +58,42 @@ async function loadInitialData() {
     // 2b. Modes (Roo-style)
     loadModes();
 
-    // 3. Sessions
-    const sessData = await api('/api/sessions');
-    State.sessions = sessData.sessions;
+    // 3. Sessions (부팅 시 일시적 공백 방지 재시도 포함)
+    let sessData = { sessions: [] };
+    for (let sAttempt = 0; sAttempt < 5; sAttempt++) {
+      try {
+        sessData = await api('/api/sessions');
+        if (sessData && sessData.sessions && sessData.sessions.length > 0) break;
+      } catch (e) {
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
+    State.sessions = (sessData && sessData.sessions) || [];
     renderSessionsList();
 
-    if (State.sessions.length > 0) {
+    // 직전 활성 세션 복원 (재기동/새로고침 후에도 이전 작업 세션 유지)
+    const savedSid = localStorage.getItem('daon_active_session_id');
+    const matched = savedSid && State.sessions.find(s => s.session_id === savedSid);
+
+    if (matched) {
+      await selectSession(matched.session_id);
+    } else if (State.sessions.length > 0) {
       await selectSession(State.sessions[0].session_id);
     } else {
       await createNewSession();
     }
+
+    // 3b. 자가 수리/확장 재기동 안내 확인
+    try {
+      const lrRes = await api('/api/system/last-restart');
+      if (lrRes && lrRes.ok && lrRes.last_restart) {
+        const lr = lrRes.last_restart;
+        if (!lr.acknowledged) {
+          showToast(`🔄 [자가 수리/확장 반영 완료] 사유: ${lr.reason || '시스템 재기동'}`, 6000);
+          api('/api/system/last-restart/ack', { method: 'POST' }).catch(() => { });
+        }
+      }
+    } catch (_) { }
 
     // 앱 시작 시 설정 모달 자동 오픈 (프로바이더/모델 설정 유도)
     // 프로바이더 미설정 시 설정창 자동 열기
@@ -456,6 +491,7 @@ async function selectSession(sid) {
 
     // ── Phase 2: Only after API success, commit state changes ──
     State.activeSessionId = sid;
+    try { localStorage.setItem('daon_active_session_id', sid); } catch (_) { }
 
     // Detach any native browser overlay during session switch
     if (window.electronAPI) {

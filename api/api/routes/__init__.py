@@ -3066,6 +3066,15 @@ def handle_get(handler, parsed) -> bool:
             plugin_name = parts[0]
             return handle_get_plugin_credentials(handler, parsed, plugin_name)
 
+    # ── System & Evolution Routes (GET) ──
+    if parsed.path == '/api/system/build-info':
+        from api.routes.system_routes import handle_get_build_info
+        return handle_get_build_info(handler, parsed)
+
+    if parsed.path == '/api/system/last-restart':
+        from api.routes.system_routes import handle_get_last_restart
+        return handle_get_last_restart(handler, parsed)
+
     _logger.debug("No GET route matched for: %s", parsed.path)
     return False  # 404
 
@@ -5586,6 +5595,11 @@ def handle_post(handler, parsed) -> bool:
         if len(parts) == 3 and parts[1] == 'credentials' and parts[2] == 'remove':
             # POST /api/plugins/{name}/credentials/remove
             return handle_post_plugin_credentials_remove(handler, body, parts[0])
+
+    # ── System & Evolution Routes (POST) ──
+    if parsed.path == '/api/system/last-restart/ack':
+        from api.routes.system_routes import handle_post_last_restart_ack
+        return handle_post_last_restart_ack(handler, parsed)
 
     return False  # 404
 

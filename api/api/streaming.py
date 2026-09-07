@@ -1589,10 +1589,40 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   if not reason:
                       return _json.dumps({"ok": False, "error": "reason is required"}, ensure_ascii=False)
                   try:
+                      rebuild_flag = bool(args.get('rebuild'))
+                      rebuild_notice = " (server.exe 바이너리 재빌드 포함)" if rebuild_flag else ""
+                      
+                      # ── Checkpoint turn to disk before server is killed ──
+                      # Electron 감시자가 서버를 종료하기 전에 현재 대화 상태를
+                      # 디스크에 원자적으로 저장하여 턴 데이터 유실을 완벽 방지.
+                      try:
+                          checkpoint_msg = {
+                              "role": "assistant",
+                              "content": (
+                                  f"🔄 **[자가 수리/확장 재기동 안내]**\n\n"
+                                  f"대표님, 작업하신 변경 사항을 시스템에 안전하게 적용하기 위해 서버 재기동{rebuild_notice}을 시작합니다.\n\n"
+                                  f"- **재기동 사유**: {reason}\n"
+                                  f"- **체크포인트**: `{args.get('checkpoint_ref') or '현재 작업 상태'}`\n\n"
+                                  f"재기동 완료 후 이 세션에서 작업을 그대로 이어가며, 제가 수정한 모든 내역을 기억하고 있겠습니다."
+                              ),
+                              "timestamp": int(time.time()),
+                              "is_checkpoint": True,
+                          }
+                          if not any(m.get('content') == checkpoint_msg['content'] for m in s.messages[-2:]):
+                              s.messages.append(checkpoint_msg)
+                              s.save()
+                              from api.models import _write_session_index
+                              _write_session_index()
+                      except Exception as _cp_save_e:
+                          print(f"[SelfUpdate] WARNING: turn checkpoint save failed: {_cp_save_e}", flush=True)
+
                       payload = _rr_request(
                           reason,
                           checkpoint_ref=args.get('checkpoint_ref'),
-                          rebuild=bool(args.get('rebuild')),
+                          rebuild=rebuild_flag,
+                          session_id=session_id,
+                          files_modified=args.get('files_modified'),
+                          summary=reason,
                       )
                       return _json.dumps({"ok": True, **payload,
                                           "message": "Restart request recorded. The supervisor will restart the server within ~5s."}, ensure_ascii=False)
@@ -1790,8 +1820,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _sevo_prompt = _sevo_block_fn()
               if _sevo_prompt:
                   workspace_system_msg += "\n\n" + _sevo_prompt
-          except Exception as _sevo_prompt_e:
-              print(f"[webui] WARNING: self-evolution prompt injection failed: {_sevo_prompt_e}", flush=True)
+          # ── Evolution Ledger: 자가 진화 / 재기동 기억 핸드오버 주입 ──
+          # 직전에 자가 수리/코드 수정/재빌드로 재기동된 경우, 에이전트가 그 수정 내역과
+          # 사유를 스스로 기억하고 대화를 이어가도록 핸드오버 맥락을 주입한다.
+          try:
+              from api.dynamic.evolution_ledger import get_handover_prompt_block as _ev_handover_fn
+              _handover_prompt = _ev_handover_fn()
+              if _handover_prompt:
+                  workspace_system_msg += "\n\n" + _handover_prompt
+                  print(f"[webui] Injected self-evolution restart handover context into system prompt.", flush=True)
+          except Exception as _ev_prompt_e:
+              print(f"[webui] WARNING: evolution handover prompt injection failed: {_ev_prompt_e}", flush=True)
 
           # ── 에이전트 간 메시징: 활성 프로필(페르소나)의 수신함을 주입 ──
           # 다른 에이전트(Dynamic Harness 노드 또는 채팅)가 이 프로필 앞으로 보낸

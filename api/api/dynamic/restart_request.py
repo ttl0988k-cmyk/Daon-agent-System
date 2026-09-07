@@ -57,7 +57,16 @@ def count_active_jobs(jobs=None):
     return len(active)
 
 
-def request_restart(reason, checkpoint_ref=None, rebuild=False, state_dir=None, jobs=None):
+def request_restart(
+    reason,
+    checkpoint_ref=None,
+    rebuild=False,
+    state_dir=None,
+    jobs=None,
+    session_id=None,
+    files_modified=None,
+    summary=None
+):
     """Record a restart request. Returns the payload dict.
 
     reason: human-readable summary of why the restart is needed (required).
@@ -65,6 +74,9 @@ def request_restart(reason, checkpoint_ref=None, rebuild=False, state_dir=None, 
                     server fails its health check (optional).
     rebuild: True when backend Python source changed and the supervisor must
              rebuild + swap server.exe while it is down (optional, default False).
+    session_id: the active chat session initiating this self-update.
+    files_modified: list of paths modified in this self-repair.
+    summary: human-readable explanation of changes made.
     Raises RestartRequestError when active jobs exist or reason is empty.
     """
     reason = str(reason or "").strip()
@@ -83,7 +95,25 @@ def request_restart(reason, checkpoint_ref=None, rebuild=False, state_dir=None, 
         "rebuild": bool(rebuild),
         "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "server_pid": os.getpid(),
+        "session_id": session_id or "",
+        "files_modified": files_modified or [],
+        "summary": summary or reason,
     }
+
+    # Record to EvolutionLedger for handover continuity across restarts
+    try:
+        from api.dynamic.evolution_ledger import record_evolution_event
+        record_evolution_event(
+            reason=reason,
+            session_id=session_id,
+            files_modified=files_modified,
+            summary=summary or reason,
+            rebuild=bool(rebuild),
+            checkpoint_ref=checkpoint_ref,
+        )
+    except Exception as _ev_err:
+        _log.warning("EvolutionLedger recording failed: %s", _ev_err)
+
     path = get_restart_request_path(state_dir)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,8 +123,8 @@ def request_restart(reason, checkpoint_ref=None, rebuild=False, state_dir=None, 
         os.replace(tmp, path)  # atomic on the same filesystem
     except OSError as e:
         raise RestartRequestError(f"cannot write restart request: {e}")
-    _log.info("self-modify restart requested: %s (checkpoint=%s)",
-              reason, checkpoint_ref)
+    _log.info("self-modify restart requested: %s (checkpoint=%s, session=%s)",
+              reason, checkpoint_ref, session_id)
     return payload
 
 

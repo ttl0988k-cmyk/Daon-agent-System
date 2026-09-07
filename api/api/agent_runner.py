@@ -240,6 +240,15 @@ def run_agent_stream(session_id, msg_text, model, workspace, stream_id):
                 "prior conversation. Both tags update with every message and override anything else."
             ) + os_ctx
 
+            # Evolution Ledger handover memory injection
+            try:
+                from api.dynamic.evolution_ledger import get_handover_prompt_block as _ev_handover_fn
+                _handover_prompt = _ev_handover_fn()
+                if _handover_prompt:
+                    workspace_system_msg += "\n\n" + _handover_prompt
+            except Exception:
+                pass
+
             # Save the user's message to local session history first
             # to make sure it persists even on crash
             if not any(m.get('role') == 'user' and m.get('content') == msg_text for m in s.messages[-2:]):

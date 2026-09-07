@@ -225,6 +225,26 @@ function createRestartOrchestrator(deps = {}) {
         return { ok: false, rolledBack, restored, rebuilt: wantsRebuild, swapped, attempts: rolledBack || restored ? 2 : 1, reason: 'server unhealthy after restart', checkpointRef };
     }
 
+    function updateLedger(result, payload) {
+        for (const d of dirs) {
+            try {
+                const ledgerPath = require('path').join(d, 'evolution_ledger.json');
+                if (fs.existsSync(ledgerPath)) {
+                    const data = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+                    if (data && data.last_restart) {
+                        data.last_restart.status = result.ok ? 'restarted_success' : 'failed';
+                        data.last_restart.completed_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+                        data.last_restart.supervisor_result = result;
+                        if (data.history && data.history.length > 0) {
+                            data.history[0] = { ...data.last_restart };
+                        }
+                        fs.writeFileSync(ledgerPath, JSON.stringify(data, null, 2), 'utf-8');
+                    }
+                }
+            } catch (_) { }
+        }
+    }
+
     async function tick() {
         if (state.busy) return;
         const payload = consumeRequest();
@@ -233,6 +253,7 @@ function createRestartOrchestrator(deps = {}) {
         try {
             state.cycles += 1;
             state.lastResult = await performRestart(payload);
+            try { updateLedger(state.lastResult, payload); } catch (_) { }
             if (deps.afterCycle) {
                 try { await deps.afterCycle(state.lastResult); } catch (_) { }
             }
