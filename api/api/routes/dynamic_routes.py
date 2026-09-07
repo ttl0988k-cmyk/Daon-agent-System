@@ -185,15 +185,10 @@ def handle_post_dynamic_approve(handler, body: dict, parsed=None) -> bool:
         handler.send_json({"ok": False, "error": "Not found"}, 404)
         return True
 
-    # Resolve the approval by updating job status back to running
-    from api.dynamic_jobs import _DYNAMIC_JOBS, _DYNAMIC_JOBS_LOCK
+    # Resolve the approval by updating job status back to running (memory + SQLite)
+    from api.dynamic_jobs import set_job_approval_response
     session_id = job.get("session_id")
-    with _DYNAMIC_JOBS_LOCK:
-        if run_id in _DYNAMIC_JOBS:
-            _DYNAMIC_JOBS[run_id]["status"] = "running"
-            _DYNAMIC_JOBS[run_id]["approval_action"] = action
-            _DYNAMIC_JOBS[run_id].pop("approval_message", None)
-            _DYNAMIC_JOBS[run_id].pop("available_actions", None)
+    set_job_approval_response(run_id, action)
 
     # CRITICAL: resolve the api.approval pending entry so the orchestrator's
     # `while has_pending(session_id)` loop unblocks. Without this the harness

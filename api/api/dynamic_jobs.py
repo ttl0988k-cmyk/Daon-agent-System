@@ -20,9 +20,20 @@ if hasattr(sys, '_MEIPASS'):
 else:
     RUN_DIR = Path(__file__).parent.parent.parent.resolve()
 
-_DYNAMIC_JOBS = {}
-_DYNAMIC_JOBS_LOCK = threading.Lock()
+from api.dynamic.job_store import HarnessJobStore
 
+_job_store = HarnessJobStore()
+
+# In-memory fast cache with DB auto-recovery on boot
+try:
+    _job_store.recover_interrupted_jobs()
+    _DYNAMIC_JOBS = _job_store.load_recent_jobs(limit=100)
+    _LINEAGE = _job_store.get_all_lineage()
+except Exception:
+    _DYNAMIC_JOBS = {}
+    _LINEAGE = {}
+
+_DYNAMIC_JOBS_LOCK = threading.Lock()
 _CANCELLED_JOBS = set()
 
 # 실행 중인 AIAgent 인스턴스 레지스트리 (run_id → set[AIAgent]).
@@ -38,30 +49,39 @@ _CANCELLABLE_STATUSES = ('running', 'clarifying', 'awaiting_approval')
 # run_id → {"parent_run_id", "root_run_id", "depth", "spawn_reason", "created_at"}
 # delegate_team 도구가 자식 실행을 만들 때 등록한다.
 # 부모 취소 시 get_descendants()로 서브트리를 찾아 연쇄 취소한다.
-_LINEAGE: dict = {}
 _LINEAGE_LOCK = threading.Lock()
 
 
 def register_lineage(run_id: str, parent_run_id: str, root_run_id: str,
                      depth: int, spawn_reason: str = "") -> None:
-    """위임으로 생성된 자식 실행의 혈통을 등록한다."""
+    """위임으로 생성된 자식 실행의 혈통을 등록한다 (메모리 + SQLite 영속화)."""
     if not run_id:
         return
+    now = time.time()
+    entry = {
+        "parent_run_id": parent_run_id,
+        "root_run_id": root_run_id,
+        "depth": int(depth),
+        "spawn_reason": str(spawn_reason or ""),
+        "created_at": now,
+    }
     with _LINEAGE_LOCK:
-        _LINEAGE[run_id] = {
-            "parent_run_id": parent_run_id,
-            "root_run_id": root_run_id,
-            "depth": int(depth),
-            "spawn_reason": str(spawn_reason or ""),
-            "created_at": time.time(),
-        }
+        _LINEAGE[run_id] = entry
+    _job_store.save_lineage(run_id, parent_run_id, root_run_id, depth, spawn_reason)
 
 
 def get_lineage(run_id: str) -> dict | None:
-    """run_id의 혈통 정보를 반환한다. 없으면 None."""
+    """run_id의 혈통 정보를 반환한다. 없으면 None (메모리 우선 조회, DB 폴백)."""
     with _LINEAGE_LOCK:
         entry = _LINEAGE.get(run_id)
-        return dict(entry) if entry else None
+        if entry:
+            return dict(entry)
+    db_entry = _job_store.get_lineage(run_id)
+    if db_entry:
+        with _LINEAGE_LOCK:
+            _LINEAGE[run_id] = db_entry
+        return dict(db_entry)
+    return None
 
 
 def get_descendants(run_id: str) -> list:
@@ -101,6 +121,7 @@ def unregister_lineage_subtree(run_id: str) -> None:
                     queue.append(child)
         for rid in to_remove:
             _LINEAGE.pop(rid, None)
+    _job_store.delete_lineage_subtree(run_id)
 
 
 def register_running_agent(run_id: str, agent) -> None:
@@ -154,6 +175,9 @@ def cancel_job(run_id: str) -> bool:
             return False
         _CANCELLED_JOBS.add(run_id)
         job['status'] = 'cancelled'
+        job_copy = dict(job)
+
+    _job_store.save_job(run_id, job_copy)
 
     # 록 밖에서 수행 — agent.interrupt / clarifier event set은 다른 록을 잡을 수 있다.
     # 1) 실행 중인 AIAgent 즉시 중단 (in-flight LLM HTTP 요청 정지)
@@ -177,6 +201,14 @@ def cancel_job(run_id: str) -> bool:
         try:
             with _DYNAMIC_JOBS_LOCK:
                 _CANCELLED_JOBS.add(_child_id)
+                child_job = _DYNAMIC_JOBS.get(_child_id)
+                if child_job:
+                    child_job['status'] = 'cancelled'
+                    c_copy = dict(child_job)
+                else:
+                    c_copy = None
+            if c_copy:
+                _job_store.save_job(_child_id, c_copy)
             _interrupt_running_agents(_child_id)
             try:
                 from api.dynamic.clarifier import abort_clarification
@@ -196,40 +228,54 @@ def is_job_cancelled(run_id: str) -> bool:
 
 
 def get_job(run_id: str) -> dict | None:
-    """Thread-safe read of a dynamic job by run_id."""
+    """Thread-safe read of a dynamic job by run_id (memory first, DB fallback)."""
     with _DYNAMIC_JOBS_LOCK:
-        return _DYNAMIC_JOBS.get(run_id)
+        job = _DYNAMIC_JOBS.get(run_id)
+        if job is not None:
+            return job
+
+    db_job = _job_store.get_job(run_id, include_logs=True)
+    if db_job:
+        with _DYNAMIC_JOBS_LOCK:
+            _DYNAMIC_JOBS[run_id] = db_job
+        return db_job
+    return None
 
 
 def get_job_logs_since(run_id: str, cursor: int) -> tuple[list[dict], int]:
     """Return (new_logs, next_cursor) for incremental polling."""
     with _DYNAMIC_JOBS_LOCK:
         job = _DYNAMIC_JOBS.get(run_id)
-        if job is None:
-            return None, 0
-        logs = list(job.get('logs', []))
-        new_logs = logs[cursor:]
-        return new_logs, cursor + len(new_logs)
+        if job is not None:
+            logs = list(job.get('logs', []))
+            new_logs = logs[cursor:]
+            return new_logs, cursor + len(new_logs)
+
+    # DB fallback
+    return _job_store.get_logs_since(run_id, cursor=cursor)
 
 
 def init_job(run_id: str, session_id: str = None) -> dict:
-    """Create a new job entry and return it."""
+    """Create a new job entry, cache in memory, and persist to SQLite."""
+    now = time.time()
     job = {
         'status': 'running',
         'result': None,
         'error': '',
-        'started_at': time.time(),
+        'started_at': now,
         'logs': [],
         'clarification': None,  # clarification questions when status='clarifying'
         'session_id': session_id,  # session_id for approval resolution
     }
     with _DYNAMIC_JOBS_LOCK:
         _DYNAMIC_JOBS[run_id] = job
+    _job_store.save_job(run_id, job)
     return job
 
 
 def set_job_clarifying(run_id: str, questions: list[str], turn: int):
-    """Mark a job as waiting for user clarification."""
+    """Mark a job as waiting for user clarification (memory + SQLite)."""
+    job_copy = None
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'clarifying'
@@ -237,27 +283,52 @@ def set_job_clarifying(run_id: str, questions: list[str], turn: int):
                 'questions': questions,
                 'turn': turn,
             }
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
 
 
 def set_job_running(run_id: str):
-    """Transition job back to running after clarification."""
+    """Transition job back to running after clarification (memory + SQLite)."""
+    job_copy = None
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'running'
             _DYNAMIC_JOBS[run_id]['clarification'] = None
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
 
 
 def set_job_awaiting_approval(run_id: str, message: str = ''):
-    """Mark a job as waiting for user approval (e.g. plan.md review)."""
+    """Mark a job as waiting for user approval (memory + SQLite)."""
+    job_copy = None
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'awaiting_approval'
             _DYNAMIC_JOBS[run_id]['approval_message'] = message or '작업 승인이 필요합니다.'
             _DYNAMIC_JOBS[run_id]['available_actions'] = ['approve', 'reject']
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
+
+
+def set_job_approval_response(run_id: str, action: str):
+    """Update job status back to running and store approval action (memory + SQLite)."""
+    job_copy = None
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]["status"] = "running"
+            _DYNAMIC_JOBS[run_id]["approval_action"] = action
+            _DYNAMIC_JOBS[run_id].pop("approval_message", None)
+            _DYNAMIC_JOBS[run_id].pop("available_actions", None)
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
 
 
 def append_job_log(run_id: str, agent_id: str, content: str, status: str = "running"):
-    """Append a log entry to a running job."""
+    """Append a log entry to a running job (memory + SQLite)."""
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['logs'].append({
@@ -265,31 +336,39 @@ def append_job_log(run_id: str, agent_id: str, content: str, status: str = "runn
                 'content': content,
                 'status': status
             })
+    _job_store.append_log(run_id, agent_id, content, status)
 
 
 def set_job_done(run_id: str, result: str):
-    """Mark a job as completed with a result."""
+    """Mark a job as completed with a result (memory + SQLite)."""
+    job_copy = None
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'done'
             _DYNAMIC_JOBS[run_id]['result'] = result
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
 
 
 def set_job_error(run_id: str, error: str):
-    """Mark a job as failed with an error message."""
+    """Mark a job as failed with an error message (memory + SQLite)."""
+    job_copy = None
     with _DYNAMIC_JOBS_LOCK:
         if run_id in _DYNAMIC_JOBS:
             _DYNAMIC_JOBS[run_id]['status'] = 'error'
             _DYNAMIC_JOBS[run_id]['error'] = error
+            job_copy = dict(_DYNAMIC_JOBS[run_id])
+    if job_copy:
+        _job_store.save_job(run_id, job_copy)
 
 
 def get_job_status_response(run_id: str) -> dict | None:
     """Build the standard poll response for /api/dynamic/status."""
-    with _DYNAMIC_JOBS_LOCK:
-        job = _DYNAMIC_JOBS.get(run_id)
-        if job is None:
-            return None
-    
+    job = get_job(run_id)
+    if job is None:
+        return None
+
     resp = {
         'run_id': run_id,
         'status': job['status'],

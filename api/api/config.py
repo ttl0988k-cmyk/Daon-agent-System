@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 _logger = logging.getLogger(__name__)
@@ -227,6 +228,67 @@ def _set_thread_env(**kwargs):
     _thread_ctx.env = kwargs
 def _clear_thread_env():
     _thread_ctx.env = {}
+
+def get_thread_env(key: str, default: Any = None) -> Any:
+    """Retrieve environment variable from thread-local context with fallback to os.environ."""
+    if hasattr(_thread_ctx, 'env') and isinstance(_thread_ctx.env, dict):
+        if key in _thread_ctx.env:
+            return _thread_ctx.env[key]
+    return os.environ.get(key, default)
+
+_AUTH_ENV_LOADED = False
+_AUTH_ENV_LOCK = threading.Lock()
+
+def init_hermes_auth_env(force: bool = False) -> None:
+    """Safely populate process environment from ~/.hermes/auth.json once.
+    Avoids repetitive file reads and lock contention across streaming threads.
+    """
+    global _AUTH_ENV_LOADED
+    if _AUTH_ENV_LOADED and not force:
+        return
+    with _AUTH_ENV_LOCK:
+        if _AUTH_ENV_LOADED and not force:
+            return
+        try:
+            import json as _json
+            auth_path = Path.home() / '.hermes' / 'auth.json'
+            if auth_path.exists():
+                cp = _json.loads(auth_path.read_text(encoding='utf-8', errors='replace')).get('credential_pool', {})
+                # gemini → GOOGLE_API_KEY
+                if not os.getenv('GOOGLE_API_KEY') and 'gemini' in cp:
+                    t = cp['gemini'][0].get('access_token') if isinstance(cp['gemini'], list) and cp['gemini'] else None
+                    if t: os.environ['GOOGLE_API_KEY'] = t
+                # openrouter → OPENROUTER_API_KEY
+                if not os.getenv('OPENROUTER_API_KEY') and 'openrouter' in cp:
+                    t = cp['openrouter'][0].get('access_token') if isinstance(cp['openrouter'], list) and cp['openrouter'] else None
+                    if t: os.environ['OPENROUTER_API_KEY'] = t
+                # ollama-cloud → OLLAMA_API_KEY
+                if not os.getenv('OLLAMA_API_KEY') and 'ollama-cloud' in cp:
+                    t = cp['ollama-cloud'][0].get('access_token') if isinstance(cp['ollama-cloud'], list) and cp['ollama-cloud'] else None
+                    if t: os.environ['OLLAMA_API_KEY'] = t
+                # nvidia → NVIDIA_API_KEY
+                if not os.getenv('NVIDIA_API_KEY') and 'nvidia' in cp:
+                    t = cp['nvidia'][0].get('access_token') if isinstance(cp['nvidia'], list) and cp['nvidia'] else None
+                    if t: os.environ['NVIDIA_API_KEY'] = t
+                # minimax → MINIMAX_API_KEY
+                if not os.getenv('MINIMAX_API_KEY') and 'minimax' in cp:
+                    t = cp['minimax'][0].get('access_token') if isinstance(cp['minimax'], list) and cp['minimax'] else None
+                    if t: os.environ['MINIMAX_API_KEY'] = t
+                # dashscope → DASHSCOPE_API_KEY
+                if not os.getenv('DASHSCOPE_API_KEY') and 'dashscope' in cp:
+                    t = cp['dashscope'][0].get('access_token') if isinstance(cp['dashscope'], list) and cp['dashscope'] else None
+                    if t: os.environ['DASHSCOPE_API_KEY'] = t
+                # anthropic → ANTHROPIC_API_KEY
+                if not os.getenv('ANTHROPIC_API_KEY') and 'anthropic' in cp:
+                    t = cp['anthropic'][0].get('access_token') if isinstance(cp['anthropic'], list) and cp['anthropic'] else None
+                    if t: os.environ['ANTHROPIC_API_KEY'] = t
+                # openai → OPENAI_API_KEY
+                if not os.getenv('OPENAI_API_KEY') and 'openai' in cp:
+                    t = cp['openai'][0].get('access_token') if isinstance(cp['openai'], list) and cp['openai'] else None
+                    if t: os.environ['OPENAI_API_KEY'] = t
+        except Exception as _e:
+            print(f"[config] WARNING: init_hermes_auth_env failed: {_e}", flush=True)
+        _AUTH_ENV_LOADED = True
 
 # Per-session agent locks
 SESSION_AGENT_LOCKS = {}

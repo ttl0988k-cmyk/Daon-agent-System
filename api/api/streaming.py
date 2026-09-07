@@ -18,6 +18,7 @@ from api.config import (
     STREAMS, STREAMS_LOCK, CANCEL_FLAGS, CLI_TOOLSETS,
     LOCK, SESSIONS, SESSION_DIR,
     _get_session_agent_lock, _set_thread_env, _clear_thread_env,
+    init_hermes_auth_env, get_thread_env,
     resolve_model_provider,
 )
 
@@ -848,47 +849,9 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           if AIAgent is None:
               raise ImportError("AIAgent not available -- check that hermes-agent is on sys.path")
 
-          # ── auth.json에서 API 키를 환경변수로 주입 (안전하게 _ENV_LOCK 아래에서) ──
-          # ~/.hermes/auth.json의 credential_pool에서 키를 읽어
-          # resolve_model_provider가 올바르게 라우팅할 수 있도록 환경변수에 주입한다.
-          with _ENV_LOCK:
-              try:
-                  import json as _json
-                  _auth_path = Path.home() / '.hermes' / 'auth.json'
-                  if _auth_path.exists():
-                      _cp = _json.loads(_auth_path.read_text()).get('credential_pool', {})
-                      # gemini → GOOGLE_API_KEY
-                      if not os.getenv('GOOGLE_API_KEY') and 'gemini' in _cp:
-                          _token = (_cp['gemini'][0].get('access_token') if isinstance(_cp['gemini'], list) and _cp['gemini'] else None)
-                          if _token:
-                              os.environ['GOOGLE_API_KEY'] = _token
-                      # openrouter → OPENROUTER_API_KEY
-                      if not os.getenv('OPENROUTER_API_KEY') and 'openrouter' in _cp:
-                          _token = (_cp['openrouter'][0].get('access_token') if isinstance(_cp['openrouter'], list) and _cp['openrouter'] else None)
-                          if _token:
-                              os.environ['OPENROUTER_API_KEY'] = _token
-                      # ollama-cloud → OLLAMA_API_KEY
-                      if not os.getenv('OLLAMA_API_KEY') and 'ollama-cloud' in _cp:
-                          _token = (_cp['ollama-cloud'][0].get('access_token') if isinstance(_cp['ollama-cloud'], list) and _cp['ollama-cloud'] else None)
-                          if _token:
-                              os.environ['OLLAMA_API_KEY'] = _token
-                      # nvidia → NVIDIA_API_KEY
-                      if not os.getenv('NVIDIA_API_KEY') and 'nvidia' in _cp:
-                          _token = (_cp['nvidia'][0].get('access_token') if isinstance(_cp['nvidia'], list) and _cp['nvidia'] else None)
-                          if _token:
-                              os.environ['NVIDIA_API_KEY'] = _token
-                      # minimax → MINIMAX_API_KEY
-                      if not os.getenv('MINIMAX_API_KEY') and 'minimax' in _cp:
-                          _token = (_cp['minimax'][0].get('access_token') if isinstance(_cp['minimax'], list) and _cp['minimax'] else None)
-                          if _token:
-                              os.environ['MINIMAX_API_KEY'] = _token
-                      # dashscope → DASHSCOPE_API_KEY
-                      if not os.getenv('DASHSCOPE_API_KEY') and 'dashscope' in _cp:
-                          _token = (_cp['dashscope'][0].get('access_token') if isinstance(_cp['dashscope'], list) and _cp['dashscope'] else None)
-                          if _token:
-                              os.environ['DASHSCOPE_API_KEY'] = _token
-              except Exception as _inject_e:
-                  print(f"[webui] WARNING: auth.json key injection failed: {_inject_e}", flush=True)
+          # ── auth.json에서 API 키를 환경변수로 1회 안전 캐싱 주입 ──
+          # resolve_model_provider가 올바르게 라우팅할 수 있도록 환경변수를 초기화한다.
+          init_hermes_auth_env()
 
           # ?�경변??주입 ??모델/?�로바이???�결??
           resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(model)
