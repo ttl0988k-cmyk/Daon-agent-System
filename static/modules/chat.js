@@ -241,9 +241,8 @@ async function _reattachSessionStream(sid, streamId) {
         if (!txt && !asstBubble.querySelector('img, video, .text-muted, .text-danger') && asstBubble.parentNode) asstBubble.remove();
       }
     } catch (_) { }
-    // [A방식] 종료 시 백그라운드 카드들 정리 — done 후 renderMessages가
-    // 최종 답변만 렌더링하므로 카드 잔존 없이 깔끔하게 마무리된다.
     try { box.querySelectorAll('.tool-group-card, .reasoning-card').forEach((el) => el.remove()); } catch (_) { }
+    try { if (sse) sse.close(); } catch (_) { }
     cleanupStreamState();
     // [세션 동시 작업] 재접속한 스트림이 끝났으면 기록을 지워 ▶ 배지를 정리한다.
     try { _forgetSessionStream(sid, streamId); renderSessionsList(); } catch (_) { }
