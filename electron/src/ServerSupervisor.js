@@ -330,7 +330,13 @@ class ServerSupervisor {
           stdio: ['pipe', 'pipe', 'pipe']
         });
       } else {
-        this.ttsProcess = spawn('python', ['server.py', '--tts-mode', '--tts-port', port.toString()], {
+        const ttsScript = path.join(__dirname, '..', '..', 'tts_server.py');
+        const scriptToRun = fs.existsSync(ttsScript) ? 'tts_server.py' : 'server.py';
+        const scriptArgs = scriptToRun === 'tts_server.py'
+          ? ['tts_server.py', '--port', port.toString()]
+          : ['server.py', '--tts-mode', '--tts-port', port.toString()];
+
+        this.ttsProcess = spawn('python', scriptArgs, {
           cwd: path.join(__dirname, '..', '..'),
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe']
