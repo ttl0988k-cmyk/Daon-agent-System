@@ -1,4 +1,4 @@
-﻿# ── DAON 개발 소스 → 설치본 동기화 스크립트 ──
+# ── DAON 개발 소스 → 설치본 동기화 스크립트 ──
 # (param은 스크립트 첫 실행문이어야 하므로 주석 직후에 위치)
 param(
     [switch]$Open
@@ -81,9 +81,10 @@ if ($Open) {
         $app | Stop-Process -Force
         Start-Sleep -Seconds 2
     }
+    Remove-Item env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $exe = Join-Path (Split-Path $dst) 'DAON Agent System.exe'
-    Start-Process $exe
-    Write-Host "[OK] 앱 재시작됨" -ForegroundColor Green
+    Start-Process $exe -ArgumentList '--remote-debugging-port=9222'
+    Write-Host "[OK] 앱 재시작됨 (CDP 9222 활성화)" -ForegroundColor Green
 }
 else {
     Write-Host '앱 재시작(또는 Ctrl+R)하면 반영됩니다. 즉시 재시작하려면: -Open 옵션'
