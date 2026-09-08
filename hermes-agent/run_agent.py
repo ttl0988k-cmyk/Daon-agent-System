@@ -1214,7 +1214,12 @@ class AIAgent:
                 # the third-party identity-injection bug.
                 from agent.anthropic_adapter import _is_oauth_token as _is_oat
                 self._is_anthropic_oauth = _is_oat(effective_key) if _is_native_anthropic else False
-                self._anthropic_client = build_anthropic_client(effective_key, base_url, timeout=_provider_timeout)
+                self._anthropic_client = build_anthropic_client(
+                    effective_key,
+                    base_url,
+                    timeout=_provider_timeout,
+                    session_id=session_id or getattr(self, "session_id", None),
+                )
                 # No OpenAI client needed for Anthropic mode
                 self.client = None
                 self._client_kwargs = {}
@@ -1279,6 +1284,11 @@ class AIAgent:
                 elif "chatgpt.com" in effective_base.lower():
                     from agent.auxiliary_client import _codex_cloudflare_headers
                     client_kwargs["default_headers"] = _codex_cloudflare_headers(api_key)
+                elif "opencode.ai" in effective_base.lower() or (self.provider and "opencode" in self.provider.lower()):
+                    _sid = getattr(self, "session_id", None) or session_id or "daon-agent-session"
+                    _headers = client_kwargs.setdefault("default_headers", {})
+                    _headers["x-opencode-session"] = str(_sid)
+                    _headers.setdefault("User-Agent", "daon-agent/1.0")
             else:
                 # No explicit creds — use the centralized provider router
                 from agent.auxiliary_client import resolve_provider_client

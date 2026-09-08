@@ -292,7 +292,7 @@ def _common_betas_for_base_url(base_url: str | None) -> list[str]:
     return _COMMON_BETAS
 
 
-def build_anthropic_client(api_key: str, base_url: str = None, timeout: float = None):
+def build_anthropic_client(api_key: str, base_url: str = None, timeout: float = None, session_id: str = None, extra_headers: dict = None):
     """Create an Anthropic client, auto-detecting setup-tokens vs API keys.
 
     If *timeout* is provided it overrides the default 900s read timeout.  The
@@ -353,6 +353,13 @@ def build_anthropic_client(api_key: str, base_url: str = None, timeout: float = 
         kwargs["api_key"] = api_key
         if common_betas:
             kwargs["default_headers"] = {"anthropic-beta": ",".join(common_betas)}
+
+    if "opencode.ai" in (normalized_base_url or "").lower():
+        _hdrs = kwargs.setdefault("default_headers", {})
+        _hdrs["x-opencode-session"] = str(session_id or "daon-agent-session")
+        _hdrs.setdefault("User-Agent", "daon-agent/1.0")
+    if extra_headers:
+        kwargs.setdefault("default_headers", {}).update(extra_headers)
 
     return _anthropic_sdk.Anthropic(**kwargs)
 

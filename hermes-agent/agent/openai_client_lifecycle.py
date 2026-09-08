@@ -214,6 +214,15 @@ def create_openai_client(
         if keepalive_http is not None:
             client_kwargs["http_client"] = keepalive_http
 
+    # OpenCode Go/Zen session header and User-Agent safeguard
+    _base_url_str = str(client_kwargs.get("base_url") or "").lower()
+    if "opencode.ai" in _base_url_str or (provider and "opencode" in str(provider).lower()):
+        hdrs = client_kwargs.setdefault("default_headers", {})
+        if "x-opencode-session" not in hdrs:
+            hdrs["x-opencode-session"] = str(getattr(agent, "session_id", None) or "daon-agent-session")
+        if "User-Agent" not in hdrs and "user-agent" not in hdrs:
+            hdrs["User-Agent"] = "daon-agent/1.0"
+
     from openai import OpenAI as _OpenAI
 
     client = _OpenAI(**client_kwargs)

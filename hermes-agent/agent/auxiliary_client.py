@@ -3492,6 +3492,12 @@ def resolve_provider_client(
 
             headers.update(copilot_default_headers())
 
+        elif "opencode.ai" in base_url.lower() or provider in ("opencode-go", "opencode-zen"):
+
+            headers["x-opencode-session"] = "daon-auxiliary-session"
+
+            headers["User-Agent"] = "daon-agent/1.0"
+
         client = OpenAI(api_key=api_key, base_url=base_url,
 
                         **({"default_headers": headers} if headers else {}))
