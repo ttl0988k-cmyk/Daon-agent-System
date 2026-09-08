@@ -32,9 +32,11 @@ from api.routes import (
 class FakeHandler:
     """Realistic HTTP request handler mock capturing responses and payloads."""
 
-    def __init__(self, body_bytes=b'{}'):
+    def __init__(self, body_bytes=b'{}', headers=None):
         self.client_address = ('127.0.0.1', 8888)
         self.headers = {'Content-Length': str(len(body_bytes))}
+        if headers:
+            self.headers.update(headers)
         self.rfile = io.BytesIO(body_bytes)
         self.wfile = io.BytesIO()
         self.status = 200
@@ -210,6 +212,36 @@ class TestPhase2Routes(unittest.TestCase):
         self.assertTrue(handle_post(h_dyn_cancel, urlparse('/api/dynamic/cancel')))
         self.assertEqual(h_dyn_cancel.status, 400)  # Missing run_id
 
+    def test_upload_route_in_post_raw_routes(self):
+        """Verify /api/upload is in POST_RAW_ROUTES and handles raw multipart without read_body interference."""
+        self.assertIn('/api/upload', POST_RAW_ROUTES)
+        self.assertNotIn('/api/upload', POST_EXACT_ROUTES)
+
+        # Build multipart payload
+        boundary = '----WebKitFormBoundaryTest12345'
+        body = (
+            f'--{boundary}\r\n'
+            f'Content-Disposition: form-data; name="session_id"\r\n\r\n'
+            f'non_existent_session_id\r\n'
+            f'--{boundary}\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="test.png"\r\n'
+            f'Content-Type: image/png\r\n\r\n'
+            f'fake_image_bytes\r\n'
+            f'--{boundary}--\r\n'
+        ).encode('utf-8')
+
+        headers = {
+            'Content-Type': f'multipart/form-data; boundary={boundary}',
+            'Content-Length': str(len(body)),
+        }
+        h_upload = FakeHandler(body_bytes=body, headers=headers)
+        # handle_post should call handle_post_upload directly from POST_RAW_ROUTES
+        result = handle_post(h_upload, urlparse('/api/upload'))
+        self.assertTrue(result)
+        # Because non_existent_session_id doesn't exist, it should return 404 (Session not found), NOT 400 or hang!
+        self.assertEqual(h_upload.status, 404)
+        self.assertEqual(h_upload.get_json().get('error'), 'Session not found')
+
     def test_native_dialog_routes(self):
         """Verify native dialog routes exist in exact registry."""
         self.assertIn('/api/workspaces/select', GET_EXACT_ROUTES)
@@ -223,3 +255,4 @@ class TestPhase2Routes(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

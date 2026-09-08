@@ -38,13 +38,22 @@ def parse_multipart(rfile, content_type, content_length) -> tuple:
         header_text = header_raw.lstrip(b'\r\n').decode('utf-8', errors='replace')
         msg = _ep.HeaderParser().parsestr(header_text)
         disp = msg.get('Content-Disposition', '')
-        name_m = _re.search(r'name="([^"]*)"', disp)
-        file_m = _re.search(r'filename="([^"]*)"', disp)
+        name_m = _re.search(r'name="([^"]*)"', disp) or _re.search(r'name=([^;\s]+)', disp)
+        file_m = _re.search(r'filename="([^"]*)"', disp) or _re.search(r'filename=([^;\s]+)', disp)
+        star_m = _re.search(r"filename\*=(?:UTF-8|utf-8)''([^;\s]+)", disp)
+        if star_m:
+            import urllib.parse as _up
+            filename = _up.unquote(star_m.group(1).strip('"'))
+        elif file_m:
+            filename = file_m.group(1).strip('"')
+        else:
+            filename = None
+
         if not name_m:
             continue
-        name = name_m.group(1)
-        if file_m:
-            files[name] = (file_m.group(1), body)
+        name = name_m.group(1).strip('"')
+        if filename is not None:
+            files[name] = (filename, body)
         else:
             fields[name] = body.decode('utf-8', errors='replace')
     return fields, files
@@ -76,6 +85,7 @@ def handle_upload(handler):
             return j(handler, {'error': 'Invalid filename'}, status=400)
         # Verify the resolved path stays within the workspace
         dest = safe_resolve_ws(workspace, safe_name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(file_bytes)
         return j(handler, {'filename': safe_name, 'path': str(dest), 'size': dest.stat().st_size})
     except Exception as e:

@@ -559,22 +559,30 @@ function addFiles(files) {
   if (!State.pendingFiles) State.pendingFiles = [];
   let hasNewImages = false;
   for (const f of files) {
-    if (!State.pendingFiles.find(p => p.name === f.name)) {
-      // 중복 파일명 방지: 이미 있으면 _N suffix 붙이기
-      let uniqueName = f.name;
+    let targetFile = f;
+    // 중복 파일명 방지: 이미 있으면 _N suffix 붙이기 (클립보드 캡처 image.png 연속 붙여넣기 대응)
+    if (State.pendingFiles.find(p => p.name === targetFile.name)) {
+      let uniqueName = targetFile.name;
       let counter = 1;
-      while (State.pendingFiles.find(p => p.name === uniqueName || p.uniqueName === uniqueName)) {
-        const dotIdx = f.name.lastIndexOf('.');
+      while (State.pendingFiles.find(p => p.name === uniqueName)) {
+        const dotIdx = targetFile.name.lastIndexOf('.');
         if (dotIdx > 0) {
-          uniqueName = f.name.slice(0, dotIdx) + '_' + counter + f.name.slice(dotIdx);
+          uniqueName = targetFile.name.slice(0, dotIdx) + '_' + counter + targetFile.name.slice(dotIdx);
         } else {
-          uniqueName = f.name + '_' + counter;
+          uniqueName = targetFile.name + '_' + counter;
         }
         counter++;
       }
-      State.pendingFiles.push(f);
-      if (f.type && f.type.startsWith('image/')) hasNewImages = true;
+      try {
+        targetFile = new File([targetFile], uniqueName, { type: targetFile.type, lastModified: targetFile.lastModified || Date.now() });
+      } catch (_) {
+        try {
+          Object.defineProperty(targetFile, 'name', { value: uniqueName, configurable: true });
+        } catch (__) { }
+      }
     }
+    State.pendingFiles.push(targetFile);
+    if (targetFile.type && targetFile.type.startsWith('image/')) hasNewImages = true;
   }
   renderTray();
 
@@ -618,14 +626,18 @@ async function uploadPendingFiles() {
     fd.append('file', f, f.name);
 
     try {
+      const ctrl = new AbortController();
+      const uploadTimer = setTimeout(() => ctrl.abort(), 30000); // 30초 업로드 타임아웃
       const res = await fetch(new URL('/api/upload', location.origin).href, {
         method: 'POST',
         credentials: 'include',
-        body: fd
+        body: fd,
+        signal: ctrl.signal
       });
+      clearTimeout(uploadTimer);
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(err);
+        throw new Error(err || `HTTP ${res.status}`);
       }
       const data = await res.json();
       if (data.error) throw new Error(data.error);

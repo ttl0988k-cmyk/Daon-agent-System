@@ -456,6 +456,7 @@ GET_PREFIX_ROUTES = [
 # ── POST Raw Handlers (called BEFORE read_body) ──
 POST_RAW_ROUTES = {
     '/api/whisper/transcribe': handle_post_whisper_transcribe,
+    '/api/upload': handle_post_upload,
 }
 
 # ── POST Parsed Handlers (receives (handler, parsed)) ──
@@ -595,7 +596,6 @@ POST_EXACT_ROUTES = {
     '/api/sync/hook/uninstall': handle_post_sync_hook_uninstall,
     '/api/sync/start': handle_post_sync_start,
     '/api/sync/stop': handle_post_sync_stop,
-    '/api/upload': handle_post_upload,
     '/api/workspaces/add': handle_post_workspace_add,
     '/api/workspaces/remove': handle_post_workspace_remove,
     '/api/workspaces/rename': handle_post_workspace_rename,

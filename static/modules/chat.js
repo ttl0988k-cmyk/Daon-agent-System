@@ -3086,6 +3086,33 @@ function setupEventListeners() {
     });
   }
 
+  // 🖼️ 채팅창 전역(메시지 목록 등)에서도 이미지 붙여넣기 지원
+  const rightPanelForPaste = document.querySelector('.right-panel');
+  if (rightPanelForPaste) {
+    rightPanelForPaste.addEventListener('paste', (e) => {
+      if (e.target === promptInput) return; // 이미 promptInput에서 처리
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      try {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        const imgFiles = [];
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f && f.type && f.type.indexOf('image/') === 0) imgFiles.push(f);
+          }
+        }
+        if (imgFiles.length > 0) {
+          e.preventDefault();
+          addFiles(imgFiles);
+          if (typeof showToast === 'function') showToast('🖼️ 이미지 ' + imgFiles.length + '개가 첨부되었습니다.');
+        }
+      } catch (_pErr) {
+        console.warn('[paste] panel image paste failed:', _pErr);
+      }
+    });
+  }
+
   // 📦 Drag & Drop Bindings on Chat Input Area (expanded to Right Panel)
   const rightPanel = document.querySelector('.right-panel');
   if (rightPanel) {
