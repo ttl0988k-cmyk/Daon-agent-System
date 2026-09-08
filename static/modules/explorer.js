@@ -325,9 +325,10 @@ function formatUserMessageContent(content, sessionId) {
   // 한/영 첨부 파일 마커 모두 매칭: "[첨부 파일: a.png, b.jpg]" 또는 "[Attached files: ...]"
   const regex = /\[(?:첨부 파일|Attached files):\s*([^\]]+)\]/;
   const match = escaped.match(regex);
+  let imagesHtml = '';
   if (match) {
     const fileList = match[1].split(',').map(f => f.trim());
-    let imagesHtml = '<div class="chat-attached-images" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; align-items:flex-start;">';
+    imagesHtml = '<div class="chat-attached-images" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; align-items:flex-start;">';
     let hasImages = false;
     fileList.forEach(filename => {
       const ext = filename.split('.').pop().toLowerCase();
@@ -338,11 +339,46 @@ function formatUserMessageContent(content, sessionId) {
       }
     });
     imagesHtml += '</div>';
-    if (hasImages) {
-      escaped = escaped + imagesHtml;
-    }
+    if (!hasImages) imagesHtml = '';
   }
-  return escaped.replace(/\n/g, '<br>');
+
+  // Bare URLs with protocol in user messages
+  let text = escaped.replace(/(https?:\/\/[^\s<>"'`]+)/gi, function (fullMatch) {
+    let url = fullMatch;
+    let suffix = '';
+    while (url.length > 0 && /[.,;:!?)'"]$/.test(url)) {
+      if (url.endsWith(')')) {
+        let openCount = (url.match(/\(/g) || []).length;
+        let closeCount = (url.match(/\)/g) || []).length;
+        if (openCount >= closeCount) break;
+      }
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+    if (!url) return fullMatch;
+    let cleanHref = url.replace(/&amp;/g, '&');
+    return '<a href="' + cleanHref + '" target="_blank" rel="noopener noreferrer" class="md-link">' + url + '</a>' + suffix;
+  });
+
+  // Bare www. URLs in user messages
+  text = text.replace(/(^|[\s(])(www\.[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-_]+)+(?:\/[^\s<>"'`]*)?)/gi, function (fullMatch, prefix, bare) {
+    let url = bare;
+    let suffix = '';
+    while (url.length > 0 && /[.,;:!?)'"]$/.test(url)) {
+      if (url.endsWith(')')) {
+        let openCount = (url.match(/\(/g) || []).length;
+        let closeCount = (url.match(/\)/g) || []).length;
+        if (openCount >= closeCount) break;
+      }
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+    if (!url) return fullMatch;
+    let cleanHref = 'https://' + url.replace(/&amp;/g, '&');
+    return prefix + '<a href="' + cleanHref + '" target="_blank" rel="noopener noreferrer" class="md-link">' + url + '</a>' + suffix;
+  });
+
+  return (text + imagesHtml).replace(/\n/g, '<br>');
 }
 async function selectWorkspacePathNative() {
   openWebExplorer({

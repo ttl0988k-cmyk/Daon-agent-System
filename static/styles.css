@@ -1455,10 +1455,12 @@
       color: var(--accent, #4a9eff);
       text-decoration: underline;
       word-break: break-all;
+      cursor: pointer;
     }
 
     .message-bubble .md-link:hover {
       opacity: 0.85;
+      text-decoration: underline;
     }
 
     .cursor {

@@ -105,8 +105,56 @@ function renderMd(text) {
   text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, txt, url) {
     var ph = '\x00MDLNK' + (phIndex++) + '\x00';
     var safeUrl = _mdEscapeContent(url);
-    placeholders.push({ ph: ph, html: '<a href="' + safeUrl + '" target="_blank" rel="noopener" class="md-link">' + _mdEscapeContent(txt) + '</a>' });
+    placeholders.push({ ph: ph, html: '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="md-link">' + _mdEscapeContent(txt) + '</a>' });
     return ph;
+  });
+
+  // Autolinks: <https://...> or <http://...>
+  text = text.replace(/<(https?:\/\/[^\s<>]+)>/gi, function (match, url) {
+    var ph = '\x00MDLNK' + (phIndex++) + '\x00';
+    var safeUrl = _mdEscapeContent(url);
+    placeholders.push({ ph: ph, html: '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="md-link">' + safeUrl + '</a>' });
+    return ph;
+  });
+
+  // Bare URLs: https://... or http://...
+  text = text.replace(/(https?:\/\/[^\s<>"'`]+)/gi, function (fullMatch) {
+    var url = fullMatch;
+    var suffix = '';
+    while (url.length > 0 && /[.,;:!?)'"]$/.test(url)) {
+      if (url.endsWith(')')) {
+        var openCount = (url.match(/\(/g) || []).length;
+        var closeCount = (url.match(/\)/g) || []).length;
+        if (openCount >= closeCount) break;
+      }
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+    if (!url) return fullMatch;
+    var ph = '\x00MDLNK' + (phIndex++) + '\x00';
+    var safeUrl = _mdEscapeContent(url);
+    placeholders.push({ ph: ph, html: '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="md-link">' + safeUrl + '</a>' });
+    return ph + suffix;
+  });
+
+  // Bare www. URLs: www.example.com
+  text = text.replace(/(^|[\s(])(www\.[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-_]+)+(?:\/[^\s<>"'`]*)?)/gi, function (fullMatch, prefix, bare) {
+    var url = bare;
+    var suffix = '';
+    while (url.length > 0 && /[.,;:!?)'"]$/.test(url)) {
+      if (url.endsWith(')')) {
+        var openCount = (url.match(/\(/g) || []).length;
+        var closeCount = (url.match(/\)/g) || []).length;
+        if (openCount >= closeCount) break;
+      }
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+    if (!url) return fullMatch;
+    var ph = '\x00MDLNK' + (phIndex++) + '\x00';
+    var safeUrl = _mdEscapeContent('https://' + url);
+    placeholders.push({ ph: ph, html: '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="md-link">' + _mdEscapeContent(url) + '</a>' });
+    return prefix + ph + suffix;
   });
 
   // ── Phase 2: HTML escape remaining text ──
@@ -326,3 +374,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   try { initHarnessSkillPicker(); } catch (e) { console.error('[daon-init] initHarnessSkillPicker failed:', e); }
   try { initSpeak(); } catch (e) { console.error('[daon-init] initSpeak failed:', e); }
 });
+
+// ── Global External Link Handler (Chat & UI Links) ──
+document.addEventListener('click', function (e) {
+  var a = e.target && e.target.closest && e.target.closest('a');
+  if (!a) return;
+  var href = a.getAttribute('href');
+  if (!href || href === '#' || href.startsWith('javascript:')) return;
+  if (/^(https?:\/\/|mailto:)/i.test(href)) {
+    e.preventDefault();
+    if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+      window.electronAPI.openExternal(href);
+    } else {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  }
+});
+

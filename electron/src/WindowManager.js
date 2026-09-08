@@ -3,7 +3,7 @@
  * WindowManager
  * Manages creation, lifecycle, guards, and shortcuts for Splash and Main BrowserWindow.
  */
-const { BrowserWindow, screen, session } = require('electron');
+const { BrowserWindow, screen, session, shell } = require('electron');
 const path = require('path');
 
 class WindowManager {
@@ -77,8 +77,15 @@ class WindowManager {
     this.mainWindow.center();
     this.mainWindow.setMenu(null);
 
-    // Guard: Prevent mainWindow from navigating away to external URLs
+    // Guard: Prevent mainWindow from navigating away to external URLs, open them in system browser
     try {
+      this.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:'))) {
+          shell.openExternal(url).catch(err => this.merr('[WindowManager] openExternal failed:', err && err.message));
+        }
+        return { action: 'deny' };
+      });
+
       this.mainWindow.webContents.on('will-navigate', (event, url) => {
         let host = '';
         let proto = '';
@@ -90,11 +97,14 @@ class WindowManager {
         const isLocalUi = proto === 'file:' || host === '127.0.0.1' || host === 'localhost' || host === '::1';
         if (!isLocalUi) {
           event.preventDefault();
-          this.mlog(`[Guard] Blocked mainWindow navigate to external URL: ${url}`);
+          this.mlog(`[Guard] Handled mainWindow external URL via shell: ${url}`);
+          if (proto === 'http:' || proto === 'https:' || proto === 'mailto:') {
+            shell.openExternal(url).catch(err => this.merr('[WindowManager] openExternal failed:', err && err.message));
+          }
         }
       });
     } catch (e) {
-      this.merr('[Guard] mainWindow will-navigate guard setup failed:', e && e.message);
+      this.merr('[Guard] mainWindow external link guard setup failed:', e && e.message);
     }
 
     // Setup crash & reload recovery guards

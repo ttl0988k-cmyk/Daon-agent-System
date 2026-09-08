@@ -38,6 +38,11 @@ TEST_SUITES = [
         "cwd": ROOT,
     },
     {
+        "name": "Phase 4b: URL Autolinking & Markdown Parser",
+        "cmd": ["node", "tests/test_url_links.js"],
+        "cwd": ROOT,
+    },
+    {
         "name": "Phase 5: SQLite JobStore, Lineage & Recovery",
         "cmd": [sys.executable, "tests/test_phase5_persistence.py"],
         "cwd": ROOT,
