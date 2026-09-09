@@ -143,6 +143,14 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self.send_error_json("Internal server error", 500)
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
+
     def do_POST(self):
         try:
             parsed = urllib.parse.urlparse(self.path)
@@ -165,6 +173,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime)
             self.send_header('Content-Length', str(len(raw_bytes)))
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(raw_bytes)
@@ -176,6 +185,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(payload)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         try:
@@ -194,11 +206,13 @@ class Handler(BaseHTTPRequestHandler):
         q = STREAMS.get(stream_id)
         if q is None:
             self.send_response(404)
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             return
 
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Cache-Control', 'no-cache')
         # SSE는 단발성 응답 — done/error 후 연결을 즉시 닫아야 클라이언트
         # readline()이 EOF를 받고 루프를 탈출한다. keep-alive로 두면 서버가

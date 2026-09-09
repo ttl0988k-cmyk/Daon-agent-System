@@ -1,0 +1,1129 @@
+/**
+ * DAON Browser Agent - Side Panel Controller
+ * 로컬 DAON 백엔드(127.0.0.1:9090)와 통신하고, 크롬 탭 감지 및 조작을 수행합니다.
+ */
+
+const SERVER_BASE = 'http://127.0.0.1:9090';
+
+// State
+let currentSessionId = null;
+let activeTab = null;
+let allTabsList = [];
+let autoContextEnabled = true; // 기본값: 자동 탭 및 컨텍스트 동기화
+let attachedContext = null;
+let isGenerating = false;
+let currentEventSource = null;
+let selectedModel = null;
+let lastUserPrompt = '';
+let currentActiveBubble = null;
+let lastActionResults = [];
+
+// DOM Elements
+const connectionBadge = document.getElementById('connectionBadge');
+const statusDot = connectionBadge?.querySelector('.status-dot');
+const statusText = connectionBadge?.querySelector('.status-text');
+const clearChatBtn = document.getElementById('clearChatBtn');
+const modelSelect = document.getElementById('modelSelect');
+const agentProfileName = document.getElementById('agentProfileName');
+const activeTabTitle = document.getElementById('activeTabTitle');
+const tabsCountBadge = document.getElementById('tabsCountBadge');
+const autoContextToggle = document.getElementById('autoContextToggle');
+const autoContextLabel = document.getElementById('autoContextLabel');
+const attachTabBtn = document.getElementById('attachTabBtn');
+const attachedPill = document.getElementById('attachedPill');
+const attachedPillText = document.getElementById('attachedPillText');
+const removeAttachedBtn = document.getElementById('removeAttachedBtn');
+const chatContainer = document.getElementById('chatContainer');
+const welcomeCard = document.getElementById('welcomeCard');
+const userInput = document.getElementById('userInput');
+const sendBtn = document.getElementById('sendBtn');
+
+// Quick Action Buttons
+const quickListTabsBtn = document.getElementById('quickListTabsBtn');
+const quickSummarizeBtn = document.getElementById('quickSummarizeBtn');
+const quickFindBtn = document.getElementById('quickFindBtn');
+const quickSnapshotBtn = document.getElementById('quickSnapshotBtn');
+
+// ── 1. 초기화 & 헬스 체크 ───────────────────────────────────────────────────
+async function init() {
+  setupEventListeners();
+  await loadAutoContextSetting();
+  await loadAvailableModels();
+  await loadActiveProfile();
+  await loadSession();
+  await updateActiveTabAndTabs();
+  await checkServerHealth();
+
+  // 10초마다 서버 헬스체크 및 탭 상태 최신화
+  setInterval(async () => {
+    await checkServerHealth();
+    await updateActiveTabAndTabs();
+  }, 10000);
+}
+
+async function loadAutoContextSetting() {
+  try {
+    const stored = await chrome.storage.local.get(['daon_auto_context']);
+    if (typeof stored.daon_auto_context === 'boolean') {
+      autoContextEnabled = stored.daon_auto_context;
+    }
+  } catch (e) {
+    autoContextEnabled = true;
+  }
+  updateAutoContextUI();
+}
+
+function updateAutoContextUI() {
+  if (!autoContextToggle) return;
+  if (autoContextEnabled) {
+    autoContextToggle.className = 'attach-chip active';
+    if (autoContextLabel) autoContextLabel.textContent = '자동 탭 감지 ON';
+    autoContextToggle.title = '모든 탭과 현재 페이지 정보를 질문 시 자동으로 전달합니다 (클릭하여 끄기)';
+  } else {
+    autoContextToggle.className = 'attach-chip inactive';
+    if (autoContextLabel) autoContextLabel.textContent = '자동 감지 OFF';
+    autoContextToggle.title = '자동 감지가 꺼져 있습니다 (클릭하여 켜기)';
+  }
+}
+
+async function checkServerHealth() {
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/system/status`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      setConnectionStatus(true, '연결됨: 9090');
+    } else {
+      setConnectionStatus(false, '오류');
+    }
+  } catch (err) {
+    try {
+      const res2 = await fetch(`${SERVER_BASE}/api/sessions`, { method: 'GET' });
+      if (res2.ok) {
+        setConnectionStatus(true, '연결됨: 9090');
+        return;
+      }
+    } catch (e) {}
+    setConnectionStatus(false, '다온 오프라인');
+  }
+}
+
+function setConnectionStatus(isOnline, text) {
+  if (!connectionBadge) return;
+  connectionBadge.className = `status-badge ${isOnline ? 'online' : 'offline'}`;
+  if (statusText) statusText.textContent = text;
+}
+
+// ── 2. 모델 & 에이전트 프로필 로드 ─────────────────────────────────────────
+async function loadAvailableModels() {
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/models`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const groups = data.groups || [];
+
+    if (!modelSelect) return;
+    modelSelect.innerHTML = '';
+    let firstModelId = null;
+
+    groups.forEach(group => {
+      const chatModels = (group.models || []).filter(m => m.type === 'chat' || !m.type);
+      if (chatModels.length === 0) return;
+
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = group.provider || '기타';
+
+      chatModels.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.label || m.id;
+        optgroup.appendChild(opt);
+        if (!firstModelId) firstModelId = m.id;
+      });
+
+      modelSelect.appendChild(optgroup);
+    });
+
+    const stored = await chrome.storage.local.get(['daon_selected_model']);
+    if (stored.daon_selected_model) {
+      modelSelect.value = stored.daon_selected_model;
+      selectedModel = stored.daon_selected_model;
+    } else if (firstModelId) {
+      modelSelect.value = firstModelId;
+      selectedModel = firstModelId;
+    }
+  } catch (err) {
+    console.warn('모델 목록 로드 실패:', err);
+    if (modelSelect) modelSelect.innerHTML = '<option value="">기본 모델</option>';
+  }
+}
+
+async function loadActiveProfile() {
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/profile/active`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.name && agentProfileName) {
+        agentProfileName.textContent = data.name;
+      }
+    }
+  } catch (e) {
+    console.warn('프로필 로드 실패:', e);
+  }
+}
+
+// ── 3. 세션 관리 ─────────────────────────────────────────────────────────
+async function loadSession() {
+  const stored = await chrome.storage.local.get(['daon_browser_session_id']);
+  if (stored.daon_browser_session_id) {
+    try {
+      const res = await fetch(`${SERVER_BASE}/api/session?session_id=${encodeURIComponent(stored.daon_browser_session_id)}`);
+      if (res.ok) {
+        const data = await res.json();
+        currentSessionId = stored.daon_browser_session_id;
+        const messages = data.session?.messages || [];
+        if (messages.length > 0) {
+          renderRestoredMessages(messages);
+        } else {
+          clearChatUI();
+        }
+        return;
+      }
+    } catch (e) {
+      console.warn('세션 유효성 확인 실패, 새 세션 생성 예정:', e);
+    }
+  }
+  await createNewSession();
+}
+
+function renderRestoredMessages(messages) {
+  chatContainer.innerHTML = '';
+  for (const m of messages) {
+    const role = m.role === 'assistant' ? 'bot' : (m.role === 'user' ? 'user' : null);
+    if (!role) continue;
+    let content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    // 시스템 안내 프롬프트 및 컨텍스트 제거하여 사용자 순수 메시지만 복원
+    if (role === 'user') {
+      if (content.includes('[사용자 요청]')) {
+        const parts = content.split('[사용자 요청]');
+        content = parts[1].trim();
+      }
+      if (content.includes('[브라우저 제어')) {
+        content = content.split('[브라우저 제어')[0].trim();
+      }
+      if (content.includes('(참고: 브라우저 조작')) {
+        content = content.split('(참고: 브라우저 조작')[0].trim();
+      }
+    }
+    appendMessage(role, content);
+  }
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+async function createNewSession() {
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/session/new`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspace: 'C:\\daon',
+        model: selectedModel || undefined
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentSessionId = data.session.session_id;
+      await chrome.storage.local.set({ daon_browser_session_id: currentSessionId });
+      clearChatUI();
+      console.log('[DAON Agent] 새 세션 생성 완료:', currentSessionId);
+      return currentSessionId;
+    }
+  } catch (err) {
+    console.error('서버 세션 생성 실패:', err);
+  }
+  currentSessionId = 'browser_' + Math.random().toString(36).substring(2, 10);
+  await chrome.storage.local.set({ daon_browser_session_id: currentSessionId });
+  clearChatUI();
+  return currentSessionId;
+}
+
+function clearChatUI() {
+  chatContainer.innerHTML = '';
+  if (welcomeCard) chatContainer.appendChild(welcomeCard);
+  attachedContext = null;
+  updateAttachedPill();
+}
+
+// ── 4. 멀티탭 감지 및 활성 탭 추적 (Multi-Tab Sensor) ─────────────────────
+async function updateActiveTabAndTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    allTabsList = tabs || [];
+    activeTab = allTabsList.find(t => t.active) || allTabsList[0];
+
+    if (activeTab && activeTabTitle) {
+      activeTabTitle.textContent = activeTab.title || activeTab.url || '새 탭';
+      activeTabTitle.title = activeTab.url || '';
+    }
+
+    if (tabsCountBadge) {
+      tabsCountBadge.textContent = `${allTabsList.length}개 탭`;
+      tabsCountBadge.title = `현재 창에 열려 있는 총 ${allTabsList.length}개의 탭 감지됨`;
+    }
+  } catch (e) {
+    console.warn('탭 목록 및 활성 탭 갱신 실패:', e);
+  }
+}
+
+// 탭 이벤트 리스너 등록
+chrome.tabs.onActivated.addListener(() => updateActiveTabAndTabs());
+chrome.tabs.onUpdated.addListener(() => updateActiveTabAndTabs());
+chrome.tabs.onCreated.addListener(() => updateActiveTabAndTabs());
+chrome.tabs.onRemoved.addListener(() => updateActiveTabAndTabs());
+
+function formatTabsContext(tabs) {
+  if (!tabs || tabs.length === 0) return '열려 있는 탭 정보를 가져올 수 없습니다.';
+  return tabs.map(t => {
+    const status = t.active ? '[★현재 활성 탭]' : '[열린 탭]';
+    return `- [탭 ID: ${t.id}] ${status} #${t.index + 1}: "${t.title || '제목 없음'}" (${t.url || ''})`;
+  }).join('\n');
+}
+
+/**
+ * 조용하게(경고창 없이) 활성 탭의 DOM 컨텍스트를 추출
+ */
+async function extractTabContextSilently(tab = null) {
+  const target = tab || activeTab;
+  if (!target || !target.id) return null;
+
+  // 특수 내부 URL 방어 (보안상 DOM 스크립트 실행 불가)
+  if (target.url && (
+    target.url.startsWith('chrome://') ||
+    target.url.startsWith('edge://') ||
+    target.url.startsWith('about:') ||
+    target.url.startsWith('chrome-extension://')
+  )) {
+    return {
+      title: target.title || '브라우저 시스템 페이지',
+      url: target.url,
+      bodyText: '(크롬 내부 시스템 페이지입니다 - 보안 정책상 DOM 스크립트 접근이 제한됩니다)',
+      metaDesc: '',
+      selectedText: '',
+      interactive: { buttons: [], inputs: [] }
+    };
+  }
+
+  try {
+    const res = await chrome.tabs.sendMessage(target.id, { action: 'GET_PAGE_CONTEXT' }, { frameId: 0 });
+    if (res && res.ok && res.data && res.data.url && res.data.url !== 'about:blank') {
+      if (!res.data.title || res.data.title === 'about:blank') {
+        res.data.title = target.title || res.data.title;
+      }
+      return res.data;
+    }
+  } catch (err) {
+    // Content script가 아직 로드되지 않은 경우 무소음 동적 주입 시도
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: target.id },
+        files: ['content.js']
+      });
+      await chrome.scripting.insertCSS({
+        target: { tabId: target.id },
+        files: ['content.css']
+      });
+      const res2 = await chrome.tabs.sendMessage(target.id, { action: 'GET_PAGE_CONTEXT' }, { frameId: 0 });
+      if (res2 && res2.ok && res2.data && res2.data.url && res2.data.url !== 'about:blank') {
+        if (!res2.data.title || res2.data.title === 'about:blank') {
+          res2.data.title = target.title || res2.data.title;
+        }
+        return res2.data;
+      }
+    } catch (e2) {
+      // 주입 실패 시 직접 DOM 추출 폴백으로 진행
+    }
+  }
+
+  // 폴백 2: chrome.scripting.executeScript로 직접 상위 DOM 컨텍스트 추출 (가장 확실한 안전장치)
+  try {
+    const directResults = await chrome.scripting.executeScript({
+      target: { tabId: target.id },
+      func: () => {
+        const clone = document.body ? document.body.cloneNode(true) : null;
+        if (clone) {
+          clone.querySelectorAll('script, style, noscript, svg').forEach(n => n.remove());
+        }
+        const text = clone ? (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim() : '';
+        const buttons = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]'))
+          .map(b => (b.innerText || b.value || b.getAttribute('aria-label') || '').trim())
+          .filter(t => t.length > 0 && t.length < 30)
+          .slice(0, 25);
+        const inputs = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, select'))
+          .map(i => i.placeholder || i.name || i.id || i.getAttribute('aria-label') || '')
+          .filter(t => t.length > 0 && t.length < 40)
+          .slice(0, 25);
+        return {
+          title: document.title || '',
+          url: window.location.href,
+          bodyText: text.length > 6000 ? text.substring(0, 6000) + '... (이하 생략)' : text,
+          metaDesc: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
+          selectedText: window.getSelection()?.toString()?.trim() || '',
+          interactive: { buttons, inputs }
+        };
+      }
+    });
+    if (directResults && directResults[0] && directResults[0].result && directResults[0].result.url !== 'about:blank') {
+      const d = directResults[0].result;
+      if (!d.title || d.title === 'about:blank') d.title = target.title || d.title;
+      return d;
+    }
+  } catch (e3) {}
+
+  return {
+    title: target.title || '활성 탭',
+    url: (target.url && target.url !== 'about:blank') ? target.url : '',
+    bodyText: '(페이지 본문을 읽어오는 중이거나 권한 제한 페이지입니다)',
+    metaDesc: '',
+    selectedText: '',
+    interactive: { buttons: [], inputs: [] }
+  };
+}
+
+// ── 5. 브라우저 탐색 및 탭 조작 (Actuator: Navigation & Tabs) ────────────────
+function normalizeUrl(rawUrl) {
+  if (!rawUrl) return 'https://www.google.com';
+  let url = rawUrl.trim();
+  // 마크다운 링크 [링크](url) 제거
+  const mdMatch = url.match(/\((https?:\/\/[^\s)]+)\)/);
+  if (mdMatch) url = mdMatch[1];
+
+  if (/^https?:\/\//i.test(url) || /^chrome:\/\//i.test(url) || /^about:/i.test(url)) {
+    return url;
+  }
+  if (url.includes('.') && !url.includes(' ')) {
+    return 'https://' + url;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+}
+
+async function handleNavigate(url) {
+  const targetUrl = normalizeUrl(url);
+  await updateActiveTabAndTabs();
+  if (activeTab && activeTab.id) {
+    await chrome.tabs.update(activeTab.id, { url: targetUrl, active: true });
+  } else {
+    await chrome.tabs.create({ url: targetUrl, active: true });
+  }
+  return { ok: true, url: targetUrl };
+}
+
+async function handleNewTab(url) {
+  const targetUrl = url ? normalizeUrl(url) : 'chrome://newtab/';
+  const newTab = await chrome.tabs.create({ url: targetUrl, active: true });
+  await updateActiveTabAndTabs();
+  return { ok: true, url: targetUrl, tabId: newTab.id };
+}
+
+async function handleSwitchTab(identifier) {
+  await updateActiveTabAndTabs();
+  if (!allTabsList || allTabsList.length === 0) return { ok: false, error: '열린 탭 없음' };
+
+  let targetTab = null;
+  const numId = parseInt(identifier);
+  if (!isNaN(numId)) {
+    targetTab = allTabsList.find(t => t.id === numId);
+    if (!targetTab && numId > 0 && numId <= allTabsList.length) {
+      targetTab = allTabsList[numId - 1];
+    }
+  }
+
+  if (!targetTab && identifier) {
+    const q = String(identifier).toLowerCase();
+    targetTab = allTabsList.find(t =>
+      (t.title && t.title.toLowerCase().includes(q)) ||
+      (t.url && t.url.toLowerCase().includes(q))
+    );
+  }
+
+  if (targetTab) {
+    await chrome.tabs.update(targetTab.id, { active: true });
+    await updateActiveTabAndTabs();
+    return { ok: true, tab: targetTab };
+  }
+  return { ok: false, error: `일치하는 탭을 찾을 수 없습니다: "${identifier}"` };
+}
+
+async function handleCloseTab(identifier) {
+  await updateActiveTabAndTabs();
+  let targetTab = null;
+  if (identifier) {
+    const numId = parseInt(identifier);
+    if (!isNaN(numId)) {
+      targetTab = allTabsList.find(t => t.id === numId);
+      if (!targetTab && numId > 0 && numId <= allTabsList.length) {
+        targetTab = allTabsList[numId - 1];
+      }
+    }
+    if (!targetTab) {
+      const q = String(identifier).toLowerCase();
+      targetTab = allTabsList.find(t =>
+        (t.title && t.title.toLowerCase().includes(q)) ||
+        (t.url && t.url.toLowerCase().includes(q))
+      );
+    }
+  } else {
+    targetTab = activeTab;
+  }
+
+  if (targetTab && targetTab.id) {
+    await chrome.tabs.remove(targetTab.id);
+    await updateActiveTabAndTabs();
+    return { ok: true, tab: targetTab };
+  }
+  return { ok: false, error: `닫을 탭을 찾을 수 없습니다: "${identifier}"` };
+}
+
+async function executeBrowserAction(action, payload) {
+  if (!activeTab || !activeTab.id) {
+    await updateActiveTabAndTabs();
+  }
+  if (!activeTab || !activeTab.id) return { ok: false, error: '활성 탭 없음' };
+
+  try {
+    const response = await chrome.tabs.sendMessage(activeTab.id, {
+      action,
+      ...payload
+    });
+    return response;
+  } catch (err) {
+    console.error('브라우저 액션 실행 오류:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+// ── 6. 메시지 전송 & 실시간 자동 컨텍스트 결합 ──────────────────────────────
+async function stopGeneration(isNewPrompt = false) {
+  if (currentEventSource) {
+    try {
+      currentEventSource.close();
+    } catch (_) {}
+    currentEventSource = null;
+  }
+
+  if (currentSessionId) {
+    try {
+      fetch(`${SERVER_BASE}/api/chat/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: currentSessionId })
+      }).catch((e) => console.warn('[DAON Agent] cancel fetch error:', e));
+    } catch (e) {}
+  }
+
+  if (currentActiveBubble) {
+    const spinner = currentActiveBubble.querySelector('.action-spinner');
+    if (spinner) spinner.remove();
+    const hint = currentActiveBubble.querySelector('.reasoning-hint');
+    if (hint) hint.remove();
+    appendActionCard(currentActiveBubble, isNewPrompt ? '⏹️ [새 지시 수신] 이전 작업이 중단되었습니다.' : '⏹️ 작업이 중단되었습니다.');
+  }
+
+  isGenerating = false;
+  currentActiveBubble = null;
+  sendBtn.disabled = false;
+}
+
+async function sendMessage(customText = null) {
+  const text = (customText !== null ? customText : userInput.value).trim();
+  if (!text) {
+    // 텍스트 없이 버튼 클릭 시 현재 생성 중이면 즉시 중단
+    if (isGenerating) {
+      await stopGeneration(false);
+    }
+    return;
+  }
+
+  // ⚡ [진행 중인 작업 자동 중지 및 새 메시지 즉시 전송]
+  if (isGenerating) {
+    console.log('[DAON Agent] ⚡ 작업 진행 중 새 지시 수신 — 이전 작업 중지 및 새 메시지 즉시 전송');
+    await stopGeneration(true);
+  }
+
+  lastUserPrompt = text;
+
+  if (welcomeCard && welcomeCard.parentNode) {
+    welcomeCard.remove();
+  }
+
+  // 사용자 말풍선 추가 (화면에는 사용자의 실제 질문만 표시)
+  appendMessage('user', text);
+  if (customText === null) {
+    userInput.value = '';
+    adjustTextareaHeight();
+  }
+
+  // 컨텍스트 및 시스템 프롬프트 조합
+  let fullPrompt = '';
+  let contextHeader = '';
+
+  if (autoContextEnabled) {
+    // 자동 컨텍스트 수집: 전체 탭 목록 및 활성 탭 DOM 상태 실시간 수집
+    await updateActiveTabAndTabs();
+    const tabsSummary = formatTabsContext(allTabsList);
+    const activeCtx = await extractTabContextSilently(activeTab);
+
+    contextHeader = `[실시간 브라우저 환경 컨텍스트 (자동 수집)]\n`;
+    contextHeader += `■ 현재 브라우저에 열려 있는 모든 탭 목록 (총 ${allTabsList.length}개):\n${tabsSummary}\n\n`;
+    if (activeCtx) {
+      const finalTitle = (activeCtx.title && activeCtx.title !== 'about:blank') ? activeCtx.title : (activeTab?.title || '활성 탭');
+      const finalUrl = (activeCtx.url && activeCtx.url !== 'about:blank') ? activeCtx.url : (activeTab?.url || '');
+      contextHeader += `■ 현재 활성 탭 상세 정보 (#${(activeTab?.index || 0) + 1}: "${finalTitle}"):\n`;
+      contextHeader += `- URL: ${finalUrl}\n`;
+      if (activeCtx.metaDesc) contextHeader += `- 요약: ${activeCtx.metaDesc}\n`;
+      if (activeCtx.selectedText) contextHeader += `- 사용자가 마우스로 드래그(선택)한 텍스트:\n"""${activeCtx.selectedText}"""\n`;
+      if (activeCtx.bodyText) contextHeader += `- 페이지 본문 핵심 내용:\n"""${activeCtx.bodyText}"""\n`;
+      if (activeCtx.interactive?.buttons?.length > 0) contextHeader += `- 주요 버튼: ${activeCtx.interactive.buttons.join(', ')}\n`;
+      if (activeCtx.interactive?.inputs?.length > 0) contextHeader += `- 주요 입력창: ${activeCtx.interactive.inputs.join(', ')}\n`;
+    }
+  } else if (attachedContext) {
+    contextHeader = `[현재 웹 브라우저 탭 수동 첨부 컨텍스트]\n- 제목: ${attachedContext.title}\n- URL: ${attachedContext.url}\n${attachedContext.selectedText ? `- 선택된 텍스트: """${attachedContext.selectedText}"""\n` : ''}- 본문: """${attachedContext.bodyText}"""\n\n`;
+    attachedContext = null;
+    updateAttachedPill();
+  }
+
+  // 직전 액션 실행 결과 주입 (에이전트가 결과를 즉시 인지하도록 피드백 루프 완성)
+  let actionResultHeader = '';
+  if (lastActionResults && lastActionResults.length > 0) {
+    actionResultHeader = `[직전 브라우저 액션 실행 결과 (성공 여부 피드백)]\n` +
+      lastActionResults.map(r => `- ${r.summary}`).join('\n') + `\n\n`;
+    lastActionResults = []; // 주입 후 비움
+  }
+
+  // 에이전트 브라우저 조작 및 실시간 시각 지침
+  const systemGuide = `[구글 크롬 사이드패널 브라우저 조작 지침 — 필수 원칙]
+1. [실시간 화면 직접 인지]: 당신은 현재 사용자의 실제 구글 크롬 브라우저를 실시간으로 직접 보고 있습니다! 위 [실시간 브라우저 환경 컨텍스트]에 현재 열린 탭 목록과 활성 탭(iframe 내부 포함)의 본문 텍스트, 제목, 버튼, 링크, 입력창 정보가 매 턴마다 최신 상태로 제공됩니다.
+2. [직전 액션 결과 자동 인지]: 당신이 실행한 조작의 성공/실패 결과는 위 [직전 브라우저 액션 실행 결과]로 즉시 보고됩니다. 따라서 조작 후 사용자에게 "확인해주세요"라고 되묻지 마세요!
+3. [내부 도구(browser_*) 호출 금지]: 데스크톱용 내부 브라우저 도구(browser_click, browser_navigate 등)는 작동하지 않으므로 절대 호출하지 마세요.
+4. [실시간 조작 액션 태그]: 브라우저 조작이 필요할 때는 반드시 아래의 XML 액션 태그를 응답에 포함하세요. 크롬 확장 프로그램이 실제 브라우저에서 즉시 실행합니다:
+   - 버튼/카드/링크 클릭: <daon_action action="click" target="버튼텍스트 또는 CSS셀렉터" nth="1" />
+   - 마우스 호버(드롭다운/메뉴 열기): <daon_action action="hover" target="메뉴텍스트 또는 셀렉터" nth="1" />
+   - 키보드 입력(Enter, Escape 등): <daon_action action="press" key="Enter" target="입력창(선택)" />
+   - 대화형 요소 스냅샷 추출: <daon_action action="snapshot" />
+   - 현재 화면 캡처(스크린샷): <daon_action action="screenshot" />
+   - 잠시 대기(로딩 대기 등): <daon_action action="wait" ms="1500" />
+   - 사이트 이동: <daon_action action="navigate" url="https://..." />
+   - 새 탭 열기: <daon_action action="new_tab" url="https://..." />
+   - 탭 전환: <daon_action action="switch_tab" tab_id="탭ID" />
+   - 탭 닫기: <daon_action action="close_tab" tab_id="탭ID" />
+   - 텍스트 입력: <daon_action action="type" target="입력창ID/셀렉터" text="입력내용" nth="1" />
+   - 스크롤: <daon_action action="scroll" direction="down|up" />
+   * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth="2"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.
+5. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 베네카페로 바로 들어갈게요. <daon_action action=\\"click\\" target=\\"베네 카페\\" />")`;
+
+  if (contextHeader) {
+    fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+  } else {
+    fullPrompt = `${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+  }
+
+  // 에이전트 대기 말풍선 생성
+  const botMessageEl = appendMessage('bot', '');
+  const bubble = botMessageEl.querySelector('.bubble');
+  bubble.innerHTML = '<div class="action-spinner"></div>';
+  currentActiveBubble = bubble;
+
+  isGenerating = true;
+  sendBtn.disabled = false;
+
+  try {
+    if (!currentSessionId) {
+      await createNewSession();
+    }
+
+    let startRes = await fetch(`${SERVER_BASE}/api/chat/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: currentSessionId,
+        message: fullPrompt,
+        model: selectedModel || undefined,
+        planning_mode: false
+      })
+    });
+
+    if (startRes.status === 404) {
+      console.warn('[DAON Agent] 세션 만료됨(404). 새 세션 생성 후 재시도...');
+      await createNewSession();
+      startRes = await fetch(`${SERVER_BASE}/api/chat/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: currentSessionId,
+          message: fullPrompt,
+          model: selectedModel || undefined,
+          planning_mode: false
+        })
+      });
+    }
+
+    if (!startRes.ok) {
+      const errBody = await startRes.text().catch(() => '');
+      throw new Error(`서버 응답 오류 (${startRes.status}) ${errBody}`);
+    }
+
+    const startData = await startRes.json();
+    const streamId = startData.stream_id;
+    bubble.innerHTML = '';
+
+    listenToStream(streamId, bubble);
+
+  } catch (err) {
+    console.error('메시지 전송 실패:', err);
+    bubble.innerHTML = `<span style="color:#f43f5e;">⚠️ 오류 발생: ${err.message}. 다온 앱(server.py)이 9090 포트에서 켜져 있는지 확인해 주세요.</span>`;
+    finishGeneration();
+  }
+}
+
+function listenToStream(streamId, bubble) {
+  let accumulatedText = '';
+  const sseUrl = `${SERVER_BASE}/api/chat/stream?stream_id=${streamId}`;
+  currentEventSource = new EventSource(sseUrl);
+
+  function handleToken(e) {
+    try {
+      const data = JSON.parse(e.data);
+      const text = typeof data === 'string' ? data : (data.text || data.delta || '');
+      accumulatedText += text;
+      bubble.innerHTML = renderMarkdown(accumulatedText);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    } catch (err) {
+      accumulatedText += e.data;
+      bubble.innerHTML = renderMarkdown(accumulatedText);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+  }
+
+  currentEventSource.addEventListener('token', handleToken);
+  currentEventSource.addEventListener('chunk', handleToken);
+  currentEventSource.onmessage = handleToken;
+
+  currentEventSource.addEventListener('reasoning', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (!bubble.querySelector('.reasoning-hint')) {
+        const hint = document.createElement('div');
+        hint.className = 'reasoning-hint';
+        hint.style.fontSize = '11px';
+        hint.style.color = '#94a3b8';
+        hint.style.fontStyle = 'italic';
+        hint.style.marginBottom = '6px';
+        hint.textContent = '💭 생각하는 중...';
+        bubble.prepend(hint);
+      }
+    } catch (err) {}
+  });
+
+  currentEventSource.addEventListener('notice', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      appendActionCard(bubble, 'ℹ️ ' + (data.message || '알림'));
+    } catch (err) {}
+  });
+
+  currentEventSource.addEventListener('tool', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.name && data.name !== '_thinking') {
+        appendActionCard(bubble, `⚡ 도구 실행: ${data.name}`);
+      }
+    } catch (err) {}
+  });
+
+  currentEventSource.addEventListener('tool_call', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      appendActionCard(bubble, `⚡ 도구 실행: ${data.name || '작업 중'}`);
+    } catch (err) {}
+  });
+
+  currentEventSource.addEventListener('done', async (e) => {
+    const hint = bubble.querySelector('.reasoning-hint');
+    if (hint) hint.remove();
+
+    try {
+      const data = JSON.parse(e.data);
+      const msgs = data.session?.messages || [];
+      const lastAsst = msgs.slice().reverse().find(m => m.role === 'assistant');
+      if (lastAsst && (!accumulatedText || accumulatedText.trim() === '')) {
+        accumulatedText = lastAsst.content || '';
+        bubble.innerHTML = renderMarkdown(accumulatedText);
+      }
+    } catch (err) {
+      console.warn('done 데이터 파싱 실패:', err);
+    }
+
+    finishGeneration();
+    await parseAndExecuteActions(accumulatedText, bubble);
+  });
+
+  currentEventSource.addEventListener('error', (e) => {
+    console.warn('SSE 스트림 종료 또는 에러:', e);
+    const hint = bubble.querySelector('.reasoning-hint');
+    if (hint) hint.remove();
+    finishGeneration();
+  });
+}
+
+function finishGeneration() {
+  if (currentEventSource) {
+    try {
+      currentEventSource.close();
+    } catch (_) {}
+    currentEventSource = null;
+  }
+  isGenerating = false;
+  currentActiveBubble = null;
+  sendBtn.disabled = false;
+  userInput.focus();
+}
+
+// ── 7. 에이전트 응답 내 브라우저 액션 태그 파싱 및 자동 실행 ───────────────
+async function parseAndExecuteActions(text, bubble) {
+  let executedAny = false;
+  const regex = /<daon_action\s+([^>]+)\/>/gi;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    executedAny = true;
+    const attrStr = match[1];
+    const actionMatch = attrStr.match(/action=["']([^"']+)["']/i);
+    const targetMatch = attrStr.match(/target=["']([^"']+)["']/i);
+    const urlMatch = attrStr.match(/url=["']([^"']+)["']/i);
+    const tabIdMatch = attrStr.match(/tab_id=["']([^"']+)["']/i);
+    const textMatch = attrStr.match(/text=["']([^"']+)["']/i);
+    const dirMatch = attrStr.match(/direction=["']([^"']+)["']/i);
+
+    const action = actionMatch ? actionMatch[1].toLowerCase() : null;
+    const target = targetMatch ? targetMatch[1] : null;
+    const urlVal = urlMatch ? urlMatch[1] : null;
+    const tabIdVal = tabIdMatch ? tabIdMatch[1] : null;
+    const inputVal = textMatch ? textMatch[1] : '';
+    const dir = dirMatch ? dirMatch[1] : 'down';
+
+    const nthMatch = attrStr.match(/nth=["']?(\d+)["']?/i);
+    const nth = nthMatch ? parseInt(nthMatch[1]) : 1;
+
+    const keyMatch = attrStr.match(/key=["']([^"']+)["']/i);
+    const keyVal = keyMatch ? keyMatch[1] : 'Enter';
+
+    const msMatch = attrStr.match(/ms=["']?(\d+)["']?/i);
+    const waitMs = msMatch ? parseInt(msMatch[1]) : 1000;
+
+    // 1. 사이트 이동 (navigate / goto / open_url)
+    if ((action === 'navigate' || action === 'goto' || action === 'open_url') && (urlVal || target)) {
+      const toUrl = urlVal || target;
+      appendActionCard(bubble, `🌐 [사이트 이동] "${toUrl}" 로 이동 중...`);
+      const res = await handleNavigate(toUrl);
+      appendActionCard(bubble, res.ok ? `✅ 이동 완료: ${res.url}` : `❌ 이동 실패: ${res.error}`);
+      lastActionResults.push({ summary: `NAVIGATE("${toUrl}"): ${res.ok ? '성공' : '실패'} (${res.ok ? res.url : res.error})` });
+    }
+    // 2. 새 탭 열기 (new_tab / open_tab)
+    else if ((action === 'new_tab' || action === 'open_tab') && (urlVal || target)) {
+      const toUrl = urlVal || target;
+      appendActionCard(bubble, `📑 [새 탭 열기] "${toUrl}" 여는 중...`);
+      const res = await handleNewTab(toUrl);
+      appendActionCard(bubble, res.ok ? `✅ 새 탭 생성 완료 (${res.url})` : `❌ 새 탭 열기 실패`);
+      lastActionResults.push({ summary: `NEW_TAB("${toUrl}"): ${res.ok ? '성공' : '실패'}` });
+    }
+    // 3. 탭 전환 (switch_tab / select_tab)
+    else if (action === 'switch_tab' || action === 'select_tab') {
+      const ident = tabIdVal || target;
+      appendActionCard(bubble, `🔀 [탭 전환] "${ident}" 탭으로 전환 중...`);
+      const res = await handleSwitchTab(ident);
+      appendActionCard(bubble, res.ok ? `✅ "${res.tab.title}" 탭으로 전환 완료` : `❌ 전환 실패: ${res.error}`);
+      lastActionResults.push({ summary: `SWITCH_TAB("${ident}"): ${res.ok ? '성공' : '실패'}` });
+    }
+    // 4. 탭 닫기 (close_tab / remove_tab)
+    else if (action === 'close_tab' || action === 'remove_tab') {
+      const ident = tabIdVal || target;
+      appendActionCard(bubble, `❌ [탭 닫기] "${ident || '현재 탭'}" 닫는 중...`);
+      const res = await handleCloseTab(ident);
+      appendActionCard(bubble, res.ok ? `✅ 탭 닫기 완료` : `❌ 닫기 실패: ${res.error}`);
+      lastActionResults.push({ summary: `CLOSE_TAB("${ident || '현재 탭'}"): ${res.ok ? '성공' : '실패'}` });
+    }
+    // 5. 클릭 (click) — nth 다중 매칭 지원
+    else if (action === 'click' && target) {
+      appendActionCard(bubble, `🖱️ [자동 실행] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 클릭 시도 중...`);
+      const res = await executeBrowserAction('ACT_CLICK', { target, nth });
+      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 클릭 실패: ${res.error}`);
+      lastActionResults.push({ summary: `CLICK("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+    }
+    // 6. 마우스 호버 (hover)
+    else if (action === 'hover' && target) {
+      appendActionCard(bubble, `🔍 [자동 실행] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 마우스 호버 중...`);
+      const res = await executeBrowserAction('ACT_HOVER', { target, nth });
+      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 호버 실패: ${res.error}`);
+      lastActionResults.push({ summary: `HOVER("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+    }
+    // 7. 키보드 입력 (press / key)
+    else if (action === 'press' || action === 'key') {
+      appendActionCard(bubble, `⌨️ [자동 실행] 키 [${keyVal}] 입력 중...`);
+      const res = await executeBrowserAction('ACT_PRESS_KEY', { key: keyVal, target, nth });
+      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 키 입력 실패: ${res.error}`);
+      lastActionResults.push({ summary: `PRESS_KEY("${keyVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+    }
+    // 8. 텍스트 입력 (type)
+    else if (action === 'type' && target) {
+      appendActionCard(bubble, `⌨️ [자동 실행] "${target}"에 "${inputVal}" 입력 시도 중...`);
+      const res = await executeBrowserAction('ACT_TYPE', { target, text: inputVal, nth });
+      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 입력 실패: ${res.error}`);
+      lastActionResults.push({ summary: `TYPE("${target}", "${inputVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+    }
+    // 9. 잠시 대기 (wait)
+    else if (action === 'wait') {
+      appendActionCard(bubble, `⏳ [자동 실행] ${(waitMs / 1000).toFixed(1)}초 대기 중...`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      appendActionCard(bubble, `✅ ${(waitMs / 1000).toFixed(1)}초 대기 완료`);
+      lastActionResults.push({ summary: `WAIT(${waitMs}ms): 완료` });
+    }
+    // 10. 스크린샷 캡처 (screenshot)
+    else if (action === 'screenshot') {
+      appendActionCard(bubble, `📸 [자동 실행] 화면 캡처 중...`);
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          chrome.tabs.captureVisibleTab(null, { format: 'png' }, (res) => {
+            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+            else resolve(res);
+          });
+        });
+        if (dataUrl) {
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.style.maxWidth = '100%';
+          img.style.borderRadius = '8px';
+          img.style.marginTop = '8px';
+          img.style.border = '1px solid rgba(255,255,255,0.1)';
+          bubble.appendChild(img);
+          appendActionCard(bubble, `✅ 스크린샷 캡처 완료`);
+          lastActionResults.push({ summary: `SCREENSHOT(): 성공 (화면 캡처됨)` });
+        }
+      } catch (e) {
+        appendActionCard(bubble, `❌ 스크린샷 실패: ${e.message}`);
+        lastActionResults.push({ summary: `SCREENSHOT(): 실패 (${e.message})` });
+      }
+    }
+    // 11. 대화형 요소 스냅샷 추출 (snapshot / elements)
+    else if (action === 'snapshot' || action === 'elements') {
+      appendActionCard(bubble, `📸 [자동 실행] 대화형 요소 스냅샷 추출 중...`);
+      const res = await executeBrowserAction('GET_PAGE_SNAPSHOT');
+      if (res && res.ok && Array.isArray(res.data)) {
+        const summary = res.data.slice(0, 30).map(it => `[#${it.index}] <${it.tag}> "${it.text}" (${it.selector})`).join('\n');
+        appendActionCard(bubble, `✅ 스냅샷 완료 (총 ${res.data.length}개 요소 감지)`);
+        lastActionResults.push({ summary: `SNAPSHOT(): 성공 (총 ${res.data.length}개 대화형 요소 감지됨):\n${summary}` });
+      } else {
+        appendActionCard(bubble, `❌ 스냅샷 실패: ${res?.error || '요소 추출 불가'}`);
+        lastActionResults.push({ summary: `SNAPSHOT(): 실패` });
+      }
+    }
+    // 12. 스크롤 (scroll)
+    else if (action === 'scroll') {
+      appendActionCard(bubble, `📜 [자동 실행] 화면 ${dir === 'down' ? '아래' : '위'}로 스크롤 중...`);
+      await executeBrowserAction('ACT_SCROLL', { direction: dir });
+      lastActionResults.push({ summary: `SCROLL("${dir}"): 완료` });
+    }
+  }
+
+  // 스마트 내비게이션 폴백: 사용자가 이동을 요청했는데 에이전트가 태그 없이 URL만 언급한 경우
+  if (!executedAny && lastUserPrompt) {
+    const navIntent = /이동|가줘|가자|열어|접속|틀어|navigate|go to|open/i.test(lastUserPrompt);
+    if (navIntent) {
+      const urlMatch = text.match(/https?:\/\/[^\s<>"')]+|\b(?:www\.)?[a-zA-Z0-9-]+\.(?:com|net|org|kr|co\.kr|io|dev|ai|app)\b/i);
+      if (urlMatch) {
+        const detectedUrl = urlMatch[0];
+        appendActionCard(bubble, `🌐 [스마트 이동 감지] 감지된 사이트 "${detectedUrl}" 로 이동합니다...`);
+        const res = await handleNavigate(detectedUrl);
+        appendActionCard(bubble, res.ok ? `✅ 이동 완료: ${res.url}` : `❌ 이동 실패: ${res.error}`);
+      }
+    }
+  }
+}
+
+// ── 8. UI 렌더링 헬퍼 ────────────────────────────────────────────────────
+function appendMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = `message-row ${role}`;
+
+  if (role === 'bot') {
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar bot';
+    avatar.innerHTML = '🤖';
+    row.appendChild(avatar);
+  }
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = renderMarkdown(text);
+  row.appendChild(bubble);
+
+  chatContainer.appendChild(row);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  return row;
+}
+
+function appendActionCard(bubbleEl, text) {
+  const card = document.createElement('div');
+  card.className = 'action-card';
+  card.style.marginTop = '6px';
+  card.textContent = text;
+  bubbleEl.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function renderMarkdown(str) {
+  if (!str) return '';
+  // 화면 표시 시 내부 XML 액션 태그(<daon_action ... />)는 깔끔하게 숨김 처리
+  let clean = str.replace(/<daon_action\s+[^>]*\/?>/gi, '').trim();
+  let html = clean
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // 코드 블록 (```code```)
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  // 인라인 코드 (`code`)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 볼드 (**text**)
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // 줄바꿈
+  html = html.replace(/\n/g, '<br/>');
+
+  return html;
+}
+
+function updateAttachedPill() {
+  if (!attachedPill) return;
+  if (attachedContext) {
+    attachedPill.classList.remove('hidden');
+    if (attachedPillText) attachedPillText.textContent = `📌 ${attachedContext.title.slice(0, 24)}...`;
+  } else {
+    attachedPill.classList.add('hidden');
+  }
+}
+
+function adjustTextareaHeight() {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+}
+
+// ── 9. 이벤트 리스너 바인딩 ──────────────────────────────────────────────
+function setupEventListeners() {
+  if (connectionBadge) connectionBadge.addEventListener('click', checkServerHealth);
+
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', async () => {
+      if (confirm('대화 내용을 모두 지우고 새 작업을 시작할까요?')) {
+        await createNewSession();
+      }
+    });
+  }
+
+  if (modelSelect) {
+    modelSelect.addEventListener('change', async () => {
+      selectedModel = modelSelect.value;
+      await chrome.storage.local.set({ daon_selected_model: selectedModel });
+      console.log('[DAON Agent] 모델 선택 변경:', selectedModel);
+    });
+  }
+
+  // 자동 탭 감지 토글 버튼
+  if (autoContextToggle) {
+    autoContextToggle.addEventListener('click', async () => {
+      autoContextEnabled = !autoContextEnabled;
+      await chrome.storage.local.set({ daon_auto_context: autoContextEnabled });
+      updateAutoContextUI();
+    });
+  }
+
+  // 수동 탭 첨부 버튼 (기존 하위 호환)
+  if (attachTabBtn) {
+    attachTabBtn.addEventListener('click', async () => {
+      const ctx = await extractTabContextSilently();
+      if (ctx) {
+        attachedContext = ctx;
+        updateAttachedPill();
+        userInput.focus();
+      }
+    });
+  }
+
+  if (removeAttachedBtn) {
+    removeAttachedBtn.addEventListener('click', () => {
+      attachedContext = null;
+      updateAttachedPill();
+    });
+  }
+
+  if (sendBtn) sendBtn.addEventListener('click', () => sendMessage());
+
+  if (userInput) {
+    userInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+    userInput.addEventListener('input', adjustTextareaHeight);
+  }
+
+  // 퀵 액션 바
+  if (quickListTabsBtn) {
+    quickListTabsBtn.addEventListener('click', () => {
+      sendMessage('현재 열려 있는 모든 브라우저 탭 목록을 확인해서 알려줘.');
+    });
+  }
+
+  if (quickSummarizeBtn) {
+    quickSummarizeBtn.addEventListener('click', () => {
+      sendMessage('현재 활성화된 웹페이지의 핵심 내용을 3줄로 요약해줘.');
+    });
+  }
+
+  if (quickFindBtn) {
+    quickFindBtn.addEventListener('click', () => {
+      sendMessage('이 페이지에서 가장 중요한 핵심 정보와 주요 링크들을 정리해줘.');
+    });
+  }
+
+  if (quickSnapshotBtn) {
+    quickSnapshotBtn.addEventListener('click', async () => {
+      if (!activeTab || !activeTab.id) return;
+      try {
+        const res = await chrome.tabs.sendMessage(activeTab.id, { action: 'GET_PAGE_SNAPSHOT' });
+        if (res && res.ok && res.data) {
+          const list = res.data.map(i => `[#${i.index}] <${i.tag}> "${i.text}" (셀렉터: ${i.selector})`).join('\n');
+          sendMessage(`이 페이지에서 발견된 대화형 요소 목록입니다:\n${list}\n\n이 중에서 어떤 동작을 수행할 수 있는지 추천해줘.`);
+        }
+      } catch (e) {
+        sendMessage('현재 페이지의 주요 대화형 요소들을 분석해줘.');
+      }
+    });
+  }
+
+  // 예시 프롬프트 클릭
+  if (chatContainer) {
+    chatContainer.addEventListener('click', (e) => {
+      const chip = e.target.closest('.example-chip');
+      if (chip) {
+        const prompt = chip.getAttribute('data-prompt');
+        if (prompt) {
+          userInput.value = prompt;
+          sendMessage();
+        }
+      }
+    });
+  }
+}
+
+// 실행
+document.addEventListener('DOMContentLoaded', init);

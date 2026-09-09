@@ -105,6 +105,7 @@ def compose_system_message(
     planning_mode: bool = False,
     open_tabs: Optional[List[Dict[str, Any]]] = None,
     injected_mcp_count: int = 0,
+    browser_context: Optional[str] = None,
 ) -> Tuple[str, List[int]]:
     """Compose full system prompt with open tabs, Korean language instruction,
 
@@ -172,15 +173,40 @@ def compose_system_message(
         "IMPORTANT: When you want to show an image, simply write ![description](url) in your response.\n"
         "The frontend already has a working markdown-to-HTML renderer that converts this to an <img> tag.\n"
         "You do NOT need to test, verify, or debug image rendering — just use the markdown syntax.\n\n"
-        "[BUILT-IN BROWSER]\n"
-        "This app has a built-in shared browser: an in-app tab driven over CDP that the user can see.\n"
-        "When a task requires viewing, scraping, or interacting with a web page, use the browser tools\n"
-        "(browser_navigate, browser_snapshot, browser_click, browser_type, browser_scroll, browser_press,\n"
-        "browser_console) — they operate this built-in tab. Do NOT launch external browsers, and do NOT\n"
-        "use curl/wget for pages that need rendering or interaction. Workflow: call browser_navigate\n"
-        "first; the returned snapshot lists interactive elements as @eN refs — use those refs with\n"
-        "browser_click/browser_type. (This does NOT override the markdown rule above — never use the\n"
-        "browser just to verify rendering.)\n\n"
+        + (
+            (
+                "[구글 크롬 사이드패널 브라우저 연동 모드 — 절대 지침]\n"
+                "당신은 현재 구글 크롬(Google Chrome) 브라우저 사이드 패널에서 사용자와 1:1로 소통하고 있습니다.\n"
+                "1. [실시간 화면 직접 인지]: 당신은 사용자의 실제 크롬 브라우저 화면을 실시간으로 직접 보고 있습니다! 매 대화마다 브라우저에서 자동 수집된 현재 열린 모든 탭 목록, 활성 탭(iframe 내부 포함) 제목, URL, 본문 텍스트, 주요 버튼 및 입력창 정보가 [실시간 브라우저 환경 컨텍스트]로 제공됩니다.\n"
+                "2. [직전 액션 결과 자동 인지]: 당신이 내린 조작 결과는 [직전 브라우저 액션 실행 결과] 헤더로 즉시 보고됩니다. 따라서 조작 후 사용자에게 '클릭되었는지 확인해주세요', '페이지가 바뀌었나요?'라고 되묻지 마세요! 스스로 보고 판단하세요.\n"
+                "3. [내부 브라우저 도구 호출 금지]: 데스크톱 Electron용 도구(browser_click, browser_navigate, browser_type 등)를 절대 호출하지 마세요. (호출 시 에러가 발생합니다.)\n"
+                "4. [실시간 브라우저 제어 액션 태그]: 브라우저 조작이 필요할 때는 반드시 아래의 XML 액션 태그를 응답 텍스트에 포함하세요. 크롬 확장프로그램이 사용자의 실제 브라우저 화면에서 즉각 실행합니다:\n"
+                "   - 버튼/카드/링크/메뉴 클릭: <daon_action action=\"click\" target=\"버튼텍스트 또는 CSS셀렉터\" nth=\"1\" />\n"
+                "   - 마우스 호버(드롭다운/서브메뉴 열기): <daon_action action=\"hover\" target=\"메뉴텍스트 또는 셀렉터\" nth=\"1\" />\n"
+                "   - 키보드 입력(Enter, Escape 등): <daon_action action=\"press\" key=\"Enter\" target=\"입력창(선택)\" />\n"
+                "   - 대화형 요소 스냅샷 추출: <daon_action action=\"snapshot\" />\n"
+                "   - 현재 화면 캡처(스크린샷): <daon_action action=\"screenshot\" />\n"
+                "   - 잠시 대기(로딩 대기 등): <daon_action action=\"wait\" ms=\"1500\" />\n"
+                "   - 현재 탭에서 사이트 이동: <daon_action action=\"navigate\" url=\"https://...\" />\n"
+                "   - 새 탭에서 열기: <daon_action action=\"new_tab\" url=\"https://...\" />\n"
+                "   - 다른 탭으로 전환: <daon_action action=\"switch_tab\" tab_id=\"탭ID\" />\n"
+                "   - 탭 닫기: <daon_action action=\"close_tab\" tab_id=\"탭ID\" />\n"
+                "   - 검색어/텍스트 입력: <daon_action action=\"type\" target=\"입력창ID/셀렉터\" text=\"입력할내용\" nth=\"1\" />\n"
+                "   - 스크롤: <daon_action action=\"scroll\" direction=\"down\" /> 또는 direction=\"up\"\n"
+                "   * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth=\"2\"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.\n"
+                "5. [답변 스타일]: 불필요한 사족 없이, 친절하고 싹싹하며 자신감 넘치는 말투로 짧고 명쾌하게 행동하세요. (예: '네! 베네카페로 들어갈게요. <daon_action action=\"click\" target=\"베네 카페\" />')\n\n"
+            ) if browser_context else (
+                "[BUILT-IN BROWSER]\n"
+                "This app has a built-in shared browser: an in-app tab driven over CDP that the user can see.\n"
+                "When a task requires viewing, scraping, or interacting with a web page, use the browser tools\n"
+                "(browser_navigate, browser_snapshot, browser_click, browser_type, browser_scroll, browser_press,\n"
+                "browser_console) — they operate this built-in tab. Do NOT launch external browsers, and do NOT\n"
+                "use curl/wget for pages that need rendering or interaction. Workflow: call browser_navigate\n"
+                "first; the returned snapshot lists interactive elements as @eN refs — use those refs with\n"
+                "browser_click/browser_type. (This does NOT override the markdown rule above — never use the\n"
+                "browser just to verify rendering.)\n\n"
+            )
+        ) +
         "[MEMORY POLICY]\n"
         "You have access to Memory MCP tools (mcp_memory_*) for long-term knowledge storage.\n"
         "CRITICAL: Do NOT automatically save information to memory. Only use memory tools when:\n"

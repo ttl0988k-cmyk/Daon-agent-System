@@ -26,10 +26,13 @@ def safe_resolve(root: Path, requested: str) -> Path:
 
 
 def _security_headers(handler):
-    """Add security headers to every response."""
+    """Add security and CORS headers to every response."""
     handler.send_header('X-Content-Type-Options', 'nosniff')
     handler.send_header('X-Frame-Options', 'DENY')
     handler.send_header('Referrer-Policy', 'same-origin')
+    handler.send_header('Access-Control-Allow-Origin', '*')
+    handler.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
+    handler.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
 
 
 def j(handler, payload, status: int=200) -> bool:

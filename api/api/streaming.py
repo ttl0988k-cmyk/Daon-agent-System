@@ -1233,6 +1233,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           from api.streaming_tools import register_all_streaming_tools
           injected_count = register_all_streaming_tools(agent, s, session_id, cancel_event)
 
+          is_browser_session = bool(
+              "[실시간 브라우저 환경 컨텍스트" in (msg_text or "") or
+              "[브라우저 제어 명령 규칙]" in (msg_text or "") or
+              "[구글 크롬" in (msg_text or "") or
+              "[사용자 요청]" in (msg_text or "") or
+              (isinstance(session_id, str) and session_id.startswith("browser_"))
+          )
+          if is_browser_session and hasattr(agent, 'tools') and isinstance(agent.tools, list):
+              # 크롬 확장프로그램 사이드패널 모드일 때는 실패하는 내부 Electron 브라우저 도구를 비활성화
+              agent.tools = [t for t in agent.tools if not t.get('function', {}).get('name', '').startswith('browser_')]
+
           # ── System Prompt & Multimodal Message Composition ──
           from api.streaming_prompts import compose_system_message, build_user_payload
 
@@ -1244,6 +1255,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               planning_mode=planning_mode,
               open_tabs=open_tabs,
               injected_mcp_count=injected_count,
+              browser_context="chrome_sidepanel" if is_browser_session else None,
           )
           if _ephemeral_prompt:
               workspace_system_msg += "\n\n" + _ephemeral_prompt
@@ -1257,8 +1269,21 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   break
 
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
-          if not any(m.get('role') == 'user' and m.get('content') == msg_text for m in s.messages[-2:]):
-              user_msg = {'role': 'user', 'content': msg_text, 'timestamp': int(time.time())}
+          display_user_msg = msg_text
+          if "[사용자 요청]" in msg_text:
+              parts = msg_text.split("[사용자 요청]", 1)
+              display_user_msg = parts[1].strip()
+              if "[브라우저 제어" in display_user_msg:
+                  display_user_msg = display_user_msg.split("[브라우저 제어", 1)[0].strip()
+              if "[구글 크롬" in display_user_msg:
+                  display_user_msg = display_user_msg.split("[구글 크롬", 1)[0].strip()
+              if "[직전 브라우저" in display_user_msg:
+                  display_user_msg = display_user_msg.split("[직전 브라우저", 1)[0].strip()
+              if "(참고: 브라우저 조작" in display_user_msg:
+                  display_user_msg = display_user_msg.split("(참고: 브라우저 조작", 1)[0].strip()
+
+          if not any(m.get('role') == 'user' and m.get('content') in (msg_text, display_user_msg) for m in s.messages[-2:]):
+              user_msg = {'role': 'user', 'content': display_user_msg or msg_text, 'timestamp': int(time.time())}
               # P6: Validate message shape against shared schema before persisting
               if _SCHEMA_AVAILABLE:
                   ok, err = _validate_msg(user_msg)

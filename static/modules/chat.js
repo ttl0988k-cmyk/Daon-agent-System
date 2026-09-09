@@ -864,13 +864,24 @@ async function sendPrompt() {
     }
     console.log('[chat] ⚡ Active stream in progress — auto-cancelling before sending new message');
     setChatStatus('thinking', '이전 작업 중지 및 새 지시 전송 중...');
-    try {
-      await cancelActiveStream();
-      // 백엔드 소켓/세션 락 정리 여유 시간
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    } catch (e) {
-      console.warn('[chat] Auto-cancel prior stream failed (proceeding):', e);
+    const oldStreamId = State.currentStreamId;
+    if (State.currentEventSource) {
+      try { State.currentEventSource.close(); } catch (_) {}
+      State.currentEventSource = null;
     }
+    State.currentStreamId = null;
+    State._isSendingPrompt = false;
+
+    // 백그라운드로 취소 요청 비동기 전송
+    api('/api/chat/cancel', {
+      method: 'POST',
+      body: {
+        stream_id: oldStreamId,
+        session_id: State.activeSessionId || ''
+      }
+    }).catch((e) => console.warn('[chat] Auto-cancel failed:', e));
+
+    cleanupStreamState();
   }
 
   State._isSendingPrompt = true;
@@ -957,8 +968,12 @@ async function _executeAgentStream(displayText, uploaded) {
   // disabled check in sendPrompt is not sufficient — e.g. race between
   // keydown and button state).
   if (State.currentStreamId) {
-    console.warn('[chat] Stream already active (id=%s), ignoring new send', State.currentStreamId);
-    return;
+    console.warn('[chat] Stream still active (id=%s), force-cancelling before new send', State.currentStreamId);
+    try {
+      if (State.currentEventSource) State.currentEventSource.close();
+      cleanupStreamState();
+    } catch (_) {}
+    State.currentStreamId = null;
   }
 
   // Set UI state to active
@@ -3026,8 +3041,7 @@ function setupEventListeners() {
   promptInput.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      // 네트워크 디스패치 중이 아니면 엔터로 전송 허용 (스트림 진행 중이면 sendPrompt에서 자동 인터럽트)
-      if (State._isSendingPrompt) return;
+      // 스트림 진행 중이어도 sendPrompt()에서 기존 작업을 자동 인터럽트하고 즉시 전송
       sendPrompt();
     }
   };

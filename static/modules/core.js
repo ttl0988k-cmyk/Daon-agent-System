@@ -75,6 +75,68 @@ function renderMd(text) {
     return ph;
   });
 
+  // ── Phase 0.5: daon_action XML 태그를 사용자 친화적인 시각 배지 카드로 변환 ──
+  text = text.replace(/<daon_action\s+([^>]+?)\/?>/gi, function (match, attrStr) {
+    var actionMatch = attrStr.match(/action=["']([^"']+)["']/i);
+    var targetMatch = attrStr.match(/target=["']([^"']+)["']/i);
+    var urlMatch = attrStr.match(/url=["']([^"']+)["']/i);
+    var keyMatch = attrStr.match(/key=["']([^"']+)["']/i);
+    var nthMatch = attrStr.match(/nth=["']?(\d+)["']?/i);
+
+    var action = actionMatch ? actionMatch[1].toLowerCase() : '';
+    var target = targetMatch ? targetMatch[1] : '';
+    var url = urlMatch ? urlMatch[1] : '';
+    var key = keyMatch ? keyMatch[1] : '';
+    var nth = nthMatch ? parseInt(nthMatch[1]) : 1;
+    var nthText = nth > 1 ? ' (' + nth + '번째)' : '';
+
+    var icon = '🌐';
+    var desc = '브라우저 액션 실행';
+    if (action === 'snapshot' || action === 'elements') {
+      icon = '📸';
+      desc = '대화형 요소 스냅샷 추출';
+    } else if (action === 'screenshot') {
+      icon = '📷';
+      desc = '화면 캡처 실행';
+    } else if (action === 'click') {
+      icon = '🖱️';
+      desc = '요소 클릭: "' + (target || '버튼') + '"' + nthText;
+    } else if (action === 'type') {
+      icon = '⌨️';
+      desc = '텍스트 입력: "' + target + '"';
+    } else if (action === 'hover') {
+      icon = '🔍';
+      desc = '마우스 호버: "' + target + '"' + nthText;
+    } else if (action === 'press' || action === 'key') {
+      icon = '⌨️';
+      desc = '키 입력: [' + (key || 'Enter') + ']';
+    } else if (action === 'navigate' || action === 'goto') {
+      icon = '🌐';
+      desc = '사이트 이동: ' + (url || target);
+    } else if (action === 'new_tab') {
+      icon = '📑';
+      desc = '새 탭 열기: ' + (url || target);
+    } else if (action === 'switch_tab') {
+      icon = '🔀';
+      desc = '탭 전환';
+    } else if (action === 'close_tab') {
+      icon = '❌';
+      desc = '탭 닫기';
+    } else if (action === 'scroll') {
+      icon = '📜';
+      desc = '화면 스크롤';
+    } else if (action === 'wait') {
+      icon = '⏳';
+      desc = '로딩 대기';
+    }
+
+    var ph = '\x00MDACT' + (phIndex++) + '\x00';
+    var badgeHtml = '<div class="daon-action-pill" style="display:inline-flex; align-items:center; gap:6px; background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.3); border-radius:6px; padding:3px 9px; margin:4px 0; font-size:12px; color:var(--accent, #818cf8); font-weight:500;">' +
+      '<span>' + icon + '</span> <span>' + _mdEscapeContent(desc) + '</span></div>';
+    placeholders.push({ ph: ph, html: badgeHtml });
+    return ph;
+  });
+
   // ── Phase 1: extract images & links ──
   // Images: ![alt](url) — only matches outside code placeholders
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function (match, alt, url) {

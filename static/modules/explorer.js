@@ -321,6 +321,27 @@ async function createNewDirPrompt() {
 let trayImageUrls = [];
 
 function formatUserMessageContent(content, sessionId) {
+  let hasBrowserContext = false;
+  if (content && typeof content === 'string') {
+    if (content.includes('[사용자 요청]')) {
+      hasBrowserContext = true;
+      const parts = content.split('[사용자 요청]');
+      let userText = parts[1].trim();
+      if (userText.includes('[브라우저 제어')) {
+        userText = userText.split('[브라우저 제어')[0].trim();
+      }
+      if (userText.includes('(참고: 브라우저 조작')) {
+        userText = userText.split('(참고: 브라우저 조작')[0].trim();
+      }
+      content = userText;
+    } else if (content.startsWith('[실시간 브라우저 환경 컨텍스트') || content.startsWith('[현재 웹 브라우저')) {
+      hasBrowserContext = true;
+      const lines = content.split('\n');
+      const userLines = lines.filter(l => !l.startsWith('[실시간') && !l.startsWith('■') && !l.startsWith('- [탭') && !l.startsWith('"""'));
+      content = userLines.join('\n').trim() || content;
+    }
+  }
+
   let escaped = esc(content);
   // 한/영 첨부 파일 마커 모두 매칭: "[첨부 파일: a.png, b.jpg]" 또는 "[Attached files: ...]"
   const regex = /\[(?:첨부 파일|Attached files):\s*([^\]]+)\]/;
@@ -378,7 +399,8 @@ function formatUserMessageContent(content, sessionId) {
     return prefix + '<a href="' + cleanHref + '" target="_blank" rel="noopener noreferrer" class="md-link">' + url + '</a>' + suffix;
   });
 
-  return (text + imagesHtml).replace(/\n/g, '<br>');
+  const badgeHtml = hasBrowserContext ? '<div class="browser-ctx-pill" style="display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:2px 8px; background:rgba(6, 182, 212, 0.12); color:#06b6d4; border:1px solid rgba(6, 182, 212, 0.25); border-radius:9999px; margin-bottom:6px; font-weight:600;">🌐 브라우저 탭 연동됨</div><br/>' : '';
+  return badgeHtml + (text + imagesHtml).replace(/\n/g, '<br>');
 }
 async function selectWorkspacePathNative() {
   openWebExplorer({
