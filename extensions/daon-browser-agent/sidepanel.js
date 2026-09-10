@@ -18,6 +18,10 @@ let lastUserPrompt = '';
 let currentActiveBubble = null;
 let lastActionResults = [];
 let currentApprovalPollTimer = null;
+let currentGoal = null;
+let currentAutonomousStep = 0;
+const MAX_AUTONOMOUS_STEPS = 6;
+let isAutoLooping = false;
 
 // DOM Elements
 const connectionBadge = document.getElementById('connectionBadge');
@@ -210,6 +214,9 @@ function renderRestoredMessages(messages) {
     let content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
     // 시스템 안내 프롬프트 및 컨텍스트 제거하여 사용자 순수 메시지만 복원
     if (role === 'user') {
+      if (content.includes('[연속 자율 실행 모드') || content.includes('연속 자율 진행 피드백')) {
+        continue;
+      }
       if (content.includes('[사용자 요청]')) {
         const parts = content.split('[사용자 요청]');
         content = parts[1].trim();
@@ -412,22 +419,57 @@ function normalizeUrl(rawUrl) {
   return `https://www.google.com/search?q=${encodeURIComponent(url)}`;
 }
 
+function waitForTabLoad(tabId, timeoutMs = 6000) {
+  if (!tabId) return Promise.resolve();
+  return new Promise((resolve) => {
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        try { chrome.tabs.onUpdated.removeListener(onUpdate); } catch (_) {}
+        resolve();
+      }
+    }, timeoutMs);
+
+    function onUpdate(updatedId, info) {
+      if (updatedId === tabId && info.status === 'complete') {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          try { chrome.tabs.onUpdated.removeListener(onUpdate); } catch (_) {}
+          setTimeout(resolve, 800);
+        }
+      }
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdate);
+  });
+}
+
 async function handleNavigate(url) {
   const targetUrl = normalizeUrl(url);
   await updateActiveTabAndTabs();
-  if (activeTab && activeTab.id) {
-    await chrome.tabs.update(activeTab.id, { url: targetUrl, active: true });
+  let targetTabId = activeTab ? activeTab.id : null;
+  if (targetTabId) {
+    await chrome.tabs.update(targetTabId, { url: targetUrl, active: true });
+    await waitForTabLoad(targetTabId, 6000);
   } else {
-    await chrome.tabs.create({ url: targetUrl, active: true });
+    const tab = await chrome.tabs.create({ url: targetUrl, active: true });
+    targetTabId = tab.id;
+    await waitForTabLoad(targetTabId, 6000);
   }
+  await updateActiveTabAndTabs();
   return { ok: true, url: targetUrl };
 }
 
 async function handleNewTab(url) {
   const targetUrl = url ? normalizeUrl(url) : 'chrome://newtab/';
   const newTab = await chrome.tabs.create({ url: targetUrl, active: true });
+  if (newTab && newTab.id && !targetUrl.startsWith('chrome://')) {
+    await waitForTabLoad(newTab.id, 6000);
+  }
   await updateActiveTabAndTabs();
-  return { ok: true, url: targetUrl, tabId: newTab.id };
+  return { ok: true, url: targetUrl, tabId: newTab ? newTab.id : null };
 }
 
 async function handleSwitchTab(identifier) {
@@ -509,6 +551,10 @@ async function executeBrowserAction(action, payload) {
 
 // ── 6. 메시지 전송 & 실시간 자동 컨텍스트 결합 ──────────────────────────────
 async function stopGeneration(isNewPrompt = false) {
+  isAutoLooping = false;
+  currentAutonomousStep = 0;
+  currentGoal = null;
+
   if (currentEventSource) {
     try {
       currentEventSource.close();
@@ -539,33 +585,51 @@ async function stopGeneration(isNewPrompt = false) {
   sendBtn.disabled = false;
 }
 
-async function sendMessage(customText = null) {
-  const text = (customText !== null ? customText : userInput.value).trim();
-  if (!text) {
-    // 텍스트 없이 버튼 클릭 시 현재 생성 중이면 즉시 중단
-    if (isGenerating) {
-      await stopGeneration(false);
+async function sendMessage(customText = null, isAutoFollowup = false) {
+  let text = '';
+  if (!isAutoFollowup) {
+    text = (customText !== null ? customText : userInput.value).trim();
+    if (!text) {
+      // 텍스트 없이 버튼 클릭 시 현재 생성 중이면 즉시 중단
+      if (isGenerating) {
+        await stopGeneration(false);
+      }
+      return;
     }
-    return;
+    // 새 사용자 요청 시작
+    currentGoal = text;
+    currentAutonomousStep = 1;
+    isAutoLooping = true;
+    lastUserPrompt = text;
+  } else {
+    // 자동 후속 턴
+    text = currentGoal || lastUserPrompt || '이전 작업 연속 수행';
   }
 
   // ⚡ [진행 중인 작업 자동 중지 및 새 메시지 즉시 전송]
-  if (isGenerating) {
+  if (isGenerating && !isAutoFollowup) {
     console.log('[DAON Agent] ⚡ 작업 진행 중 새 지시 수신 — 이전 작업 중지 및 새 메시지 즉시 전송');
     await stopGeneration(true);
   }
-
-  lastUserPrompt = text;
 
   if (welcomeCard && welcomeCard.parentNode) {
     welcomeCard.remove();
   }
 
-  // 사용자 말풍선 추가 (화면에는 사용자의 실제 질문만 표시)
-  appendMessage('user', text);
-  if (customText === null) {
-    userInput.value = '';
-    adjustTextareaHeight();
+  if (!isAutoFollowup) {
+    // 사용자 말풍선 추가 (화면에는 사용자의 실제 질문만 표시)
+    appendMessage('user', text);
+    if (customText === null) {
+      userInput.value = '';
+      adjustTextareaHeight();
+    }
+  } else {
+    // 연속 자율 진행 단계 표시용 뱃지 삽입
+    const stepBadge = document.createElement('div');
+    stepBadge.className = 'auto-step-indicator';
+    stepBadge.innerHTML = `<span>🔄</span> <span>연속 작업 진행 중... (Step ${currentAutonomousStep}/${MAX_AUTONOMOUS_STEPS})</span>`;
+    chatContainer.appendChild(stepBadge);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
   }
 
   // 컨텍스트 및 시스템 프롬프트 조합
@@ -624,12 +688,27 @@ async function sendMessage(customText = null) {
    - 텍스트 입력: <daon_action action="type" target="입력창ID/셀렉터" text="입력내용" nth="1" />
    - 스크롤: <daon_action action="scroll" direction="down|up" />
    * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth="2"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.
-5. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 베네카페로 바로 들어갈게요. <daon_action action=\\"click\\" target=\\"베네 카페\\" />")`;
+5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우, 첫 번째 액션(<daon_action action="navigate" ... />)을 실행하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 단계를 이어가세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
+6. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 네이버로 이동해서 검색을 진행할게요. <daon_action action=\\"navigate\\" url=\\"https://www.naver.com\\" />")`;
 
-  if (contextHeader) {
-    fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+  if (!isAutoFollowup) {
+    if (contextHeader) {
+      fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+    } else {
+      fullPrompt = `${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+    }
   } else {
-    fullPrompt = `${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+    const followupInstruction = `[연속 자율 실행 모드 — Step ${currentAutonomousStep}/${MAX_AUTONOMOUS_STEPS}]\n` +
+      `■ 사용자의 원래 요청: "${currentGoal}"\n` +
+      `■ 직전 브라우저 액션이 실행 완료되어 화면이 갱신되었습니다.\n` +
+      `■ 지침: 위 [실시간 브라우저 환경 컨텍스트]의 최신 화면(URL, 제목, 본문, 버튼, 입력창)을 확인하세요.\n` +
+      `사용자의 원래 요청을 완수하기 위한 다음 단계 액션(<daon_action ... />)을 즉시 실행하세요. 만약 사용자의 요청(예: 검색 결과 확인/탐색 등)이 모두 완료되었다면, 추가 액션 태그 없이 사용자에게 최종 결과를 상세히 보고하세요.\n\n`;
+
+    if (contextHeader) {
+      fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n${followupInstruction}`;
+    } else {
+      fullPrompt = `${actionResultHeader}${systemGuide}\n\n${followupInstruction}`;
+    }
   }
 
   // 에이전트 대기 말풍선 생성
@@ -972,9 +1051,39 @@ async function parseAndExecuteActions(text, bubble) {
         appendActionCard(bubble, `🌐 [스마트 이동 감지] 감지된 사이트 "${detectedUrl}" 로 이동합니다...`);
         const res = await handleNavigate(detectedUrl);
         appendActionCard(bubble, res.ok ? `✅ 이동 완료: ${res.url}` : `❌ 이동 실패: ${res.error}`);
+        if (res.ok) executedAny = true;
       }
     }
   }
+
+  // ── 연속 자율 실행 피드백 루프 (Autonomous Multi-Step Loop) ──
+  if (executedAny) {
+    if (isAutoLooping && currentGoal && currentAutonomousStep < MAX_AUTONOMOUS_STEPS) {
+      currentAutonomousStep++;
+      appendActionCard(bubble, `🔄 [연속 자율 진행] 화면 갱신 후 다음 단계로 자동 연결합니다... (Step ${currentAutonomousStep}/${MAX_AUTONOMOUS_STEPS})`);
+      setTimeout(async () => {
+        if (!isAutoLooping) return;
+        await triggerAutoFollowup();
+      }, 1200);
+    } else {
+      if (currentAutonomousStep >= MAX_AUTONOMOUS_STEPS) {
+        appendActionCard(bubble, `ℹ️ 연속 자율 작업 최대 횟수(${MAX_AUTONOMOUS_STEPS}회)에 도달하여 대기합니다.`);
+      }
+      isAutoLooping = false;
+      currentAutonomousStep = 0;
+      currentGoal = null;
+    }
+  } else {
+    // 액션 태그가 없으면 작업이 완료되었거나 일반 설명 응답이므로 루프 종료
+    isAutoLooping = false;
+    currentAutonomousStep = 0;
+    currentGoal = null;
+  }
+}
+
+async function triggerAutoFollowup() {
+  if (isGenerating || !isAutoLooping) return;
+  await sendMessage(null, true);
 }
 
 // ── 8. UI 렌더링 헬퍼 ────────────────────────────────────────────────────

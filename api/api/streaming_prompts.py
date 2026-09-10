@@ -194,7 +194,8 @@ def compose_system_message(
                 "   - 검색어/텍스트 입력: <daon_action action=\"type\" target=\"입력창ID/셀렉터\" text=\"입력할내용\" nth=\"1\" />\n"
                 "   - 스크롤: <daon_action action=\"scroll\" direction=\"down\" /> 또는 direction=\"up\"\n"
                 "   * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth=\"2\"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.\n"
-                "5. [답변 스타일]: 불필요한 사족 없이, 친절하고 싹싹하며 자신감 넘치는 말투로 짧고 명쾌하게 행동하세요. (예: '네! 베네카페로 들어갈게요. <daon_action action=\"click\" target=\"베네 카페\" />')\n\n"
+                "5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: '네이버로 이동해서 AI뉴스 검색해봐')로 구성된 경우, 첫 번째 액션(<daon_action action=\"navigate\" ... />)을 응답하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 진행하세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.\n"
+                "6. [답변 스타일]: 불필요한 사족 없이, 친절하고 싹싹하며 자신감 넘치는 말투로 짧고 명쾌하게 행동하세요. (예: '네! 네이버로 이동해서 AI뉴스를 검색할게요. <daon_action action=\"navigate\" url=\"https://www.naver.com\" />')\n\n"
             ) if browser_context else (
                 "[BUILT-IN BROWSER]\n"
                 "This app has a built-in shared browser: an in-app tab driven over CDP that the user can see.\n"

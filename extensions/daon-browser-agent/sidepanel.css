@@ -675,6 +675,21 @@ textarea#userInput::placeholder {
 }
 
 /* ── Inline Approval Card (위험 명령 및 도구 실행 승인 요청) ── */
+.auto-step-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px auto;
+  padding: 4px 14px;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px dashed rgba(99, 102, 241, 0.4);
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  color: #c7d2fe;
+  width: fit-content;
+  animation: fadeIn 0.2s ease-out;
+}
+
 .inline-approval-card {
   margin: 10px 0;
   background: rgba(15, 23, 42, 0.95);

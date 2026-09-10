@@ -1270,7 +1270,9 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
 
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
           display_user_msg = msg_text
-          if "[사용자 요청]" in msg_text:
+          if "[연속 자율 실행 모드" in msg_text:
+              display_user_msg = "🔄 [연속 자율 진행 피드백]"
+          elif "[사용자 요청]" in msg_text:
               parts = msg_text.split("[사용자 요청]", 1)
               display_user_msg = parts[1].strip()
               if "[브라우저 제어" in display_user_msg:
