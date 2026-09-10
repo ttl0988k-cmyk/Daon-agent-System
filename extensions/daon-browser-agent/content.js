@@ -377,13 +377,16 @@
     if (typeof targetEl.focus === 'function') targetEl.focus();
     if (typeof element.focus === 'function') element.focus();
 
-    // 2. Selection 초기화
+    // 2. Selection 초기화: 오직 해당 입력창/에디터 내부만 안전하게 잡도록 Range 설정 (전체 페이지 선택 방지)
     if (typeof element.select === 'function') {
       try { element.select(); } catch (e) {}
     } else if (isEditable) {
       try {
-        // ProseMirror/브라우저가 에디터 내부 올바른 블록에 Selection을 맺도록 selectAll 호출
-        document.execCommand('selectAll', false, null);
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(targetEl || element);
+        sel.removeAllRanges();
+        sel.addRange(range);
       } catch (e) {}
     }
 
@@ -458,7 +461,11 @@
         let inserted = false;
         try {
           if (typeof element.focus === 'function') element.focus();
-          document.execCommand('selectAll', false, null);
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(targetEl || element);
+          sel.removeAllRanges();
+          sel.addRange(range);
           inserted = document.execCommand('insertText', false, text);
         } catch (e) {
           inserted = false;
