@@ -673,3 +673,123 @@ textarea#userInput::placeholder {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Inline Approval Card (위험 명령 및 도구 실행 승인 요청) ── */
+.inline-approval-card {
+  margin: 10px 0;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.15);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.inline-approval-card.resolved {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(6, 78, 59, 0.2);
+  box-shadow: none;
+}
+
+.inline-approval-card.rejected {
+  border-color: rgba(244, 63, 94, 0.4);
+  background: rgba(136, 19, 55, 0.2);
+  box-shadow: none;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.approval-icon {
+  font-size: 16px;
+}
+
+.approval-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #fbbf24;
+}
+
+.inline-approval-card.resolved .approval-title {
+  color: #34d399;
+}
+
+.inline-approval-card.rejected .approval-title {
+  color: #f87171;
+}
+
+.approval-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.approval-command {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: #a5f3fc;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn-approval {
+  flex: 1;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-approval.approve {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+}
+
+.btn-approval.approve:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.4);
+}
+
+.btn-approval.reject {
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: #fda4af;
+}
+
+.btn-approval.reject:hover {
+  background: rgba(244, 63, 94, 0.25);
+  color: #fff;
+}
+
+.btn-approval:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+

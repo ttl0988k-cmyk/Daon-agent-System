@@ -122,6 +122,23 @@
       }
     }
 
+    // ⚠️ 2026-09-10 패치: type 속성이 아예 없는 input은 input[type=text] 셀렉터에 매칭되지 않음
+    // (HTML 기본값이 text여도 DOM에 속성이 없으면 안 잡힘 — 네이버 검색창 사례)
+    // → 쿼리에 input이 포함되어 있고 매칭 실패 시 visible 텍스트 입력창 폴백 탐색
+    if (matches.length === 0 && /\binput\b/i.test(query)) {
+      for (const doc of docs) {
+        const inputs = Array.from(doc.querySelectorAll(
+          'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="image"]), textarea'
+        ));
+        for (const el of inputs) {
+          if (el.offsetParent !== null || el.offsetHeight > 0) {
+            if (!matches.includes(el)) matches.push(el);
+          }
+        }
+      }
+    }
+
+
     if (matches.length === 0) return null;
     return matches[nth - 1] || matches[0];
   }
@@ -142,10 +159,19 @@
       element.value = text;
     }
 
-    // 표준 이벤트 시퀀스 발생
+    // 표준 이벤트 시퀀스 발생 (keydown→input→change→keyup, React/Vue 모두 커버)
+    element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }));
     element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter' }));
+
+    // Enter 키 의미(=제출)는 form.requestSubmit 폴백으로 확정 (네이버 등 keydown submit 사이트 대응)
+    try {
+      const form = element.closest('form');
+      if (form && typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      }
+    } catch (e) { /* form 없으면 무시 */ }
 
     return element.value === text;
   }

@@ -17,6 +17,7 @@ let selectedModel = null;
 let lastUserPrompt = '';
 let currentActiveBubble = null;
 let lastActionResults = [];
+let currentApprovalPollTimer = null;
 
 // DOM Elements
 const connectionBadge = document.getElementById('connectionBadge');
@@ -53,12 +54,16 @@ async function init() {
   await loadSession();
   await updateActiveTabAndTabs();
   await checkServerHealth();
+  await checkPendingApproval(chatContainer);
 
-  // 10초마다 서버 헬스체크 및 탭 상태 최신화
+  // 10초마다 서버 헬스체크 및 탭 상태 최신화, 대기 중인 승인 요청 확인
   setInterval(async () => {
     await checkServerHealth();
     await updateActiveTabAndTabs();
-  }, 10000);
+    if (!isGenerating) {
+      await checkPendingApproval(chatContainer);
+    }
+  }, 5000);
 }
 
 async function loadAutoContextSetting() {
@@ -604,7 +609,7 @@ async function sendMessage(customText = null) {
   const systemGuide = `[구글 크롬 사이드패널 브라우저 조작 지침 — 필수 원칙]
 1. [실시간 화면 직접 인지]: 당신은 현재 사용자의 실제 구글 크롬 브라우저를 실시간으로 직접 보고 있습니다! 위 [실시간 브라우저 환경 컨텍스트]에 현재 열린 탭 목록과 활성 탭(iframe 내부 포함)의 본문 텍스트, 제목, 버튼, 링크, 입력창 정보가 매 턴마다 최신 상태로 제공됩니다.
 2. [직전 액션 결과 자동 인지]: 당신이 실행한 조작의 성공/실패 결과는 위 [직전 브라우저 액션 실행 결과]로 즉시 보고됩니다. 따라서 조작 후 사용자에게 "확인해주세요"라고 되묻지 마세요!
-3. [내부 도구(browser_*) 호출 금지]: 데스크톱용 내부 브라우저 도구(browser_click, browser_navigate 등)는 작동하지 않으므로 절대 호출하지 마세요.
+3. [브라우저 전용 액션 태그 사용 필수]: 데스크톱용 내부 브라우저 도구(browser_*)나 터미널/파이썬 스크립트 도구를 쓰지 마세요. 웹페이지 조작 및 입력은 오직 아래의 XML 액션 태그(<daon_action ... />)를 사용해야 실제 브라우저에서 즉각 실행됩니다.
 4. [실시간 조작 액션 태그]: 브라우저 조작이 필요할 때는 반드시 아래의 XML 액션 태그를 응답에 포함하세요. 크롬 확장 프로그램이 실제 브라우저에서 즉시 실행합니다:
    - 버튼/카드/링크 클릭: <daon_action action="click" target="버튼텍스트 또는 CSS셀렉터" nth="1" />
    - 마우스 호버(드롭다운/메뉴 열기): <daon_action action="hover" target="메뉴텍스트 또는 셀렉터" nth="1" />
@@ -747,6 +752,27 @@ function listenToStream(streamId, bubble) {
     } catch (err) {}
   });
 
+  // ── 승인 요청 (Approval) 이벤트 리스너 ──
+  currentEventSource.addEventListener('approval', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      renderApprovalCard(data, bubble);
+    } catch (err) {
+      console.warn('approval parse failed:', err);
+    }
+  });
+
+  // 생성 중 1.5초 간격으로 백엔드 승인 대기 상태 폴링 (SSE 누락 대비)
+  if (currentApprovalPollTimer) clearInterval(currentApprovalPollTimer);
+  currentApprovalPollTimer = setInterval(async () => {
+    if (!isGenerating) {
+      clearInterval(currentApprovalPollTimer);
+      currentApprovalPollTimer = null;
+      return;
+    }
+    await checkPendingApproval(bubble);
+  }, 1500);
+
   currentEventSource.addEventListener('done', async (e) => {
     const hint = bubble.querySelector('.reasoning-hint');
     if (hint) hint.remove();
@@ -776,6 +802,10 @@ function listenToStream(streamId, bubble) {
 }
 
 function finishGeneration() {
+  if (currentApprovalPollTimer) {
+    clearInterval(currentApprovalPollTimer);
+    currentApprovalPollTimer = null;
+  }
   if (currentEventSource) {
     try {
       currentEventSource.close();
@@ -797,28 +827,26 @@ async function parseAndExecuteActions(text, bubble) {
   while ((match = regex.exec(text)) !== null) {
     executedAny = true;
     const attrStr = match[1];
-    const actionMatch = attrStr.match(/action=["']([^"']+)["']/i);
-    const targetMatch = attrStr.match(/target=["']([^"']+)["']/i);
-    const urlMatch = attrStr.match(/url=["']([^"']+)["']/i);
-    const tabIdMatch = attrStr.match(/tab_id=["']([^"']+)["']/i);
-    const textMatch = attrStr.match(/text=["']([^"']+)["']/i);
-    const dirMatch = attrStr.match(/direction=["']([^"']+)["']/i);
+    // ⚠️ 2026-09-10 패치: 속성값에 반대 따옴표가 포함된 CSS 셀렉터(input[placeholder*='x'] 등)를
+    // 온전히 파싱하도록 개선. 기존 [^"']+ 패턴은 값 내부의 반대 따옴표에서 조기 종료되어
+    // target이 잘렸음 (예: "input[placeholder*=" 까지만 인식 → 입력 실패).
+    const getAttr = (name) => {
+      const dq = attrStr.match(new RegExp(`\\b${name}="([^"]*)"`, 'i'));
+      if (dq) return dq[1];
+      const sq = attrStr.match(new RegExp(`\\b${name}='([^']*)'`, 'i'));
+      return sq ? sq[1] : null;
+    };
 
-    const action = actionMatch ? actionMatch[1].toLowerCase() : null;
-    const target = targetMatch ? targetMatch[1] : null;
-    const urlVal = urlMatch ? urlMatch[1] : null;
-    const tabIdVal = tabIdMatch ? tabIdMatch[1] : null;
-    const inputVal = textMatch ? textMatch[1] : '';
-    const dir = dirMatch ? dirMatch[1] : 'down';
+    const action = (getAttr('action') || '').toLowerCase();
+    const target = getAttr('target');
+    const urlVal = getAttr('url');
+    const tabIdVal = getAttr('tab_id');
+    const inputVal = getAttr('text') || '';
+    const dir = getAttr('direction') || 'down';
 
-    const nthMatch = attrStr.match(/nth=["']?(\d+)["']?/i);
-    const nth = nthMatch ? parseInt(nthMatch[1]) : 1;
-
-    const keyMatch = attrStr.match(/key=["']([^"']+)["']/i);
-    const keyVal = keyMatch ? keyMatch[1] : 'Enter';
-
-    const msMatch = attrStr.match(/ms=["']?(\d+)["']?/i);
-    const waitMs = msMatch ? parseInt(msMatch[1]) : 1000;
+    const nth = parseInt(getAttr('nth') || '1', 10) || 1;
+    const keyVal = getAttr('key') || 'Enter';
+    const waitMs = parseInt(getAttr('ms') || '1000', 10) || 1000;
 
     // 1. 사이트 이동 (navigate / goto / open_url)
     if ((action === 'navigate' || action === 'goto' || action === 'open_url') && (urlVal || target)) {
@@ -1123,6 +1151,182 @@ function setupEventListeners() {
       }
     });
   }
+}
+
+// ── 9. 승인 (Approval) 요청 확인 및 인터랙티브 카드 렌더링 ──────────────────
+async function checkPendingApproval(container) {
+  if (!currentSessionId) return;
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/approval/pending?session_id=${encodeURIComponent(currentSessionId)}`);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json && json.has_pending && json.pending) {
+      renderApprovalCard(json.pending, container || currentActiveBubble || chatContainer);
+    }
+  } catch (e) {
+    // 무소음 통과
+  }
+}
+
+function renderApprovalCard(data, container) {
+  if (!data) return;
+  const targetContainer = container || currentActiveBubble || chatContainer;
+  if (!targetContainer) return;
+
+  const existingCard = document.getElementById('daonInlineApprovalCard');
+
+  // 백엔드에서 45초 무응답 자동 승인된 경우 카드 갱신
+  if (data.status === 'auto_approved') {
+    if (existingCard) {
+      existingCard.className = 'inline-approval-card resolved';
+      existingCard.innerHTML = `
+        <div class="approval-header">
+          <span class="approval-icon">✅</span>
+          <span class="approval-title">자동 승인됨</span>
+        </div>
+        <div class="approval-body" style="color:var(--accent-emerald);">
+          ${escapeHtml(data.message || '45초 무응답으로 자동 승인되어 작업을 계속 진행합니다.')}
+        </div>
+      `;
+      setTimeout(() => existingCard.remove(), 5000);
+    }
+    return;
+  }
+
+  // 이미 카드가 렌더링되어 있으면 중복 렌더링 방지
+  if (existingCard) return;
+
+  const isDangerous = data.type === 'dangerous_command' || !!data.command;
+  const cmd = data.command || '';
+  const desc = data.description || data.message || (isDangerous ? '명령 실행을 허용할까요?' : '작업 실행 승인이 필요합니다.');
+  const previewId = data.preview_id || '';
+
+  const card = document.createElement('div');
+  card.className = 'inline-approval-card';
+  card.id = 'daonInlineApprovalCard';
+
+  let bodyHtml = `<div class="approval-body">${escapeHtml(desc)}</div>`;
+  if (cmd) {
+    bodyHtml += `<pre class="approval-command"><code>${escapeHtml(cmd)}</code></pre>`;
+  }
+
+  card.innerHTML = `
+    <div class="approval-header">
+      <span class="approval-icon">⚠️</span>
+      <span class="approval-title">도구 실행 승인 요청</span>
+    </div>
+    ${bodyHtml}
+    <div class="approval-actions">
+      <button class="btn-approval approve" id="btnApproveAction">
+        <span>승인 (계속 진행)</span>
+      </button>
+      <button class="btn-approval reject" id="btnRejectAction">
+        <span>거부</span>
+      </button>
+    </div>
+  `;
+
+  const btnApprove = card.querySelector('#btnApproveAction');
+  const btnReject = card.querySelector('#btnRejectAction');
+
+  btnApprove.addEventListener('click', async () => {
+    btnApprove.disabled = true;
+    btnReject.disabled = true;
+    btnApprove.textContent = '승인 처리 중...';
+    try {
+      if (isDangerous) {
+        await fetch(`${SERVER_BASE}/api/approval/respond`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            choice: 'once'
+          })
+        });
+      } else {
+        await fetch(`${SERVER_BASE}/api/approval/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            preview_id: previewId
+          })
+        });
+      }
+      card.className = 'inline-approval-card resolved';
+      card.innerHTML = `
+        <div class="approval-header">
+          <span class="approval-icon">✅</span>
+          <span class="approval-title">승인 완료</span>
+        </div>
+        <div class="approval-body" style="color:var(--accent-emerald);">
+          승인이 완료되었습니다. 에이전트가 다음 작업을 계속 진행합니다.
+        </div>
+      `;
+      setTimeout(() => card.remove(), 6000);
+    } catch (err) {
+      console.error('승인 처리 실패:', err);
+      btnApprove.disabled = false;
+      btnReject.disabled = false;
+      btnApprove.textContent = '다시 승인 시도';
+    }
+  });
+
+  btnReject.addEventListener('click', async () => {
+    btnApprove.disabled = true;
+    btnReject.disabled = true;
+    btnReject.textContent = '거부 처리 중...';
+    try {
+      if (isDangerous) {
+        await fetch(`${SERVER_BASE}/api/approval/respond`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            choice: 'deny'
+          })
+        });
+      } else {
+        await fetch(`${SERVER_BASE}/api/approval/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            preview_id: previewId
+          })
+        });
+      }
+      card.className = 'inline-approval-card rejected';
+      card.innerHTML = `
+        <div class="approval-header">
+          <span class="approval-icon">❌</span>
+          <span class="approval-title">작업 거부됨</span>
+        </div>
+        <div class="approval-body" style="color:var(--accent-rose);">
+          도구 실행을 거부했습니다. 에이전트가 이를 인지하고 대안을 찾습니다.
+        </div>
+      `;
+      setTimeout(() => card.remove(), 4000);
+    } catch (err) {
+      console.error('거부 처리 실패:', err);
+      btnApprove.disabled = false;
+      btnReject.disabled = false;
+      btnReject.textContent = '다시 거부 시도';
+    }
+  });
+
+  targetContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 // 실행
