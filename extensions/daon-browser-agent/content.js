@@ -48,6 +48,25 @@
     }
   }
 
+  // ── 요소 가시성(Visibility) 정밀 판별 ──────────────────────────────────────
+  // 네이버 GNB 등 숨겨진 인풋(#gnb_svc_search_input) 오인 타겟팅 방어
+  function isElementVisible(el) {
+    if (!el) return false;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return true;
+      }
+      return el.getClientRects().length > 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ── 검색 가능한 도큐먼트 수집 (메인 프레임 + 동일 출처 iframe/프레임 탐색) ────
   function getSearchableDocuments() {
     const docs = [document];
@@ -67,112 +86,227 @@
     return docs;
   }
 
-  // ── 요소 탐색 헬퍼 (CSS 셀렉터 + 시맨틱 텍스트 매칭 + nth 다중 일치 지원) ──
-  function findElement(query, nth = 1) {
+  // ── 요소 탐색 헬퍼 (CSS 셀렉터 + 시맨틱 검색창/버튼 확장 + 가시성 우선 정렬) ──
+  function findElement(query, nth = 1, options = {}) {
     if (!query) return null;
-    query = query.trim();
+    query = String(query).trim();
     nth = Math.max(1, parseInt(nth) || 1);
+    const { isInput = false, isClick = false } = options;
 
     const docs = getSearchableDocuments();
     const matches = [];
 
-    for (const doc of docs) {
-      // 1. 직접 CSS 셀렉터 시도
-      try {
-        const els = Array.from(doc.querySelectorAll(query));
-        for (const el of els) {
-          if (!matches.includes(el)) matches.push(el);
+    function addMatch(el) {
+      if (el && !matches.includes(el)) {
+        matches.push(el);
+      }
+    }
+
+    const lowerQuery = query.toLowerCase();
+
+    // 0. 시맨틱 검색 의도 감지 ('검색', '검색창', 'search', 'query', 'input[type=text]' 등)
+    const isSearchIntent = /검색|search|query|nx_query/i.test(query);
+    const isGenericInputIntent = /^input(\[type=['"]?text['"]?\])?$/i.test(query.replace(/\s+/g, ''));
+
+    // 0-A. 입력 필드 탐색 시(isInput = true) 검색창 및 텍스트 인풋 우선 탐색
+    if (isInput && (isSearchIntent || isGenericInputIntent)) {
+      const searchInputSelectors = [
+        '#query',                      // 네이버 메인 검색창
+        '#nx_query',                   // 네이버 통합검색 결과창
+        'input[name="query"]',         // 네이버/다음 검색창
+        'input[name="q"]',             // 구글/유튜브/깃허브 검색창
+        'textarea[name="q"]',          // 최신 구글 검색창 (textarea)
+        'input[type="search"]',        // HTML5 표준 검색창
+        'input.search_input',          // 네이버 검색창 클래스
+        'input[placeholder*="검색" i]', // 네이버 '검색어를 입력해 주세요.'
+        'input[title*="검색" i]',       // 네이버 '검색어 입력'
+        'input[aria-label*="검색" i]',
+        'input[placeholder*="Search" i]',
+        'input[aria-label*="Search" i]',
+        'input[type="text"]',
+        'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+        'textarea'
+      ];
+
+      for (const doc of docs) {
+        for (const sel of searchInputSelectors) {
+          try {
+            const els = Array.from(doc.querySelectorAll(sel));
+            for (const el of els) {
+              // ⚠️ 화면에 실제로 보이는 활성 입력창만 추가 (숨겨진 GNB 검색창 원천 배제)
+              if (isElementVisible(el) && !el.disabled) {
+                addMatch(el);
+              }
+            }
+          } catch (e) {}
         }
+      }
+
+      if (matches.length > 0) {
+        return matches[nth - 1] || matches[0];
+      }
+    }
+
+    // 0-B. 클릭 액션 시(isClick = true) '검색'/'search' 관련 버튼 우선 탐색
+    if (isClick && isSearchIntent) {
+      const searchButtonSelectors = [
+        '#search-btn',                   // 네이버 검색 버튼
+        'button.btn_search',             // 네이버/다음 검색 버튼 클래스
+        'button[type="submit"]',         // 폼 제출 검색 버튼
+        'input[type="submit"]',          // 구형 폼 제출 버튼
+        'button[aria-label*="검색" i]',
+        'button[title*="검색" i]',
+        'button[aria-label*="Search" i]',
+        'button[title*="Search" i]',
+        '[role="button"][aria-label*="검색" i]'
+      ];
+
+      for (const doc of docs) {
+        for (const sel of searchButtonSelectors) {
+          try {
+            const els = Array.from(doc.querySelectorAll(sel));
+            for (const el of els) {
+              if (isElementVisible(el) && !el.disabled) {
+                addMatch(el);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (matches.length > 0) {
+        return matches[nth - 1] || matches[0];
+      }
+    }
+
+    // 1. 직접 CSS 셀렉터 시도 (input[type=text]인 경우 type=search 및 textarea도 함께 확장)
+    let cssSelector = query;
+    if (/input\[type=['"]?text['"]?\]/i.test(query)) {
+      cssSelector = 'input[type="text"], input[type="search"], input:not([type]), textarea';
+    }
+
+    for (const doc of docs) {
+      try {
+        const els = Array.from(doc.querySelectorAll(cssSelector));
+        for (const el of els) addMatch(el);
       } catch (e) {
-        // 잘못된 셀렉터 구문이면 텍스트 탐색으로 폴백
+        // 유효하지 않은 CSS 셀렉터 구문이면 후속 탐색으로 진행
       }
+    }
 
-      // 2. ID 또는 Name 시도
-      const elId = doc.getElementById(query);
-      if (elId && !matches.includes(elId)) matches.push(elId);
+    // 2. ID 시도 (# 접두사 유무 모두 허용)
+    const cleanId = query.startsWith('#') ? query.slice(1) : query;
+    for (const doc of docs) {
+      const elId = doc.getElementById(cleanId);
+      if (elId) addMatch(elId);
+    }
 
-      const elNames = Array.from(doc.querySelectorAll(`[name="${query}"]`));
-      for (const el of elNames) {
-        if (!matches.includes(el)) matches.push(el);
-      }
+    // 3. Name 속성 시도
+    for (const doc of docs) {
+      try {
+        const elNames = Array.from(doc.querySelectorAll(`[name="${cleanId}"]`));
+        for (const el of elNames) addMatch(el);
+      } catch (e) {}
+    }
 
-      // 3. Placeholder, Aria-Label, Title 시도
-      const attrEls = Array.from(doc.querySelectorAll(
-        `[placeholder*="${query}" i], [aria-label*="${query}" i], [title*="${query}" i]`
-      ));
-      for (const el of attrEls) {
-        if (!matches.includes(el)) matches.push(el);
-      }
+    // 4. Placeholder, Aria-Label, Title 매칭 (부분 일치)
+    for (const doc of docs) {
+      try {
+        const attrEls = Array.from(doc.querySelectorAll(
+          `[placeholder*="${query}" i], [aria-label*="${query}" i], [title*="${query}" i]`
+        ));
+        for (const el of attrEls) addMatch(el);
+      } catch (e) {}
+    }
 
-      // 4. 버튼/링크 텍스트 내용으로 탐색
+    // 5. 버튼/링크 텍스트 내용으로 탐색
+    for (const doc of docs) {
       const candidates = Array.from(doc.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]'));
       for (const c of candidates) {
         const text = (c.innerText || c.textContent || c.value || '').trim();
-        if (text.toLowerCase().includes(query.toLowerCase())) {
-          if (!matches.includes(c)) matches.push(c);
-        }
-      }
-
-      // 5. 일반 텍스트 매칭
-      const allTextEls = Array.from(doc.querySelectorAll('span, div, p, label, li, td, th, h1, h2, h3, h4, em, strong'));
-      for (const c of allTextEls) {
-        if (c.children.length === 0 && (c.textContent || '').trim().toLowerCase().includes(query.toLowerCase())) {
-          if (!matches.includes(c)) matches.push(c);
+        if (text.toLowerCase().includes(lowerQuery)) {
+          addMatch(c);
         }
       }
     }
 
-    // ⚠️ 2026-09-10 패치: type 속성이 아예 없는 input은 input[type=text] 셀렉터에 매칭되지 않음
-    // (HTML 기본값이 text여도 DOM에 속성이 없으면 안 잡힘 — 네이버 검색창 사례)
-    // → 쿼리에 input이 포함되어 있고 매칭 실패 시 visible 텍스트 입력창 폴백 탐색
-    if (matches.length === 0 && /\binput\b/i.test(query)) {
+    // 6. 일반 텍스트 매칭 (단말 노드 위주)
+    for (const doc of docs) {
+      const allTextEls = Array.from(doc.querySelectorAll('span, div, p, label, li, td, th, h1, h2, h3, h4, em, strong'));
+      for (const c of allTextEls) {
+        if (c.children.length === 0 && (c.textContent || '').trim().toLowerCase().includes(lowerQuery)) {
+          addMatch(c);
+        }
+      }
+    }
+
+    // 7. 일반 input/textarea 폴백
+    if (matches.length === 0 && (isInput || /\binput\b/i.test(query))) {
       for (const doc of docs) {
         const inputs = Array.from(doc.querySelectorAll(
           'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="image"]), textarea'
         ));
         for (const el of inputs) {
-          if (el.offsetParent !== null || el.offsetHeight > 0) {
-            if (!matches.includes(el)) matches.push(el);
+          if (isElementVisible(el)) {
+            addMatch(el);
           }
         }
       }
     }
 
-
     if (matches.length === 0) return null;
+
+    // ⚠️ 핵심: 가시성(visible) 요소를 최우선으로 정렬
+    // 숨겨진 GNB 검색창(#gnb_svc_search_input 등)보다 실제 화면의 검색창이 항상 먼저 선택됨
+    if (matches.length > 1) {
+      const visibleMatches = matches.filter(el => isElementVisible(el));
+      if (visibleMatches.length > 0) {
+        return visibleMatches[nth - 1] || visibleMatches[0];
+      }
+    }
+
     return matches[nth - 1] || matches[0];
   }
 
-  // ── React/Vue 호환 타이핑 (Synthetic Event Dispatcher) ─────────────────────
+  // ── 브라우저 네이티브 + React/Vue 호환 타이핑 ───────────────────────────
   function simulateTyping(element, text) {
+    if (!element) return false;
     element.focus();
 
-    // React/Vue 내부 상태 갱신을 위해 prototype setter 우회
-    const proto = Object.getPrototypeOf(element);
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
-                   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set ||
-                   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-
-    if (setter) {
-      setter.call(element, text);
-    } else {
-      element.value = text;
+    if (typeof element.select === 'function') {
+      try { element.select(); } catch (e) {}
     }
 
-    // 표준 이벤트 시퀀스 발생 (keydown→input→change→keyup, React/Vue 모두 커버)
-    element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }));
-    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-    element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter' }));
-
-    // Enter 키 의미(=제출)는 form.requestSubmit 폴백으로 확정 (네이버 등 keydown submit 사이트 대응)
+    // 1차 시도: 브라우저 네이티브 execCommand('insertText')
+    // Chrome 확장 환경에서 실제 사용자 타이핑과 동일하게 동작하여
+    // beforeinput, input, composition 이벤트 및 프레임워크(React, Vue) 가상 DOM 상태와 완벽 동기화
+    let typedNatively = false;
     try {
-      const form = element.closest('form');
-      if (form && typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-      }
-    } catch (e) { /* form 없으면 무시 */ }
+      typedNatively = document.execCommand('insertText', false, text);
+    } catch (e) {}
 
+    // 2차 시도: execCommand 미지원 또는 값 불일치 시 프로토타입 setter 및 합성 이벤트 폴백
+    if (!typedNatively || element.value !== text) {
+      const proto = Object.getPrototypeOf(element);
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
+                     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set ||
+                     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+
+      if (setter) {
+        setter.call(element, text);
+      } else {
+        element.value = text;
+      }
+
+      try {
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+      } catch (e) {
+        element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      }
+      element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    }
+
+    // 타이핑 자체는 값 주입만 수행 (Enter 제출은 press_key 또는 submit 버튼 클릭 액션으로 분리)
     return element.value === text;
   }
 
@@ -224,25 +358,40 @@
     const target = element || document.activeElement || document.body;
     if (typeof target.focus === 'function') target.focus();
 
+    const isEnter = key.toLowerCase() === 'enter';
+    const keyCode = isEnter ? 13 : (key.toLowerCase() === 'escape' ? 27 : (key.toLowerCase() === 'tab' ? 9 : 0));
+
     const keyEvents = ['keydown', 'keypress', 'keyup'];
     keyEvents.forEach(type => {
       target.dispatchEvent(new KeyboardEvent(type, {
         key: key,
-        code: key === 'Enter' ? 'Enter' : (key === 'Escape' ? 'Escape' : (key === 'Tab' ? 'Tab' : key)),
+        code: isEnter ? 'Enter' : (key === 'Escape' ? 'Escape' : (key === 'Tab' ? 'Tab' : key)),
+        keyCode: keyCode,
+        which: keyCode,
         bubbles: true,
         cancelable: true,
         view: window
       }));
     });
 
-    if (key.toLowerCase() === 'enter') {
+    if (isEnter) {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
         const form = target.closest('form');
         if (form) {
           try {
-            if (form.requestSubmit) form.requestSubmit();
-            else form.submit();
-          } catch (e) {}
+            if (typeof form.requestSubmit === 'function') {
+              form.requestSubmit();
+            } else if (typeof form.submit === 'function') {
+              form.submit();
+            }
+          } catch (e) {
+            const submitBtn = form.querySelector('button[type="submit"], input[type="submit"], button#search-btn, button.btn_search');
+            if (submitBtn) submitBtn.click();
+          }
+        } else {
+          // form 외부 검색 버튼 폴백
+          const searchBtn = document.querySelector('#search-btn, button[type="submit"], button.btn_search, [aria-label*="검색"]');
+          if (searchBtn && searchBtn !== target) searchBtn.click();
         }
       }
     }
@@ -274,13 +423,15 @@
         combinedText += (combinedText ? '\n\n' : '') + text;
       }
 
-      // 주요 대화형 요소 수집
+      // 주요 대화형 요소 수집 (보이는 요소 우선)
       Array.from(doc.querySelectorAll('button, [role="button"], input[type="submit"], a.btn, a[role="button"]'))
+        .filter(b => isElementVisible(b))
         .map(b => (b.innerText || b.value || b.getAttribute('aria-label') || '').trim())
         .filter(t => t.length > 0 && t.length < 30)
         .forEach(t => { if (!buttons.includes(t)) buttons.push(t); });
 
       Array.from(doc.querySelectorAll('input:not([type="hidden"]), textarea, select'))
+        .filter(i => isElementVisible(i))
         .map(i => i.placeholder || i.name || i.id || i.getAttribute('aria-label') || '')
         .filter(t => t.length > 0 && t.length < 40)
         .forEach(t => { if (!inputs.includes(t)) inputs.push(t); });
@@ -314,9 +465,7 @@
       const elements = Array.from(doc.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
       for (const el of elements) {
         if (count >= 50) break;
-        const rect = el.getBoundingClientRect();
-        const isVisible = rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
-        if (!isVisible) continue;
+        if (!isElementVisible(el)) continue;
 
         const tag = el.tagName.toLowerCase();
         const type = el.type || '';
@@ -339,28 +488,28 @@
 
   // ── 메시지 리스너 (사이드패널 ↔ 컨텐츠 스크립트) ─────────────────────────
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // ⚠️ 광고, 트래커 등 서브프레임이 메시지를 가로채서 조기 실패 응답을 보내는 현상 원천 차단
+    // 브라우저 조작 액션은 반드시 메인 프레임(window.top)에서만 단독 처리
+    if (window !== window.top) {
+      return false;
+    }
+
     try {
       switch (request.action) {
         case 'GET_PAGE_CONTEXT': {
-          if (window !== window.top) {
-            return false; // 서브프레임은 전체 페이지 컨텍스트 응답에서 제외 (메인 프레임만 응답)
-          }
           const ctx = extractPageContext();
           sendResponse({ ok: true, data: ctx });
           break;
         }
 
         case 'GET_PAGE_SNAPSHOT': {
-          if (window !== window.top) {
-            return false; // 서브프레임은 전체 스냅샷 응답에서 제외
-          }
           const snapshot = extractInteractiveSnapshot();
           sendResponse({ ok: true, data: snapshot });
           break;
         }
 
         case 'ACT_CLICK': {
-          const el = findElement(request.target || request.selector, request.nth || 1);
+          const el = findElement(request.target || request.selector, request.nth || 1, { isClick: true });
           if (!el) {
             sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector}" (nth: ${request.nth || 1})` });
             return;
@@ -376,7 +525,7 @@
         }
 
         case 'ACT_HOVER': {
-          const el = findElement(request.target || request.selector, request.nth || 1);
+          const el = findElement(request.target || request.selector, request.nth || 1, { isClick: false });
           if (!el) {
             sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector}" (nth: ${request.nth || 1})` });
             return;
@@ -393,7 +542,7 @@
 
         case 'ACT_PRESS_KEY': {
           const key = request.key || 'Enter';
-          let el = request.target ? findElement(request.target, request.nth || 1) : null;
+          let el = request.target ? findElement(request.target, request.nth || 1, { isInput: true }) : null;
           if (el) {
             showFeedback(el, `키: ${key}`);
           }
@@ -406,18 +555,19 @@
         }
 
         case 'ACT_TYPE': {
-          const el = findElement(request.target || request.selector, request.nth || 1);
+          const el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
           if (!el) {
             sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector}"` });
             return;
           }
+          const visible = isElementVisible(el);
           showFeedback(el, `입력: "${request.text}"`);
           const verified = simulateTyping(el, request.text);
           sendResponse({
             ok: true,
-            verified,
+            verified: verified && visible,
             value: el.value,
-            message: `입력 완료: "${request.text}" (검증: ${verified ? '성공' : '경고'})`
+            message: `입력 완료: "${request.text}" (${visible ? '화면 표시 정상' : '경고: 숨겨진 요소에 입력됨'})`
           });
           break;
         }

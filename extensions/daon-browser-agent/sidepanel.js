@@ -538,14 +538,24 @@ async function executeBrowserAction(action, payload) {
   if (!activeTab || !activeTab.id) return { ok: false, error: '활성 탭 없음' };
 
   try {
+    // ⚠️ frameId: 0 지정하여 서브프레임(광고/트래커 등) 배제하고 메인 프레임에만 메시지 송신
     const response = await chrome.tabs.sendMessage(activeTab.id, {
       action,
       ...payload
-    });
+    }, { frameId: 0 });
     return response;
   } catch (err) {
-    console.error('브라우저 액션 실행 오류:', err);
-    return { ok: false, error: err.message };
+    try {
+      // 구형 환경 또는 예외 시 브로드캐스트 폴백
+      const fallbackRes = await chrome.tabs.sendMessage(activeTab.id, {
+        action,
+        ...payload
+      });
+      return fallbackRes;
+    } catch (e2) {
+      console.error('브라우저 액션 실행 오류:', err);
+      return { ok: false, error: err.message };
+    }
   }
 }
 
@@ -900,7 +910,8 @@ function finishGeneration() {
 // ── 7. 에이전트 응답 내 브라우저 액션 태그 파싱 및 자동 실행 ───────────────
 async function parseAndExecuteActions(text, bubble) {
   let executedAny = false;
-  const regex = /<daon_action\s+([^>]+)\/>/gi;
+  // 슬래시 유무 유연 매칭 (<daon_action ... /> 또는 <daon_action ...>)
+  const regex = /<daon_action\s+([^>]+?)\/?>/gi;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
@@ -965,6 +976,7 @@ async function parseAndExecuteActions(text, bubble) {
       const res = await executeBrowserAction('ACT_CLICK', { target, nth });
       appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 클릭 실패: ${res.error}`);
       lastActionResults.push({ summary: `CLICK("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+      if (res.ok) await new Promise(resolve => setTimeout(resolve, 300));
     }
     // 6. 마우스 호버 (hover)
     else if (action === 'hover' && target) {
@@ -972,6 +984,7 @@ async function parseAndExecuteActions(text, bubble) {
       const res = await executeBrowserAction('ACT_HOVER', { target, nth });
       appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 호버 실패: ${res.error}`);
       lastActionResults.push({ summary: `HOVER("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+      if (res.ok) await new Promise(resolve => setTimeout(resolve, 200));
     }
     // 7. 키보드 입력 (press / key)
     else if (action === 'press' || action === 'key') {
@@ -979,6 +992,7 @@ async function parseAndExecuteActions(text, bubble) {
       const res = await executeBrowserAction('ACT_PRESS_KEY', { key: keyVal, target, nth });
       appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 키 입력 실패: ${res.error}`);
       lastActionResults.push({ summary: `PRESS_KEY("${keyVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+      if (res.ok) await new Promise(resolve => setTimeout(resolve, 400));
     }
     // 8. 텍스트 입력 (type)
     else if (action === 'type' && target) {
@@ -986,6 +1000,7 @@ async function parseAndExecuteActions(text, bubble) {
       const res = await executeBrowserAction('ACT_TYPE', { target, text: inputVal, nth });
       appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 입력 실패: ${res.error}`);
       lastActionResults.push({ summary: `TYPE("${target}", "${inputVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
+      if (res.ok) await new Promise(resolve => setTimeout(resolve, 300));
     }
     // 9. 잠시 대기 (wait)
     else if (action === 'wait') {
@@ -1120,7 +1135,7 @@ function appendActionCard(bubbleEl, text) {
 function renderMarkdown(str) {
   if (!str) return '';
   // 화면 표시 시 내부 XML 액션 태그(<daon_action ... />)는 깔끔하게 숨김 처리
-  let clean = str.replace(/<daon_action\s+[^>]*\/?>/gi, '').trim();
+  let clean = str.replace(/<daon_action\s+[^>]*\/?>/gi, '').replace(/<\/daon_action>/gi, '').trim();
   let html = clean
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -1236,7 +1251,7 @@ function setupEventListeners() {
     quickSnapshotBtn.addEventListener('click', async () => {
       if (!activeTab || !activeTab.id) return;
       try {
-        const res = await chrome.tabs.sendMessage(activeTab.id, { action: 'GET_PAGE_SNAPSHOT' });
+        const res = await chrome.tabs.sendMessage(activeTab.id, { action: 'GET_PAGE_SNAPSHOT' }, { frameId: 0 });
         if (res && res.ok && res.data) {
           const list = res.data.map(i => `[#${i.index}] <${i.tag}> "${i.text}" (셀렉터: ${i.selector})`).join('\n');
           sendMessage(`이 페이지에서 발견된 대화형 요소 목록입니다:\n${list}\n\n이 중에서 어떤 동작을 수행할 수 있는지 추천해줘.`);
