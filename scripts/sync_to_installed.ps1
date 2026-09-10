@@ -101,12 +101,17 @@ if ($Open) {
     if ($app) {
         Write-Host '실행 중인 앱 종료 중...'
         $app | Stop-Process -Force
-        Start-Sleep -Seconds 2
     }
+    $srv = Get-Process -Name 'server' -ErrorAction SilentlyContinue
+    if ($srv) {
+        Write-Host '실행 중인 server.exe 종료 중...'
+        $srv | Stop-Process -Force
+    }
+    Start-Sleep -Seconds 2
     Remove-Item env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $exe = Join-Path (Split-Path $dst) 'DAON Agent System.exe'
     Start-Process $exe -ArgumentList '--remote-debugging-port=9222'
-    Write-Host "[OK] 앱 재시작됨 (CDP 9222 활성화)" -ForegroundColor Green
+    Write-Host "[OK] 앱 및 서버 재시작됨 (CDP 9222 활성화)" -ForegroundColor Green
 }
 else {
     Write-Host '앱 재시작(또는 Ctrl+R)하면 반영됩니다. 즉시 재시작하려면: -Open 옵션'
