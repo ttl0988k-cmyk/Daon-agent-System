@@ -108,6 +108,17 @@ if ($Open) {
         $srv | Stop-Process -Force
     }
     Start-Sleep -Seconds 2
+    # Clean any orphaned _MEI* extraction folders from daon_runtime
+    $runtimeDirs = @(
+        (Join-Path (Split-Path $dst) 'daon_runtime'),
+        'C:\daon\DAON-Portable\resources\daon_runtime'
+    )
+    foreach ($rd in $runtimeDirs) {
+        if (Test-Path $rd) {
+            Get-ChildItem -Path $rd -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     Remove-Item env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $exe = Join-Path (Split-Path $dst) 'DAON Agent System.exe'
     Start-Process $exe -ArgumentList '--remote-debugging-port=9222'
