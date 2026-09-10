@@ -698,6 +698,9 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
    - 텍스트 입력: <daon_action action="type" target="입력창ID/셀렉터" text="입력내용" nth="1" />
    - 스크롤: <daon_action action="scroll" direction="down|up" />
    * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth="2"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.
+   ⚠️ [텍스트 입력 엄격 규칙 — 한 글자 쪼개기 절대 금지]:
+   - 단어, 문장, 검색어 등 모든 텍스트는 반드시 단 1개의 <daon_action action="type" target="..." text="완전한 문자열" /> 태그로 한 번에 입력하세요!
+   - 절대로 한 글자씩 확인하겠다며 <daon_action action="press" key="...">와 <daon_action action="wait">를 수십 개 쪼개서 나열하지 마세요! (press는 Enter, Tab, Escape 등 단일 특수키 입력 전용입니다.)
 5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우, 첫 번째 액션(<daon_action action="navigate" ... />)을 실행하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 단계를 이어가세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
 6. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 네이버로 이동해서 검색을 진행할게요. <daon_action action=\\"navigate\\" url=\\"https://www.naver.com\\" />")`;
 
@@ -941,77 +944,81 @@ async function parseAndExecuteActions(text, bubble) {
     // 1. 사이트 이동 (navigate / goto / open_url)
     if ((action === 'navigate' || action === 'goto' || action === 'open_url') && (urlVal || target)) {
       const toUrl = urlVal || target;
-      appendActionCard(bubble, `🌐 [사이트 이동] "${toUrl}" 로 이동 중...`);
+      const card = appendActionCard(bubble, `🌐 [사이트 이동] "${toUrl}" 로 이동 중...`);
       const res = await handleNavigate(toUrl);
-      appendActionCard(bubble, res.ok ? `✅ 이동 완료: ${res.url}` : `❌ 이동 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ 이동 완료: ${res.url}` : `❌ 이동 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `NAVIGATE("${toUrl}"): ${res.ok ? '성공' : '실패'} (${res.ok ? res.url : res.error})` });
     }
     // 2. 새 탭 열기 (new_tab / open_tab)
     else if ((action === 'new_tab' || action === 'open_tab') && (urlVal || target)) {
       const toUrl = urlVal || target;
-      appendActionCard(bubble, `📑 [새 탭 열기] "${toUrl}" 여는 중...`);
+      const card = appendActionCard(bubble, `📑 [새 탭 열기] "${toUrl}" 여는 중...`);
       const res = await handleNewTab(toUrl);
-      appendActionCard(bubble, res.ok ? `✅ 새 탭 생성 완료 (${res.url})` : `❌ 새 탭 열기 실패`);
+      updateActionCard(card, res.ok ? `✅ 새 탭 생성 완료 (${res.url})` : `❌ 새 탭 열기 실패`, !res.ok);
       lastActionResults.push({ summary: `NEW_TAB("${toUrl}"): ${res.ok ? '성공' : '실패'}` });
     }
     // 3. 탭 전환 (switch_tab / select_tab)
     else if (action === 'switch_tab' || action === 'select_tab') {
       const ident = tabIdVal || target;
-      appendActionCard(bubble, `🔀 [탭 전환] "${ident}" 탭으로 전환 중...`);
+      const card = appendActionCard(bubble, `🔀 [탭 전환] "${ident}" 탭으로 전환 중...`);
       const res = await handleSwitchTab(ident);
-      appendActionCard(bubble, res.ok ? `✅ "${res.tab.title}" 탭으로 전환 완료` : `❌ 전환 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ "${res.tab.title}" 탭으로 전환 완료` : `❌ 전환 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `SWITCH_TAB("${ident}"): ${res.ok ? '성공' : '실패'}` });
     }
     // 4. 탭 닫기 (close_tab / remove_tab)
     else if (action === 'close_tab' || action === 'remove_tab') {
       const ident = tabIdVal || target;
-      appendActionCard(bubble, `❌ [탭 닫기] "${ident || '현재 탭'}" 닫는 중...`);
+      const card = appendActionCard(bubble, `❌ [탭 닫기] "${ident || '현재 탭'}" 닫는 중...`);
       const res = await handleCloseTab(ident);
-      appendActionCard(bubble, res.ok ? `✅ 탭 닫기 완료` : `❌ 닫기 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ 탭 닫기 완료` : `❌ 닫기 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `CLOSE_TAB("${ident || '현재 탭'}"): ${res.ok ? '성공' : '실패'}` });
     }
     // 5. 클릭 (click) — nth 다중 매칭 지원
     else if (action === 'click' && target) {
-      appendActionCard(bubble, `🖱️ [자동 실행] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 클릭 시도 중...`);
+      const card = appendActionCard(bubble, `🖱️ [클릭] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 시도 중...`);
       const res = await executeBrowserAction('ACT_CLICK', { target, nth });
-      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 클릭 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 클릭 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `CLICK("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
       if (res.ok) await new Promise(resolve => setTimeout(resolve, 300));
     }
     // 6. 마우스 호버 (hover)
     else if (action === 'hover' && target) {
-      appendActionCard(bubble, `🔍 [자동 실행] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 마우스 호버 중...`);
+      const card = appendActionCard(bubble, `🔍 [호버] "${target}"${nth > 1 ? ` (${nth}번째)` : ''} 마우스 호버 중...`);
       const res = await executeBrowserAction('ACT_HOVER', { target, nth });
-      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 호버 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 호버 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `HOVER("${target}"${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
       if (res.ok) await new Promise(resolve => setTimeout(resolve, 200));
     }
     // 7. 키보드 입력 (press / key)
     else if (action === 'press' || action === 'key') {
-      appendActionCard(bubble, `⌨️ [자동 실행] 키 [${keyVal}] 입력 중...`);
+      const card = appendActionCard(bubble, `⌨️ [키 입력] [${keyVal}] 실행 중...`);
       const res = await executeBrowserAction('ACT_PRESS_KEY', { key: keyVal, target, nth });
-      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 키 입력 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 키 입력 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `PRESS_KEY("${keyVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
-      if (res.ok) await new Promise(resolve => setTimeout(resolve, 400));
+      if (res.ok) await new Promise(resolve => setTimeout(resolve, 300));
     }
     // 8. 텍스트 입력 (type)
     else if (action === 'type' && target) {
-      appendActionCard(bubble, `⌨️ [자동 실행] "${target}"에 "${inputVal}" 입력 시도 중...`);
+      const card = appendActionCard(bubble, `⌨️ [입력] "${target}"에 "${inputVal}" 입력 중...`);
       const res = await executeBrowserAction('ACT_TYPE', { target, text: inputVal, nth });
-      appendActionCard(bubble, res.ok ? `✅ ${res.message}` : `❌ 입력 실패: ${res.error}`);
+      updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 입력 실패: ${res.error}`, !res.ok);
       lastActionResults.push({ summary: `TYPE("${target}", "${inputVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` });
       if (res.ok) await new Promise(resolve => setTimeout(resolve, 300));
     }
-    // 9. 잠시 대기 (wait)
+    // 9. 잠시 대기 (wait) — 0.5초 이하는 카드를 띄우지 않고 조용히 대기 (화면 도배 방지)
     else if (action === 'wait') {
-      appendActionCard(bubble, `⏳ [자동 실행] ${(waitMs / 1000).toFixed(1)}초 대기 중...`);
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-      appendActionCard(bubble, `✅ ${(waitMs / 1000).toFixed(1)}초 대기 완료`);
+      if (waitMs > 500) {
+        const card = appendActionCard(bubble, `⏳ [대기] ${(waitMs / 1000).toFixed(1)}초 대기 중...`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        updateActionCard(card, `✅ ${(waitMs / 1000).toFixed(1)}초 대기 완료`);
+      } else {
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
       lastActionResults.push({ summary: `WAIT(${waitMs}ms): 완료` });
     }
     // 10. 스크린샷 캡처 (screenshot)
     else if (action === 'screenshot') {
-      appendActionCard(bubble, `📸 [자동 실행] 화면 캡처 중...`);
+      const card = appendActionCard(bubble, `📸 [스크린샷] 화면 캡처 중...`);
       try {
         const dataUrl = await new Promise((resolve, reject) => {
           chrome.tabs.captureVisibleTab(null, { format: 'png' }, (res) => {
@@ -1027,31 +1034,32 @@ async function parseAndExecuteActions(text, bubble) {
           img.style.marginTop = '8px';
           img.style.border = '1px solid rgba(255,255,255,0.1)';
           bubble.appendChild(img);
-          appendActionCard(bubble, `✅ 스크린샷 캡처 완료`);
+          updateActionCard(card, `✅ 스크린샷 캡처 완료`);
           lastActionResults.push({ summary: `SCREENSHOT(): 성공 (화면 캡처됨)` });
         }
       } catch (e) {
-        appendActionCard(bubble, `❌ 스크린샷 실패: ${e.message}`);
+        updateActionCard(card, `❌ 스크린샷 실패: ${e.message}`, true);
         lastActionResults.push({ summary: `SCREENSHOT(): 실패 (${e.message})` });
       }
     }
     // 11. 대화형 요소 스냅샷 추출 (snapshot / elements)
     else if (action === 'snapshot' || action === 'elements') {
-      appendActionCard(bubble, `📸 [자동 실행] 대화형 요소 스냅샷 추출 중...`);
+      const card = appendActionCard(bubble, `📸 [스냅샷] 대화형 요소 추출 중...`);
       const res = await executeBrowserAction('GET_PAGE_SNAPSHOT');
       if (res && res.ok && Array.isArray(res.data)) {
         const summary = res.data.slice(0, 30).map(it => `[#${it.index}] <${it.tag}> "${it.text}" (${it.selector})`).join('\n');
-        appendActionCard(bubble, `✅ 스냅샷 완료 (총 ${res.data.length}개 요소 감지)`);
+        updateActionCard(card, `✅ 스냅샷 완료 (총 ${res.data.length}개 요소 감지)`);
         lastActionResults.push({ summary: `SNAPSHOT(): 성공 (총 ${res.data.length}개 대화형 요소 감지됨):\n${summary}` });
       } else {
-        appendActionCard(bubble, `❌ 스냅샷 실패: ${res?.error || '요소 추출 불가'}`);
+        updateActionCard(card, `❌ 스냅샷 실패: ${res?.error || '요소 추출 불가'}`, true);
         lastActionResults.push({ summary: `SNAPSHOT(): 실패` });
       }
     }
     // 12. 스크롤 (scroll)
     else if (action === 'scroll') {
-      appendActionCard(bubble, `📜 [자동 실행] 화면 ${dir === 'down' ? '아래' : '위'}로 스크롤 중...`);
+      const card = appendActionCard(bubble, `📜 [스크롤] 화면 ${dir === 'down' ? '아래' : '위'}로 이동...`);
       await executeBrowserAction('ACT_SCROLL', { direction: dir });
+      updateActionCard(card, `✅ 스크롤 완료 (${dir === 'down' ? '아래' : '위'})`);
       lastActionResults.push({ summary: `SCROLL("${dir}"): 완료` });
     }
   }
@@ -1129,6 +1137,22 @@ function appendActionCard(bubbleEl, text) {
   card.style.marginTop = '6px';
   card.textContent = text;
   bubbleEl.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  return card;
+}
+
+function updateActionCard(card, text, isError = false) {
+  if (!card) return;
+  card.textContent = text;
+  if (isError) {
+    card.style.background = 'rgba(239, 68, 68, 0.15)';
+    card.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+    card.style.color = '#fca5a5';
+  } else {
+    card.style.background = 'rgba(16, 185, 129, 0.12)';
+    card.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+    card.style.color = '#6ee7b7';
+  }
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
