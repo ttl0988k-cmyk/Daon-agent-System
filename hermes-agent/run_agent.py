@@ -722,6 +722,10 @@ def _normalize_tool_schemas_for_api(tools: list) -> list:
         elif params.get("type") == "object" and "properties" not in params:
             # {"type": "object"} without properties → add an empty properties map.
             params["properties"] = {}
+        # Providers like GLM (OpenCode Go) reject tools with missing/empty descriptions (HTTP 400 "function.description is required")
+        desc = fn.get("description")
+        if not desc or not str(desc).strip():
+            fn["description"] = f"Execute {fn.get('name', 'tool')}"
     return tools
 
 

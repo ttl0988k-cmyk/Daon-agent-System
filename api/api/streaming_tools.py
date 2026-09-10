@@ -63,11 +63,12 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
             toolset_name = f"mcp-{safe_srv}"
 
             # 1) OpenAI-format schema for agent.tools (model visibility)
+            mcp_desc = (t.get('description') or '').strip() or f"MCP tool {orig_name} from {server_id}"
             api_schema = {
                 "type": "function",
                 "function": {
                     "name": mcp_func_name,
-                    "description": t.get('description', f"MCP tool {orig_name} from {server_id}"),
+                    "description": mcp_desc,
                     "parameters": _normalize_input_schema(t.get('inputSchema'))
                 }
             }
@@ -77,7 +78,7 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
             # 2) Flat registry schema for dispatch
             registry_schema = {
                 "name": mcp_func_name,
-                "description": api_schema["function"]["description"],
+                "description": mcp_desc,
                 "parameters": _normalize_input_schema(t.get('inputSchema')),
             }
 
