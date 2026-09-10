@@ -32,6 +32,8 @@ class TestPhase5HarnessJobStore(unittest.TestCase):
         self.store = HarnessJobStore(db_path=self.db_path)
 
     def tearDown(self):
+        if hasattr(self, "store") and self.store:
+            self.store.close()
         self.temp_dir.cleanup()
 
     def test_schema_and_crud(self):
@@ -93,6 +95,45 @@ class TestPhase5HarnessJobStore(unittest.TestCase):
         self.assertEqual(len(logs3), 1)
         self.assertEqual(next_cursor3, 4)
         self.assertEqual(logs3[0]["content"], "Step 2 complete")
+
+    def test_concurrent_batch_writes(self):
+        """Test high-concurrency batch writing and non-blocking queue under 20 parallel threads."""
+        import threading
+        num_threads = 20
+        logs_per_thread = 10
+        errors = []
+
+        def worker(thread_idx: int):
+            try:
+                run_id = f"concurrent_run_{thread_idx}"
+                self.store.save_job(run_id, {
+                    "session_id": f"sess_{thread_idx}",
+                    "status": "running",
+                    "started_at": 1000.0 + thread_idx,
+                })
+                for log_idx in range(logs_per_thread):
+                    self.store.append_log(run_id, f"Agent_{thread_idx}", f"Log {log_idx}")
+            except Exception as ex:
+                errors.append(ex)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(errors), 0, f"Thread errors occurred: {errors}")
+
+        # Flush to guarantee all in-flight batch writes are committed
+        self.store.flush(timeout=3.0)
+
+        # Verify all jobs and logs were persisted correctly
+        for i in range(num_threads):
+            run_id = f"concurrent_run_{i}"
+            job = self.store.get_job(run_id, include_logs=True)
+            self.assertIsNotNone(job, f"Job {run_id} missing")
+            self.assertEqual(job["status"], "running")
+            self.assertEqual(len(job["logs"]), logs_per_thread, f"Expected {logs_per_thread} logs for {run_id}")
 
     def test_lineage_tree_and_subtree_deletion(self):
         """Test delegation lineage registration and recursive subtree cleanup."""
