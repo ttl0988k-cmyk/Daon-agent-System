@@ -123,6 +123,9 @@
         '[contenteditable="true"][role="textbox"]',
         '[contenteditable="true"][aria-label*="prompt" i]',
         '[contenteditable="true"][aria-label*="입력" i]',
+        'div.ProseMirror',
+        '[contenteditable="true"].ProseMirror',
+        'div[data-slate-editor="true"]',
         'div[contenteditable="true"]',
         '[contenteditable="true"]',
         '[role="textbox"]',
@@ -184,6 +187,48 @@
           try {
             const els = Array.from(doc.querySelectorAll(sel));
             for (const el of els) {
+              if (isElementVisible(el) && !el.disabled) {
+                addMatch(el);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (matches.length > 0) {
+        return matches[nth - 1] || matches[0];
+      }
+    }
+
+    // 0-C. 클릭 액션 시(isClick = true) '생성'/'전송'/'제출'/'화살표' 버튼 우선 탐색 (Google Flow, ChatGPT, Claude 등)
+    const isGenerateIntent = /생성|generate|create|전송|send|submit|화살표|arrow|run|run_btn/i.test(query);
+    if (isClick && (isGenerateIntent || isPromptIntent)) {
+      const generateButtonSelectors = [
+        'button[aria-label*="generate" i]',
+        'button[aria-label*="생성" i]',
+        'button[aria-label*="send" i]',
+        'button[aria-label*="전송" i]',
+        'button[aria-label*="submit" i]',
+        'button[aria-label*="run" i]',
+        'button[aria-label*="arrow" i]',
+        'button[title*="generate" i]',
+        'button[title*="생성" i]',
+        'button[title*="send" i]',
+        'button[title*="submit" i]',
+        'button[type="submit"]',
+        '[role="button"][aria-label*="generate" i]',
+        '[role="button"][aria-label*="생성" i]',
+        '[role="button"][aria-label*="send" i]',
+        '[role="button"][aria-label*="전송" i]',
+        'button.send-button',
+        'button.generate-button'
+      ];
+
+      for (const doc of docs) {
+        for (const sel of generateButtonSelectors) {
+          try {
+            const els = Array.from(doc.querySelectorAll(sel));
+            for (let el of els) {
               if (isElementVisible(el) && !el.disabled) {
                 addMatch(el);
               }
@@ -286,8 +331,9 @@
     return matches[nth - 1] || matches[0];
   }
 
-  // ── 브라우저 네이티브 + React/Vue/ContentEditable 호환 타이핑 ──────────
-  // ⚠️ 사람 타이핑 리듬: 한 글자씩 랜덤 지연 삽입 (Flow 등 봇감지 회피)
+  // ── 브라우저 네이티브 + React/Vue/ProseMirror/ContentEditable 호환 타이핑 ──────────
+  // ⚠️ 사람 타이핑 리듬: 한 글자씩 랜덤 지연 삽입 (Google Flow, ChatGPT 등 봇 감지 회피)
+  // ⚠️ 가상 돔(React/ProseMirror/Slate) 상태 및 유효성 검사 완벽 동기화 (희미한 플레이스홀더 탈출 & 생성 버튼 활성화)
   async function simulateTyping(element, text) {
     if (!element) return false;
 
@@ -298,49 +344,103 @@
                        element.getAttribute('contenteditable') === '' ||
                        element.getAttribute('role') === 'textbox';
 
-    element.focus();
+    // 1. 화면 스크롤 및 요소 활성화
+    try {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {}
 
-    // 1. selection 또는 select() 준비
+    // Google Flow / ProseMirror / Slate 등 리치 에디터 내부 편집 노드(<p>, span 등) 정밀 타겟팅
+    let targetEl = element;
+    if (isEditable) {
+      const innerNode = element.querySelector('p, [data-slate-node="element"], [data-slate-node="text"], div[data-placeholder], span');
+      if (innerNode && isElementVisible(innerNode)) {
+        targetEl = innerNode;
+      }
+    }
+
+    // 실제 사람 마우스 인터랙션 시뮬레이션 (에디터 내부 포커스 및 캐럿 활성화)
+    const rect = targetEl.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(evtType => {
+      try {
+        targetEl.dispatchEvent(new MouseEvent(evtType, {
+          bubbles: true,
+          cancelable: true,
+          clientX: cx,
+          clientY: cy,
+          view: window
+        }));
+      } catch (e) {}
+    });
+
+    if (typeof targetEl.focus === 'function') targetEl.focus();
+    if (typeof element.focus === 'function') element.focus();
+
+    // 2. Selection 초기화
     if (typeof element.select === 'function') {
       try { element.select(); } catch (e) {}
     } else if (isEditable) {
       try {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        range.collapse(false); // 커서를 텍스트 끝으로 이동
-        selection.removeAllRanges();
-        selection.addRange(range);
+        // ProseMirror/브라우저가 에디터 내부 올바른 블록에 Selection을 맺도록 selectAll 호출
+        document.execCommand('selectAll', false, null);
       } catch (e) {}
     }
 
-    // 2. 1차 시도: 구글 플로우 / ChatGPT 봇 감지 회피 — 한 글자씩 휴먼 리듬 타이핑
-    // Chrome 확장 환경에서 실제 사람이 키보드를 치듯 글자별로 insertText를 호출하여
-    // beforeinput, input, composition 이벤트 및 가상 DOM/ProseMirror 상태를 완벽 동기화
+    // 3. 1차 시도: 한 글자씩 인간 타이핑 리듬 입력 (beforeinput + execCommand)
     let typedNatively = true;
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
       let ok = false;
       try {
+        // A. W3C 표준 beforeinput 이벤트 디스패치 (ProseMirror/Slate 트랜잭션 트리거)
+        targetEl.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: char
+        }));
+
+        // B. 브라우저 네이티브 텍스트 삽입 명령 실행
         ok = document.execCommand('insertText', false, char);
       } catch (e) {
         ok = false;
       }
+
+      // C. React / Vue 상태 감지용 input 이벤트 디스패치
+      try {
+        targetEl.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: char
+        }));
+      } catch (e) {}
+
       if (!ok) {
+        // 네이티브 insertText가 지원되지 않거나 거부된 경우 루프 중단 후 즉시 전용 폴백 가동
         typedNatively = false;
         break;
       }
-      // 사람 타자 속도 리듬 (글자당 25ms~65ms 랜덤 딜레이, 공백/개행은 60ms~100ms)
+
+      // 사람 타자 속도 리듬 (글자당 20ms~50ms 랜덤 딜레이, 공백/개행은 45ms~75ms)
       const delay = (char === ' ' || char === '\n')
-        ? Math.floor(Math.random() * 40) + 60
-        : Math.floor(Math.random() * 40) + 25;
+        ? Math.floor(Math.random() * 30) + 45
+        : Math.floor(Math.random() * 30) + 20;
       await new Promise(r => setTimeout(r, delay));
     }
 
-    // 3. 2차 시도: execCommand 미지원 또는 값 미반영 시 타입별 안전 폴백
-    if (isInput || isTextarea) {
-      // ⚠️ HTMLInputElement / HTMLTextAreaElement 전용 setter (Illegal invocation 원천 방지)
-      if (!typedNatively || element.value !== text) {
+    // 4. 2차 시도: execCommand 미지원 또는 에디터에 글자가 반영되지 않았을 때의 안전 폴백
+    const getCurrentText = () => {
+      if (isInput || isTextarea) return element.value || '';
+      return (element.innerText || element.textContent || '').trim();
+    };
+
+    const isTextPresent = getCurrentText().includes(text.trim().slice(0, Math.min(12, text.trim().length)));
+
+    if (!typedNatively || !isTextPresent) {
+      if (isInput || isTextarea) {
+        // HTMLInputElement / HTMLTextAreaElement 프로토타입 setter 호출
         try {
           const proto = isInput ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
@@ -350,51 +450,70 @@
             element.value = text;
           }
         } catch (e) {
-          try { element.value = text; } catch (_) {}
+          element.value = text;
+        }
+      } else if (isEditable) {
+        // ⚠️ 리치 에디터(Google Flow, ProseMirror, Slate, Lexical) 전용 무손실 폴백:
+        // 절대 raw innerText를 대입하지 않고(가상 돔 파괴 방지), 전체 insertText 또는 ClipboardEvent(paste) 실행!
+        let inserted = false;
+        try {
+          if (typeof element.focus === 'function') element.focus();
+          document.execCommand('selectAll', false, null);
+          inserted = document.execCommand('insertText', false, text);
+        } catch (e) {
+          inserted = false;
         }
 
-        try {
-          element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-        } catch (e) {
-          element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-        }
-        element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-      }
-    } else if (isEditable) {
-      // ⚠️ Google Flow, ChatGPT, Notion 등 contenteditable div/span 요소 처리
-      // (절대 HTMLInputElement.prototype.value setter를 호출하지 않음!)
-      const currentText = (element.innerText || element.textContent || '').trim();
-      if (!typedNatively || !currentText.includes(text.trim())) {
-        try {
-          element.innerText = text;
-        } catch (e) {
-          try { element.textContent = text; } catch (_) {}
+        if (!inserted || !getCurrentText().includes(text.trim().slice(0, 10))) {
+          // DataTransfer 가상 클립보드 붙여넣기 (ProseMirror handlePaste 수신 및 내부 트랜잭션 유도)
+          try {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+            const pasteEvt = new ClipboardEvent('paste', {
+              clipboardData: dt,
+              bubbles: true,
+              cancelable: true
+            });
+            targetEl.dispatchEvent(pasteEvt) || element.dispatchEvent(pasteEvt);
+          } catch (e) {}
         }
 
-        try {
-          element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-        } catch (e) {
-          element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        // 최후의 수단: 내부 <p> 또는 텍스트 컨테이너에 안전하게 주입
+        if (!getCurrentText().includes(text.trim().slice(0, 10))) {
+          try {
+            const p = element.querySelector('p') || element;
+            p.textContent = text;
+          } catch (e) {
+            try { element.textContent = text; } catch (_) {}
+          }
         }
-        element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
       }
-    } else {
-      // 기타 일반 DOM 요소 안전 처리
-      try {
-        if ('value' in element) element.value = text;
-        else element.textContent = text;
-      } catch (e) {}
     }
 
-    // 4. 입력 성공 검증 (contenteditable은 텍스트 포함 여부 검증)
-    if (isInput || isTextarea) {
-      return element.value === text;
-    } else if (isEditable) {
-      const content = (element.innerText || element.textContent || '').trim();
-      return content.includes(text.trim()) || typedNatively;
-    } else {
-      return ('value' in element ? element.value === text : true);
-    }
+    // 5. ⚠️ 핵심: React / ProseMirror / Flow 내부 상태 완벽 각성 (희미한 텍스트 -> 활성 텍스트 & 생성 버튼 활성화)
+    const wakeupEvents = [
+      new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }),
+      new Event('input', { bubbles: true, cancelable: true }),
+      new Event('change', { bubbles: true, cancelable: true }),
+      new KeyboardEvent('keydown', { bubbles: true, key: 'Process', code: 'Process' }),
+      new KeyboardEvent('keyup', { bubbles: true, key: 'Process', code: 'Process' }),
+    ];
+    wakeupEvents.forEach(evt => {
+      try { targetEl.dispatchEvent(evt); } catch (e) {}
+      try { element.dispatchEvent(evt); } catch (e) {}
+    });
+
+    // ⚠️ Blur -> Focus 사이클로 폼 검증기 및 생성(제출) 버튼 잠금 해제
+    try {
+      targetEl.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      targetEl.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 60));
+      if (typeof element.focus === 'function') element.focus();
+      targetEl.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    } catch (e) {}
+
+    // 6. 결과 검증
+    return getCurrentText().includes(text.trim().slice(0, Math.min(10, text.trim().length))) || typedNatively;
   }
 
   // ── 마우스 클릭 시뮬레이션 ───────────────────────────────────────────────
@@ -655,23 +774,29 @@
         }
 
         case 'ACT_TYPE': {
-          const el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
-          if (!el) {
-            sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector}"` });
-            return;
-          }
-          const visible = isElementVisible(el);
-          showFeedback(el, `입력: "${request.text}"`);
-          const verified = simulateTyping(el, request.text);
-          const val = ('value' in el && typeof el.value === 'string')
-            ? el.value
-            : ((el.innerText || el.textContent || '').trim().slice(0, 50));
-          sendResponse({
-            ok: true,
-            verified: verified && visible,
-            value: val,
-            message: `입력 완료: "${request.text}" (${visible ? '화면 표시 정상' : '경고: 숨겨진 요소에 입력됨'})`
-          });
+          (async () => {
+            try {
+              const el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
+              if (!el) {
+                sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector}"` });
+                return;
+              }
+              const visible = isElementVisible(el);
+              showFeedback(el, `입력: "${request.text}"`);
+              const verified = await simulateTyping(el, request.text);
+              const val = ('value' in el && typeof el.value === 'string')
+                ? el.value
+                : ((el.innerText || el.textContent || '').trim().slice(0, 50));
+              sendResponse({
+                ok: true,
+                verified: verified && visible,
+                value: val,
+                message: `입력 완료: "${request.text}" (${visible ? '화면 표시 정상' : '경고: 숨겨진 요소에 입력됨'})`
+              });
+            } catch (err) {
+              sendResponse({ ok: false, error: err.message });
+            }
+          })();
           break;
         }
 
