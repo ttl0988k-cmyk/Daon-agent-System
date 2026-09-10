@@ -125,7 +125,9 @@
         'input[aria-label*="Search" i]',
         'input[type="text"]',
         'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])',
-        'textarea'
+        'textarea',
+        '[contenteditable="true"]',
+        '[role="textbox"]'
       ];
 
       for (const doc of docs) {
@@ -240,11 +242,11 @@
       }
     }
 
-    // 7. 일반 input/textarea 폴백
-    if (matches.length === 0 && (isInput || /\binput\b/i.test(query))) {
+    // 7. 일반 input/textarea/contenteditable 폴백
+    if (matches.length === 0 && (isInput || /\b(input|text|edit|창|field)\b/i.test(query))) {
       for (const doc of docs) {
         const inputs = Array.from(doc.querySelectorAll(
-          'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="image"]), textarea'
+          'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="image"]), textarea, [contenteditable="true"], [role="textbox"]'
         ));
         for (const el of inputs) {
           if (isElementVisible(el)) {
@@ -268,46 +270,99 @@
     return matches[nth - 1] || matches[0];
   }
 
-  // ── 브라우저 네이티브 + React/Vue 호환 타이핑 ───────────────────────────
+  // ── 브라우저 네이티브 + React/Vue/ContentEditable 호환 타이핑 ──────────
   function simulateTyping(element, text) {
     if (!element) return false;
+
+    const isInput = element instanceof HTMLInputElement;
+    const isTextarea = element instanceof HTMLTextAreaElement;
+    const isEditable = element.isContentEditable ||
+                       element.getAttribute('contenteditable') === 'true' ||
+                       element.getAttribute('contenteditable') === '' ||
+                       element.getAttribute('role') === 'textbox';
+
     element.focus();
 
+    // 1. selection 또는 select() 준비
     if (typeof element.select === 'function') {
       try { element.select(); } catch (e) {}
+    } else if (isEditable) {
+      try {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false); // 커서를 텍스트 끝으로 이동
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } catch (e) {}
     }
 
-    // 1차 시도: 브라우저 네이티브 execCommand('insertText')
+    // 2. 1차 시도: 브라우저 네이티브 execCommand('insertText')
     // Chrome 확장 환경에서 실제 사용자 타이핑과 동일하게 동작하여
-    // beforeinput, input, composition 이벤트 및 프레임워크(React, Vue) 가상 DOM 상태와 완벽 동기화
+    // beforeinput, input, composition 이벤트 및 프레임워크(React, Vue, Slate, ProseMirror, Quill) 가상 DOM 상태와 완벽 동기화
     let typedNatively = false;
     try {
       typedNatively = document.execCommand('insertText', false, text);
     } catch (e) {}
 
-    // 2차 시도: execCommand 미지원 또는 값 불일치 시 프로토타입 setter 및 합성 이벤트 폴백
-    if (!typedNatively || element.value !== text) {
-      const proto = Object.getPrototypeOf(element);
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
-                     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set ||
-                     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    // 3. 2차 시도: execCommand 미지원 또는 값 미반영 시 타입별 안전 폴백
+    if (isInput || isTextarea) {
+      // ⚠️ HTMLInputElement / HTMLTextAreaElement 전용 setter (Illegal invocation 원천 방지)
+      if (!typedNatively || element.value !== text) {
+        try {
+          const proto = isInput ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) {
+            setter.call(element, text);
+          } else {
+            element.value = text;
+          }
+        } catch (e) {
+          try { element.value = text; } catch (_) {}
+        }
 
-      if (setter) {
-        setter.call(element, text);
-      } else {
-        element.value = text;
+        try {
+          element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+        } catch (e) {
+          element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        }
+        element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
       }
+    } else if (isEditable) {
+      // ⚠️ Google Flow, ChatGPT, Notion 등 contenteditable div/span 요소 처리
+      // (절대 HTMLInputElement.prototype.value setter를 호출하지 않음!)
+      const currentText = (element.innerText || element.textContent || '').trim();
+      if (!typedNatively || !currentText.includes(text.trim())) {
+        try {
+          element.innerText = text;
+        } catch (e) {
+          try { element.textContent = text; } catch (_) {}
+        }
 
+        try {
+          element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+        } catch (e) {
+          element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        }
+        element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      }
+    } else {
+      // 기타 일반 DOM 요소 안전 처리
       try {
-        element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-      } catch (e) {
-        element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-      }
-      element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        if ('value' in element) element.value = text;
+        else element.textContent = text;
+      } catch (e) {}
     }
 
-    // 타이핑 자체는 값 주입만 수행 (Enter 제출은 press_key 또는 submit 버튼 클릭 액션으로 분리)
-    return element.value === text;
+    // 4. 입력 성공 검증 (contenteditable은 텍스트 포함 여부 검증)
+    if (isInput || isTextarea) {
+      return element.value === text;
+    } else if (isEditable) {
+      const content = (element.innerText || element.textContent || '').trim();
+      return content.includes(text.trim()) || typedNatively;
+    } else {
+      return ('value' in element ? element.value === text : true);
+    }
   }
 
   // ── 마우스 클릭 시뮬레이션 ───────────────────────────────────────────────
@@ -563,10 +618,13 @@
           const visible = isElementVisible(el);
           showFeedback(el, `입력: "${request.text}"`);
           const verified = simulateTyping(el, request.text);
+          const val = ('value' in el && typeof el.value === 'string')
+            ? el.value
+            : ((el.innerText || el.textContent || '').trim().slice(0, 50));
           sendResponse({
             ok: true,
             verified: verified && visible,
-            value: el.value,
+            value: val,
             message: `입력 완료: "${request.text}" (${visible ? '화면 표시 정상' : '경고: 숨겨진 요소에 입력됨'})`
           });
           break;
