@@ -657,10 +657,15 @@ def interruptible_streaming_api_call(
         request_client_holder["client"] = create_request_openai_client(
             agent, reason="chat_completion_stream_request"
         )
-        # Reset stale-stream timer so the detector measures from this
-        # attempt's start, not a previous attempt's last chunk.
-        last_chunk_time["t"] = time.time()
-        agent._touch_activity("waiting for provider response (streaming)")
+        # Ensure OpenCode Go/Zen extra_headers are explicitly attached to streaming call
+        _base_url_str = str(getattr(agent, "base_url", "") or "").lower()
+        if "opencode.ai" in _base_url_str or "opencode" in str(getattr(agent, "provider", "")).lower():
+            extra_h = stream_kwargs.setdefault("extra_headers", {})
+            if "x-opencode-session" not in extra_h:
+                extra_h["x-opencode-session"] = str(getattr(agent, "session_id", None) or "daon-agent-session")
+            if "User-Agent" not in extra_h and "user-agent" not in extra_h:
+                extra_h["User-Agent"] = "daon-agent/1.0"
+
         stream = request_client_holder["client"].chat.completions.create(**stream_kwargs)
 
         # Capture rate limit headers from the initial HTTP response.

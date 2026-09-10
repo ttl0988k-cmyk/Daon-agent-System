@@ -61,7 +61,29 @@ if (Test-Path (Join-Path $dst 'static\static')) {
     Write-Host '[정리] 잘못 생성됐던 static\static 중첩 폴더 삭제'
 }
 
-Write-Host "[OK] 동기화 완료 → $dst" -ForegroundColor Green
+# ── 3-1. 동기화: 백엔드 런타임 (hermes-agent, api, skills) ──
+function Sync-FolderWithRobocopy([string]$sDir, [string]$tDir, [string[]]$xDirs, [string[]]$xFiles) {
+    if (-not (Test-Path $sDir)) { return }
+    $params = @($sDir, $tDir, '/E', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS')
+    if ($xDirs -and $xDirs.Count -gt 0) {
+        $params += '/XD'
+        $params += $xDirs
+    }
+    if ($xFiles -and $xFiles.Count -gt 0) {
+        $params += '/XF'
+        $params += $xFiles
+    }
+    & robocopy @params *>$null
+    if ($LASTEXITCODE -ge 8) {
+        Write-Host "[경고] 동기화 실패 (코드 $LASTEXITCODE): $sDir" -ForegroundColor Yellow
+    }
+}
+
+Sync-FolderWithRobocopy (Join-Path $src 'hermes-agent') (Join-Path $dst 'hermes-agent') @('__pycache__', '.pytest_cache', '.git', 'tests', '.venv', 'node_modules') @('*.pyc')
+Sync-FolderWithRobocopy (Join-Path $src 'api') (Join-Path $dst 'api') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
+Sync-FolderWithRobocopy (Join-Path $src 'skills') (Join-Path $dst 'skills') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
+
+Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills) → $dst" -ForegroundColor Green
 Write-Host "     백업: $backup"
 
 # ── 4. 검증: 핵심 파일 크기 비교 ──
