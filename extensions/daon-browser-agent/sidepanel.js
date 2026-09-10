@@ -697,10 +697,10 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
    - 탭 닫기: <daon_action action="close_tab" tab_id="탭ID" />
    - 텍스트 입력: <daon_action action="type" target="입력창ID/셀렉터" text="입력내용" nth="1" />
    - 스크롤: <daon_action action="scroll" direction="down|up" />
-   * 팁: 같은 이름의 버튼이나 링크가 여러 개일 때는 nth="2"처럼 몇 번째 요소인지 지정하여 정확히 클릭할 수 있습니다.
-   ⚠️ [텍스트 입력 엄격 규칙 — 한 글자 쪼개기 절대 금지]:
-   - 단어, 문장, 검색어 등 모든 텍스트는 반드시 단 1개의 <daon_action action="type" target="..." text="완전한 문자열" /> 태그로 한 번에 입력하세요!
-   - 절대로 한 글자씩 확인하겠다며 <daon_action action="press" key="...">와 <daon_action action="wait">를 수십 개 쪼개서 나열하지 마세요! (press는 Enter, Tab, Escape 등 단일 특수키 입력 전용입니다.)
+   ⚠️ [텍스트/프롬프트 입력 필수 규칙 — 구글 플로우/ChatGPT 등 봇 감지 회피]:
+   - 단어, 문장, 검색어, 프롬프트 등 모든 텍스트는 반드시 단 1개의 <daon_action action="type" target="프롬프트창 또는 셀렉터" text="완전한 문자열" /> 태그로 입력하세요!
+   - 확장 프로그램 시스템이 브라우저 내부에서 실제 사람처럼 한 글자씩 무작위 지연(25~65ms)을 주며 휴먼 리듬으로 자동 타이핑하므로, 봇 감지가 완벽히 회피됩니다.
+   - 절대로 <daon_action action="press" key="...">와 wait로 글자를 하나씩 쪼개지 마세요! (press는 합성 키 이벤트라 실제 입력창에 글자가 써지지 않고 실패합니다.)
 5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우, 첫 번째 액션(<daon_action action="navigate" ... />)을 실행하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 단계를 이어가세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
 6. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 네이버로 이동해서 검색을 진행할게요. <daon_action action=\\"navigate\\" url=\\"https://www.naver.com\\" />")`;
 

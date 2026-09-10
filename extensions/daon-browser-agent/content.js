@@ -104,13 +104,28 @@
 
     const lowerQuery = query.toLowerCase();
 
-    // 0. 시맨틱 검색 의도 감지 ('검색', '검색창', 'search', 'query', 'input[type=text]' 등)
+    // 0. 시맨틱 검색 및 프롬프트/AI 채팅 의도 감지 ('프롬프트', 'prompt', '검색', 'flow', 'chat' 등)
     const isSearchIntent = /검색|search|query|nx_query/i.test(query);
+    const isPromptIntent = /프롬프트|prompt|flow|chat|대화|입력창|ask|describe|생성/i.test(query) ||
+                           /div\[contenteditable/i.test(query) ||
+                           /\[contenteditable/i.test(query);
     const isGenericInputIntent = /^input(\[type=['"]?text['"]?\])?$/i.test(query.replace(/\s+/g, ''));
 
-    // 0-A. 입력 필드 탐색 시(isInput = true) 검색창 및 텍스트 인풋 우선 탐색
-    if (isInput && (isSearchIntent || isGenericInputIntent)) {
+    // 0-A. 입력 필드 탐색 시(isInput = true) 프롬프트창/검색창 및 텍스트 인풋 우선 탐색
+    if (isInput && (isSearchIntent || isPromptIntent || isGenericInputIntent)) {
       const searchInputSelectors = [
+        // Google Flow / AI Canvas / ChatGPT / Claude 특화 프롬프트 입력창 우선 탐색
+        'textarea[placeholder*="prompt" i]',
+        'textarea[placeholder*="Ask" i]',
+        'textarea[placeholder*="Describe" i]',
+        'textarea[placeholder*="입력" i]',
+        '[contenteditable="true"][data-placeholder]',
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"][aria-label*="prompt" i]',
+        '[contenteditable="true"][aria-label*="입력" i]',
+        'div[contenteditable="true"]',
+        '[contenteditable="true"]',
+        '[role="textbox"]',
         '#query',                      // 네이버 메인 검색창
         '#nx_query',                   // 네이버 통합검색 결과창
         'input[name="query"]',         // 네이버/다음 검색창
@@ -125,9 +140,7 @@
         'input[aria-label*="Search" i]',
         'input[type="text"]',
         'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])',
-        'textarea',
-        '[contenteditable="true"]',
-        '[role="textbox"]'
+        'textarea'
       ];
 
       for (const doc of docs) {
@@ -135,9 +148,12 @@
           try {
             const els = Array.from(doc.querySelectorAll(sel));
             for (const el of els) {
-              // ⚠️ 화면에 실제로 보이는 활성 입력창만 추가 (숨겨진 GNB 검색창 원천 배제)
+              // ⚠️ 화면에 실제로 보이는 활성 입력창만 추가 (최소 너비 40px, 높이 18px 이상)
               if (isElementVisible(el) && !el.disabled) {
-                addMatch(el);
+                const rect = el.getBoundingClientRect();
+                if (rect.width >= 40 && rect.height >= 18) {
+                  addMatch(el);
+                }
               }
             }
           } catch (e) {}
@@ -271,7 +287,8 @@
   }
 
   // ── 브라우저 네이티브 + React/Vue/ContentEditable 호환 타이핑 ──────────
-  function simulateTyping(element, text) {
+  // ⚠️ 사람 타이핑 리듬: 한 글자씩 랜덤 지연 삽입 (Flow 등 봇감지 회피)
+  async function simulateTyping(element, text) {
     if (!element) return false;
 
     const isInput = element instanceof HTMLInputElement;
@@ -297,13 +314,28 @@
       } catch (e) {}
     }
 
-    // 2. 1차 시도: 브라우저 네이티브 execCommand('insertText')
-    // Chrome 확장 환경에서 실제 사용자 타이핑과 동일하게 동작하여
-    // beforeinput, input, composition 이벤트 및 프레임워크(React, Vue, Slate, ProseMirror, Quill) 가상 DOM 상태와 완벽 동기화
-    let typedNatively = false;
-    try {
-      typedNatively = document.execCommand('insertText', false, text);
-    } catch (e) {}
+    // 2. 1차 시도: 구글 플로우 / ChatGPT 봇 감지 회피 — 한 글자씩 휴먼 리듬 타이핑
+    // Chrome 확장 환경에서 실제 사람이 키보드를 치듯 글자별로 insertText를 호출하여
+    // beforeinput, input, composition 이벤트 및 가상 DOM/ProseMirror 상태를 완벽 동기화
+    let typedNatively = true;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      let ok = false;
+      try {
+        ok = document.execCommand('insertText', false, char);
+      } catch (e) {
+        ok = false;
+      }
+      if (!ok) {
+        typedNatively = false;
+        break;
+      }
+      // 사람 타자 속도 리듬 (글자당 25ms~65ms 랜덤 딜레이, 공백/개행은 60ms~100ms)
+      const delay = (char === ' ' || char === '\n')
+        ? Math.floor(Math.random() * 40) + 60
+        : Math.floor(Math.random() * 40) + 25;
+      await new Promise(r => setTimeout(r, delay));
+    }
 
     // 3. 2차 시도: execCommand 미지원 또는 값 미반영 시 타입별 안전 폴백
     if (isInput || isTextarea) {
@@ -414,13 +446,18 @@
     if (typeof target.focus === 'function') target.focus();
 
     const isEnter = key.toLowerCase() === 'enter';
-    const keyCode = isEnter ? 13 : (key.toLowerCase() === 'escape' ? 27 : (key.toLowerCase() === 'tab' ? 9 : 0));
+    const isSpace = key.toLowerCase() === 'space' || key === ' ';
+    const isEscape = key.toLowerCase() === 'escape';
+    const isTab = key.toLowerCase() === 'tab';
+    const isBackspace = key.toLowerCase() === 'backspace';
+
+    const keyCode = isEnter ? 13 : (isEscape ? 27 : (isTab ? 9 : (isSpace ? 32 : (isBackspace ? 8 : (key.charCodeAt(0) || 0)))));
 
     const keyEvents = ['keydown', 'keypress', 'keyup'];
     keyEvents.forEach(type => {
       target.dispatchEvent(new KeyboardEvent(type, {
-        key: key,
-        code: isEnter ? 'Enter' : (key === 'Escape' ? 'Escape' : (key === 'Tab' ? 'Tab' : key)),
+        key: isSpace ? ' ' : key,
+        code: isEnter ? 'Enter' : (isEscape ? 'Escape' : (isTab ? 'Tab' : (isSpace ? 'Space' : (isBackspace ? 'Backspace' : key)))),
         keyCode: keyCode,
         which: keyCode,
         bubbles: true,
@@ -428,6 +465,14 @@
         view: window
       }));
     });
+
+    // ⚠️ 단일 문자 또는 Space 키인 경우 실제 DOM에 텍스트가 삽입되도록 execCommand 보완
+    // (브라우저는 보안상 합성 KeyboardEvent만으로는 DOM에 글자를 적지 않음)
+    if (isSpace) {
+      try { document.execCommand('insertText', false, ' '); } catch (e) {}
+    } else if (key.length === 1 && !isEnter && !isEscape && !isTab) {
+      try { document.execCommand('insertText', false, key); } catch (e) {}
+    }
 
     if (isEnter) {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
