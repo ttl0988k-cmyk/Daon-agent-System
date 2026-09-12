@@ -2703,6 +2703,14 @@ function cleanupStreamState() {
     State.currentEventSource = null;
     State.currentStreamId = null;
   }
+  // [FIX 2026-09-12] Reset the tool-active counter on every stream teardown.
+  // If the backend drops tool.completed (interrupt-cancel path), _activeTools
+  // stays permanently > 0: the chat sticks in "tool running" until the 5-min
+  // watchdog resets it, and mid-stream result recovery is skipped for that
+  // window ("tool result not shown" symptom). Cancel/complete/error all pass
+  // through this function, so clearing here covers every exit path.
+  _activeTools = 0;
+  _toolSuppressStart = 0;
   try { setChatStatus('idle', '대기 중'); } catch (err) { console.warn('[SSE-DIAG] status reset failed:', err); }
   try {
     const sendBtn = $('sendPromptBtn');

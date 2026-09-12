@@ -368,6 +368,21 @@ def execute_tool_calls_concurrent(
             else:
                 function_result = f"Error executing tool '{name}': thread did not return a result"
             tool_duration = 0.0
+            # [FIX 2026-09-12] results[i] is None path (interrupt-cancelled or
+            # unfinished future) must also emit tool.completed. Without it the
+            # frontend _activeTools counter never decrements: the chat stays in
+            # "tool running" state until the 5-min watchdog reset, and mid-stream
+            # result recovery is skipped ("tool result not shown" symptom).
+            # Root cause of the cancel-button hang. (measured: started 10845 vs
+            # completed 10837 for this repo)
+            if agent.tool_progress_callback:
+                try:
+                    agent.tool_progress_callback(
+                        "tool.completed", name, None, None,
+                        duration=tool_duration, is_error=True,
+                    )
+                except Exception as cb_err:
+                    logging.debug(f"Tool progress callback error: {cb_err}")
         else:
             function_name, function_args, function_result, tool_duration, is_error = r
 
