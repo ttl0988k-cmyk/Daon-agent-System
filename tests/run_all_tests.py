@@ -47,6 +47,11 @@ TEST_SUITES = [
         "cmd": [sys.executable, "tests/test_phase5_persistence.py"],
         "cwd": ROOT,
     },
+    {
+        "name": "Self-Update BuildRoot Regression",
+        "cmd": ["node", "tests/test_self_update_buildroot.js"],
+        "cwd": ROOT,
+    },
 ]
 
 

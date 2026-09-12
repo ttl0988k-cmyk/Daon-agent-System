@@ -250,12 +250,19 @@ function createSelfUpdate(deps = {}) {
     // (webview/index.html 부재 → RESOURCE_DIR=RUN_DIR). exe 만 스왑하면
     // 프론트엔드·데이터성 모듈이 구버전인 채 남는다. 코드성 자산만 갱신하고
     // 사용자 상태(data/, .env, config.yaml)는 절대 건드리지 않는다.
+    // [근본 수정 2026-09-12] 미러(dist_new/, _sync_build.py 가 방금 재구성한 최신본)
+    // 를 우선 소스로 삼는다. 이전에는 skills 를 레포 원본에서 복사해 미러와
+    // 불일치할 수 있었고, hermes-agent/config.yaml 은 아예 갱신 대상이 아니었다.
+    // packaged 에서 buildRoot=<앱>/resources 이며 위 번들 항목으로 이 경로들이
+    // 존재하므로, dev/packaged 양쪽에서 동일하게 동작한다.
     const RESOURCE_REFRESH_PAIRS = [
         ['dist_new/api/api', 'api'],
         ['dist_new/static', 'static'],
+        ['dist_new/hermes-agent', 'hermes-agent'],
         ['dist_new/index.html', 'index.html'],
+        ['dist_new/config.yaml', 'config.yaml'],
+        ['dist_new/skills', 'skills'],
         ['api/agents', 'agents'],
-        ['skills', 'skills'],
     ];
 
     async function refreshLooseResources(targetExe, buildRoot) {
@@ -289,6 +296,16 @@ function createSelfUpdate(deps = {}) {
         if (!targetExe) return { swapped: false, reason: 'no server.exe target (dev python mode)' };
         const buildRoot = resolveBuildRoot();
         if (!buildRoot) return { swapped: false, reason: 'daon-server.spec not found — set DAON_BUILD_ROOT to enable packaged self-update' };
+
+        // [근본 수정 2026-09-12] spec 이중 검증. resolveBuildRoot 는 이미 spec
+        // 존재로 후보를 검증하지만, 주입형 deps 로 무검증 경로가 들어올 수 있다.
+        // spec 부재 상태로 진행하면 _sync_build→PyInstaller(수 분)를 헛돌린 뒤
+        // 에야 실패한다(실측: 재빌드 후 EBUSY 로 헛돈 교훈). 스왑 프리플라이트
+        // (targetWritable)와 함께 '빌드 전 즉시 실패' 원칙을 지킨다.
+        if (!fs.existsSync(path.join(buildRoot, 'daon-server.spec'))) {
+            errLog('[SelfUpdate] rebuild refused — daon-server.spec missing in build root: ' + buildRoot);
+            return { swapped: false, reason: 'rebuild refused: daon-server.spec missing (invalid build root)' };
+        }
 
         // [자가 빌드 완성 2026-08-25] 미러 동기화를 파이프라인에 통합.
         // spec의 datas는 dist_new/ 미러를 번들하므로 동기화 없이 빌드하면

@@ -36,6 +36,46 @@ class ServerSupervisor {
     this.WATCHDOG_INTERVAL = 30_000;
     this.MAX_RESTARTS = 3;
     this.POST_SWAP_HEALTH_GRACE_MS = 120_000;
+
+    // [재시작 루프 방어 2026-09-12] 즉사-재스폰 무한 루프 방지.
+    // 포트 9090 을 붙잡은 잔존 server.exe 가 있으면 새 스폰이 바인딩 실패로
+    // 즉사하고 exit 핸들러가 다시 2초 후 스폰 → 무한 반복(실측 1,998회,
+    // server.log 122MB, _MEI 11개 누적). 세 겹으로 차단한다:
+    //   ① 재스폰 전 killPortOwner(port) 로 잔존 점유자 제거 (C-1)
+    //   ② 스폰 후 CRASH_WINDOW_MS 내 종료 = '즉사'로 계상, 지수 백오프 (C-2)
+    //   ③ MAX_CRASH_STREAK 연속 즉사 시 자동 재시작 중단 = 서킷브레이커 (C-2)
+    this.CRASH_WINDOW_MS = 15_000;
+    this.MAX_CRASH_STREAK = 8;
+    this.MAX_RESTART_BACKOFF_MS = 60_000;
+    this.crashStreak = 0;
+    this._lastSpawnAt = 0;
+  }
+
+  // 자동 재시작 단일 관문 — 즉사 계상 · 백오프 · 서킷브레이커 · 잔존 점유자 제거를
+  // 한 곳에서 처리한다. exit / error / spawn-catch 모든 경로가 이 함수만 호출한다.
+  _scheduleAutoRespawn(port, cause) {
+    if (this.isQuitting || this.selfModifyRestartActive) return;
+    if (this.crashStreak >= this.MAX_CRASH_STREAK) {
+      this.merr(
+        `[ServerSupervisor] CIRCUIT BREAKER open — ${this.crashStreak} consecutive rapid crashes. `
+        + 'Auto-restart halted. Manual restart required.'
+      );
+      return;
+    }
+    const delay = Math.min(
+      2000 * Math.pow(2, Math.max(0, this.crashStreak - 1)),
+      this.MAX_RESTART_BACKOFF_MS
+    );
+    this.mlog(
+      `[ServerSupervisor] ${cause} — auto-restart in ${Math.round(delay / 1000)}s `
+      + `(rapid-crash streak ${this.crashStreak}/${this.MAX_CRASH_STREAK}).`
+    );
+    setTimeout(() => {
+      if (this.isQuitting || this.pythonProcess) return;
+      // ① 잔존 포트 점유자 제거 — 없으면 새 스폰이 EADDRINUSE 로 즉사한다.
+      try { this.killPortOwner(port); } catch (_) { }
+      this.startPythonProcess(port);
+    }, delay);
   }
 
   // ── Port & Socket Utilities ──
@@ -287,24 +327,19 @@ class ServerSupervisor {
     } catch (err) {
       this.merr(`[ServerSupervisor] startPythonProcess spawn failed: ${err.message}`);
       this.pythonProcess = null;
-      if (!this.isQuitting) {
-        setTimeout(() => {
-          if (!this.isQuitting && !this.pythonProcess) this.startPythonProcess(port);
-        }, 1500);
-      }
+      this.crashStreak += 1;
+      this._scheduleAutoRespawn(port, 'spawn failed');
       return null;
     }
 
     if (!this.pythonProcess) return null;
+    this._lastSpawnAt = Date.now();
 
     this.pythonProcess.on('error', (err) => {
       this.merr(`[ServerSupervisor] Python process error: ${err && err.message}`);
       this.pythonProcess = null;
-      if (!this.isQuitting) {
-        setTimeout(() => {
-          if (!this.isQuitting && !this.pythonProcess) this.startPythonProcess(port);
-        }, 1500);
-      }
+      this.crashStreak += 1;
+      this._scheduleAutoRespawn(port, 'Python process error');
     });
 
     try {
@@ -321,18 +356,21 @@ class ServerSupervisor {
     this.pythonProcess.on('exit', (code, signal) => {
       this.merr(`[ServerSupervisor] Main Python server exited (code=${code}, signal=${signal}, isQuitting=${this.isQuitting})`);
       this.pythonProcess = null;
-      if (!this.isQuitting) {
-        if (this.selfModifyRestartActive) {
-          this.mlog('[ServerSupervisor] Server exit during self-modify restart — orchestrator owns respawn.');
-        } else {
-          this.mlog('[ServerSupervisor] Server exit detected — Auto-restarting Python server in 2s...');
-          setTimeout(() => {
-            if (!this.isQuitting && !this.pythonProcess) {
-              this.startPythonProcess(port);
-            }
-          }, 2000);
-        }
+      if (this.isQuitting) return;
+      if (this.selfModifyRestartActive) {
+        this.mlog('[ServerSupervisor] Server exit during self-modify restart — orchestrator owns respawn.');
+        return;
       }
+
+      // ② 즉사 판정: 스폰 직후 짧은 생존 후 종료 = 크래시로 계상(백오프 대상).
+      //    CRASH_WINDOW_MS 이상 생존했다 죽으면 정상 종료로 보고 스트릭을 리셋한다.
+      const aliveMs = this._lastSpawnAt ? Date.now() - this._lastSpawnAt : Infinity;
+      if (aliveMs < this.CRASH_WINDOW_MS) {
+        this.crashStreak += 1;
+      } else {
+        this.crashStreak = 0;
+      }
+      this._scheduleAutoRespawn(port, 'Server exit detected');
     });
 
     // Priority boost on Windows
@@ -502,6 +540,8 @@ class ServerSupervisor {
       const req = http.get({ host: '127.0.0.1', port, path: '/health', family: 4 }, (res) => {
         if (res.statusCode === 200) {
           this.watchdogRestartCount = 0;
+          // 서버가 실제로 응답했으므로 즉사 스트릭을 닫는다(서킷브레이커 재무장).
+          this.crashStreak = 0;
         } else {
           this.merr(`[Watchdog] Health check non-200: ${res.statusCode}`);
           this.handleWatchdogFailure(port);

@@ -122,21 +122,78 @@ def _read_schema(agents_dir: Path) -> dict:
 
 # ── 자원 인덱스 ──────────────────────────────────────────────────────────
 
-def _collect_existing_skills() -> set[str]:
-    """실재 스킬 id 집합. (profiles/raon/skills + repo skills)"""
-    names: set[str] = set()
-    bases = []
+def _skill_root_candidates(agents_dir: "Path | None" = None) -> list:
+    """스킬 루트 후보를 가능한 한 모두 모은다.
+
+    ⚠ [버그 수정 2026-09-12] 이전 구현은 `Path(__file__).parent*4 / "skills"` 하나만
+    썼는데, 이는 소스 트리(`<repo>/api/api/dynamic/` → `<repo>/skills`)에서만 맞고
+    PyInstaller 번들(`_MEIPASS/api/dynamic/` → `daon_runtime/skills` ≠ `_MEIPASS/skills`)
+    에서는 한 단계 어긋나 스킬 164건을 거짓 누락으로 보고했다(실측: 소스 304개 vs
+    번들 281개 인덱싱 → 거짓 FAIL 164건). 후보를 전부 훑어 존재하는 것만 쓰도록 고친다.
+    """
+    cands: list = []
+
+    # 1) Hermes 프로필(사용자 스킬) + 전역
     try:
         home = Path(os.path.expanduser("~"))
-        bases.append(home / ".hermes" / "profiles" / "raon" / "skills")
+        cands.append(home / ".hermes" / "profiles" / "raon" / "skills")
+        cands.append(home / ".hermes" / "skills")
     except Exception:
         pass
-    here = Path(__file__).resolve()
-    bases.append(here.parent.parent.parent.parent / "skills")  # repo/skills
-    for base in bases:
+
+    # 2) PyInstaller onefile 번들 루트 (추출 디렉터리)
+    try:
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            cands.append(Path(meipass) / "skills")
+    except Exception:
+        pass
+
+    # 3) 이 파일에서 위로 올라가며 <조상>/skills
+    try:
+        here = Path(__file__).resolve()
+        for anc in list(here.parents)[:6]:
+            cands.append(anc / "skills")
+    except Exception:
+        pass
+
+    # 4) agents_dir 기준 (스키마가 있는 트리 옆의 skills)
+    if agents_dir is not None:
         try:
-            if not base.is_dir():
-                continue
+            cands.append(Path(agents_dir).parent / "skills")
+            cands.append(Path(agents_dir).parent.parent / "skills")
+        except Exception:
+            pass
+
+    # 5) cwd 기준
+    try:
+        cands.append(Path.cwd() / "skills")
+    except Exception:
+        pass
+
+    seen = set()
+    out: list = []
+    for c in cands:
+        try:
+            key = str(c.resolve()).lower()
+        except Exception:
+            key = str(c).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if c.is_dir():
+                out.append(c)
+        except Exception:
+            continue
+    return out
+
+
+def _collect_existing_skills(agents_dir: "Path | None" = None) -> set:
+    """실재 스킬 id 집합. (Hermes 프로필 + 번들/소스 트리 skills 를 전부 훑는다)"""
+    names: set = set()
+    for base in _skill_root_candidates(agents_dir):
+        try:
             for p in base.rglob("SKILL.md"):
                 names.add(p.parent.name.lower())
                 try:

@@ -68,6 +68,30 @@
       {
         "from": "api/agents",
         "to": "agents"
+      },
+      {
+        "from": "_sync_build.py",
+        "to": "_sync_build.py"
+      },
+      {
+        "from": "daon-server.spec",
+        "to": "daon-server.spec"
+      },
+      {
+        "from": "server.py",
+        "to": "server.py"
+      },
+      {
+        "from": "tts_server.py",
+        "to": "tts_server.py"
+      },
+      {
+        "from": "api/api",
+        "to": "api/api"
+      },
+      {
+        "from": "api/agents",
+        "to": "api/agents"
       }
     ]
   },

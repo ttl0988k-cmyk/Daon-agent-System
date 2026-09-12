@@ -83,6 +83,18 @@ def _save_custom_providers(providers: dict) -> None:
         print(f"[ModelManager] Warning: Cannot write custom_providers.json: {e}")
         raise RuntimeError(f"Cannot save provider data: {e}")
 
+    # 모바일 연동 동기화 (daon_remote_connector의 모델 동기화 비동기 호출)
+    try:
+        import sys as _sys
+        import threading as _thr
+        _conn_dir = r'c:\daon\mobile\LLM\chat\connector'
+        if _conn_dir not in _sys.path:
+            _sys.path.insert(0, _conn_dir)
+        import daon_remote_connector as _drc
+        _thr.Thread(target=_drc.sync_models_to_supabase_and_config, daemon=True).start()
+    except Exception:
+        pass
+
 
 # ── Hidden models ───────────────────────────────────────────────────────
 # No hardcoded hidden-model list. If a provider's /models endpoint omits

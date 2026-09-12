@@ -9,6 +9,7 @@ console.log("[BUILD ID]: main-v6-modular-2026-09-08");
 const { app, session } = require('electron');
 const path = require('path');
 const net = require('net');
+const fs = require('fs');
 const { execSync } = require('child_process');
 
 if (net.setDefaultAutoSelectFamily) {
@@ -67,6 +68,44 @@ let trayManager = null;
 let windowManager = null;
 let tabManager = null;
 let restartOrchestrator = null;
+
+// ── Build Root Resolution (packaged self-update) ──
+// [근본 수정 2026-09-12] Phase 3 리팩터링(f4c1a73)에서 누락된 resolveBuildRoot 를
+// 복원한다. 이전에는 `path.join(__dirname, '..')` 를 무검증으로 반환해,
+// 패키징 앱에서는 __dirname 이 asar 내부 가상 경로(<앱>/resources/app.asar/electron)
+// 이므로 buildRoot 가 <앱>/resources 로 해석되고 그곳에 daon-server.spec /
+// _sync_build.py 가 없어 rebuild 가 조용히 거부됐다(2026-09-07 이후).
+// 이제 후보를 순회하며 daon-server.spec 존재로 build root 를 검증한다.
+//   - dev      : <repo>                       (__dirname = <repo>/electron)
+//   - packaged : process.resourcesPath        (<앱>/resources — extraResources 위치)
+function resolveBuildRoot() {
+  const candidates = [
+    process.env.DAON_BUILD_ROOT,
+    process.resourcesPath,        // packaged: extraResources 들이 놓이는 실제 디렉터리
+    path.join(__dirname, '..'),   // dev: 레포 루트
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, 'daon-server.spec'))) return c;
+    } catch (_) { /* keep scanning */ }
+  }
+  return null;
+}
+
+// git 롤백은 실제 git 저장소(.git)가 있는 dev 트리에서만 유효하다.
+// packaged 번들에는 .git 이 없으므로 null 을 반환하고 gitRollback 이 사전 차단된다.
+function resolveRepoRoot() {
+  const candidates = [
+    process.env.DAON_REPO_ROOT,
+    path.join(__dirname, '..'),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, '.git'))) return c;
+    } catch (_) { /* keep scanning */ }
+  }
+  return null;
+}
 
 // Handle second instance launch
 app.on('second-instance', () => {
@@ -145,12 +184,16 @@ app.whenReady().then(async () => {
     supervisor.startWatchdog(DEFAULT_PORT);
 
     // ── STEP 4: Start Self-Modify Restart Orchestrator (Gap E-3) ──
-    const repoRoot = path.join(__dirname, '..');
+    // buildRoot(재빌드 대상: daon-server.spec 이 있는 곳)와 repoRoot(git 롤백용)
+    // 를 분리한다. packaged 에서는 buildRoot=<앱>/resources, repoRoot=null.
+    const buildRoot = resolveBuildRoot();
+    const repoRoot = resolveRepoRoot();
+    mlog(`[Startup] buildRoot=${buildRoot || '(none)'} repoRoot=${repoRoot || '(none)'}`);
     const selfUpdate = createSelfUpdate({
       log: mlog,
       errLog: merr,
       findTargetExe: () => supervisor.findServerExe(),
-      resolveBuildRoot: () => repoRoot,
+      resolveBuildRoot: () => buildRoot,
       probeHealth: (port) => supervisor.probeHealth(port, 1500),
       findFreePort: (port) => supervisor.findFreePort(port),
     });
@@ -196,6 +239,10 @@ app.whenReady().then(async () => {
       rebuildAndSwap: selfUpdate.rebuildAndSwap,
       restoreBackup: selfUpdate.restoreBackup,
       gitRollback: async (ref) => {
+        if (!repoRoot) {
+          merr('[RestartOrch] git rollback unavailable — no git repo root (packaged build). Skipping.');
+          return false;
+        }
         try {
           execSync(`git reset --hard ${ref}`, { cwd: repoRoot, windowsHide: true, timeout: 30000 });
           execSync('git clean -fd', { cwd: repoRoot, windowsHide: true, timeout: 30000 });
