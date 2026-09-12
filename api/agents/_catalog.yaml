@@ -1468,7 +1468,6 @@ categories:
       - brainstorming
       - project-documentation
       - scriptwriting
-      - obsidian
       - daon-vault
       capability: 콘텐츠 기획, 글쓰기, 카피라이팅, 스토리텔링, 프로젝트 문서, 브레인스토밍
       domain: creative-content, documentation, korean-writing
@@ -1780,7 +1779,6 @@ categories:
       - playwright
       - curl_cffi
       - patchright
-      - excel
       - xlsx
       - robots-txt
       - data-collection

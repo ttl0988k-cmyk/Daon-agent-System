@@ -8,11 +8,9 @@ tools:
 - web_search
 - browser
 skills:
-- presentation
-- document-routing
-- svg-authoring
-- pptx-generation
-- korean-typography
+- daon-slide-master-workflow
+- daon-slide-master-formats-checklist
+- powerpoint
 model_prefs:
   strength: code
   min_context: 64000
@@ -119,8 +117,8 @@ domain: presentation, document-generation, korean-deck
 related_agents:
 - ai-creator
 - web-crawler-expert
-- designer
-- writer
+- data-viz
+- tutorial-writer
 avoid_when:
 - backend_logic
 - data_extraction

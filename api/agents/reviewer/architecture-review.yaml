@@ -60,7 +60,7 @@ capability_score:
   debugging: 6
   architecture: 10
   testing: 6
-  documentation: 8
+  documentation: 5
   design: 3
   devops: 5
   reasoning: 10

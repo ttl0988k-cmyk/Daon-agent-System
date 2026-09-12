@@ -65,3 +65,11 @@ capability_score:
   reasoning: 9
 cost_profile:
   tier: mid
+
+model_preference:
+  reasoning:
+  - claude-sonnet
+  - deepseek-v3
+  security:
+  - claude-sonnet
+  - deepseek-v3

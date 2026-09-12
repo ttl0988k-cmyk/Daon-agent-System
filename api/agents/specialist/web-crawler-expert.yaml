@@ -7,14 +7,10 @@ tools:
 - terminal
 - web_search
 - browser
-- excel
 skills:
-- web-scraping
-- robots-txt
-- stealth-browsing
-- data-extraction
-- excel-export
-- domain-profiling
+- web-crawler
+- nuxt-data-extractor
+- ocr-and-documents
 model_prefs:
   strength: code
   min_context: 32000
@@ -70,7 +66,6 @@ tags:
 - playwright
 - curl_cffi
 - patchright
-- excel
 - xlsx
 - robots-txt
 - data-collection
@@ -83,7 +78,7 @@ related_agents:
 - slide-master-expert
 - ai-creator
 - excel-automation
-- integrator
+- data-pipeline
 avoid_when:
 - presentation_design
 - content_writing_without_data

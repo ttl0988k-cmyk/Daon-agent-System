@@ -23,6 +23,56 @@ _AGENTS_DIR: Optional[Path] = None
 _TEMPLATE_CACHE: dict[str, dict] = {}
 _CATALOG_CACHE: Optional[dict] = None
 
+# ── 템플릿 스키마 검증 (2026-09-12 추가) ──────────────────────────────────
+# api/agents/_schema.yaml 은 계약을 정의하지만, 이를 강제하는 코드가
+# 없었다(template_loader 는 safe_load 후 검증 없이 캐시).
+# Codex codex-rs/core/src/agent/role.rs 의 권한 불변식
+# ("roles may reduce capabilities but never replace the parent authority")
+# 에 대응하는 집행기를 여기에 배선한다.
+#
+# fail-open: 검증 실패는 절대 실행을 막지 않는다. WARNING 로그만 남긴다.
+_VALIDATION_DONE = False
+
+# 전체 스캔 완료 플래그.
+# _TEMPLATE_CACHE 는 load_template() 이 개별 항목을 넣기도 하므로,
+# 캐시가 비어있지 않다는 이유로 load_all_templates() 가 부분 캐시를
+# 전체로 반환하던 버그(pre-existing, 2026-09-12 발견)를 막는다.
+_ALL_LOADED = False
+
+
+def _run_template_validation_once() -> None:
+    """전체 템플릿 스키마 검증을 프로세스당 1회 실행하고 결과를 로그로 남긴다.
+
+    절대 raise 하지 않는다 — 검증은 관측 계층이며 실행 경로를 막지 않는다.
+    """
+    global _VALIDATION_DONE
+    if _VALIDATION_DONE:
+        return
+    _VALIDATION_DONE = True
+    try:
+        from api.dynamic.template_validator import validate_all_templates
+        report = validate_all_templates(_get_agents_dir())
+        if report.get("ok"):
+            _log.info(
+                "Template validation PASS (%s templates, %s skills indexed)",
+                report.get("total"), report.get("skills_indexed"),
+            )
+        else:
+            _log.warning(
+                "Template validation FAIL - %s violation(s) across %s template(s): %s",
+                len(report.get("violations", [])),
+                len(report.get("by_agent", {})),
+                report.get("by_code", {}),
+            )
+            for item in report.get("violations", [])[:10]:
+                _log.warning(
+                    "  [%s] %s :: %s - %s",
+                    item.get("code"), item.get("agent_id"),
+                    item.get("field"), item.get("detail"),
+                )
+    except Exception as exc:
+        _log.debug("Template validation skipped: %s", exc)
+
 
 def _get_agents_dir() -> Path:
     """Resolve the agents/ directory path."""
@@ -66,6 +116,8 @@ def load_template(template_id: str) -> Optional[dict]:
                     data["_category"] = category_dir.name
                     data["_file"] = str(yaml_file)
                     _TEMPLATE_CACHE[template_id] = data
+                    # 스키마 집행: 개별 로드 경로(compile)도 커버 (fail-open)
+                    _run_template_validation_once()
                     return data
             except Exception as e:
                 _log.warning("Failed to load template '%s': %s", yaml_file, e)
@@ -76,7 +128,8 @@ def load_template(template_id: str) -> Optional[dict]:
 
 def load_all_templates() -> dict[str, dict]:
     """Load all templates from all category directories. Returns {id: template_dict}."""
-    if _TEMPLATE_CACHE:
+    global _ALL_LOADED
+    if _ALL_LOADED:
         return dict(_TEMPLATE_CACHE)
 
     agents_dir = _get_agents_dir()
@@ -96,7 +149,11 @@ def load_all_templates() -> dict[str, dict]:
             except Exception as e:
                 _log.warning("Failed to load template file '%s': %s", yaml_file, e)
 
+    _ALL_LOADED = True
     _log.info("Loaded %d agent templates from %s", len(_TEMPLATE_CACHE), agents_dir)
+
+    # 스키마 집행: 전 템플릿 검증 1회 (fail-open, 실행을 막지 않음)
+    _run_template_validation_once()
     return dict(_TEMPLATE_CACHE)
 
 
@@ -274,6 +331,7 @@ def resolve_template_for_node(node: dict) -> dict:
 
 def invalidate_cache():
     """Clear template cache (useful for hot-reload during development)."""
-    global _CATALOG_CACHE
+    global _CATALOG_CACHE, _ALL_LOADED
     _TEMPLATE_CACHE.clear()
     _CATALOG_CACHE = None
+    _ALL_LOADED = False

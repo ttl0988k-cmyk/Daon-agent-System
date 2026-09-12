@@ -6,17 +6,13 @@ tools:
 - file
 - terminal
 - web_search
-- obsidian
 skills:
-- creative-writing
-- copywriting
-- storytelling
-- content-strategy
-- brainstorming
-- project-documentation
-- korean-writing
+- code-grounded-system-documentation
+- youtube-content
+- baoyu-infographic
+- creative-director
 model_prefs:
-  strength: writing
+  strength: creative
   min_context: 32000
   preferred_providers:
   - anthropic
@@ -71,7 +67,6 @@ tags:
 - brainstorming
 - project-documentation
 - scriptwriting
-- obsidian
 - daon-vault
 version: '1.0'
 author: daon
@@ -80,8 +75,8 @@ domain: creative-content, documentation, korean-writing
 related_agents:
 - slide-master-expert
 - web-crawler-expert
-- writer
-- planner
+- copywriting
+- prd-writer
 avoid_when:
 - pure_data_extraction
 - ui_implementation
