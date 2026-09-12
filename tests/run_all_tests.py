@@ -11,6 +11,8 @@ Suites:
   2. Phase 3: Electron Modular Architecture & Supervisors (Node.js)
   3. Phase 4: Frontend Sub-Panels & Memory Leak Prevention (Node.js)
   4. Phase 5: SQLite HarnessJobStore, Lineage DAG & Recovery (Python)
+  5. Self-Update BuildRoot Regression (Node.js)
+  6. Self-Build Guard: agent build lockout (Python)
 """
 
 import os
@@ -50,6 +52,11 @@ TEST_SUITES = [
     {
         "name": "Self-Update BuildRoot Regression",
         "cmd": ["node", "tests/test_self_update_buildroot.js"],
+        "cwd": ROOT,
+    },
+    {
+        "name": "Self-Build Guard: agent build lockout",
+        "cmd": [sys.executable, "tests/test_self_build_guard.py"],
         "cwd": ROOT,
     },
 ]

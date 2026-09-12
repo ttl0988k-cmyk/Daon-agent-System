@@ -1329,6 +1329,123 @@ def _foreground_background_guidance(command: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# DAON self-build guard
+# ---------------------------------------------------------------------------
+# DAON's self-update pipeline is owned by the Electron supervisor
+# (electron/restart_orchestrator.js -> electron/self_update.js). The agent must
+# not drive a build itself: doing so produces artifacts that never reach the
+# installed / portable copies and can leave a half-built repo behind.
+#
+#   * PyInstaller       -> the supervisor already runs this in rebuildAndSwap().
+#   * electron-builder  -> RELEASE-MANAGER ONLY (manual, pre-commit).
+#   * npm run build     -> release-manager only; on the released tree this
+#                          script is electron-builder, and npx would fetch it
+#                          from the network even where it is not installed.
+#
+# To request a rebuild, call the request_server_update tool with rebuild=true.
+# To inspect the pipeline (never execute it), use `--help` / `--version`.
+_DAON_SELF_MODIFY_MARKERS = (
+    "daon-server.spec",
+    "electron-builder.yml",
+    "_sync_build.py",
+    "scripts/after-pack.js",
+    "scripts\\after-pack.js",
+    "release/_build_zip.ps1",
+    "release\\_build_zip.ps1",
+    "install-portable.ps1",
+    "win-unpacked",
+    "dist_new",
+)
+
+_DAON_NPM_BUILD_RE = re.compile(
+    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b", re.IGNORECASE
+)
+_DAON_PYINSTALLER_RE = re.compile(
+    r"\bpython(?:3(?:\.\d+)?)?\b[^|;&\n]*?\s-m\s+pyinstaller\b"
+    r"|\bpyinstaller(?:\.exe)?\b",
+    re.IGNORECASE,
+)
+_DAON_ELECTRON_BUILDER_RE = re.compile(
+    r"\belectron-builder(?:\.cmd|\.exe)?\b", re.IGNORECASE
+)
+
+
+# Files / path fragments that identify the DAON repo itself.
+_DAON_REPO_MARKERS = ("daon-server.spec", "daon agent system")
+
+
+def _is_daon_workspace(cwd) -> bool:
+    """True when *cwd* is DAON's own repo.
+
+    The agent runs *inside* DAON, so an unknown/omitted cwd is treated as DAON
+    (fail-closed): otherwise a caller could dodge the guard by omitting workdir.
+    """
+    if not cwd or not isinstance(cwd, str):
+        return True
+    try:
+        cwd = os.path.expanduser(cwd)
+        if not os.path.isdir(cwd):
+            return True
+        if any(marker in cwd.lower() for marker in _DAON_REPO_MARKERS):
+            return True
+        for marker in ("daon-server.spec", "electron-builder.yml"):
+            if os.path.exists(os.path.join(cwd, marker)):
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def _self_build_guard(command: str, cwd: str | None = None) -> str | None:
+    """Return a refusal message when the agent tries to build DAON itself.
+
+    A build command is a DAON self-build when it names a DAON artifact
+    (``daon-server.spec``, ``--config electron-builder.yml``, ...) OR when it is
+    run from the DAON workspace. Hard-blocks those; returns advisory guidance
+    for build commands run somewhere that is clearly *not* DAON. Returns None
+    when the command is not a build at all.
+    """
+    if not isinstance(command, str):
+        return None
+    if _looks_like_help_or_version_command(command):
+        return None
+
+    in_daon = _is_daon_workspace(cwd)
+    lowered = command.lower()
+    has_daon_marker = any(m.lower() in lowered for m in _DAON_SELF_MODIFY_MARKERS)
+
+    def _is_daon_build(regex) -> bool:
+        return bool(regex.search(command)) and (has_daon_marker or in_daon)
+
+    hits = (
+        ("PyInstaller", _is_daon_build(_DAON_PYINSTALLER_RE)),
+        ("electron-builder", _is_daon_build(_DAON_ELECTRON_BUILDER_RE)),
+        ("npm build", _is_daon_build(_DAON_NPM_BUILD_RE)),
+    )
+    hard = [name for name, is_daon_build in hits if is_daon_build]
+    if hard:
+        return (
+            f"Blocked: '{hard[0]}' is part of DAON's own build pipeline, which the agent "
+            "must not run. The Electron supervisor owns the pipeline "
+            "(electron/restart_orchestrator.js -> electron/self_update.js, PyInstaller "
+            "only). electron-builder is reserved for the release manager and must be run "
+            "manually. To apply backend changes, call the request_server_update tool with "
+            "rebuild=true; the supervisor will kill the server, rebuild, swap, and "
+            "health-check. To inspect the pipeline instead of running it, use "
+            "`--help` / `--version`."
+        )
+
+    if _DAON_ELECTRON_BUILDER_RE.search(command) or _DAON_NPM_BUILD_RE.search(command):
+        return (
+            "Note: this looks like a project build command. If it is for DAON itself, do "
+            "not run it; DAON builds are owned by the supervisor (request_server_update "
+            "with rebuild=true) and electron-builder is release-manager only. Run it only "
+            "for a different project you are working on."
+        )
+    return None
+
+
 def terminal_tool(
     command: str,
     background: bool = False,
@@ -1419,6 +1536,23 @@ def terminal_tool(
                     f"Foreground timeout {timeout}s exceeds the maximum of "
                     f"{FOREGROUND_MAX_TIMEOUT}s. Use background=true with "
                     f"notify_on_complete=true for long-running commands."
+                ),
+            }, ensure_ascii=False)
+
+        # Guardrail: DAON self-builds must go through the supervisor, never the
+        # agent's shell. Runs before the foreground/background nudge so build
+        # commands always surface the supervisor path.
+        build_guard = _self_build_guard(command, workdir or cwd)
+        if build_guard is not None:
+            advisory = build_guard.startswith("Note:")
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": build_guard,
+                "status": "error" if advisory else "blocked",
+                "recovery": (
+                    "Call the request_server_update tool with rebuild=true to have the "
+                    "supervisor rebuild and restart the server."
                 ),
             }, ensure_ascii=False)
 

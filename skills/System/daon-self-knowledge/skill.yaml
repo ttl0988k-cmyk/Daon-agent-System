@@ -26,9 +26,9 @@ tags:
 - build-system
 - ouroboros
 - gap-e
-when_to_use: DAON 레포 자체의 코드를 수정/빌드/프로브하거나 갭 E 자기 수정 작업을 시작할 때
+when_to_use: DAON 레포 자체의 코드를 수정/프로브하거나 갭 E 자기 수정 작업을 시작할 때 (빌드는 감독관 담당)
 when_not_to_use: 사용자 프로젝트 작업, 일반 코딩 질문
 inputs: DAON 레포 관련 작업 지시
 outputs: 레포 구조/빌드 순서/프로브 실행법/정책에 기반한 정확한 작업 계획
-constraints: 빌드 전 git push 필수, 서버 무단 재시작 금지, _tmp_* 파일 git add 금지, .cmd 함정 확인 필수
-success_criteria: 빌드 파이프라인 순서 준수, 프로브 통과 확인, 정책 위반 없음
+constraints: 에이전트 자체 빌드 금지 (PyInstaller/electron-builder/npm run build는 terminal 코드 가드로 차단, 빌드는 request_server_update(rebuild=true)로만 요청), electron-builder와 포터블 zip은 릴리스 담당자 수동 전용, 빌드 전 git push 필수, 서버 무단 재시작 금지, _tmp_* 파일 git add 금지, .cmd 함정 확인 필수
+success_criteria: 감독관 경로로만 빌드 요청, 프로브 통과 확인, 정책 위반 없음
