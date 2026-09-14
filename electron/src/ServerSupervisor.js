@@ -344,6 +344,19 @@ class ServerSupervisor {
 
     try {
       const serverLogPath = path.join(app.getPath('userData'), 'server.log');
+      // [2026-09-14] 로그 로테이션 — 무한 증가 방지.
+      // 기존에는 flags:'a' 로 계속 append 해서 server.log 가 124.9MB 까지 커졌다
+      // (로그가 쌓이면 디스크만 먹고, 사용자는 원인을 알 수 없다).
+      // 스폰 시점에 임계(20MB)를 넘으면 server.log.1 로 밀어내고 새로 시작한다.
+      const MAX_LOG_BYTES = 20 * 1024 * 1024;
+      try {
+        const st = fs.statSync(serverLogPath);
+        if (st.size > MAX_LOG_BYTES) {
+          const rotatedLog = serverLogPath + '.1';
+          try { fs.rmSync(rotatedLog, { force: true }); } catch (_) { }
+          fs.renameSync(serverLogPath, rotatedLog);
+        }
+      } catch (_) { /* 파일 없음 = 첫 실행 */ }
       const serverLogStream = fs.createWriteStream(serverLogPath, { flags: 'a' });
       this.pythonProcess.stdout.on('data', (data) => {
         try { serverLogStream.write(`[STDOUT] ${data}`); } catch (_) { }

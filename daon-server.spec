@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 import os
+import sysconfig
 
 from PyInstaller.utils.hooks import collect_all
 
@@ -16,18 +16,52 @@ except Exception as _pw_exc:  # pragma: no cover
     print("Warning: collect_all('playwright') failed:", _pw_exc)
     _pw_datas, _pw_binaries, _pw_hidden = [], [], []
 
+# --- CUDA DLL 번들 (2026-09-14 근본 수정) --------------------------------------
+# [문제] 기존 spec 은 cublas64_12.dll(97.8MB) + cublasLt64_12.dll(637.7MB) 을
+#        무조건 server.exe 에 포함시켰다. 실측 결과 server.exe 1,158MB 중
+#        CUDA 가 735MB(63%) 를 차지했고, 그 결과:
+#          ① NSIS 인스톨러가 1,298MB 로 비대해져 7z/zip 해제 단계에서
+#             설치 진행률 ~10% 멈춤 (installer.nsh 주석에 기록된 실제 증상)
+#          ② 첫 실행 시 _MEI 추출이 25~30초 소요
+#          ③ 지인 배포 시 1.2GB 전송 부담
+#        또한 사용자 경로(C:\Users\ttl09\...)를 하드코딩하고 있어 다른 PC 에서
+#        빌드하면 CUDA 가 조용히 누락됐다.
+#
+# [해결] CUDA 를 선택 사항으로 만든다. 기본은 번들 제외(slim).
+#        · 개발 PC(로컬 whisper GPU 가속 필요) → DAON_CUDA=1 로 빌드
+#        · 배포본(지인, GPU 불필요)            → 기본값 그대로 (자동 slim)
+#
+# [왜 빼도 되는가] whisper_routes.py 의 _register_nvidia_cuda_dlls() 가
+#        exe_dir → site-packages/nvidia/... → sys._MEIPASS 순서로 DLL 을 찾는다.
+#        개발 PC 에는 nvidia-cublas-cu12 / nvidia-cudnn-cu12 가 이미 설치돼
+#        있으므로 번들에서 빠져도 GPU 가속이 유지된다. (없으면 CPU 로 자동 폴백)
+_INCLUDE_CUDA = os.environ.get('DAON_CUDA', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
 nvidia_binaries = []
-try:
-    user_py = r'C:\Users\ttl09\AppData\Local\Programs\Python\Python312\Lib\site-packages'
+if _INCLUDE_CUDA:
     essential_dlls = ['cublas64_12.dll', 'cublasLt64_12.dll', 'cudnn64_9.dll']
-    for sub in [('nvidia', 'cublas', 'bin'), ('nvidia', 'cudnn', 'bin')]:
-        bdir = os.path.join(user_py, *sub)
-        if os.path.isdir(bdir):
-            for fn in os.listdir(bdir):
-                if fn in essential_dlls:
-                    nvidia_binaries.append((os.path.join(bdir, fn), '.'))
-except Exception as e:
-    print("Warning loading nvidia binaries:", e)
+    # 하드코딩된 사용자 경로 대신 실제 인터프리터의 site-packages 를 조회한다.
+    bases = [
+        os.environ.get('DAON_CUDA_DIR'),
+        os.path.join(os.environ.get('LOCALAPPDATA', ''),
+                     'Programs', 'Python', 'Python312', 'Lib', 'site-packages'),
+        sysconfig.get_paths().get('purelib'),
+    ]
+    _seen = set()
+    for _base in bases:
+        if not _base or _base in _seen or not os.path.isdir(_base):
+            continue
+        _seen.add(_base)
+        for _sub in (('nvidia', 'cublas', 'bin'), ('nvidia', 'cudnn', 'bin')):
+            _bdir = os.path.join(_base, *_sub)
+            if not os.path.isdir(_bdir):
+                continue
+            for _fn in os.listdir(_bdir):
+                if _fn in essential_dlls:
+                    nvidia_binaries.append((os.path.join(_bdir, _fn), '.'))
+    print(f"[spec] CUDA DLL bundled: {len(nvidia_binaries)} file(s)")
+else:
+    print("[spec] CUDA skipped — slim build (set DAON_CUDA=1 to bundle CUDA)")
 
 a = Analysis(
     ['server.py'],

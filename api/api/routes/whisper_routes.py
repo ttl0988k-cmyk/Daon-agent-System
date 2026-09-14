@@ -36,31 +36,47 @@ _local_whisper_device = os.getenv('LOCAL_WHISPER_DEVICE', 'auto')
 
 def _register_nvidia_cuda_dlls():
     """Register nvidia-cublas and nvidia-cudnn DLL paths on Windows so CTranslate2 finds cublas64_12.dll."""
-    if sys.platform == 'win32':
-        exe_dir = os.path.dirname(sys.executable)
-        user_site = r'C:\Users\ttl09\AppData\Local\Programs\Python\Python312\Lib\site-packages'
-        search_dirs = [
-            exe_dir,
-            os.path.join(user_site, 'nvidia', 'cublas', 'bin'),
-            os.path.join(user_site, 'nvidia', 'cudnn', 'bin'),
-            os.path.join(sys.prefix, 'Lib', 'site-packages', 'nvidia', 'cublas', 'bin'),
-            os.path.join(sys.prefix, 'Lib', 'site-packages', 'nvidia', 'cudnn', 'bin'),
-        ]
-        if hasattr(sys, '_MEIPASS'):
-            search_dirs.extend([
-                sys._MEIPASS,
-                os.path.join(sys._MEIPASS, 'nvidia', 'cublas', 'bin'),
-                os.path.join(sys._MEIPASS, 'nvidia', 'cudnn', 'bin'),
-            ])
+    if sys.platform != 'win32':
+        return
+    import sysconfig
+    exe_dir = os.path.dirname(sys.executable)
+    # [2026-09-14 근본 수정] 사용자 경로 하드코딩(예: C:/Users/<이름>/.../Python312/...)을
+    # 제거하고 실제 인터프리터의 site-packages 를 조회한다.
+    #   - 기존: 다른 PC 에서 빌드/실행하면 CUDA DLL 을 찾지 못해 GPU 가속이 조용히 죽었다.
+    #   - 번들에서 CUDA 를 빼는 slim 빌드(daon-server.spec 기본값)에서도
+    #     개발 PC 의 nvidia-cublas-cu12 / nvidia-cudnn-cu12 를 찾아 GPU 를 유지한다.
+    #   - resources/ 에 DLL 을 동봉하는 경우(exe_dir)도 함께 탐색한다.
+    _sites = []
+    for _cand in (
+        os.environ.get('DAON_CUDA_DIR') or '',
+        sysconfig.get_paths().get('purelib') or '',
+        os.path.join(os.environ.get('LOCALAPPDATA', ''),
+                     'Programs', 'Python', 'Python312', 'Lib', 'site-packages'),
+        os.path.join(sys.prefix, 'Lib', 'site-packages'),
+    ):
+        if _cand and os.path.isdir(_cand) and _cand not in _sites:
+            _sites.append(_cand)
 
-        for d in search_dirs:
-            if os.path.isdir(d):
-                try:
-                    os.add_dll_directory(d)
-                    os.environ['PATH'] = d + os.path.pathsep + os.environ.get('PATH', '')
-                except Exception:
-                    pass
+    search_dirs = [exe_dir]
+    for _site in _sites:
+        search_dirs.append(os.path.join(_site, 'nvidia', 'cublas', 'bin'))
+        search_dirs.append(os.path.join(_site, 'nvidia', 'cudnn', 'bin'))
+    search_dirs.append(os.path.join(exe_dir, 'nvidia', 'cublas', 'bin'))
+    search_dirs.append(os.path.join(exe_dir, 'nvidia', 'cudnn', 'bin'))
+    if hasattr(sys, '_MEIPASS'):
+        search_dirs.extend([
+            sys._MEIPASS,
+            os.path.join(sys._MEIPASS, 'nvidia', 'cublas', 'bin'),
+            os.path.join(sys._MEIPASS, 'nvidia', 'cudnn', 'bin'),
+        ])
 
+    for d in search_dirs:
+        if os.path.isdir(d):
+            try:
+                os.add_dll_directory(d)
+                os.environ['PATH'] = d + os.path.pathsep + os.environ.get('PATH', '')
+            except Exception:
+                pass
 _register_nvidia_cuda_dlls()
 
 
