@@ -14,10 +14,12 @@ DAON 기억 시스템 (Memory Store)
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -85,8 +87,73 @@ _queue_worker_lock = threading.Lock()
 # ── 유지보수 (Always-on ①⑤⑥): 워커가 자체 주기 점검 (외부 cron 불필요) ──
 _MAINTENANCE_INTERVAL = 3600.0   # facts 상한 정리 점검 주기(초, 1시간)
 _DAILY_INTERVAL = 86400.0        # VACUUM + 백업 주기(초, 24시간)
-_last_maintenance_ts = 0.0       # 마지막 정리 시각(워커 시작 시 즉시 1회 실행)
-_last_daily_ts = 0.0             # 마지막 일일 정비 시각
+# 재시작 폭주 수정(2026-09-14): 0.0 으로 두면 프로세스가 뜰 때마다 now-0>=주기가
+# 참이 되어 매 재시작마다 일일정제(LLM)가 즉시 1회씩 실행됐다. 워커 시작 시각으로
+# 초기화해 '실제 주기 도래'에만 실행되게 한다.
+_last_maintenance_ts = time.time()   # 워커 시작 시각 기준(즉시 실행 방지)
+_last_daily_ts = time.time()         # 일일 정비도 시작 시각 기준
+
+# ── 기억 자동화 게이트 (2026-09-14) ──
+# 배포판(지인)에서 기억 자동 추출/일일정제가 무료가 아닌 유료 토큰을 태우는 것을
+# 막는다. OmniRoute(로컬 무료 라우터, http://localhost:20128)가 감지될 때만 자동화를
+# 켠다. 명시적 오버라이드: config.yaml memory.auto_extract / env DAON_MEMORY_AUTO_EXTRACT
+#   - 'auto' (기본): OmniRoute 감지 시 ON, 아니면 OFF
+#   - 'on'/'true': 항상 ON   /   'off'/'false': 항상 OFF
+_OMNIROUTE_PROBE_URLS = (
+    'http://127.0.0.1:20128/v1/models',
+    'http://localhost:20128/v1/models',
+)
+_OMNIROUTE_PROBE_TTL = 30.0      # 감지 결과 캐시(초)
+_omniroute_probe_cache = {'ts': 0.0, 'alive': False}
+_omni_probe_lock = threading.Lock()
+_DAILY_REFINE_MAX_FACTS = 200    # 일일정제 LLM 입력 facts 상한(토큰 폭주 방지)
+
+
+def _setting_memory_auto() -> str:
+    """config.yaml memory.auto_extract → env DAON_MEMORY_AUTO_EXTRACT → 'auto'."""
+    try:
+        from api.config import _load_config_value
+        val = _load_config_value('memory.auto_extract', 'DAON_MEMORY_AUTO_EXTRACT', 'auto')
+    except Exception:
+        val = os.getenv('DAON_MEMORY_AUTO_EXTRACT', 'auto')
+    return str(val if val is not None else 'auto').strip().lower()
+
+
+def _omniroute_available() -> bool:
+    """로컬 OmniRoute(무료 라우터) 데몬이 살아있는지 best-effort 감지. TTL 캐시."""
+    now = time.time()
+    with _omni_probe_lock:
+        if now - _omniroute_probe_cache['ts'] < _OMNIROUTE_PROBE_TTL:
+            return _omniroute_probe_cache['alive']
+    alive = False
+    for url in _OMNIROUTE_PROBE_URLS:
+        try:
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                code = getattr(resp, 'status', 200) or 200
+                if 200 <= int(code) < 500:
+                    alive = True
+                    break
+        except Exception:
+            continue
+    with _omni_probe_lock:
+        _omniroute_probe_cache['ts'] = now
+        _omniroute_probe_cache['alive'] = alive
+    return alive
+
+
+def memory_auto_enabled() -> bool:
+    """기억 자동화(추출/정제) 활성 여부.
+
+    우선순위: 명시 설정(on/off) > OmniRoute 감지(무료 라우터가 있으면 ON).
+    기본 'auto' 는 무료 로컬 라우터가 없으면 False → LLM 토큰 소모 0.
+    """
+    setting = _setting_memory_auto()
+    if setting in ('off', 'false', '0', 'no', 'none', 'disable', 'disabled'):
+        return False
+    if setting in ('on', 'true', '1', 'yes', 'always', 'enable', 'enabled'):
+        return True
+    return _omniroute_available()
 
 
 # ---------------------------------------------------------------------------
@@ -1824,7 +1891,7 @@ def _run_maintenance() -> None:
 def _run_daily_refine() -> None:
     """Phase 4-B: 일일 심화 정제 — LLM으로 facts 클러스터링 → 병합 → 모순 해결."""
     try:
-        facts = list_facts(limit=500, include_superseded=False)
+        facts = list_facts(limit=_DAILY_REFINE_MAX_FACTS, include_superseded=False)
         if len(facts) < 10:
             return
         from api.dynamic.direct_calls import _call_direct
@@ -1882,7 +1949,7 @@ def _run_daily_refine() -> None:
             _log_refine('merge', [rep['id']] + [o['id'] for o in others], merged_text)
 
         # 3) 모순 감지
-        active_facts = list_facts(limit=500, include_superseded=False)
+        active_facts = list_facts(limit=_DAILY_REFINE_MAX_FACTS, include_superseded=False)
         if len(active_facts) >= 2:
             af_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in active_facts)
             contra_prompt = (
@@ -1910,11 +1977,13 @@ def _run_daily_refine() -> None:
 def _run_daily() -> None:
     """⑤⑥ 일일 정비: 심화 정제 → WAL 체크포인트 → 백업 → VACUUM."""
     try:
-        # 0) Phase 4-B: 심화 정제 (LLM 호출)
-        try:
-            _run_daily_refine()
-        except Exception:
-            pass
+        # 0) Phase 4-B: 심화 정제 (LLM 호출) — 무료 로컬 라우터(OmniRoute) 감지 시에만.
+        #    미감지(지인 기본 env)면 LLM 호출 없이 DB 정비(WAL/백업/VACUUM)만 수행한다.
+        if memory_auto_enabled():
+            try:
+                _run_daily_refine()
+            except Exception:
+                pass
         # 1) WAL을 본 DB에 반영(백업 정합성) + 용량 축소
         with _db_lock:
             conn = _connect()
@@ -2032,6 +2101,9 @@ def process_session_async(session) -> None:
     않는다(순수 부가 원칙).
     """
     try:
+        # 무료 로컬 라우터(OmniRoute)가 없으면 자동 추출을 건너뛴다(유료 토큰 소모 방지).
+        if not memory_auto_enabled():
+            return
         messages = getattr(session, 'messages', None)
         if not messages:
             return

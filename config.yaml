@@ -113,6 +113,15 @@ toolsets:
 self_evolution:
   auto_mode: false
 
+# --- Memory automation (기억 자동화 게이트) ---
+# 대화 종료 후 자동 facts/profile 추출 + 일일 정제(LLM) 실행 여부.
+#   'auto' (기본): 로컬 무료 라우터 OmniRoute(http://localhost:20128)가 감지될 때만 ON.
+#                  미감지 시 OFF → 유료 토큰 소모 없음(지인 배포 기본값).
+#   'on'  : 항상 ON   /   'off' : 항상 OFF
+# env DAON_MEMORY_AUTO_EXTRACT 로도 오버라이드 가능(우선순위: env > 이 값).
+memory:
+  auto_extract: "auto"
+
 # --- Fallback models (when model_manager is unavailable) ---
 # OpenRouter 차단: 기존 fallback이 모두 OpenRouter 경유라 대시보드 사용량
 # 청구를 막기 위해 목록을 비움. (메인 MiniMax-M3 는 api.minimax.io 직결이라 무관)
