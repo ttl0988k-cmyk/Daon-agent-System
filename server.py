@@ -320,11 +320,33 @@ def main():
     # ── [v5-fix] 포트 점유 사전 검사 ──
     # 기존 인스턴스(좀비 리스너)가 포트를 LISTENING 중이면 명확한 메시지와 함께
     # 즉시 종료한다. 이전처럼 조용히 겹쳐 바인드되는 것을 허용하지 않는다.
+    #
+    # [재기동 루프 근본 수정 2026-09-14] 단, Electron Supervisor 는 잔존 점유자를
+    # taskkill 한 '직후' 새 프로세스를 스폰한다. Windows 의 프로세스 종료는
+    # 비동기이므로, 방금 죽인 점유자가 아직 LISTENING 으로 보이는 찰나가 존재한다.
+    # 이때 곧바로 sys.exit(1) 하면 Supervisor 가 즉시 재스폰 → 또 점유자 감지 →
+    # exit(1) 의 무한 '죽었다 살았다' 루프가 된다. 더 나쁜 것은 Supervisor 의
+    # /health 프로브가 그 사이 살아있는 잔존 프로세스에 성공해 rapid-crash 스트릭이
+    # 0 으로 리셋되고, 서킷브레이커(MAX_CRASH_STREAK=8)가 영원히 열리지 않는다
+    # (실측: server.log 에 'rapid-crash streak 0/8' 만 반복, 1,998회 재기동).
+    # 따라서 유예 시간 동안 재확인하고, 그 사이 점유자가 사라지면 정상 기동한다.
+    # 유예가 끝나도 점유가 지속될 때만(진짜 다른 인스턴스) 종료한다.
+    _PORT_WAIT_SEC = float(os.environ.get('DAON_PORT_WAIT_SEC', '40'))
     _owner_pid = _find_port_owner(PORT)
     if _owner_pid is not None and _owner_pid != os.getpid():
-        print(f"[ERROR] 포트 {PORT}는 이미 다른 프로세스(PID {_owner_pid})가 사용 중입니다.", flush=True)
-        print("[ERROR] 기존 DAON 서버를 종료한 후 다시 실행하세요. (taskkill /PID " + str(_owner_pid) + " /F)", flush=True)
-        sys.exit(1)
+        _wait_deadline = time.time() + _PORT_WAIT_SEC
+        print(f"[port] port {PORT} held by PID {_owner_pid}; waiting up to "
+              f"{_PORT_WAIT_SEC:.0f}s for release...", flush=True)
+        while time.time() < _wait_deadline:
+            time.sleep(1.0)
+            _owner_pid = _find_port_owner(PORT)
+            if _owner_pid is None or _owner_pid == os.getpid():
+                break
+        if _owner_pid is not None and _owner_pid != os.getpid():
+            print(f"[ERROR] 포트 {PORT}는 이미 다른 프로세스(PID {_owner_pid})가 사용 중입니다.", flush=True)
+            print("[ERROR] 기존 DAON 서버를 종료한 후 다시 실행하세요. (taskkill /PID " + str(_owner_pid) + " /F)", flush=True)
+            sys.exit(1)
+        print(f"[port] port {PORT} released by previous owner - continuing startup.", flush=True)
 
     try:
         server = RobustThreadingHTTPServer((HOST, PORT), Handler)

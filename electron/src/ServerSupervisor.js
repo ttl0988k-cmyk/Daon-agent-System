@@ -553,8 +553,15 @@ class ServerSupervisor {
       const req = http.get({ host: '127.0.0.1', port, path: '/health', family: 4 }, (res) => {
         if (res.statusCode === 200) {
           this.watchdogRestartCount = 0;
-          // 서버가 실제로 응답했으므로 즉사 스트릭을 닫는다(서킷브레이커 재무장).
-          this.crashStreak = 0;
+          // [재기동 루프 근본 수정 2026-09-14] 여기서 무조건 crashStreak 을 0 으로
+          // 만들면 서킷브레이커가 영원히 열리지 않는다. 포트를 붙잡은 '잔존'
+          // server.exe 가 응답하면, 정작 새로 스폰된 자식은 EADDRINUSE 로 즉사하는데도
+          // 스트릭이 리셋되어 무한 재기동이 된다(실측: 'streak 0/8' 만 반복).
+          // '우리가 스폰해 추적 중인' 프로세스가 살아있을 때만 리셋한다.
+          if (this.pythonProcess && this.pythonProcess.pid
+            && this.isProcessAlive(this.pythonProcess.pid)) {
+            this.crashStreak = 0;
+          }
         } else {
           this.merr(`[Watchdog] Health check non-200: ${res.statusCode}`);
           this.handleWatchdogFailure(port);

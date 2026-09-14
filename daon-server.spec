@@ -1,9 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import sys
 import sysconfig
 
 from PyInstaller.utils.hooks import collect_all
+
+# [빌드 크래시 근본 수정 2026-09-14] spec 은 PyInstaller 가 exec() 하는 실행
+# 스크립트이므로, 여기서의 print() 는 빌드 프로세스의 stdout 으로 나간다.
+# Windows 콘솔 기본 인코딩(cp949)에서는 em-dash(U+2014) 등 비-cp949 문자를
+# print 하는 순간 UnicodeEncodeError 로 PyInstaller 전체가 exit 1 로 죽는다.
+# (실측: "[SelfUpdate] rebuild failed - PyInstaller exit 1 :: ...print("
+#  "[spec] CUDA skipped \u2014 slim build...")" → 자가 빌드가 조용히 실패)
+# stdout/stderr 를 UTF-8 로 재설정하고(errors=replace), 아래 메시지에서도
+# 비-ASCII 문자를 쓰지 않는다.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # --- Playwright: bundle the full package (submodules + node driver data) ---
 # `from playwright.sync_api import sync_playwright` fails inside the onefile
@@ -61,7 +76,8 @@ if _INCLUDE_CUDA:
                     nvidia_binaries.append((os.path.join(_bdir, _fn), '.'))
     print(f"[spec] CUDA DLL bundled: {len(nvidia_binaries)} file(s)")
 else:
-    print("[spec] CUDA skipped — slim build (set DAON_CUDA=1 to bundle CUDA)")
+    # 하이픈만 사용한다 — 위 reconfigure 로 방어했더라도 비-ASCII 는 쓰지 않는다.
+    print("[spec] CUDA skipped - slim build (set DAON_CUDA=1 to bundle CUDA)")
 
 a = Analysis(
     ['server.py'],
