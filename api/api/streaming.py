@@ -20,6 +20,11 @@ from api.config import (
     _get_session_agent_lock, _set_thread_env, _clear_thread_env,
     init_hermes_auth_env, get_thread_env,
     resolve_model_provider,
+    # session_id -> stream_id reverse map. Owned by api.config so long-lived
+    # background workers (builders, self-evolution, dynamic jobs, approval
+    # gates) can resolve the live SSE queue for a session. Kept here as an
+    # import (not a private copy) so registration/cleanup stay in one place.
+    ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK,
 )
 
 # Global lock for os.environ writes. Per-session locks (_agent_lock) prevent
@@ -35,8 +40,12 @@ _ACTIVE_AGENTS_LOCK = threading.Lock()
 
 # Reverse mapping: session_id → stream_id so we can auto-cancel a session's
 # previous stream when a new message arrives for the same session.
-_ACTIVE_SESSION_STREAMS = {}
-_ACTIVE_SESSION_STREAMS_LOCK = threading.Lock()
+#
+# NOTE: this used to be a module-private dict. It now lives in api.config
+# (imported above) so that long-lived background workers — builder approval
+# gates, self-evolution proposals, dynamic harness jobs — can resolve the
+# live SSE queue for a session instead of calling STREAMS.get(session_id),
+# which always returned None. Registration/cleanup remains owned here.
 
 # Cache of recently completed streams (stream_id → done_event_data).
 # When a client's EventSource auto-reconnects after stream completion,
@@ -356,12 +365,12 @@ def cancel_session_streams(session_id: str) -> bool:
     Returns True if at least one stream was cancelled.
     """
     cancelled_any = False
-    with _ACTIVE_SESSION_STREAMS_LOCK:
-        old_stream_id = _ACTIVE_SESSION_STREAMS.get(session_id)
+    with ACTIVE_SESSION_STREAMS_LOCK:
+        old_stream_id = ACTIVE_SESSION_STREAMS.get(session_id)
     if old_stream_id:
         _logger.info("Auto-cancelling previous stream %s for session %s", old_stream_id, session_id)
         # session_id를 명시적으로 넘긴다. 그렇지 않으면 취소 직후 새 스트림이
-        # _ACTIVE_SESSION_STREAMS[session_id]를 덮어써 _force_release_session_lock의
+        # ACTIVE_SESSION_STREAMS[session_id]를 덮어써 _force_release_session_lock의
         # 역방향 조회가 실패해 세션 락이 해제되지 않고, 새 메시지가
         # "이전 작업이 아직 종료되지 않았습니다"로 거부되는 레이스 컨디션이 발생한다.
         cancelled_any = cancel_stream(old_stream_id, session_id=session_id)
@@ -385,9 +394,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     # Auto-cancel any previous stream for this session before starting
     cancel_session_streams(session_id)
 
-    # Register this stream as the active one for this session
-    with _ACTIVE_SESSION_STREAMS_LOCK:
-        _ACTIVE_SESSION_STREAMS[session_id] = stream_id
+    # Register this stream as the active one for this session.
+    # The map is shared with api.config so background workers (builder
+    # approval, self-evolution, dynamic jobs) can resolve this stream's queue
+    # via get_stream_queue(session_id) instead of the always-failing
+    # STREAMS.get(session_id).
+    with ACTIVE_SESSION_STREAMS_LOCK:
+        ACTIVE_SESSION_STREAMS[session_id] = stream_id
 
     # Sprint 10: create a cancel event for this stream
     cancel_event = threading.Event()
@@ -1231,7 +1244,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # Injects MCP tools, Patch Registry, Memory Forget, Media generation,
           # Self-Update, and Self-Evolution tools into Hermes registry and agent.tools.
           from api.streaming_tools import register_all_streaming_tools
-          injected_count = register_all_streaming_tools(agent, s, session_id, cancel_event)
+          injected_count = register_all_streaming_tools(
+              agent, s, session_id, cancel_event, stream_id=stream_id)
 
           is_browser_session = bool(
               "[실시간 브라우저 환경 컨텍스트" in (msg_text or "") or
@@ -1606,10 +1620,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             _ACTIVE_AGENTS.pop(stream_id, None)
         with _STREAM_THREADS_LOCK:
             _STREAM_THREADS.pop(stream_id, None)
-        with _ACTIVE_SESSION_STREAMS_LOCK:
+        with ACTIVE_SESSION_STREAMS_LOCK:
             # Only remove if this stream is still the active one for the session
-            if _ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
-                _ACTIVE_SESSION_STREAMS.pop(session_id, None)
+            if ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
+                ACTIVE_SESSION_STREAMS.pop(session_id, None)
 
         # Cache the 'done' event data so that clients whose EventSource
         # auto-reconnects after the stream has completed still get a proper
@@ -1727,12 +1741,12 @@ def _force_release_session_lock(stream_id: str, session_id: str | None = None) -
 
     session_id를 명시적으로 받은 경우 그대로 사용하고, 받지 못한 경우에만
     (하위 호환) 역방향 조회로 찾는다. 역방향 조회는 취소 직후 새 스트림이
-    _ACTIVE_SESSION_STREAMS[session_id]를 덮어쓰면 실패할 수 있으므로,
+    ACTIVE_SESSION_STREAMS[session_id]를 덮어쓰면 실패할 수 있으므로,
     취소 경로에서는 반드시 session_id를 전달해야 락이 해제된다.
     """
     if not session_id:
-        with _ACTIVE_SESSION_STREAMS_LOCK:
-            for _sid, _sid_stream in _ACTIVE_SESSION_STREAMS.items():
+        with ACTIVE_SESSION_STREAMS_LOCK:
+            for _sid, _sid_stream in ACTIVE_SESSION_STREAMS.items():
                 if _sid_stream == stream_id:
                     session_id = _sid
                     break

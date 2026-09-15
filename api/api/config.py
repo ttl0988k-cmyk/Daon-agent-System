@@ -222,6 +222,58 @@ CANCEL_FLAGS = {}  # stream_id -> threading.Event
 SERVER_START_TIME = time.time()
 CHAT_LOCK = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# session_id -> active stream_id
+#
+# STREAMS is keyed by stream_id (a per-message uuid), but long-lived background
+# workers (builders, self-evolution, dynamic jobs, approval gates) only know the
+# session_id. Historically those call sites did ``STREAMS.get(session_id)``,
+# which ALWAYS returned None — session_id is not a stream_id — so their SSE
+# progress logs were silently dropped. This shared map is the bridge: producers
+# register here, consumers resolve the live stream_id and enqueue real events.
+#
+# api.streaming uses this same object as its authoritative reverse map (it no
+# longer keeps a private copy), so registration/cleanup stay in one place.
+# ---------------------------------------------------------------------------
+ACTIVE_SESSION_STREAMS = {}  # session_id -> stream_id
+ACTIVE_SESSION_STREAMS_LOCK = threading.Lock()
+
+
+def resolve_stream_id(session_id: str) -> str:
+    """Return the active stream_id for a session, or '' when none is live."""
+    if not session_id:
+        return ''
+    try:
+        with ACTIVE_SESSION_STREAMS_LOCK:
+            return ACTIVE_SESSION_STREAMS.get(session_id) or ''
+    except Exception:
+        return ''
+
+
+def get_stream_queue(session_id_or_stream_id: str):
+    """Resolve an SSE queue from either a session_id or a stream_id.
+
+    Tries the value as a literal stream_id first (STREAMS is keyed by stream_id),
+    then falls back to the session's active stream. Returns None when no live
+    queue exists. Never raises — callers treat None as "no live stream".
+    """
+    if not session_id_or_stream_id:
+        return None
+    key = str(session_id_or_stream_id)
+    try:
+        q = STREAMS.get(key)
+        if q is not None:
+            return q
+    except Exception:
+        pass
+    stream_id = resolve_stream_id(key)
+    if stream_id:
+        try:
+            return STREAMS.get(stream_id)
+        except Exception:
+            return None
+    return None
+
 # Thread-local env context
 _thread_ctx = threading.local()
 def _set_thread_env(**kwargs):

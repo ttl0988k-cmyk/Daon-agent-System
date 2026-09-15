@@ -911,8 +911,10 @@ class HermesDynamicRunner:
                     except Exception as _jae:
                         _log.warning("Failed to set job awaiting_approval: %s", _jae)
                 
-                from api.config import STREAMS
-                q = STREAMS.get(session_id)
+                # STREAMS 는 stream_id 로 키잉된다. session_id 로 직접 조회하면
+                # 항상 None 이 되어 계획 승인 배너가 전달되지 않는다.
+                from api.config import get_stream_queue
+                q = get_stream_queue(session_id)
                 if q:
                     q.put(('approval', {
                         'preview_id': preview_id,

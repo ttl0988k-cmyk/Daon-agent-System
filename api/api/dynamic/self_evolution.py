@@ -19,6 +19,7 @@ auto_mode=True 여도 make_session_approver 의 자동 타임아웃 승인 경�
 게이트/편입 단계 자체를 건너뛰지 않는다. 어떤 함수도 절대 raise 하지 않는다.
 """
 
+import json
 import threading
 
 _PROMPT_BLOCK_HEADER = "[SELF-EVOLUTION CAPABILITY]"
@@ -101,13 +102,19 @@ def get_self_evolution_prompt_block() -> str:
         return ''
 
 
-def _log_to_stream(session_id, agent, message, status="running"):
-    """SSE 큐로 진행 상황 전달 (최선 노력, 절대 raise 하지 않음)."""
-    if not session_id:
+def _log_to_stream(session_id, agent, message, status="running", stream_id=None):
+    """SSE 큐로 진행 상황 전달 (최선 노력, 절대 raise 하지 않음).
+
+    STREAMS 는 stream_id 로 키잉되므로 session_id 로 직접 조회하면 항상 None 이
+    되어 로그가 조용히 유실된다. config.get_stream_queue 가 stream_id ->
+    (해당 세션의 활성 stream_id) 순으로 해석한다.
+    """
+    key = stream_id or session_id
+    if not key:
         return
     try:
-        from api.config import STREAMS
-        queue = STREAMS.get(session_id)
+        from api.config import get_stream_queue
+        queue = get_stream_queue(key)
         if queue:
             queue.put(('agent_log', {
                 'agent': agent,
@@ -118,7 +125,7 @@ def _log_to_stream(session_id, agent, message, status="running"):
         pass
 
 
-def _run_proposal(capability, description, session_id):
+def _run_proposal(capability, description, session_id, stream_id=None):
     """백그라운드 제안 스레드 본체: 승인 -> 스폰 -> 편입.
 
     E-L2 dispatch_builder_requests 와 E-L4 incorporate_builder_dispatches 를
@@ -127,6 +134,14 @@ def _run_proposal(capability, description, session_id):
     dispatch_record = None
     incorporation_results = []
     error_msg = ""
+
+    def _emit(agent, message, status="running"):
+        """이 제안 스레드 전용 SSE 로그 라우터 (stream_id -> 세션 활성 스트림)."""
+        _log_to_stream(session_id, agent, message, status, stream_id=stream_id)
+
+    def _log_cb(agent, content, status="running"):
+        _emit(agent, content, status)
+
     try:
         # 1) 승인자 구성 (auto_mode 여부와 무관하게 세션 승인 인프라 사용).
         approver = None
@@ -136,14 +151,13 @@ def _run_proposal(capability, description, session_id):
                 APPROVAL_KIND_INCORPORATION)
             approver = make_session_approver(
                 session_id, kind=APPROVAL_KIND_BUILDER_SPAWN,
-                log_callback=lambda a, c, s="running": _log_to_stream(session_id, a, c, s))
+                log_callback=_log_cb)
             incorporation_approver = make_session_approver(
                 session_id, kind=APPROVAL_KIND_INCORPORATION,
-                log_callback=lambda a, c, s="running": _log_to_stream(session_id, a, c, s))
+                log_callback=_log_cb)
         except Exception as e:
             incorporation_approver = None
-            _log_to_stream(session_id, "Builder",
-                           "승인 인프라 구성 실패: %s" % e, "warning")
+            _emit("Builder", "승인 인프라 구성 실패: %s" % e, "warning")
 
         # 2) E-L2: 게이트 + Builder 서브팀 스폰.
         builder_queue = [{
@@ -153,19 +167,16 @@ def _run_proposal(capability, description, session_id):
         try:
             from api.dynamic.builder_agent import dispatch_builder_requests
             records = dispatch_builder_requests(
-                builder_queue, approver=approver,
-                log_callback=lambda a, c, s="running": _log_to_stream(session_id, a, c, s))
+                builder_queue, approver=approver, log_callback=_log_cb)
             dispatch_record = records[0] if records else None
         except Exception as e:
             error_msg = "builder dispatch failed: %s" % e
-            _log_to_stream(session_id, "Builder", error_msg, "error")
+            _emit("Builder", error_msg, "error")
 
         spawned = bool(dispatch_record and dispatch_record.get("status") == "spawned")
         if not spawned:
             reason = (dispatch_record or {}).get("reason") or error_msg or "dispatch denied"
-            _log_to_stream(
-                session_id, "Builder",
-                "제작 요청이 처리되지 않았습니다: %s" % reason, "warning")
+            _emit("Builder", "제작 요청이 처리되지 않았습니다: %s" % reason, "warning")
             return
 
         # 3) E-L4: 편입 거버넌스 (진입 -> 프로브 -> 승인 -> 편입).
@@ -173,34 +184,32 @@ def _run_proposal(capability, description, session_id):
             from api.dynamic.builder_pipeline import incorporate_builder_dispatches
             incorporation_results = incorporate_builder_dispatches(
                 [dispatch_record], session_id=session_id,
-                approver=incorporation_approver,
-                log_callback=lambda a, c, s="running": _log_to_stream(session_id, a, c, s))
+                approver=incorporation_approver, log_callback=_log_cb)
         except Exception as e:
-            _log_to_stream(session_id, "Governance",
-                           "편입 파이프라인 오류: %s" % e, "error")
+            _emit("Governance", "편입 파이프라인 오류: %s" % e, "error")
 
         ok = any(r.get("ok") for r in incorporation_results if isinstance(r, dict))
         if ok:
             names = ", ".join(str(r.get("name") or "") for r in incorporation_results
                               if isinstance(r, dict) and r.get("ok"))
-            _log_to_stream(
-                session_id, "Governance",
-                "자가 진화 완료: '%s' 스킬이 편입되었습니다. 다음 턴부터 사용 가능합니다." % names,
-                "running")
+            _emit("Governance",
+                  "자가 진화 완료: '%s' 스킬이 편입되었습니다. 다음 턴부터 사용 가능합니다." % names,
+                  "running")
         else:
-            _log_to_stream(
-                session_id, "Governance",
-                "편입이 완료되지 않았습니다 (초안은 draft 상태로 보존됨).", "warning")
+            _emit("Governance",
+                  "편입이 완료되지 않았습니다 (초안은 draft 상태로 보존됨).", "warning")
     except Exception as e:
-        _log_to_stream(session_id, "System",
-                       "자가 진화 파이프라인 내부 오류: %s" % e, "error")
+        _emit("System", "자가 진화 파이프라인 내부 오류: %s" % e, "error")
     finally:
         with _ACTIVE_LOCK:
             _ACTIVE_PROPOSALS.pop(str(capability or "").strip(), None)
 
 
-def start_proposal(capability, description="", session_id=None):
+def start_proposal(capability, description="", session_id=None, stream_id=None):
     """결핍 능력 제작 제출. 백그라운드 스레드를 띄우고 즉시 반환.
+
+    stream_id 는 SSE 진행 로그를 정확한 큐로 보내기 위한 것이며, 모르면
+    session_id 로 활성 스트림을 역해석한다.
 
     반환 dict: {"ok": bool, "status": started|duplicate|invalid, "message": str}
     절대 raise 하지 않는다.
@@ -216,7 +225,7 @@ def start_proposal(capability, description="", session_id=None):
                                 "in this session." % cap)}
         thread = threading.Thread(
             target=_run_proposal,
-            args=(cap, str(description or ""), session_id),
+            args=(cap, str(description or ""), session_id, stream_id),
             daemon=True,
             name="self-evolution-%s" % cap[:40],
         )
@@ -228,8 +237,102 @@ def start_proposal(capability, description="", session_id=None):
                         "background." % cap)}
 
 
+def register_self_evolution_tools(registry, session_id=None, stream_id=None):
+    """자가 진화 진입 도구(propose_self_evolution)를 레지스트리에 등록한다.
+
+    9af7c02 에서는 이 도구가 streaming.py 에 인라인으로 구현되어 있었다.
+    eb2d212 리팩터가 이를 streaming_tools.inject_self_evolution_tool 로 옮기면서
+    구현체를 삭제했고, 임포트만 남아 ImportError 가 try/except 에 삼켜졌다
+    (도구는 조용히 사라지고 프롬프트만 "호출하라"고 지시하는 상태).
+
+    여기서 구현을 복원한다. 등록에 성공하든 실패하든 agent.tools 에 append 할
+    수 있도록 OpenAI 형식 함수 스키마를 반환한다 (절대 raise 하지 않음).
+
+    dispatch 는 session_id / stream_id 를 kwargs 로 넘기지 않으므로, 핸들러가
+    쓸 세션 컨텍스트는 이 클로저에서 캡처한다.
+    """
+    schema = {
+        "name": "propose_self_evolution",
+        "description": (
+            "Propose building a MISSING capability as a new Skill. Use ONLY when "
+            "no existing tool, skill, or plugin can accomplish what the user needs. "
+            "The system then runs the immutable order create -> isolate -> verify "
+            "-> approve -> incorporate -> use, and the user controls approval."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "capability": {
+                    "type": "string",
+                    "description": ("Short kebab-case name of the missing ability "
+                                    "(e.g. 'pdf-form-filler')."),
+                },
+                "description": {
+                    "type": "string",
+                    "description": ("What the capability must do, its inputs/outputs, "
+                                    "and how success is verified."),
+                },
+            },
+            "required": ["capability"],
+        },
+    }
+
+    def _handler(args: dict, **kwargs) -> str:
+        try:
+            args = args or {}
+            capability = str(args.get('capability') or '').strip()
+            if not capability:
+                return json.dumps(
+                    {"ok": False, "status": "invalid",
+                     "message": "capability is required"}, ensure_ascii=False)
+            sid = session_id or kwargs.get('session_id') or ''
+            sxid = stream_id or kwargs.get('stream_id') or ''
+            result = start_proposal(
+                capability, args.get('description') or '',
+                session_id=sid, stream_id=sxid)
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "status": "error",
+                 "message": "self-evolution proposal failed: %s" % e},
+                ensure_ascii=False)
+
+    try:
+        registry.register(
+            name="propose_self_evolution",
+            toolset="self-evolution",
+            schema={
+                "name": schema["name"],
+                "description": schema["description"],
+                "parameters": schema["parameters"],
+            },
+            handler=_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Propose building a missing capability as a new Skill",
+        )
+        try:
+            # 사용자가 config.yaml 의 toolset 목록에 'evolution' 이라고 적어도
+            # 정식 이름('self-evolution')으로 해석되도록 별칭을 등록한다.
+            registry.register_toolset_alias("evolution", "self-evolution")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return {
+        "type": "function",
+        "function": {
+            "name": schema["name"],
+            "description": schema["description"],
+            "parameters": schema["parameters"],
+        },
+    }
+
+
 __all__ = [
     "is_auto_mode_enabled",
     "get_self_evolution_prompt_block",
     "start_proposal",
+    "register_self_evolution_tools",
 ]

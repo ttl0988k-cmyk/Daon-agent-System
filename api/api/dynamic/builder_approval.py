@@ -153,10 +153,14 @@ def make_session_approver(session_id, kind=APPROVAL_KIND_BUILDER_SPAWN,
                 pass
 
         # 2. SSE 알림 (최선 노력).
+        # STREAMS 는 session_id 가 아니라 stream_id 로 키잉된다. 따라서
+        # session_id 로 직접 조회하면 항상 None 이 되어 승인 배너가 화면에
+        # 뜨지 않는다. get_stream_queue 가 stream_id 우선 조회 후
+        # session→활성 스트림 역참조로 해석한다.
         queue = None
         try:
-            from api.config import STREAMS
-            queue = STREAMS.get(session_id)
+            from api.config import get_stream_queue
+            queue = get_stream_queue(session_id)
             if queue:
                 queue.put(('approval', {
                     'preview_id': '',

@@ -383,17 +383,54 @@ def inject_self_update_tool(agent: Any, session: Any, session_id: str) -> None:
         _logger.warning("Self-update tool injection failed: %s", _su_inj_e)
 
 
-def inject_self_evolution_tool(agent: Any) -> None:
-    """Inject propose_self_evolution tool into agent."""
+def inject_self_evolution_tool(
+    agent: Any, session_id: str = None, stream_id: str = None
+) -> None:
+    """Inject the propose_self_evolution tool into the agent.
+
+    session_id / stream_id are captured in the handler closure so the
+    background proposal thread can route progress to a live SSE queue. The
+    dispatch chain now also forwards session_id (registry.dispatch resolves
+    stream_id from it), so both paths resolve to the same queue.
+    """
+    tool_name = "propose_self_evolution"
     try:
         from api.dynamic.self_evolution import register_self_evolution_tools as _se_register
         from tools.registry import registry as _se_registry
 
-        _se_schema = _se_register(_se_registry)
-        if _se_schema:
+        # registry 는 원본(raw) 스키마(name/description/parameters)만 보관하고
+        # OpenAI 래퍼({"type":"function","function":{...}})는 감싸지 않는다.
+        # 따라서 entry.schema 를 그대로 agent.tools 에 넣으면 로더/디스패처가
+        # tool_name 을 찾지 못해 도구가 없는 것처럼 보인다. 재사용 분기를 두지
+        # 않고 항상 register 반환(래퍼) 스키마를 주입한다.
+        # (동일 이름/동일 toolset 재등록은 registry 에서 멱등 overwrite 된다.)
+        # register_self_evolution_tools 는 절대 raise 하지 않는다.
+        _se_schema = _se_register(
+            _se_registry, session_id=session_id, stream_id=stream_id
+        )
+
+        if not _se_schema:
+            _logger.warning("Self-evolution tool injection skipped: no schema returned.")
+            return
+
+        # 중복 방지: agent.tools 에 같은 이름의 스키마가 이미 있으면 append 하지 않는다.
+        _already_in_agent = False
+        try:
+            for _t in getattr(agent, "tools", []) or []:
+                _fn = _t.get("function", {}) if isinstance(_t, dict) else {}
+                if _fn.get("name") == tool_name:
+                    _already_in_agent = True
+                    break
+        except Exception:
+            _already_in_agent = False
+
+        if not _already_in_agent:
             agent.tools.append(_se_schema)
-            agent.valid_tool_names.add("propose_self_evolution")
-            _logger.debug("Injected propose_self_evolution tool into agent.")
+        agent.valid_tool_names.add(tool_name)
+        _logger.debug(
+            "Injected %s tool into agent (session=%s, stream=%s, reused=%s).",
+            tool_name, session_id or "-", stream_id or "-", _already_in_agent,
+        )
     except Exception as _se_inj_e:
         _logger.warning("Self-evolution tool injection failed: %s", _se_inj_e)
 
@@ -403,6 +440,7 @@ def register_all_streaming_tools(
     session: Any,
     session_id: str,
     cancel_event: threading.Event,
+    stream_id: str = None,
 ) -> int:
     """Convenience orchestrator that injects all dynamic streaming tools.
 
@@ -413,5 +451,5 @@ def register_all_streaming_tools(
     inject_memory_forget_tool(agent)
     inject_media_generation_tools(agent)
     inject_self_update_tool(agent, session, session_id)
-    inject_self_evolution_tool(agent)
+    inject_self_evolution_tool(agent, session_id=session_id, stream_id=stream_id)
     return mcp_count

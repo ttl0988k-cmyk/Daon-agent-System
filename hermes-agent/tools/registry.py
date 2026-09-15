@@ -299,6 +299,22 @@ class ToolRegistry:
         entry = self.get_entry(name)
         if not entry:
             return json.dumps({"error": f"ToolNotFoundError: The tool '{name}' is not registered. Do NOT guess tool names. Check the available tools schema and call an explicitly registered tool."})
+
+        # Session-scoped tools (approval gates, self-evolution, dynamic harness
+        # jobs) need the calling session's live SSE queue. The registry keeps
+        # exactly ONE handler per tool name, so a closure captured at injection
+        # time would always point at the most recently injected session. Pass
+        # the per-call context through instead, and resolve stream_id here so
+        # handlers can reach the queue via get_stream_queue(session_id).
+        if kwargs.get("session_id") and not kwargs.get("stream_id"):
+            try:
+                from api.config import resolve_stream_id
+                _resolved_stream = resolve_stream_id(kwargs.get("session_id") or "")
+                if _resolved_stream:
+                    kwargs["stream_id"] = _resolved_stream
+            except Exception:
+                pass  # never block tool execution on context resolution
+
         try:
             if entry.is_async:
                 from model_tools import _run_async

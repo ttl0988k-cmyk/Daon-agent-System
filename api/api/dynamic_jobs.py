@@ -468,8 +468,10 @@ def start_harness_job(body: dict) -> str:
                         log_callback("System", f"⏱️ 응답 없음 — 파일 변경이 자동 승인되었습니다. ({cmd})", "running")
                     else:
                         log_callback("System", f"⚠️ Command approval required ({desc}): {cmd}\nPlease review and approve in the chat interface.", "running")
-                    from api.config import STREAMS
-                    q = STREAMS.get(session_id)
+                    # STREAMS 는 stream_id 로 키잉된다. session_id 로 직접 조회하면
+                    # 항상 None 이 되어 위험 명령 승인 프롬프트가 뜨지 않는다.
+                    from api.config import get_stream_queue
+                    q = get_stream_queue(session_id)
                     if q:
                         # type을 'dangerous_command'로 통일 — 프론트(approval.js)가
                         # 이 타입을 /api/approval/respond 로 라우팅한다. 'command' 타입은
