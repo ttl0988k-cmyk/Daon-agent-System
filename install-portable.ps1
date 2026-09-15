@@ -6,8 +6,19 @@
 # Run:  powershell -ExecutionPolicy Bypass -File install-portable.ps1
 
 $ErrorActionPreference = 'Stop'
+
+# 설치 폴더명 혼선 제거 — 단일 정의 모듈 사용 (공백 vs 하이픈).
+# 실제 설치 폴더는 하이픈/소문자 "daon-agent-system" 이며, 바로가기도 이 폴더를
+# 가리킨다. 과거 공백 폴더로 설치하면 바로가기/자동동기화와 어긋났다.
+. (Join-Path $PSScriptRoot 'lib\daon_paths.ps1')
+
 $src = Join-Path $PSScriptRoot 'dist\win-unpacked'
-$dst = Join-Path $env:LOCALAPPDATA 'Programs\DAON Agent System'
+
+# 이미 설치본이 있으면 그 폴더를 재사용, 없으면 표준(하이픈) 경로로 새로 만든다.
+$dst = Resolve-DaonInstalledDir
+if (-not $dst) {
+    $dst = Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') 'daon-agent-system'
+}
 
 if (-not (Test-Path (Join-Path $src 'DAON Agent System.exe'))) {
     Write-Error "source build not found: $src (run from project root)"
@@ -41,7 +52,7 @@ if (Test-Path $upd) {
 }
 
 Write-Host "[2/3] Creating shortcuts ..."
-$exe = Join-Path $dst 'DAON Agent System.exe'
+$exe = Get-DaonMainExe -Root $dst
 $launcher = Join-Path $dst 'DAON Agent System.cmd'
 # Some developer environments export ELECTRON_RUN_AS_NODE=1 globally.  That
 # makes the packaged Electron executable behave like node.exe and exit with

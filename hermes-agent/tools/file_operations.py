@@ -36,6 +36,26 @@ from hermes_constants import get_hermes_home
 from tools.binary_extensions import BINARY_EXTENSIONS
 
 
+def _normalize_newlines(text: str) -> str:
+    """Normalize newlines to LF (\\r\\n and \\r -> \\n).
+
+    [Windows newline asymmetry fix 2026-09-14] In the LocalEnvironment backend,
+    ``_run_bash`` opens the pipe with ``Popen(text=True)``: writes (stdin) are
+    translated ``\\n`` -> ``os.linesep`` (``\\r\\n`` on Windows), but reads
+    (stdout) decode raw bytes and therefore PRESERVE ``\\r\\n``. That asymmetry
+    caused two bugs in ``patch_replace``:
+      (a) the post-write re-read comparison was always unequal (LF-basis
+          ``new_content`` vs CRLF on-disk), returning a false
+          "The patch did not persist" even though the write succeeded; and
+      (b) writing content that already contained ``\\r\\n`` produced ``\\r\\r\\n``
+          which accumulates across repeated patches and corrupts files.
+    Normalizing on write (and on compare) fixes both.
+    """
+    if not text:
+        return text
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 # ---------------------------------------------------------------------------
 # Write-path deny list — blocks writes to sensitive system/credential files
 # ---------------------------------------------------------------------------
@@ -724,7 +744,11 @@ class ShellFileOperations(FileOperations):
         # Write via stdin pipe — content bypasses shell arg parsing entirely,
         # so there's no ARG_MAX limit regardless of file size.
         write_cmd = f"cat > {self._escape_shell_arg(path)}"
-        write_result = self._exec(write_cmd, stdin_data=content)
+        # [Windows newline fix 2026-09-14] ``_run_bash`` writes through a
+        # text-mode pipe that translates ``\n`` -> ``os.linesep`` (``\r\n``).
+        # Feeding content that already contains ``\r\n`` yields ``\r\r\n`` and
+        # accumulates on every patch, so normalize to LF right before the pipe.
+        write_result = self._exec(write_cmd, stdin_data=_normalize_newlines(content))
         
         if write_result.exit_code != 0:
             return WriteResult(error=f"Failed to write file: {write_result.stdout}")
@@ -804,7 +828,11 @@ class ShellFileOperations(FileOperations):
         verify_result = self._exec(verify_cmd)
         if verify_result.exit_code != 0:
             return PatchResult(error=f"Post-write verification failed: could not re-read {path}")
-        if verify_result.stdout != new_content:
+        # [Windows newline fix 2026-09-14] ``cat`` returns the on-disk bytes
+        # (CRLF preserved) while ``write_file`` piped an LF-normalized payload,
+        # so a raw comparison is always unequal on Windows and reported a false
+        # failure. Compare with both sides newline-normalized.
+        if _normalize_newlines(verify_result.stdout) != _normalize_newlines(new_content):
             return PatchResult(error=(
                 f"Post-write verification failed for {path}: on-disk content "
                 f"differs from intended write "

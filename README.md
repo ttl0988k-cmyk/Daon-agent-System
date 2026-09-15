@@ -2,6 +2,9 @@
 
 > Electron + Python 기반 **멀티 에이전트 IDE** — 로컬 백엔드 서버, 웹 UI, 다중 AI 에이전트를 결합한 데스크톱 개발 환경
 
+> 📍 **빌드/배포/설치 위치가 헷갈린다면** → [`docs/ARTIFACTS_AND_BUILD.md`](docs/ARTIFACTS_AND_BUILD.md)
+> (server.exe · electron · 포터블 · 설치본 · 바로가기가 어디에 있고 어떻게 흐르는지 한 장 지도)
+
 ---
 
 ## ✨ 주요 기능

@@ -150,9 +150,33 @@ def _run_browser_command_via_bridge(
         return _convert_result(result)
 
     elif command == "screenshot":
-        labeled = "--labeled" in (args or []) or "-l" in (args or [])
+        # agent-browser CLI는 Set-of-Marks 오버레이를 "--annotate"로 요청한다.
+        # (과거 "--labeled"/-l"만 검사해 browser_vision의 annotate가 무시되던 버그)
+        labeled = ("--labeled" in (args or []) or "-l" in (args or [])
+                   or "--annotate" in (args or []))
         result = _submit_task("screenshot", session_id=task_id, labeled=labeled)
-        return _convert_result(result)
+        converted = _convert_result(result)
+        if converted.get("success"):
+            # agent-browser CLI는 인자로 받은 경로에 파일을 쓴다. 여기서는 CDP가
+            # base64를 돌려주므로, hermes browser_vision이 기대하는 "출력 경로 파일"을
+            # 직접 만들어 준다. (경로 인자 없으면 기존처럼 base64만 반환)
+            out_path = None
+            for _a in (args or []):
+                if isinstance(_a, str) and _a.lower().endswith(".png"):
+                    out_path = _a
+            if out_path:
+                image_b64 = (converted.get("data", {}) or {}).get("image_base64", "")
+                if not image_b64:
+                    return {"success": False, "error": "Screenshot returned no image data"}
+                import base64 as _b64
+                import os as _os
+                _dir = _os.path.dirname(out_path)
+                if _dir:
+                    _os.makedirs(_dir, exist_ok=True)
+                with open(out_path, "wb") as _f:
+                    _f.write(_b64.b64decode(image_b64))
+                converted["data"]["path"] = out_path
+        return converted
 
     elif command == "batch":
         import json as _json

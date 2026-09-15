@@ -27,22 +27,34 @@ exports.default = async function afterPack(context) {
     fs.writeFileSync(cmdPath, content);
     console.log('[afterPack] launcher cmd ensured: ' + cmdPath);
 
-    // ── 자동 동기화: 빌드 직후 설치본 및 포터블 경로로 app.asar 자동 복사 ──
-    const targets = [
+    // ── 자동 동기화: 빌드 직후 (설치본 + 포터블) 로 app.asar / server.exe 복사 ──
+    // ⚠ 설치 폴더명 혼선 주의: productName 은 공백 "DAON Agent System" 이지만
+    //   실제 설치 폴더는 하이픈/소문자 "daon-agent-system" 이다. 과거에는 공백
+    //   경로만 조회해 자동동기화가 "조용히" 실패 → 배포본만 옛 버전으로 남았다.
+    //   두 이름을 모두 후보로 탐색한다. (scripts/lib/daon_paths.ps1 과 동일 규칙)
+    const localPrograms = path.join(
+        process.env.LOCALAPPDATA || 'C:\\Users\\ttl09\\AppData\\Local', 'Programs');
+    const appDirs = [
         'C:\\daon\\DAON-Portable',
-        path.join(process.env.LOCALAPPDATA || 'C:\\Users\\ttl09\\AppData\\Local', 'Programs', productName)
+        path.join(localPrograms, 'daon-agent-system'), // 실제(하이픈)
+        path.join(localPrograms, productName),         // 레거시(공백)
     ];
-    const srcAsar = path.join(context.appOutDir, 'resources', 'app.asar');
-    if (fs.existsSync(srcAsar)) {
-        for (const targetDir of targets) {
+    const srcRes = path.join(context.appOutDir, 'resources');
+    // server.exe = PyInstaller 백엔드 번들(핵심 버그픽스가 들어있는 파일).
+    // 느슨한 리소스(spec/store)는 지인용 빌드에서 sanitize 될 수 있어 제외한다.
+    const filesToSync = ['app.asar', 'server.exe'];
+    for (const appDir of appDirs) {
+        const targetRes = path.join(appDir, 'resources');
+        if (!fs.existsSync(targetRes)) { continue; }
+        for (const fname of filesToSync) {
+            const src = path.join(srcRes, fname);
+            if (!fs.existsSync(src)) { continue; }
             try {
-                const targetRes = path.join(targetDir, 'resources');
-                if (fs.existsSync(targetRes)) {
-                    fs.copyFileSync(srcAsar, path.join(targetRes, 'app.asar'));
-                    console.log('[afterPack] Auto-synced app.asar -> ' + targetRes);
-                }
+                fs.copyFileSync(src, path.join(targetRes, fname));
+                console.log('[afterPack] Auto-synced ' + fname + ' -> ' + targetRes);
             } catch (e) {
-                console.warn('[afterPack] Auto-sync failed for ' + targetDir + ':', e && e.message);
+                console.warn('[afterPack] Auto-sync failed for ' + fname +
+                    ' @ ' + appDir + ':', e && e.message);
             }
         }
     }

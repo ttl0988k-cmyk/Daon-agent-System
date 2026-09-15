@@ -61,6 +61,20 @@ release/*.zip
 release/*.yml
 release/win-unpacked/
 release/_stage/
+release/_archive/
+
+# 지인 배포용 산출물 (Setup.exe + win-unpacked = 수백 MB 바이너리, 소스 아님)
+release_friend/
+
+# 빌드 중 생성되는 임시 백업 (build_friend_release.ps1)
+_friend_build_backup_*/
+
+# Windows 예약 장치명이 하위 경로에 생성된 경우 (셸 리다이렉트 사고)
+**/nul
+**/nul.*
+
+# 타임스탬프 백업 사본 (스토어/설정 저장 시 자동 생성)
+*.bak-*
 
 # Electron builder config (duplicated from package.json)
 electron-builder.yml

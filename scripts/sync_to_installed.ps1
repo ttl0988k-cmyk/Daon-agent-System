@@ -16,12 +16,25 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $ErrorActionPreference = 'Stop'
 
 $src = Join-Path $PSScriptRoot '..'
-$dst = Join-Path $env:LOCALAPPDATA 'Programs\DAON Agent System\resources'
 
-if (-not (Test-Path $dst)) {
-    Write-Host "[중단] 설치본을 찾을 수 없습니다: $dst" -ForegroundColor Red
+# 설치 폴더명 혼선(공백 "DAON Agent System" vs 하이픈 "daon-agent-system") 제거.
+# 실제 설치본은 하이픈 폴더이므로 단일 정의 모듈로 자동 탐색한다.
+. (Join-Path $PSScriptRoot 'lib\daon_paths.ps1')
+
+$installedRoot = Resolve-DaonInstalledDir
+if (-not $installedRoot) {
+    $cands = (Get-DaonInstallCandidates) -join ', '
+    Write-Host "[중단] 설치본을 찾을 수 없습니다. 확인한 후보: $cands" -ForegroundColor Red
+    Write-Host "        설치 후 다시 실행하세요." -ForegroundColor Yellow
     exit 1
 }
+$dst = Join-Path $installedRoot 'resources'
+
+if (-not (Test-Path $dst)) {
+    Write-Host "[중단] resources 폴더가 없습니다: $dst" -ForegroundColor Red
+    exit 1
+}
+Write-Host "[대상] 설치본: $installedRoot" -ForegroundColor Cyan
 
 # ── 1. 백업 (타임스탬프 폴더, 최근 3개만 유지) ──
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -116,11 +129,11 @@ if ($Open) {
     foreach ($rd in $runtimeDirs) {
         if (Test-Path $rd) {
             Get-ChildItem -Path $rd -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
     Remove-Item env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-    $exe = Join-Path (Split-Path $dst) 'DAON Agent System.exe'
+    $exe = Get-DaonMainExe -Root $installedRoot
     Start-Process $exe -ArgumentList '--remote-debugging-port=9222'
     Write-Host "[OK] 앱 및 서버 재시작됨 (CDP 9222 활성화)" -ForegroundColor Green
 }
