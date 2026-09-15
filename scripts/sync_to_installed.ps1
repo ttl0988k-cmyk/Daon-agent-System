@@ -50,17 +50,38 @@ Sort-Object Name -Descending |
 Select-Object -Skip 3 |
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-# ── 2. 캐시 버스팅 자동 버전업 ──
+# ── 2. 캐시 버스팅 자동 버전업 (전 배포 트리 동시 반영) ──
 # 소스를 고쳐도 index.html의 ?v=NN이 그대로면 이미 열린 페이지가 캐시된
 # 옛 JS를 계속 실행한다. 동기화 시마다 chat.js 버전을 자동 +1 한다.
+#
+# [수정] 예전에는 소스 index.html 만 +1 한 뒤 설치본에만 복사했다. 그래서
+#   win-unpacked / 포터블 은 낮은 버전, 설치본만 높은 버전이 되어
+#   "일부만 갱신된" 불일치가 남았다. 이제 bump 결과를 소스 + 전 배포 트리에
+#   동일하게 기록해 어느 실행 경로에서도 같은 캐시 버전을 본다.
 $indexPath = Join-Path $src 'index.html'
 $idxContent = Get-Content $indexPath -Raw -Encoding UTF8
 if ($idxContent -match 'chat\.js\?v=(\d+)') {
     $newV = [int]$Matches[1] + 1
     $idxContent = $idxContent -replace 'chat\.js\?v=\d+', ("chat.js?v=" + $newV)
-    # UTF-8(BOM 없음)로 저장 — 원본 인코딩 유지
-    [System.IO.File]::WriteAllText($indexPath, $idxContent, (New-Object System.Text.UTF8Encoding($false)))
-    Write-Host ("[OK] chat.js 캐시 버전 자동 업그레이드: v=" + $newV)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($indexPath, $idxContent, $utf8NoBom)
+
+    $bumped = @($indexPath)
+    foreach ($t in (Resolve-DaonDeployTargets)) {
+        $tIdx = Join-Path $t.Resources 'index.html'
+        if (Test-Path $tIdx) {
+            [System.IO.File]::WriteAllText($tIdx, $idxContent, $utf8NoBom)
+            $bumped += $tIdx
+        }
+    }
+    # 재빌드 자기완결 번들이 쓰는 미러도 맞춰 둔다 (fallback index.html 정합)
+    $mirrorIdx = Join-Path $src 'dist_new\index.html'
+    if (Test-Path $mirrorIdx) {
+        [System.IO.File]::WriteAllText($mirrorIdx, $idxContent, $utf8NoBom)
+        $bumped += $mirrorIdx
+    }
+    Write-Host ("[OK] chat.js 캐시 버전 자동 업그레이드: v=" + $newV + " (" + $bumped.Count + "개 위치 동시 반영)")
+    foreach ($b in $bumped) { Write-Host ("     - " + $b) }
 }
 
 # ── 3. 동기화: index.html + static/ (JS/CSS/이미지 등 UI 자산 전체) ──
