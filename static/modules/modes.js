@@ -319,7 +319,9 @@ function renderModeSuggestionCards(suggestions, displayText, uploaded) {
     container.appendChild(footer);
 
     box.appendChild(container);
-    scrollToChatBottom();
+    // 모드 제안 카드 = 사용자 조작 흐름 → 하단 고정
+    if (typeof forceStickChatBottom === 'function') forceStickChatBottom();
+    else scrollToChatBottom();
 }
 
 /**

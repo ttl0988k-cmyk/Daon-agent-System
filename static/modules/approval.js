@@ -135,6 +135,9 @@ function _showApprovalSlotIfIsSlot(container) {
     if (container && container.id === 'approvalSlot') container.style.display = 'block';
 }
 function _scrollChatToBottom() {
+    // [2026-09-15] 사용자가 위쪽을 읽는 중이면 승인 카드로 인해 끌어내리지 않는다.
+    // chat.js 의 전역 스크롤 앵커링(_chatPinned / scrollToChatBottom)을 사용한다.
+    if (typeof scrollToChatBottom === 'function') { scrollToChatBottom(); return; }
     var box = document.getElementById('chatMessages');
     if (box) box.scrollTop = box.scrollHeight;
 }
@@ -349,6 +352,11 @@ function _escInlineApproval(str) {
 
 function _scrollContainerToBottom(container) {
     if (!container) return;
+    // 승인 슬롯이 아닌 채팅 컨테이너라면 읽기 중 스크롤을 보존한다.
+    if (container.id === 'chatMessages' && typeof scrollToChatBottom === 'function') {
+        scrollToChatBottom();
+        return;
+    }
     container.scrollTop = container.scrollHeight;
 }
 

@@ -197,7 +197,9 @@ function _assistantBubble(html) {
     b.className = 'message-bubble assistant beginner-wizard-bubble';
     b.innerHTML = html;
     box.appendChild(b);
-    if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
+    // 마법사/환영 등 사용자 조작 흐름 → 하단 고정
+    if (typeof forceStickChatBottom === 'function') forceStickChatBottom();
+    else if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
     return b;
 }
 
@@ -208,7 +210,8 @@ function _userBubble(text) {
     b.className = 'message-bubble user';
     b.textContent = text;
     box.appendChild(b);
-    if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
+    if (typeof forceStickChatBottom === 'function') forceStickChatBottom();
+    else if (typeof scrollToChatBottom === 'function') scrollToChatBottom();
 }
 
 // ── 마법사 환영 (카드: 접었다 펼 수 있음) ──

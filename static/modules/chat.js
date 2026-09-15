@@ -491,6 +491,9 @@ async function selectSession(sid) {
     // ── Phase 2: Only after API success, commit state changes ──
     State.activeSessionId = sid;
     try { localStorage.setItem('daon_active_session_id', sid); } catch (_) { }
+    // 다른 세션으로 이동 = 새 대화를 봐야 함 → 스크롤 고정 복원
+    _chatPinned = true;
+    _chatMissedCount = 0;
 
     // Detach any native browser overlay during session switch
     if (window.electronAPI) {
@@ -683,6 +686,7 @@ async function clearChatHistory() {
       method: 'POST',
       body: { session_id: State.activeSessionId }
     });
+    forceStickChatBottom();
     renderMessages([], []);
   } catch (e) {
     showToast("기록 삭제 실패: " + e.message);
@@ -770,6 +774,10 @@ function renderMessages(messages, toolCalls) {
       });
     }
   } catch (_) { }
+  // ★ [스크롤 보존] innerHTML 초기화는 scrollTop 을 0 으로 리셋한다.
+  //   위쪽을 읽는 중이면 읽던 위치를 복원하고, 하단 고정이면 하단으로 내린다.
+  const _prevScrollTop = box.scrollTop;
+  const _wasPinnedOnRender = _chatPinned;
   box.innerHTML = '';
 
   messages.forEach((msg, idx) => {
@@ -818,7 +826,14 @@ function renderMessages(messages, toolCalls) {
   });
   // 보존한 카드(승인/선택)를 맨 아래에 복원 — 재렌더링 후에도 승인 버튼 유지
   preservedCards.forEach((c) => box.appendChild(c));
-  scrollToChatBottom();
+
+  if (_wasPinnedOnRender) {
+    scrollToChatBottom();
+  } else {
+    // 읽던 위치 복원(전체 재렌더로 scrollTop 이 0 이 된 것을 되돌린다).
+    box.scrollTop = _prevScrollTop;
+    _updateScrollDownBadge();
+  }
 }
 
 function toggleToolCard(headerEl) {
@@ -833,17 +848,117 @@ function toggleToolCard(headerEl) {
   }
 }
 
+// ── [2026-09-15 스크롤 앵커링] ──────────────────────────────────────────────
+// 문제: 에이전트가 작업/생각 중일 때 토큰·도구·상태 이벤트마다 무조건
+//       scrollTop=scrollHeight 로 이동해, 위쪽 대화를 읽을 수 없었다.
+// 해결: "사용자가 하단에 붙어 있는 동안에만" 자동 스크롤한다.
+//       위로 올리면(_chatPinned=false) 자동 스크롤을 멈추고,
+//       하단으로 돌아오거나 '맨 아래로' 버튼을 누르면 다시 붙는다.
+var _chatPinned = true;        // true = 하단 고정(자동 스크롤 허용)
+var _chatPinnedInit = false;   // 최초 1회 리스너 바인딩 가드
+var _chatMissedCount = 0;      // 고정 해제 중 쌓인 신규 콘텐츠 수
+var _CHAT_PIN_THRESHOLD = 80;  // 하단 판정 여유(px)
+
+function _isChatNearBottom(el) {
+  if (!el) return true;
+  // 스크롤이 없는(짧은) 콘텐츠도 "하단"으로 간주
+  if (el.scrollHeight <= el.clientHeight + 1) return true;
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) <= _CHAT_PIN_THRESHOLD;
+}
+
+// 사용자가 위쪽을 읽는 중인지 실시간 추적하는 리스너(최초 1회).
+function _initChatScrollListeners() {
+  if (_chatPinnedInit) return;
+  const chatBox = $('chatMessages');
+  if (!chatBox) return;   // DOM 준비 전이면 다음 호출에서 재시도
+  _chatPinnedInit = true;
+
+  const onScroll = () => {
+    // ★ scroll 이벤트는 사용자 조작과 scrollTop 대입 모두 발생하므로,
+    //   현재 위치가 하단이면 pinned=true 로 수렴시킨다(자기 유발 스크롤은 무해).
+    _chatPinned = _isChatNearBottom(chatBox);
+    _updateScrollDownBadge();
+  };
+  chatBox.addEventListener('scroll', onScroll, { passive: true });
+
+  // 휠/터치/드래그 시작 시 즉시 고정 해제 → 다음 토큰이 끌어내리지 못하게.
+  const onUserScrollIntent = () => {
+    if (!_isChatNearBottom(chatBox)) _chatPinned = false;
+  };
+  chatBox.addEventListener('wheel', onUserScrollIntent, { passive: true });
+  chatBox.addEventListener('touchstart', onUserScrollIntent, { passive: true });
+  chatBox.addEventListener('mousedown', onUserScrollIntent, { passive: true });
+  chatBox.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'PageUp', 'Home'].indexOf(e.key) !== -1) onUserScrollIntent();
+  });
+
+  _ensureScrollDownBtn(chatBox);
+  _updateScrollDownBadge();
+}
+
+// '맨 아래로' 점프 버튼: chatMessages 의 부모 컨테이너에 절대 위치로 삽입.
+function _ensureScrollDownBtn(chatBox) {
+  if (document.getElementById('chatScrollDownBtn')) return;
+  const host = chatBox.parentNode;
+  if (!host) return;
+  const btn = document.createElement('button');
+  btn.id = 'chatScrollDownBtn';
+  btn.type = 'button';
+  btn.title = '맨 아래로 (새 메시지 보기)';
+  btn.textContent = '↓';
+  btn.onclick = () => {
+    _chatPinned = true;
+    _chatMissedCount = 0;
+    chatBox.scrollTop = chatBox.scrollHeight;
+    _updateScrollDownBadge();
+    try { btn.blur(); } catch (_) { }
+  };
+  host.appendChild(btn);
+}
+
+// 읽는 중(고정 해제)일 때만 버튼 노출. 쌓인 신규 콘텐츠 수를 함께 표시.
+function _updateScrollDownBadge() {
+  const btn = document.getElementById('chatScrollDownBtn');
+  if (!btn) return;
+  if (_chatPinned) {
+    _chatMissedCount = 0;
+    btn.classList.remove('visible', 'has-new');
+    btn.textContent = '↓';
+    return;
+  }
+  btn.classList.add('visible');
+  btn.classList.toggle('has-new', _chatMissedCount > 0);
+  btn.textContent = _chatMissedCount > 0 ? ('↓ ' + _chatMissedCount + ' 새 메시지') : '↓';
+}
+
+// 사용자가 명시적으로 "하단을 봐야 하는" 동작(메시지 전송, 세션 전환,
+// 스트림 완료)일 때 호출: 읽던 위치와 무관하게 하단 고정을 복원한다.
+function forceStickChatBottom() {
+  _chatPinned = true;
+  _chatMissedCount = 0;
+  scrollToChatBottom();
+}
+
 function scrollToChatBottom() {
   const chatBox = $('chatMessages');
   const debateBox = $('debateMessages');
 
+  _initChatScrollListeners();
+
   setTimeout(() => {
     if (chatBox && chatBox.style.display !== 'none') {
-      chatBox.scrollTop = chatBox.scrollHeight;
+      // ★ 사용자가 위쪽을 읽는 중이면 자동 스크롤을 건너뛴다(핵심 수정).
+      if (_chatPinned) {
+        chatBox.scrollTop = chatBox.scrollHeight;
+      } else {
+        // 읽는 중: 끌어내리지 않고, 쌓인 신규 콘텐츠 수만 알린다.
+        _chatMissedCount++;
+      }
     }
     if (debateBox && debateBox.style.display !== 'none') {
       debateBox.scrollTop = debateBox.scrollHeight;
     }
+    _updateScrollDownBadge();
   }, 30);
 }
 async function sendPrompt() {
@@ -866,7 +981,7 @@ async function sendPrompt() {
     setChatStatus('thinking', '이전 작업 중지 및 새 지시 전송 중...');
     const oldStreamId = State.currentStreamId;
     if (State.currentEventSource) {
-      try { State.currentEventSource.close(); } catch (_) {}
+      try { State.currentEventSource.close(); } catch (_) { }
       State.currentEventSource = null;
     }
     State.currentStreamId = null;
@@ -933,7 +1048,8 @@ async function sendPrompt() {
   }
   userBubble.innerHTML = formatUserMessageContent(displayText, State.activeSessionId);
   box.appendChild(userBubble);
-  scrollToChatBottom();
+  // 사용자가 메시지를 보냈으므로 항상 하단 고정(새 대화를 봐야 함).
+  forceStickChatBottom();
 
   // ── Auto mode switching ──
   // Before executing, let the mode system auto-switch based on intent detection.
@@ -972,7 +1088,7 @@ async function _executeAgentStream(displayText, uploaded) {
     try {
       if (State.currentEventSource) State.currentEventSource.close();
       cleanupStreamState();
-    } catch (_) {}
+    } catch (_) { }
     State.currentStreamId = null;
   }
 
@@ -985,7 +1101,7 @@ async function _executeAgentStream(displayText, uploaded) {
   $('cancelStreamBtn').style.display = 'block';
   // [I] 취소 버튼이 높이를 차지해 chatMessages 가시 영역이 줄어든다.
   // 방금 보낸 메시지의 마지막 줄이 버튼 뒤로 숨지 않도록 즉시 재스크롤.
-  scrollToChatBottom();
+  forceStickChatBottom();
 
   // Create stream target assistant bubble
   const box = $('chatMessages');
@@ -2945,6 +3061,9 @@ function findBestModelMatch(modelId) {
 
 // ── Event Listeners Binding ──
 function setupEventListeners() {
+  // [2026-09-15] 스크롤 앵커링 리스너 + '맨 아래로' 버튼을 초기화 시점에 부착.
+  try { _initChatScrollListeners(); } catch (e) { console.warn('[chat] scroll listeners init failed:', e); }
+
   // New session button
   $('newSessionBtn').onclick = createNewSession;
 
