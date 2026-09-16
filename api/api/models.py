@@ -108,6 +108,8 @@ class Session:
             'input_tokens': self.input_tokens,
             'output_tokens': self.output_tokens,
             'estimated_cost': self.estimated_cost,
+            # 실행 표면 추가 — UI가 세션별 표면(webui|chrome_extension)을 표시/판별할 수 있게 한다
+            'surface': self.surface,
         }
 
     def to_response(self, include_messages: bool = True, include_tool_calls: bool = True) -> dict:

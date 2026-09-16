@@ -979,15 +979,20 @@
                 <div class="browser-tab-bar" id="browserTabBar">
                   <div class="browser-tabs" id="browserTabs"></div>
                   <button class="browser-tab-new" onclick="browserNewTab()" title="새 탭">＋</button>
-                  <div class="browser-mode-controls" style="margin-left:auto; display:flex; align-items:center; gap:6px;">
-                    <button class="browser-mode-btn" id="btnBrowserGridMode" onclick="setBrowserMode('grid')" title="미니뷰 그리드로 축소">⊞ 미니뷰 그리드</button>
-                    <button class="browser-mode-btn" id="btnBrowserFocusMode" onclick="setBrowserMode('focus')" title="현재 탭 전체화면 제어">🔍 확대 제어</button>
-                    <button class="browser-nav-btn" onclick="toggleBrowserView()" title="브라우저 닫기" style="color:var(--danger); font-size:14px; margin-left:4px;">✖</button>
+                  <div class="browser-mode-controls"
+                    style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+                    <button class="browser-mode-btn" id="btnBrowserGridMode" onclick="setBrowserMode('grid')"
+                      title="미니뷰 그리드로 축소">⊞ 미니뷰 그리드</button>
+                    <button class="browser-mode-btn" id="btnBrowserFocusMode" onclick="setBrowserMode('focus')"
+                      title="현재 탭 전체화면 제어">🔍 확대 제어</button>
+                    <button class="browser-nav-btn" onclick="toggleBrowserView()" title="브라우저 닫기"
+                      style="color:var(--danger); font-size:14px; margin-left:4px;">✖</button>
                   </div>
                 </div>
 
                 <!-- 1. 미니뷰 그리드 관제 모드 (#browserGridContainer) -->
-                <div id="browserGridContainer" class="browser-grid-container" style="display:flex; flex-direction:column; flex:1; overflow-y:auto;">
+                <div id="browserGridContainer" class="browser-grid-container"
+                  style="display:flex; flex-direction:column; flex:1; overflow-y:auto;">
                   <div class="browser-grid-header">
                     <div class="bgh-title-wrap">
                       <span class="bgh-icon">🌐</span>
@@ -998,7 +1003,8 @@
                     </div>
                     <div class="bgh-actions">
                       <button class="bgh-btn" onclick="fetchBrowserGrid()" title="화면 새로고침">🔄 새로고침</button>
-                      <button class="bgh-btn bgh-btn-primary" onclick="browserNewTab()" title="새 브라우저 탭 추가">＋ 새 브라우저</button>
+                      <button class="bgh-btn bgh-btn-primary" onclick="browserNewTab()" title="새 브라우저 탭 추가">＋ 새
+                        브라우저</button>
                     </div>
                   </div>
                   <div id="browserGridCards" class="browser-grid-cards">
@@ -1007,7 +1013,8 @@
                 </div>
 
                 <!-- 2. 포커스(전체 브라우저) 모드 (#browserFocusContainer) -->
-                <div id="browserFocusContainer" style="display:none; flex-direction:column; flex:1; height:100%; min-height:0;">
+                <div id="browserFocusContainer"
+                  style="display:none; flex-direction:column; flex:1; height:100%; min-height:0;">
                   <div class="browser-url-bar">
                     <button class="browser-nav-btn" onclick="browserBack()" title="뒤로">◀</button>
                     <button class="browser-nav-btn" onclick="browserForward()" title="앞으로">▶</button>
@@ -1596,7 +1603,8 @@
     <div class="modal-panel" style="max-width: 420px; width: 90%;">
       <div class="modal-header">
         <span id="connModalTitle">🔗 연결</span>
-        <button class="action-btn" onclick="closeConnModal()" style="background:var(--bg3);color:var(--muted);">✕</button>
+        <button class="action-btn" onclick="closeConnModal()"
+          style="background:var(--bg3);color:var(--muted);">✕</button>
       </div>
       <div id="connModalBody" style="padding:10px 12px;overflow-y:auto;max-height:70vh;"></div>
     </div>
@@ -1632,7 +1640,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
   <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
   <script src="/static/modules/core.js?v=7"></script>
-  <script src="/static/modules/chat.js?v=58"></script>
+  <script src="/static/modules/chat.js?v=61"></script>
   <script src="/static/modules/explorer.js?v=2"></script>
   <script src="/static/modules/editor.js"></script>
   <!-- DAON Panels Sub-modules (Phase 4 Modularization) -->

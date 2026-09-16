@@ -227,11 +227,20 @@ app.whenReady().then(async () => {
           maxWaitMs: supervisor.POST_SWAP_HEALTH_GRACE_MS,
           stableHits: 3,
           isAlive: () => {
-            if (!supervisor.pythonProcess) return false;
-            if (supervisor.pythonProcess._adopted && supervisor.pythonProcess.pid) {
-              return supervisor.isProcessAlive(supervisor.pythonProcess.pid);
+            // [재시작 폭풍 수정 2026-09-16] 스왑 직후 첫 health 실패 시점에는
+            // supervisor.pythonProcess 가 아직 null 일 수 있다(스폰 반영 전).
+            // 종전에는 이때 즉시 false 를 반환해 유예창(120초)이 열리기도 전에
+            // 'grace health aborted — server process already exited' 로 중단됐다.
+            // 스폰 직후 유예 구간에서는 낙관 판정해 onefile _MEI 추출(수십 초)을 기다린다.
+            const p = supervisor.pythonProcess;
+            if (!p) {
+              const sinceSpawn = Date.now() - (supervisor._lastSpawnAt || 0);
+              return sinceSpawn < (supervisor.POST_SWAP_HEALTH_GRACE_MS || 120000);
             }
-            return supervisor.pythonProcess.exitCode === null && supervisor.pythonProcess.signalCode === undefined;
+            if (p._adopted && p.pid) {
+              return supervisor.isProcessAlive(p.pid);
+            }
+            return p.exitCode === null && p.signalCode === undefined;
           },
         });
         return !!(h && h.healthy);

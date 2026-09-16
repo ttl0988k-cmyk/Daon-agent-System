@@ -1667,6 +1667,9 @@ async function _executeAgentStream(displayText, uploaded) {
         workspace: State.activeWorkspacePath,
         attachments: uploaded.length > 0 ? uploaded : undefined,
         planning_mode: planningMode,
+        // 실행 표면 선언: WebUI는 'webui'. 백엔드가 표면별 도구 목록을 강제한다
+        // (chrome_extension은 browser_* 도구 제거). 미선언 시 이전 표면이 잔존하므로 항상 보낸다.
+        surface: 'webui',
         open_tabs: openTabs,
         media_options: buildMediaOptions()
       }

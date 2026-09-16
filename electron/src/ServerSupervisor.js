@@ -44,11 +44,18 @@ class ServerSupervisor {
     //   ① 재스폰 전 killPortOwner(port) 로 잔존 점유자 제거 (C-1)
     //   ② 스폰 후 CRASH_WINDOW_MS 내 종료 = '즉사'로 계상, 지수 백오프 (C-2)
     //   ③ MAX_CRASH_STREAK 연속 즉사 시 자동 재시작 중단 = 서킷브레이커 (C-2)
-    this.CRASH_WINDOW_MS = 15_000;
+    // [재시작 폭풍 수정 2026-09-16] onefile _MEI 추출 + 포트 바인딩 실패까지 약 60초가
+    // 걸리는데 종전 15초 기준은 이를 '정상 종료'로 오판해 crashStreak 을 매번 0 으로
+    // 리셋했다(실측: streak 0/8 ↔ 1/8 17회 반복, 서킷브레이커 영구 미발동).
+    //   ① 즉사 판정창을 onefile 부팅보다 크게(150초) 늘리고,
+    //   ② 포트 경합(EADDRINUSE)은 생존시간과 무관하게 즉사로 계상한다(_PORT_CONFLICT_RE).
+    this.CRASH_WINDOW_MS = 150_000;
     this.MAX_CRASH_STREAK = 8;
     this.MAX_RESTART_BACKOFF_MS = 60_000;
+    this._PORT_CONFLICT_RE = /EADDRINUSE|Address already in use|WinError 10048|10048|이미 사용 중|이미 다른 프로세스/i;
     this.crashStreak = 0;
     this._lastSpawnAt = 0;
+    this._lastStderr = '';
   }
 
   // 자동 재시작 단일 관문 — 즉사 계상 · 백오프 · 서킷브레이커 · 잔존 점유자 제거를
@@ -334,6 +341,7 @@ class ServerSupervisor {
 
     if (!this.pythonProcess) return null;
     this._lastSpawnAt = Date.now();
+    this._lastStderr = '';
 
     this.pythonProcess.on('error', (err) => {
       this.merr(`[ServerSupervisor] Python process error: ${err && err.message}`);
@@ -363,6 +371,8 @@ class ServerSupervisor {
       });
       this.pythonProcess.stderr.on('data', (data) => {
         try { serverLogStream.write(`[STDERR] ${data}`); } catch (_) { }
+        // 포트 경합 판정용 — 최근 stderr 꼬리만 보관 (무한 증가 방지)
+        try { this._lastStderr = (this._lastStderr + String(data)).slice(-4000); } catch (_) { }
       });
     } catch (_) { }
 
@@ -376,10 +386,17 @@ class ServerSupervisor {
       }
 
       // ② 즉사 판정: 스폰 직후 짧은 생존 후 종료 = 크래시로 계상(백오프 대상).
-      //    CRASH_WINDOW_MS 이상 생존했다 죽으면 정상 종료로 보고 스트릭을 리셋한다.
+      //    - 포트 경합(EADDRINUSE)은 생존시간과 무관하게 즉사로 계상한다.
+      //      (onefile 은 추출 후 바인딩 실패까지 ~60초가 걸려 '정상 종료'로 오판됨 —
+      //       2026-09-16 재시작 폭풍의 근본 원인)
+      //    - 그 외에는 CRASH_WINDOW_MS 이상 생존 시 정상 종료로 보고 스트릭을 리셋한다.
       const aliveMs = this._lastSpawnAt ? Date.now() - this._lastSpawnAt : Infinity;
-      if (aliveMs < this.CRASH_WINDOW_MS) {
+      const _portConflict = this._PORT_CONFLICT_RE.test(this._lastStderr || '');
+      if (_portConflict || aliveMs < this.CRASH_WINDOW_MS) {
         this.crashStreak += 1;
+        if (_portConflict) {
+          this.merr(`[ServerSupervisor] port conflict on ${port} (EADDRINUSE) — counted as rapid crash (streak ${this.crashStreak}/${this.MAX_CRASH_STREAK}).`);
+        }
       } else {
         this.crashStreak = 0;
       }

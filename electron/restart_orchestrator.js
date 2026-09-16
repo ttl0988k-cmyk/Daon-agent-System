@@ -197,6 +197,17 @@ function createRestartOrchestrator(deps = {}) {
                     await sleep(settleMs);
                     await deps.spawnServer();
                     healthy = await deps.healthCheck();
+                    // [재시작 폭풍 수정 2026-09-16] 롤백 재기동도 onefile — _MEI 추출로
+                    // 수십 초 지연된다. 단발 판정 실패만으로 '불량' 확정하지 않고
+                    // 심층 유예창(deepHealthCheck, 120s)으로 재판정한다(스왑 경로와 대칭).
+                    if (!healthy && typeof deps.deepHealthCheck === 'function') {
+                        log('[RestartOrch] post-rollback first check failed — deep re-verdict before giving up.');
+                        try {
+                            healthy = await deps.deepHealthCheck() === true;
+                        } catch (e) {
+                            log(`[RestartOrch] post-rollback deep re-verdict threw: ${e && e.message}`);
+                        }
+                    }
                 } catch (e) {
                     log(`[RestartOrch] post-rollback respawn failed: ${e && e.message}`);
                     healthy = false;
@@ -214,6 +225,16 @@ function createRestartOrchestrator(deps = {}) {
                 await sleep(settleMs);
                 await deps.spawnServer();
                 healthy = await deps.healthCheck();
+                // [재시작 폭풍 수정 2026-09-16] 백업(known-good) 재기동도 onefile 이라
+                // 단발 판정 실패는 정상(느린 부팅). 심층 유예창으로 재판정한다.
+                if (!healthy && typeof deps.deepHealthCheck === 'function') {
+                    log('[RestartOrch] post-restore first check failed — deep re-verdict before giving up.');
+                    try {
+                        healthy = await deps.deepHealthCheck() === true;
+                    } catch (e) {
+                        log(`[RestartOrch] post-restore deep re-verdict threw: ${e && e.message}`);
+                    }
+                }
             } catch (e) {
                 log(`[RestartOrch] post-restore respawn failed: ${e && e.message}`);
                 healthy = false;

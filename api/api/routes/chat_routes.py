@@ -225,9 +225,10 @@ def handle_post_chat_start(handler, body) -> bool:
     planning_mode = body.get('planning_mode', False)
     # 실행 표면 선언 반영 (chrome_extension | webui).
     # 표면별 도구 강제에 쓰이므로 기존 세션도 매 요청마다 갱신한다.
-    _surface_decl = str(body.get('surface') or '').strip()
-    if _surface_decl:
-        s.surface = _surface_decl
+    # 미선언(빈 값) 시 'webui'로 기본 확정 — 이전 표면(chrome_extension)이
+    # 세션 JSON에 남아 WebUI 재사용 시 browser_* 도구가 계속 제거되는 것을 막는다.
+    _surface_decl = str(body.get('surface') or '').strip() or 'webui'
+    s.surface = _surface_decl
     open_tabs = body.get('open_tabs') or []
     media_options = body.get('media_options') or {}
     thr = threading.Thread(
