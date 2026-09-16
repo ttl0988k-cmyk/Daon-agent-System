@@ -745,7 +745,8 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
         session_id: currentSessionId,
         message: fullPrompt,
         model: selectedModel || undefined,
-        planning_mode: false
+        planning_mode: false,
+        surface: 'chrome_extension'
       })
     });
 
@@ -759,7 +760,8 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
           session_id: currentSessionId,
           message: fullPrompt,
           model: selectedModel || undefined,
-          planning_mode: false
+          planning_mode: false,
+          surface: 'chrome_extension'
         })
       });
     }

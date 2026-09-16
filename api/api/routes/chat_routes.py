@@ -223,6 +223,11 @@ def handle_post_chat_start(handler, body) -> bool:
     with STREAMS_LOCK:
         STREAMS[stream_id] = q
     planning_mode = body.get('planning_mode', False)
+    # 실행 표면 선언 반영 (chrome_extension | webui).
+    # 표면별 도구 강제에 쓰이므로 기존 세션도 매 요청마다 갱신한다.
+    _surface_decl = str(body.get('surface') or '').strip()
+    if _surface_decl:
+        s.surface = _surface_decl
     open_tabs = body.get('open_tabs') or []
     media_options = body.get('media_options') or {}
     thr = threading.Thread(

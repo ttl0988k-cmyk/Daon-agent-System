@@ -950,6 +950,24 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           _pt = _cfg.get('platform_toolsets', {})
           _toolsets = _pt.get('webui', CLI_TOOLSETS) if isinstance(_pt, dict) else CLI_TOOLSETS
 
+          # ── 표면(surface) 기반 도구 강제 ────────────────────
+          # 크롬 확장 사이드패널에서 실행 중이면 웹페이지 조작은 <daon_action>
+          # 태그가 전담한다. 내부 브라우저 도구(browser_*)가 함께 있으면
+          # 모델이 습관적으로 그쪽을 호출해 실제 화면이 움직이지 않는 오작동이 생긴다.
+          # 프롬프트로 부탁하는 대신 도구 목록에서 제거해 구조적으로 차단한다.
+          # (web_search/web_extract 는 'web' 툴셋이 별도 제공하므로 유지된다)
+          try:
+              _surface_name = getattr(s, 'surface', None) if s is not None else None
+              if _surface_name:
+                  _surface_ts = _pt.get(_surface_name) if isinstance(_pt, dict) else None
+                  if isinstance(_surface_ts, (list, tuple)) and len(_surface_ts) > 0:
+                      _toolsets = list(_surface_ts)
+                  elif _surface_name == 'chrome_extension' and isinstance(_toolsets, (list, tuple)):
+                      _toolsets = [ts for ts in _toolsets if ts != 'browser']
+                  print(f"[webui] surface={_surface_name} -> toolsets={_toolsets}", flush=True)
+          except Exception as _surface_e:
+              print(f"[webui] WARNING: surface toolset filter failed: {_surface_e}", flush=True)
+
           # Fallback model from profile config (e.g. for rate-limit recovery)
           _fallback = _cfg.get('fallback_model') or None
           if _fallback:
