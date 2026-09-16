@@ -5,6 +5,9 @@
 > 📍 **빌드/배포/설치 위치가 헷갈린다면** → [`docs/ARTIFACTS_AND_BUILD.md`](docs/ARTIFACTS_AND_BUILD.md)
 > (server.exe · electron · 포터블 · 설치본 · 바로가기가 어디에 있고 어떻게 흐르는지 한 장 지도)
 
+> 🧩 **크롬 확장(브라우저 에이전트)은 별도 레포로 분리되어 있습니다** → [ttl0988k-cmyk/daon-browser-agent](https://github.com/ttl0988k-cmyk/daon-browser-agent)
+> (Releases에서 zip을 받아 압축 해제 후 크롬에 로드 · 소스는 이 레포의 [`extensions/daon-browser-agent/`](extensions/daon-browser-agent)에도 유지)
+
 ---
 
 ## ✨ 주요 기능
