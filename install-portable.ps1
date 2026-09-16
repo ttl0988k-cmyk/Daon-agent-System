@@ -10,7 +10,13 @@ $ErrorActionPreference = 'Stop'
 # 설치 폴더명 혼선 제거 — 단일 정의 모듈 사용 (공백 vs 하이픈).
 # 실제 설치 폴더는 하이픈/소문자 "daon-agent-system" 이며, 바로가기도 이 폴더를
 # 가리킨다. 과거 공백 폴더로 설치하면 바로가기/자동동기화와 어긋났다.
-. (Join-Path $PSScriptRoot 'lib\daon_paths.ps1')
+# [2026-09-16] 모듈은 scripts\lib 로 이동됨(scripts/* 및 루트 스크립트 공용).
+# 루트(scripts\lib)를 먼저 시도하고, 없으면 레거시 루트 lib\ 로 폴백한다.
+$daonPathsModule = Join-Path $PSScriptRoot 'scripts\lib\daon_paths.ps1'
+if (-not (Test-Path $daonPathsModule)) {
+    $daonPathsModule = Join-Path $PSScriptRoot 'lib\daon_paths.ps1'
+}
+. $daonPathsModule
 
 $src = Join-Path $PSScriptRoot 'dist\win-unpacked'
 
