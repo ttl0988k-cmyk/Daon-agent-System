@@ -358,6 +358,18 @@ def main():
     global _server_start_ts
     _server_start_ts = time.time()
 
+    # [onefile 자식 PID 추적 2026-09-17] 실제 9090 을 바인딩한 자식 프로세스가 자기
+    # PID 를 파일로 남긴다. Electron 슈퍼바이저의 spawn() 은 부트로더(부모) PID 만
+    # 돌려주므로, 자식이 포트를 붙잡은 채 고아로 남으면 슈퍼바이저가 포트 점유자
+    # (=진짜 서버)를 스스로 죽이고 재기동을 반복하는 핑퐁이 발생한다. 이 파일로
+    # 진짜 서버 PID 를 알아내 kill/adopt 한다.
+    # cwd 는 userData(쓰기 가능) — 설치 폴더 권한 문제를 피한다. 실패해도 무해.
+    try:
+        with open('server.pid', 'w', encoding='ascii') as _pf:
+            _pf.write(str(os.getpid()))
+    except Exception:
+        pass
+
     # ── 백그라운드 초기화 (서버 이미 포트 바인딩 완료 상태) ──
     def _background_init():
         # Initialize profile state
@@ -409,6 +421,11 @@ def main():
         uptime = int(time.time() - _server_start_ts)
         h, m, s = uptime // 3600, (uptime % 3600) // 60, uptime % 60
         print(f"[Shutdown] Server stopping after Uptime={h:02d}:{m:02d}:{s:02d}  pid={os.getpid()}", flush=True)
+        # [onefile 자식 PID 추적 2026-09-17] 정상 종료 시 PID 파일을 제거해 잔존을 막는다.
+        try:
+            os.remove('server.pid')
+        except Exception:
+            pass
     _atexit.register(_on_shutdown)
 
     # Start background cron scheduler timer

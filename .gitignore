@@ -81,3 +81,8 @@ electron-builder.yml
 
 # Scratch
 scratch/
+
+# asar 재패키징 중간 산출물 (핫스왑용 임시 파일)
+.asar-stage/
+app.asar.new
+app.asar.new.bak*

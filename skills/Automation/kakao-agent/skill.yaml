@@ -1,0 +1,38 @@
+name: kakao-agent
+label: 다온 응대 (카톡)
+category: Automation
+version: '1.0'
+description: 카카오톡 대화방에서 호출을 감지하고 판단하여 응대한다
+priority: high
+capabilities:
+- kakao_response
+- trigger_judgment
+- ocr_text_recovery
+knowledge:
+- prompts
+- examples
+- data
+- templates
+trigger:
+- kakao
+- 카톡
+- 카카오톡
+- 다온아
+- 라온아
+tags:
+- automation
+- kakao
+- messaging
+- ocr
+- response
+graph_requires:
+- self-reflection
+graph_compatible:
+- sherlock-qa
+- notification-relay
+when_to_use: 카카오톡 대화방 자동 응대, 호출 감지, 메시지 판정, OCR 텍스트 복구가 필요할 때
+when_not_to_use: 코드 생성, UI 디자인, 문서 작성, 로컬 파일 작업
+inputs: OCR로 읽은 카톡 대화 텍스트, 내 발신 목록, 이미 답한 호출 목록, 현재 시각
+outputs: 'JSON 판정 — {"action":"reply","text":"..."} 또는 {"action":"skip","reason":"..."}'
+constraints: 호출어(다온/라온)가 있을 때만 응답, 로컬경로·개인정보·시스템정보 노출 금지, 60자 이내, 이모지·마크다운 금지
+success_criteria: 호출에만 응답, 오탐 0건, 중복 응답 0건, 금지 요청 전부 거절

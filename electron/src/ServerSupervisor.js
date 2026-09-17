@@ -56,13 +56,21 @@ class ServerSupervisor {
     this.crashStreak = 0;
     this._lastSpawnAt = 0;
     this._lastStderr = '';
+
+    // [onefile 부모/자식 추적 수정 2026-09-17] PyInstaller onefile exe 는
+    // 부트로더(부모)와 실제 서버(자식) 2-프로세스로 뜬다. spawn() 이 반환하는 건
+    // 부모뿐이라, 자식이 9090 을 붙잡은 채 고아로 남으면 슈퍼바이저가 포트 점유자
+    // (=진짜 서버)를 스스로 죽이고 재기동을 반복하는 핑퐁이 생긴다. 서버가 기록한
+    // PID 파일로 진짜 자식 PID 를 알아내 kill/adopt 에 사용한다.
+    this._childPid = null;
   }
 
   // 자동 재시작 단일 관문 — 즉사 계상 · 백오프 · 서킷브레이커 · 잔존 점유자 제거를
   // 한 곳에서 처리한다. exit / error / spawn-catch 모든 경로가 이 함수만 호출한다.
-  _scheduleAutoRespawn(port, cause) {
+  _scheduleAutoRespawn(port, cause, defer = false) {
     if (this.isQuitting || this.selfModifyRestartActive) return;
-    if (this.crashStreak >= this.MAX_CRASH_STREAK) {
+    const knownConflict = !!defer || this._PORT_CONFLICT_RE.test(this._lastStderr || '');
+    if (!knownConflict && this.crashStreak >= this.MAX_CRASH_STREAK) {
       this.merr(
         `[ServerSupervisor] CIRCUIT BREAKER open — ${this.crashStreak} consecutive rapid crashes. `
         + 'Auto-restart halted. Manual restart required.'
@@ -73,13 +81,29 @@ class ServerSupervisor {
       2000 * Math.pow(2, Math.max(0, this.crashStreak - 1)),
       this.MAX_RESTART_BACKOFF_MS
     );
-    this.mlog(
-      `[ServerSupervisor] ${cause} — auto-restart in ${Math.round(delay / 1000)}s `
-      + `(rapid-crash streak ${this.crashStreak}/${this.MAX_CRASH_STREAK}).`
-    );
-    setTimeout(() => {
+    if (knownConflict) {
+      this.mlog(`[ServerSupervisor] ${cause} (port-busy) — verifying port ${port} liveness before respawn...`);
+    } else {
+      this.mlog(
+        `[ServerSupervisor] ${cause} — auto-restart in ${Math.round(delay / 1000)}s `
+        + `(rapid-crash streak ${this.crashStreak}/${this.MAX_CRASH_STREAK}).`
+      );
+    }
+    setTimeout(async () => {
       if (this.isQuitting || this.pythonProcess) return;
-      // ① 잔존 포트 점유자 제거 — 없으면 새 스폰이 EADDRINUSE 로 즉사한다.
+      // ① [onefile 수정 2026-09-17] 포트 점유자가 '살아있는 진짜 서버'인지 확인한다.
+      //    onefile 부모(부트로더)만 종료됐고 자식 서버가 9090 을 정상 서비스 중이면,
+      //    죽이지 않고 adopt 하여 재사용한다(재시작 폭풍/고아 포트 근본 차단).
+      try {
+        const h = await this.probeHealthStable(port);
+        if (h && h.healthy && h.pid) {
+          this.mlog(`[ServerSupervisor] live healthy server found on ${port} (pid=${h.pid}) — adopting instead of respawning.`);
+          this.adoptRunningServer(h.pid, port);
+          this.crashStreak = 0;
+          return;
+        }
+      } catch (_) { }
+      // ② 잔존 포트 점유자 제거 — 없으면 새 스폰이 EADDRINUSE 로 즉사한다.
       try { this.killPortOwner(port); } catch (_) { }
       this.startPythonProcess(port);
     }, delay);
@@ -246,11 +270,23 @@ class ServerSupervisor {
 
   killProcessTree(pid) {
     if (!pid) return;
+    // [onefile 수정 2026-09-17] 자식(실제 서버) PID 를 알고 있으면 그 트리도 함께 종료한다.
+    // 부모(부트로더)만 죽이면 자식이 9090 을 붙잡은 고아로 남는다.
+    let childPid = null;
+    try {
+      if (pid === (this.pythonProcess && this.pythonProcess.pid) && this._childPid) {
+        childPid = this._childPid;
+      }
+    } catch (_) { }
     try {
       if (process.platform === 'win32') {
+        if (childPid) {
+          try { execSync(`taskkill /pid ${childPid} /T /F 2>nul`, { windowsHide: true }); } catch (_) { }
+        }
         execSync(`taskkill /pid ${pid} /T /F 2>nul`, { windowsHide: true });
         this.mlog(`[ServerSupervisor] Successfully killed process tree for PID: ${pid}`);
       } else {
+        if (childPid) { try { process.kill(childPid, 'SIGKILL'); } catch (_) { } }
         process.kill(-pid, 'SIGKILL');
       }
     } catch (_) { }
@@ -284,6 +320,30 @@ class ServerSupervisor {
     return false;
   }
 
+  // ── PID File Helpers (onefile 자식 PID 추적) ──
+
+  _pidFilePath() {
+    try { return path.join(app.getPath('userData'), 'server.pid'); } catch (_) { }
+    try { return path.join(__dirname, '..', '..', 'server.pid'); } catch (_) { return null; }
+  }
+
+  _loadChildPid() {
+    try {
+      const p = this._pidFilePath();
+      if (!p) return null;
+      const raw = String(fs.readFileSync(p, 'utf8') || '').trim();
+      const n = parseInt(raw, 10);
+      return (n && !isNaN(n) && n > 0) ? n : null;
+    } catch (_) { return null; }
+  }
+
+  _clearChildPidFile() {
+    try {
+      const p = this._pidFilePath();
+      if (p) fs.rmSync(p, { force: true });
+    } catch (_) { }
+  }
+
 
   isProcessAlive(pid) {
     if (!pid) return false;
@@ -315,7 +375,11 @@ class ServerSupervisor {
     try {
       if (exePath) {
         this.mlog(`[ServerSupervisor] Spawning server executable: ${exePath} on port ${port}`);
-        const cwd = path.dirname(exePath);
+        // [onefile PID 파일 수정 2026-09-17] cwd 를 userData 로 두어 서버가 server.pid 를
+        // 기록하는 안정적 위치를 제공한다(설치 폴더 쓰기권한 회피). Electron 부모 사망 시에도
+        // userData 경로는 유지되므로 자식 PID 를 항상 찾을 수 있다.
+        let cwd = app.getPath('userData');
+        try { if (!fs.existsSync(cwd)) cwd = path.dirname(exePath); } catch (_) { cwd = path.dirname(exePath); }
         this.pythonProcess = spawn(exePath, ['--no-browser', '--port', port.toString()], {
           cwd,
           env,
@@ -342,6 +406,14 @@ class ServerSupervisor {
     if (!this.pythonProcess) return null;
     this._lastSpawnAt = Date.now();
     this._lastStderr = '';
+    this._childPid = null;
+    // 서버가 PID 파일을 기록할 시간을 준 뒤 진짜(자식) PID 를 반영한다.
+    setTimeout(() => {
+      try {
+        const cp = this._loadChildPid();
+        if (cp) this._childPid = cp;
+      } catch (_) { }
+    }, 2000);
 
     this.pythonProcess.on('error', (err) => {
       this.merr(`[ServerSupervisor] Python process error: ${err && err.message}`);
@@ -385,22 +457,21 @@ class ServerSupervisor {
         return;
       }
 
-      // ② 즉사 판정: 스폰 직후 짧은 생존 후 종료 = 크래시로 계상(백오프 대상).
-      //    - 포트 경합(EADDRINUSE)은 생존시간과 무관하게 즉사로 계상한다.
-      //      (onefile 은 추출 후 바인딩 실패까지 ~60초가 걸려 '정상 종료'로 오판됨 —
-      //       2026-09-16 재시작 폭풍의 근본 원인)
-      //    - 그 외에는 CRASH_WINDOW_MS 이상 생존 시 정상 종료로 보고 스트릭을 리셋한다.
-      const aliveMs = this._lastSpawnAt ? Date.now() - this._lastSpawnAt : Infinity;
+      // [onefile 부모/자식 수정 2026-09-17] 종료된 이 프로세스가 "부트로더(부모)"일 뿐이고
+      // 실제 서버(자식)가 9090 을 붙잡은 채 살아있을 수 있다. 그 경우 크래시로 계상해
+      // 재기동하면 신규 스폰이 EADDRINUSE 로 즉사하는 핑퐁이 된다(서킷브레이커 오발동).
+      // → 포트 경합(EADDRINUSE) 신호가 있으면 즉사 계상을 보류하고, 재기동 대신
+      //    _scheduleAutoRespawn 의 포트 생존(adopt) 판정에 위임한다.
       const _portConflict = this._PORT_CONFLICT_RE.test(this._lastStderr || '');
-      if (_portConflict || aliveMs < this.CRASH_WINDOW_MS) {
+      const aliveMs = this._lastSpawnAt ? Date.now() - this._lastSpawnAt : Infinity;
+      if (_portConflict) {
+        this.mlog(`[ServerSupervisor] main process exited but port ${port} busy (EADDRINUSE) — deferring to port-liveness adopt.`);
+      } else if (aliveMs < this.CRASH_WINDOW_MS) {
         this.crashStreak += 1;
-        if (_portConflict) {
-          this.merr(`[ServerSupervisor] port conflict on ${port} (EADDRINUSE) — counted as rapid crash (streak ${this.crashStreak}/${this.MAX_CRASH_STREAK}).`);
-        }
       } else {
         this.crashStreak = 0;
       }
-      this._scheduleAutoRespawn(port, 'Server exit detected');
+      this._scheduleAutoRespawn(port, 'Server exit detected', _portConflict);
     });
 
     // Priority boost on Windows
