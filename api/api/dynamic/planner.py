@@ -19,7 +19,11 @@ from typing import Optional
 from api.skill_registry import get_skill_registry
 from api.dynamic.limits import _load_harness_limits
 from api.dynamic.state import StreamLogBuffer
-from api.dynamic.plan_validator import validate_plan_schema, semantic_validate
+from api.dynamic.plan_validator import (
+    validate_plan_schema,
+    semantic_validate,
+    validate_plan_structure,
+)
 from api.dynamic.direct_calls import _call_direct
 from api.dynamic.model_selector import get_skill_history, extract_task_context, build_context_keys
 from api.dynamic.template_loader import get_catalog_text, load_all_templates
@@ -766,6 +770,16 @@ class HermesPlanner:
                 if not errors:
                     errors = semantic_validate(plan_dict)
                 if not errors:
+                    # NON-BLOCKING structure quality gate (fail-open).
+                    # validate_plan_structure()는 실행을 막지 않는다 — 구조적
+                    # 결함(고아 노드/분리 컴포넌트/싱크 부재/중복명/완전직렬)을
+                    # WARNING으로만 관측 가능하게 남기고 계획을 그대로 진행한다.
+                    try:
+                        structure_warnings = validate_plan_structure(plan_dict)
+                        for warning in structure_warnings:
+                            _log.warning("Plan structure quality: %s", warning)
+                    except Exception as struct_exc:  # noqa: BLE001
+                        _log.warning("Structure quality check skipped: %s", struct_exc)
                     return plan_dict
 
                 last_error_msg = "\n".join(errors)

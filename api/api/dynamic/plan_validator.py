@@ -4,9 +4,10 @@ Plan schema validation and semantic checking.
 Provides:
 - validate_plan_schema(): structural validation of plan dict (nodes + edges)
 - semantic_validate(): cycle detection, tool checks, skill conflict detection
+- validate_plan_structure(): NON-BLOCKING structure quality warnings (fail-open)
 """
 
-from collections import deque
+from collections import defaultdict, deque
 
 from api.dynamic.logging_utils import get_logger
 
@@ -221,3 +222,137 @@ def semantic_validate(plan: dict) -> list[str]:
         _log.warning("Failed to run skill conflict detection: %s", e)
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Structure quality warnings (NON-BLOCKING / fail-open)
+# ---------------------------------------------------------------------------
+#
+# validate_plan_schema()/semantic_validate()는 "유효성"만 본다 — 필수 키, 최소
+# 노드 수, 엣지 대상 존재, 사이클, 노드 타입, 스킬 충돌. 이들은 실행을 막는
+# 하드 에러다.
+#
+# 반면 아래 validate_plan_structure()는 "품질"을 본다 — 고아 노드, 분리된
+# 컴포넌트, 싱크 노드 부재, 중복 노드명, 완전 직렬 체인. 이들은 실행을 막지
+# 않는다(fail-open). 호출측은 결과를 WARNING 로그로만 남기고 계획을 그대로
+# 진행시킨다. 목적은 CEO가 만든 DAG의 구조적 결함을 관측 가능하게 만드는 것.
+
+def _normalize_name(name) -> str:
+    """Normalize a node name the same way the rest of the validator does."""
+    return str(name).strip().lower().replace(" ", "_")
+
+
+def validate_plan_structure(plan: dict) -> list[str]:
+    """Return NON-BLOCKING structure quality warnings for a plan.
+
+    Unlike validate_plan_schema()/semantic_validate(), the returned strings are
+    advisory only — the caller must NOT block execution on them. Each warning is
+    prefixed with ``[structure]`` so it is distinguishable from hard errors.
+
+    Checks:
+    - orphan nodes (no incoming and no outgoing edge)
+    - disconnected components (more than one weakly-connected group)
+    - missing sink node (no node with out-degree 0)
+    - duplicate node names
+    - fully-serial chain (max batch width == 1 while node count >= 3)
+    """
+    warnings: list[str] = []
+    if not isinstance(plan, dict):
+        return warnings
+
+    nodes = plan.get("nodes", [])
+    edges = plan.get("edges", [])
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return warnings
+
+    # Collect normalized names, preserving order, and detect duplicates.
+    raw_names = [
+        n.get("name")
+        for n in nodes
+        if isinstance(n, dict) and isinstance(n.get("name"), str) and n.get("name").strip()
+    ]
+    norm_names = [_normalize_name(n) for n in raw_names]
+    nameset = set(norm_names)
+
+    seen: set[str] = set()
+    dupes: set[str] = set()
+    for name in norm_names:
+        if name in seen:
+            dupes.add(name)
+        seen.add(name)
+    if dupes:
+        warnings.append(f"[structure] Duplicate node name(s): {sorted(dupes)}")
+
+    if not nameset:
+        return warnings
+
+    # Build adjacency (deduped) restricted to known node names.
+    adj: dict[str, set[str]] = defaultdict(set)
+    rev: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        if isinstance(edge, (list, tuple)) and len(edge) >= 2:
+            src = _normalize_name(edge[0])
+            tgt = _normalize_name(edge[1])
+            if src in nameset and tgt in nameset and src != tgt:
+                adj[src].add(tgt)
+                rev[tgt].add(src)
+
+    # Orphan nodes: no incoming and no outgoing edge.
+    orphans = sorted(n for n in nameset if not adj.get(n) and not rev.get(n))
+    if orphans:
+        warnings.append(f"[structure] Orphan node(s) with no edges: {orphans}")
+
+    # Missing sink: no node with out-degree 0 (every node has a successor).
+    if not any(not adj.get(n) for n in nameset):
+        warnings.append("[structure] No sink node (every node has an outgoing edge).")
+
+    # Disconnected components (weakly connected, via union-find over undirected edges).
+    parent: dict[str, str] = {n: n for n in nameset}
+
+    def _find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a: str, b: str) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for src, targets in adj.items():
+        for tgt in targets:
+            _union(src, tgt)
+    components = {_find(n) for n in nameset}
+    if len(components) > 1:
+        warnings.append(
+            f"[structure] Disconnected plan: {len(components)} separate component(s) "
+            f"for {len(nameset)} node(s)."
+        )
+
+    # Fully-serial chain: max batch width == 1 while node count >= 3.
+    if len(nameset) >= 3:
+        deg: dict[str, int] = {n: 0 for n in nameset}
+        for src, targets in adj.items():
+            for tgt in targets:
+                deg[tgt] += 1
+        batches: list[list[str]] = []
+        placed: set[str] = set()
+        queue: deque[str] = deque(n for n, d in deg.items() if d == 0)
+        while queue:
+            batch = list(queue)
+            batches.append(batch)
+            placed.update(batch)
+            queue.clear()
+            for pnode in batch:
+                for child in adj.get(pnode, ()):
+                    deg[child] -= 1
+            queue.extend(n for n, d in deg.items() if d == 0 and n not in placed)
+        max_width = max((len(b) for b in batches), default=1)
+        if max_width <= 1:
+            warnings.append(
+                f"[structure] Fully-serial chain: {len(nameset)} nodes but max "
+                f"parallel width is 1 (no concurrency)."
+            )
+
+    return warnings

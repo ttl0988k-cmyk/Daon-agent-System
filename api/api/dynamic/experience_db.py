@@ -20,7 +20,7 @@ Architecture:
 import json
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Optional
 
@@ -217,14 +217,45 @@ class ExperienceDatabase:
         node_count = len(nodes) if nodes else 0
         edge_count = len(edges) if edges else 0
 
-        # Compute max parallelism from the DAG
-        in_degree: dict[str, int] = defaultdict(int)
-        adj: dict[str, list[str]] = defaultdict(list)
-        for edge in (edges or []):
-            src, tgt = edge
-            in_degree[tgt] += 1
-            adj[src].append(tgt)
-        max_parallelism = max(1, sum(1 for v in in_degree.values() if v == 0))
+        # Compute max parallelism from the DAG.
+        #
+        # 정의: "동시에 실행 가능한 최대 노드 수" = 최대 배치 폭(max batch width).
+        # dag_utils._compute_execution_batches()와 동일한 레벨 기반 Kahn 위상정렬을
+        # 사용해, 러너가 실제로 만드는 배치와 수치가 일치하도록 한다.
+        #
+        # (구버전 버그: in_degree[tgt] += 1 만 수행해 모든 키가 >=1 이 되므로
+        #  "v == 0" 개수는 구조적으로 항상 0 → max(1, 0) = 1 로 고정됐다.)
+        node_names = [
+            str(n.get("name", "")).strip()
+            for n in (nodes or [])
+            if isinstance(n, dict) and n.get("name")
+        ]
+        if node_names:
+            nameset = set(node_names)
+            deg: dict[str, int] = {n: 0 for n in node_names}
+            adj: dict[str, list[str]] = defaultdict(list)
+            for edge in (edges or []):
+                if isinstance(edge, (list, tuple)) and len(edge) >= 2:
+                    src = str(edge[0]).strip()
+                    tgt = str(edge[1]).strip()
+                    if src in nameset and tgt in nameset:
+                        adj[src].append(tgt)
+                        deg[tgt] += 1
+            batches: list[list[str]] = []
+            placed: set[str] = set()
+            queue: deque[str] = deque(n for n, d in deg.items() if d == 0)
+            while queue:
+                batch = list(queue)
+                batches.append(batch)
+                placed.update(batch)
+                queue.clear()
+                for parent in batch:
+                    for child in adj[parent]:
+                        deg[child] -= 1
+                queue.extend(n for n, d in deg.items() if d == 0 and n not in placed)
+            max_parallelism = max(1, max((len(b) for b in batches), default=1))
+        else:
+            max_parallelism = 1
 
         # DAG History entry
         dag_entry = {
