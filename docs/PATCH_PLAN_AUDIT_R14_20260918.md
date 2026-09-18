@@ -7,7 +7,7 @@
 - 목적: 감사 지적사항을 **소스 근거와 함께** 확정하고, P0→P2 패치 우선순위와 변경 지점을 결정한다.
 - 범위: 본 문서는 "무엇을 어떤 순서로 고칠 것인가"의 결정서이며, 구현 자체는 후속 작업이다.
 - **실행 결과**: 구현·실측은 [`docs/PATCH_EXECUTION_REPORT_R14_20260918.md`](PATCH_EXECUTION_REPORT_R14_20260918.md)에 기록됐다.
-  (8단계 완료, 169 tests passed, Evidence ZIP digest `d440a477…`)
+  (8단계 완료, 169 tests passed, Evidence ZIP digest `459777e5…`)
 
 ---
 
@@ -419,7 +419,7 @@ A1 봉합이 끝나면 비로소 측정 가능해진다. 순서를 고정한다.
 > 결과: **13 receipt — pass 12 / skip 1 / fail 0 / error 0, Status COMPLETE.**
 > 산출물: `evidence/daon_evidence.zip` + sidecar `evidence/daon_evidence.zip.sha256`.
 > 결정성: `--deterministic` 2회 실행 시 **바이트 동일** —
-> bundle digest `d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa`.
+> bundle digest `459777e52bae0f2a47adf95a86a3d6d11320327cc986c5a7732a9454e293553c`.
 > 아래 체크는 "self-report"가 아니라 **위 ZIP 내 receipt/artifact/hash**로 뒷받침된다.
 
 - [x] 정확한 build fingerprint 고정 (`product_version`, `build_id`, `artifact SHA-256`)

@@ -318,14 +318,23 @@ def _run_t09_to_t13(emitter: EvidenceReceiptEmitter, workdir: Path) -> None:
         emitter.record_error("T12", exc)
 
     # --- T13: public-site claim accuracy ----------------------------------
+    # 주의: 이 T13은 Mobile/RLS/Realtime/E2EE/P2P 기능 검증이 **아니다**.
+    # 공개 사이트(daon-download)에 금지 문구가 남아있지 않은지만 스캔한다.
+    # 외부 검증측이 기대하는 T13과 이름만 같고 내용이 다르므로, receipt의
+    # title/notes/evidence에 그 범위를 명시해 재사용 오해를 차단한다.
     try:
         site = Path("C:/daon/portfolio/Test/daon-download/index.html")
         if not site.exists():
             emitter.record(
                 "T13",
                 STATUS_SKIP,
-                evidence={"site_path": str(site), "exists": False},
-                notes="라이브 사이트 파일 미발견 — 별도 배포 트리",
+                evidence={
+                    "site_path": str(site),
+                    "exists": False,
+                    "verification_scope": "public-site banned-phrase scan",
+                    "not_covered": ["Mobile", "RLS", "Realtime", "E2EE", "P2P"],
+                },
+                notes="라이브 사이트 파일 미발견 — 별도 배포 트리 (기능 검증 아님)",
             )
         else:
             text = site.read_text(encoding="utf-8", errors="ignore")
@@ -334,8 +343,13 @@ def _run_t09_to_t13(emitter: EvidenceReceiptEmitter, workdir: Path) -> None:
             emitter.record(
                 "T13",
                 STATUS_PASS if not hits else STATUS_FAIL,
-                evidence={"site_path": str(site), "banned_phrase_hits": hits},
-                notes="실측: 라이브 사이트 금지 문구 스캔",
+                evidence={
+                    "site_path": str(site),
+                    "banned_phrase_hits": hits,
+                    "verification_scope": "public-site banned-phrase scan",
+                    "not_covered": ["Mobile", "RLS", "Realtime", "E2EE", "P2P"],
+                },
+                notes="실측: 라이브 사이트 금지 문구 스캔 (Mobile/RLS/E2EE/P2P 기능 검증 아님)",
             )
     except Exception as exc:  # noqa: BLE001
         emitter.record_error("T13", exc)

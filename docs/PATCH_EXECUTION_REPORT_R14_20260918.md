@@ -13,7 +13,7 @@
 
 감사가 지목한 R14 `FAIL - FINAL_GENERATION_CONTRACT_FAILURE`의 직접 원인을 **코드로 봉합**하고,
 T01~T13 receipt 발행기와 효과 실험 하네스를 붙여 **재검증 가능 상태**로 만들었다.
-실측 결과 **13 receipt — pass 12 / skip 1 / fail 0**, 결정성 ZIP digest `d440a477…` (2회 바이트 동일),
+실측 결과 **13 receipt — pass 12 / skip 1 / fail 0**, 결정성 ZIP digest `459777e5…` (2회 바이트 동일),
 전체 소유 테스트 **169 passed**.
 
 | 항목 | 값 |
@@ -23,7 +23,7 @@ T01~T13 receipt 발행기와 효과 실험 하네스를 붙여 **재검증 가�
 | 신규 테스트 파일 | 7개 |
 | 테스트 | **169 passed** |
 | Evidence ZIP | `evidence/daon_evidence.zip` + `.sha256` sidecar |
-| 결정성 digest | `d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa` |
+| 결정성 digest | `459777e52bae0f2a47adf95a86a3d6d11320327cc986c5a7732a9454e293553c` |
 | 빌드 산출물 | `dist/DAON Agent System Setup 1.0.0.exe` (360,105,895 bytes ≈ 343.4 MB) |
 | 설치기 SHA-256 | `ED29D14A33E8A62E…` (전체: `ED29D14A33E8A62E`로 시작, 2026-09-18 23:58:32 생성) |
 | 백엔드 `server.exe` | 211,170,086 bytes, SHA-256 `F7C8B7E65466A87E…` (2026-09-18 23:56:30 생성) |
@@ -241,7 +241,7 @@ A1은 **실재하는 잠재 결함**이다. 제품 진입점 [`analyze_text_work
 | pass / skip / fail / error | **12 / 1 / 0 / 0** |
 | Status | **COMPLETE** |
 | 산출물 | `evidence/daon_evidence.zip` + `evidence/daon_evidence.zip.sha256` |
-| 결정성 digest | `d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa` (2회 바이트 동일) |
+| 결정성 digest | `459777e52bae0f2a47adf95a86a3d6d11320327cc986c5a7732a9454e293553c` (2회 바이트 동일) |
 
 ---
 
@@ -293,7 +293,7 @@ python scripts/run_evidence_suite.py --deterministic
 
 # 결정성 확인 (2회 실행 후 digest 비교)
 python scripts/run_evidence_suite.py --deterministic
-# → digest d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa
+# → digest 459777e52bae0f2a47adf95a86a3d6d11320327cc986c5a7732a9454e293553c
 ```
 
 ---
@@ -337,6 +337,67 @@ npm run build
 - **검증 포인트**: `server.exe`의 SHA-256이 `dist`·`win-unpacked`·Portable·설치본 **4곳 모두 동일** →
   패치된 백엔드가 실제 배포 트리에 반영됐음을 해시로 입증.
 - 이전 stale 값(server.exe 12:29 / installer 11:43)과 **완전히 상이** → 이번 빌드가 실제로 재생성됨.
+
+---
+
+## 12-B. 외부 제출 가이드 §4 재지적 3건 대응 (2026-09-18)
+
+외부 문서 `DAON_EXTERNAL_EVIDENCE_SUBMISSION_DECISION_GUIDE_20260918`의 §4 사전검사 체크리스트 중
+**마지막 3개 항목**이 이전 감사에서 지적된 사항을 재차 못박은 것이다. 실제 Evidence ZIP과 대조한 결과와
+대응을 기록한다.
+
+### 재지적 ① — T03~T08 합성 runner + T11 SKIP 은폐 여부 → ✅ 방어됨
+
+- T11 receipt: `status="skip"`, `evidence.status="unproven"`, `reason="공개 범위에서 autonomous self-evolution은 미입증 (정직 표기)"`
+- manifest `summary.by_status = {pass: 12, skip: 1}` — SKIP이 집계에 그대로 노출
+- T03~T08은 `effect_experiment.py`의 **합성 runner** 기반이며 본 보고서 §0에 명시
+- **은폐 없음.**
+
+### 재지적 ② — T13 receipt 재사용 여부 → ⚠️ 이름 충돌 해소
+
+- 문제: 외부 검증측이 기대하는 T13(Mobile/RLS/Realtime/E2EE/P2P)과 우리 T13(공개 사이트 문구 스캔)이
+  **이름만 같고 내용이 다름** → "단순 콘텐츠 스캔을 T13 PASS로 재사용"으로 오해될 소지.
+- 대응: T13의 `title`/`notes`/`evidence`에 **검증 범위를 명시**해 재사용 오해를 차단.
+  - `TEST_REGISTRY["T13"]` = `"public-site claim accuracy (banned-phrase scan; NOT Mobile/RLS/E2EE/P2P)"`
+  - receipt `evidence.verification_scope = "public-site banned-phrase scan"`
+  - receipt `evidence.not_covered = ["Mobile", "RLS", "Realtime", "E2EE", "P2P"]`
+  - receipt `notes = "실측: 라이브 사이트 금지 문구 스캔 (Mobile/RLS/E2EE/P2P 기능 검증 아님)"`
+
+### 재지적 ③ — build_id / artifact SHA / source snapshot 구분 → ⚠️ 보강 완료
+
+- 문제: receipt fingerprint의 `build_id`·`product_version`이 **빈 문자열**이고 `git_commit`이
+  **패치 이전 커밋(`6517fc2`)** 을 가리켜, "패치 build"라는 주장과 receipt가 모순.
+- 원인: [`BuildFingerprint.capture()`](../api/api/evidence_receipt.py:100)의 import 경로가
+  `api.routes.system_routes` / `api.config`(잘못된 경로)여서 실패 → 필드가 비었음.
+- 대응:
+  - import 경로를 실제 경로(`api.api.routes.system_routes` / `api.api.config`)로 수정 + 양쪽 spelling 시도
+  - `product_version` fallback: `package.json`의 `version` → `1.0.0`
+  - `build_id` fallback: `server.py`의 `[BUILD ID]:` 배너 → `server-v5-2026-08-14-20:05`
+  - `git_commit`: 실행 시점 HEAD → `b37b002` (패치 커밋)
+
+### 보강 후 fingerprint 실측 (T13 receipt)
+
+```json
+{
+  "build_id": "server-v5-2026-08-14-20:05",
+  "product_version": "1.0.0",
+  "git_commit": "b37b002",
+  "artifact_sha256": "…(evidence_receipt.py 자신의 해시)",
+  "captured_at": "1970-01-01T00:00:00+0000"
+}
+```
+
+### 재산출 결과
+
+| 항목 | 값 |
+|---|---|
+| Evidence ZIP | `evidence/daon_evidence.zip` + `.sha256` sidecar |
+| 결정성 digest (신) | `459777e52bae0f2a47adf95a86a3d6d11320327cc986c5a7732a9454e293553c` |
+| 결정성 검증 | 2회 실행 RUN1 == RUN2 (byte-identical) |
+| receipt | 13건 — pass 12 / skip 1 / fail 0 |
+| 회귀 테스트 | **169 passed** (유지) |
+
+> 이전 digest `d440a477…`는 fingerprint 보강 전 값이며, 본 보강으로 `459777e5…`로 갱신됐다.
 
 ---
 

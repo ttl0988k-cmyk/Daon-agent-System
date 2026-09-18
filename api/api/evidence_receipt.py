@@ -51,7 +51,7 @@ TEST_REGISTRY: dict[str, str] = {
     "T10": "synthetic marker + EXTERNAL_PROVIDER_SENT=false",
     "T11": "autonomous self-evolution claim scope",
     "T12": "auth / CDP / IPC boundary",
-    "T13": "public-site claim accuracy",
+    "T13": "public-site claim accuracy (banned-phrase scan; NOT Mobile/RLS/E2EE/P2P)",
 }
 
 # Receipt status vocabulary.
@@ -114,17 +114,53 @@ class BuildFingerprint:
         except Exception:
             pass
 
-        # build_id / version from the system route constant when importable.
-        try:
-            from api.routes.system_routes import BUILD_ID  # type: ignore
-            fp.build_id = str(BUILD_ID)
-        except Exception:
-            pass
-        try:
-            from api.config import PRODUCT_VERSION  # type: ignore
-            fp.product_version = str(PRODUCT_VERSION)
-        except Exception:
-            pass
+        # build_id / version. The real importable paths in the source tree are
+        # ``api.api.routes.system_routes`` and ``api.api.config`` (the repo root
+        # is on sys.path, so ``api.routes`` / ``api.config`` do NOT resolve).
+        # We try both spellings so the fingerprint is populated in the source
+        # tree AND inside the frozen server.exe (where the layout differs).
+        for mod_name in ("api.api.routes.system_routes", "api.routes.system_routes"):
+            try:
+                mod = __import__(mod_name, fromlist=["BUILD_ID"])
+                fp.build_id = str(getattr(mod, "BUILD_ID", "") or "")
+                if fp.build_id:
+                    break
+            except Exception:
+                continue
+        for mod_name in ("api.api.config", "api.config"):
+            try:
+                mod = __import__(mod_name, fromlist=["PRODUCT_VERSION"])
+                fp.product_version = str(getattr(mod, "PRODUCT_VERSION", "") or "")
+                if fp.product_version:
+                    break
+            except Exception:
+                continue
+
+        # Fallbacks so the fingerprint is never silently empty: read the
+        # product version from package.json and the backend build id from the
+        # server.py banner. These are the identifiers a third party compares
+        # against the previous public revision.
+        if not fp.product_version:
+            try:
+                pkg = Path(__file__).resolve().parents[2] / "package.json"
+                fp.product_version = str(json.loads(pkg.read_text(encoding="utf-8")).get("version", "") or "")
+            except Exception:
+                pass
+        if not fp.build_id:
+            try:
+                import re as _re
+                srv = Path(__file__).resolve().parents[2] / "server.py"
+                for line in srv.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if "[BUILD ID]:" in line:
+                        # The banner is: print("[BUILD ID]: server-v5-...", flush=True)
+                        # The value sits BETWEEN the marker and the closing quote,
+                        # so capture up to the first quote (no leading quote).
+                        m = _re.search(r"\[BUILD ID\]:\s*([^'\"]+)", line)
+                        if m:
+                            fp.build_id = m.group(1).strip()
+                        break
+            except Exception:
+                pass
 
         # git commit (best effort).
         try:
