@@ -5,6 +5,83 @@
  */
 const { ipcMain, shell, app } = require('electron');
 const { spawn, exec } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+/**
+ * SECURITY (audit R14 / P1-2): validate an installer path before it is handed
+ * to `cmd.exe`. The renderer (and any page loaded in the embedded browser) can
+ * reach the `install-update` channel, so an unvalidated path is a command
+ * injection / arbitrary-execution vector. This is FAIL-CLOSED: anything that
+ * does not satisfy every check is rejected.
+ *
+ * Rules:
+ *   1. must be a non-empty string
+ *   2. must be an absolute path (no relative traversal)
+ *   3. must resolve (realpath) to a location inside a trusted root
+ *   4. must exist and be a regular file
+ *   5. must have a `.exe` extension (Windows installer)
+ *   6. must not contain shell metacharacters
+ *
+ * @param {string} installerPath
+ * @returns {{ ok: true, path: string } | { ok: false, reason: string }}
+ */
+function validateInstallerPath(installerPath) {
+  if (typeof installerPath !== 'string' || installerPath.trim() === '') {
+    return { ok: false, reason: 'installerPath must be a non-empty string' };
+  }
+
+  // Reject shell metacharacters outright — defence in depth even though we
+  // quote the path below.
+  if (/[&|<>^%!`\r\n]/.test(installerPath)) {
+    return { ok: false, reason: 'installerPath contains shell metacharacters' };
+  }
+
+  if (!path.isAbsolute(installerPath)) {
+    return { ok: false, reason: 'installerPath must be absolute' };
+  }
+
+  if (path.extname(installerPath).toLowerCase() !== '.exe') {
+    return { ok: false, reason: 'installerPath must be a .exe file' };
+  }
+
+  // Trusted roots: the app's own userData dir (where self-update downloads the
+  // installer) and the OS temp dir. Anything else is refused.
+  const trustedRoots = [];
+  try {
+    trustedRoots.push(path.resolve(app.getPath('userData')));
+  } catch (_) { /* ignore */ }
+  try {
+    trustedRoots.push(path.resolve(app.getPath('temp')));
+  } catch (_) { /* ignore */ }
+
+  let real;
+  try {
+    real = fs.realpathSync(installerPath);
+  } catch (e) {
+    return { ok: false, reason: `installerPath does not exist: ${String(e)}` };
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(real);
+  } catch (e) {
+    return { ok: false, reason: `installerPath is not accessible: ${String(e)}` };
+  }
+  if (!stat.isFile()) {
+    return { ok: false, reason: 'installerPath is not a regular file' };
+  }
+
+  const inTrustedRoot = trustedRoots.some((root) => {
+    const rel = path.relative(root, real);
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  });
+  if (!inTrustedRoot) {
+    return { ok: false, reason: 'installerPath is outside the trusted update directories' };
+  }
+
+  return { ok: true, path: real };
+}
 
 /**
  * Register all IPC channels
@@ -94,6 +171,14 @@ function registerIpcHandlers({ tabManager, supervisor, mainWindow, merr, mlog })
   });
 
   ipcMain.on('open-system-browser', (event, filePath) => {
+    // SECURITY (audit R14 / P1-2): the renderer supplies filePath and it is
+    // interpolated into a shell command. Reject shell metacharacters and
+    // require an absolute path so a crafted value cannot inject a command.
+    if (typeof filePath !== 'string' || filePath.trim() === '' ||
+      /[&|<>^%!`\r\n]/.test(filePath) || !path.isAbsolute(filePath)) {
+      merr(`[IPC] open-system-browser rejected: invalid path (path=${filePath})`);
+      return;
+    }
     const cmd = process.platform === 'win32'
       ? `start "" "${filePath}"`
       : process.platform === 'darwin'
@@ -107,7 +192,16 @@ function registerIpcHandlers({ tabManager, supervisor, mainWindow, merr, mlog })
 
   // ── Auto-Update Installer Trigger ──
   ipcMain.on('install-update', (event, installerPath) => {
-    mlog(`[IPC] Starting update process with installer: ${installerPath}`);
+    // SECURITY (audit R14 / P1-2): FAIL-CLOSED validation. Never hand an
+    // unvalidated renderer-supplied path to cmd.exe. If validation fails we
+    // abort WITHOUT quitting the app, so the user can retry with a good path.
+    const check = validateInstallerPath(installerPath);
+    if (!check.ok) {
+      merr(`[IPC] install-update rejected: ${check.reason} (path=${installerPath})`);
+      return;
+    }
+    const safeInstallerPath = check.path;
+    mlog(`[IPC] Starting update process with installer: ${safeInstallerPath}`);
 
     // Stop supervisor processes
     if (supervisor) {
@@ -123,7 +217,7 @@ function registerIpcHandlers({ tabManager, supervisor, mainWindow, merr, mlog })
         'ping 127.0.0.1 -n 4 > nul',
         'taskkill /F /IM "DAON Agent System.exe" /T > nul 2>&1',
         'taskkill /F /IM "server.exe" /T > nul 2>&1',
-        `"${installerPath}" /S`
+        `"${safeInstallerPath}" /S`
       ].join(' & ');
 
       const updaterProcess = spawn('cmd.exe', ['/c', cmdStr], {

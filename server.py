@@ -135,6 +135,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             parsed = urllib.parse.urlparse(self.path)
+            # P1-2 (audit R14): auth middleware. When a password is configured
+            # this blocks every non-public path; when auth is disabled it is a
+            # no-op (preserves the current local-only behaviour).
+            from api.auth import check_auth
+            if not check_auth(self, parsed):
+                return
             from api.routes import handle_get
             if handle_get(self, parsed):
                 return
@@ -154,6 +160,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             parsed = urllib.parse.urlparse(self.path)
+            # P1-2 (audit R14): auth middleware — same gate as do_GET.
+            from api.auth import check_auth
+            if not check_auth(self, parsed):
+                return
             from api.routes import handle_post
             if handle_post(self, parsed):
                 return

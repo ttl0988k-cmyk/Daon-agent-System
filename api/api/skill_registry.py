@@ -25,6 +25,35 @@ SKILL_REVIEW = "review"        # Under evaluation
 SKILL_APPROVED = "approved"    # Verified, appears in default CEO catalog
 SKILL_REJECTED = "rejected"    # Failed review, excluded from catalog
 
+# Verification Levels (audit R14 / mutual-IP spec v1.3 T08).
+#
+# CRITICAL: "APPROVED" is a LIFECYCLE decision (a human said yes). It is NOT
+# evidence that the skill was independently verified. These two axes are
+# deliberately separate so a promoted skill can never masquerade as verified.
+#
+#   A  LIFECYCLE_ONLY            — a human approved it; no automated check ran.
+#   B  STATIC_VALIDATION         — schema / frontmatter / lint checks passed.
+#   C  RUNTIME_SELF_TEST         — the skill was executed once and did not crash.
+#   D  EXPECTED_OUTPUT_VALIDATION— output matched an expected result.
+#   E  INDEPENDENT_VERIFICATION  — verified by a party other than the author.
+VERIFICATION_LEVEL_LIFECYCLE_ONLY = "A"
+VERIFICATION_LEVEL_STATIC_VALIDATION = "B"
+VERIFICATION_LEVEL_RUNTIME_SELF_TEST = "C"
+VERIFICATION_LEVEL_EXPECTED_OUTPUT_VALIDATION = "D"
+VERIFICATION_LEVEL_INDEPENDENT_VERIFICATION = "E"
+
+# Default level for any skill that has not been explicitly verified. A promoted
+# skill starts here — approval alone never implies verification.
+DEFAULT_VERIFICATION_LEVEL = VERIFICATION_LEVEL_LIFECYCLE_ONLY
+
+VERIFICATION_LEVELS = {
+    VERIFICATION_LEVEL_LIFECYCLE_ONLY: "LIFECYCLE_ONLY",
+    VERIFICATION_LEVEL_STATIC_VALIDATION: "STATIC_VALIDATION",
+    VERIFICATION_LEVEL_RUNTIME_SELF_TEST: "RUNTIME_SELF_TEST",
+    VERIFICATION_LEVEL_EXPECTED_OUTPUT_VALIDATION: "EXPECTED_OUTPUT_VALIDATION",
+    VERIFICATION_LEVEL_INDEPENDENT_VERIFICATION: "INDEPENDENT_VERIFICATION",
+}
+
 _MANIFEST_FILE = "_skill_manifest.json"
 
 
@@ -88,6 +117,7 @@ class SkillEntry:
     """Represents a single indexed skill with YAML metadata."""
     __slots__ = (
         "name", "label", "path", "title", "source", "content", "lifecycle",
+        "verification_level",
         "version", "category", "priority", "tags", "conflicts_with",
         "purpose", "when_to_use", "when_not_to_use",
         "inputs", "outputs", "examples", "constraints", "success_criteria",
@@ -111,6 +141,7 @@ class SkillEntry:
         trigger: list = None, capabilities: list = None,
         enabled: bool = True,
         mcp_servers: list = None,
+        verification_level: str = DEFAULT_VERIFICATION_LEVEL,
     ):
         self.name = name
         self.label = label
@@ -119,6 +150,9 @@ class SkillEntry:
         self.source = source
         self.content = content
         self.lifecycle = lifecycle
+        # Verification level is INDEPENDENT of lifecycle. A promoted (approved)
+        # skill defaults to level A (LIFECYCLE_ONLY) — approval ≠ verification.
+        self.verification_level = verification_level or DEFAULT_VERIFICATION_LEVEL
         self.version = version
         self.category = category
         self.priority = priority
@@ -621,12 +655,18 @@ class SkillRegistry:
                 return title
         return fallback
 
-    def get_catalog_text(self) -> str:
+    def get_catalog_text(self, include_rejected: bool = False) -> str:
         """
         Return a formatted catalog of all available skills for the CEO prompt.
         CEO uses this to select which skills to apply.
         Only curated and APPROVED auto-skills appear in the default catalog.
         Draft skills are listed separately as candidates for promotion.
+
+        P0-3 (audit R14 / spec v1.3 T07): REJECTED skills are EXCLUDED from the
+        default catalog entirely. They are only surfaced when the caller
+        explicitly opts in (``include_rejected=True``) for a diagnostic view,
+        and even then they are placed in a clearly-labelled, non-selectable
+        section so the CEO cannot pick them.
         """
         if not self._skills:
             return "(No skills available)"
@@ -637,6 +677,7 @@ class SkillRegistry:
         plugin = [s for s in self._skills.values() if s.source == "plugin"]
         approved_auto = [s for s in self._skills.values() if s.source == "auto" and s.lifecycle == SKILL_APPROVED]
         draft_auto = [s for s in self._skills.values() if s.source == "auto" and s.lifecycle == SKILL_DRAFT]
+        rejected_auto = [s for s in self._skills.values() if s.source == "auto" and s.lifecycle == SKILL_REJECTED]
 
         if curated:
             lines.append("[Curated Skills - Always Available]")
@@ -652,13 +693,23 @@ class SkillRegistry:
             lines.extend(s.to_catalog_line() for s in approved_auto)
         if draft_auto:
             lines.append(f"[Draft Auto-Skills - {len(draft_auto)} pending review, NOT available for selection]")
+        if include_rejected and rejected_auto:
+            lines.append(
+                f"[REJECTED Auto-Skills - {len(rejected_auto)} failed review, "
+                f"DIAGNOSTIC VIEW ONLY, NOT selectable]"
+            )
+            lines.extend(s.to_catalog_line() for s in rejected_auto)
 
         return "\n".join(lines)
 
-    def load_skills(self, skill_names: list[str]) -> str:
+    def load_skills(self, skill_names: list[str], include_rejected: bool = False) -> str:
         """
         Load and concatenate the content of requested skills.
         Returns a formatted string ready for injection into agent system_prompt.
+
+        P0-3 (audit R14 / spec v1.3 T07): the NORMAL_USER_PATH must never inject
+        a REJECTED (or DRAFT) skill into the model context. ``include_rejected``
+        is the explicit opt-in used ONLY by the diagnostic/forced path.
         """
         if not skill_names:
             return ""
@@ -668,6 +719,13 @@ class SkillRegistry:
             clean_name = name.strip().lower().replace(" ", "-")
             entry = self._skills.get(clean_name)
             if entry:
+                # Lifecycle gate: block REJECTED/DRAFT on the normal path.
+                if not include_rejected and entry.lifecycle in (SKILL_REJECTED, SKILL_DRAFT):
+                    print(
+                        f"[SkillRegistry] Blocked '{entry.name}' "
+                        f"(lifecycle={entry.lifecycle}) on normal path."
+                    )
+                    continue
                 sections.append(
                     f"=== SKILL: {entry.name} ({entry.source}) ===\n"
                     f"{entry.content}\n"
@@ -685,10 +743,13 @@ class SkillRegistry:
             + "\n"
         )
 
-    def load_skills_for_reviewer(self, skill_names: list[str]) -> str:
+    def load_skills_for_reviewer(self, skill_names: list[str], include_rejected: bool = False) -> str:
         """
         Load skills formatted for the reviewer agent.
         The reviewer checks compliance against these skills.
+
+        P0-3: same lifecycle gate as load_skills() — REJECTED/DRAFT skills are
+        excluded unless the caller explicitly opts in (diagnostic path).
         """
         if not skill_names:
             return ""
@@ -698,6 +759,8 @@ class SkillRegistry:
             clean_name = name.strip().lower().replace(" ", "-")
             entry = self._skills.get(clean_name)
             if entry:
+                if not include_rejected and entry.lifecycle in (SKILL_REJECTED, SKILL_DRAFT):
+                    continue
                 sections.append(f"- {entry.name}: {entry.title}")
 
         if not sections:
@@ -711,9 +774,19 @@ class SkillRegistry:
             + "\n"
         )
 
-    def get_skill(self, name: str) -> Optional[SkillEntry]:
-        """Get a single skill entry by name."""
-        return self._skills.get(name.strip().lower().replace(" ", "-"))
+    def get_skill(self, name: str, include_rejected: bool = False) -> Optional[SkillEntry]:
+        """Get a single skill entry by name.
+
+        P0-3: on the normal path a REJECTED/DRAFT skill is treated as absent
+        (returns None) so no caller can accidentally surface it. The diagnostic
+        path passes ``include_rejected=True``.
+        """
+        entry = self._skills.get(name.strip().lower().replace(" ", "-"))
+        if entry is None:
+            return None
+        if not include_rejected and entry.lifecycle in (SKILL_REJECTED, SKILL_DRAFT):
+            return None
+        return entry
 
     def get(self, name: str, default=None) -> Optional[SkillEntry]:
         """Dict-like access alias for get_skill."""
@@ -752,16 +825,42 @@ class SkillRegistry:
             encoding="utf-8",
         )
 
-    def promote_skill(self, skill_name: str, to_status: str = SKILL_APPROVED) -> bool:
+    def promote_skill(
+        self,
+        skill_name: str,
+        to_status: str = SKILL_APPROVED,
+        verification_level: str = None,
+    ) -> bool:
         """Promote an auto-distilled skill's lifecycle status.
+
+        ``verification_level`` is recorded SEPARATELY from ``to_status``. If it
+        is omitted, the skill keeps its current level (defaulting to level A,
+        LIFECYCLE_ONLY). Approval never silently upgrades the verification level
+        — a caller must pass an explicit level to claim one.
 
         Usage:
             registry.promote_skill("auto_skill_xxx", SKILL_APPROVED)
+            registry.promote_skill("auto_skill_xxx", SKILL_APPROVED, "C")
         """
-        entry = self.get_skill(skill_name)
+        # Promotion is an explicit administrative action, so it must be able to
+        # SEE a DRAFT/REJECTED skill — the normal read path (P0-3) hides those.
+        entry = self.get_skill(skill_name, include_rejected=True)
         if not entry or entry.source != "auto":
             print(f"[SkillRegistry] Cannot promote '{skill_name}': not an auto-distilled skill.")
             return False
+
+        # Resolve the effective verification level. Unknown values fall back to
+        # the entry's current level so a typo can never inflate the grade.
+        if verification_level is None:
+            effective_level = getattr(entry, "verification_level", DEFAULT_VERIFICATION_LEVEL)
+        elif verification_level in VERIFICATION_LEVELS:
+            effective_level = verification_level
+        else:
+            print(
+                f"[SkillRegistry] Unknown verification_level '{verification_level}' "
+                f"for '{skill_name}'; keeping '{getattr(entry, 'verification_level', DEFAULT_VERIFICATION_LEVEL)}'."
+            )
+            effective_level = getattr(entry, "verification_level", DEFAULT_VERIFICATION_LEVEL)
 
         # Find the correct manifest directory by checking where the skill actually lives
         auto_dir = None
@@ -781,10 +880,19 @@ class SkillRegistry:
             "status": to_status,
             "promoted_at": time.time(),
             "previous_status": entry.lifecycle,
+            # Verification is a SEPARATE axis from lifecycle. Recorded so an
+            # auditor can tell "approved" apart from "verified".
+            "verification_level": effective_level,
+            "verification_level_name": VERIFICATION_LEVELS.get(effective_level, "UNKNOWN"),
         }
         self._save_manifest(auto_dir, manifest)
         entry.lifecycle = to_status
-        print(f"[SkillRegistry] Skill '{skill_name}' promoted to '{to_status}'.")
+        entry.verification_level = effective_level
+        print(
+            f"[SkillRegistry] Skill '{skill_name}' promoted to '{to_status}' "
+            f"(verification_level={effective_level} "
+            f"{VERIFICATION_LEVELS.get(effective_level, 'UNKNOWN')})."
+        )
         return True
 
     def reject_skill(self, skill_name: str) -> bool:
@@ -804,7 +912,11 @@ class SkillRegistry:
         return summary
 
     @staticmethod
-    def register_new_auto_skill(skill_path: Path, lifecycle: str = SKILL_DRAFT) -> None:
+    def register_new_auto_skill(
+        skill_path: Path,
+        lifecycle: str = SKILL_DRAFT,
+        verification_level: str = DEFAULT_VERIFICATION_LEVEL,
+    ) -> None:
         """Register a newly auto-distilled skill in the manifest.
         Called by AutoSkillExtractor after saving a new skill file.
 
@@ -818,7 +930,18 @@ class SkillRegistry:
             skill_path: Path to the SKILL.md file.
             lifecycle: Initial lifecycle state (default: SKILL_DRAFT).
                        Pass SKILL_APPROVED for user-approved saves.
+            verification_level: Independent verification grade (A~E). Defaults
+                       to A (LIFECYCLE_ONLY). A user-approved save is NOT a
+                       verification — callers must pass an explicit level to
+                       claim anything above A.
         """
+        if verification_level not in VERIFICATION_LEVELS:
+            print(
+                f"[SkillRegistry] Unknown verification_level '{verification_level}' "
+                f"for '{skill_path.parent.name}'; defaulting to {DEFAULT_VERIFICATION_LEVEL}."
+            )
+            verification_level = DEFAULT_VERIFICATION_LEVEL
+
         # skill_path = auto/{name}/SKILL.md → parent = auto/{name}/ → parent.parent = auto/
         skill_dir = skill_path.parent
         auto_dir = skill_dir.parent
@@ -848,12 +971,21 @@ class SkillRegistry:
             "status": lifecycle,
             "created_at": time.time(),
             "auto_distilled": True,
+            # Verification is a SEPARATE axis from lifecycle. A user-approved
+            # save is registered at level A (LIFECYCLE_ONLY) unless the caller
+            # explicitly claims a higher grade.
+            "verification_level": verification_level,
+            "verification_level_name": VERIFICATION_LEVELS.get(verification_level, "UNKNOWN"),
         }
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        print(f"[SkillRegistry] Registered new auto-skill as {lifecycle.upper()}: {skill_name}")
+        print(
+            f"[SkillRegistry] Registered new auto-skill as {lifecycle.upper()}: {skill_name} "
+            f"(verification_level={verification_level} "
+            f"{VERIFICATION_LEVELS.get(verification_level, 'UNKNOWN')})"
+        )
 
 
 # Module-level singleton

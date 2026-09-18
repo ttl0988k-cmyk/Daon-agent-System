@@ -40,11 +40,17 @@ import hashlib
 from pathlib import Path
 from typing import Optional, Callable
 
+from api.api.sensitive_redaction import redact_events, build_trust_flags
+
 _logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Constants
 # =============================================================================
+# Schema version for the SkillAnalyzer output envelope. Bump this whenever the
+# {"frontmatter": dict, "body": str, "_meta": {...}} contract changes.
+# (audit R14 contract failure / mutual-IP spec v1.3 T01)
+ANALYZER_OUTPUT_SCHEMA_VERSION = "1.0"
 SKILL_ANALYSIS_SYSTEM_PROMPT = """You are a Skill Distiller — an expert at observing user demonstrations and converting them into reusable, executable Playwright automation skills.
 
 Your task: Analyze a sequence of captured USER INTERACTION events (clicks, inputs, navigations) from a user demonstration and produce a complete, executable Skill definition.
@@ -1032,8 +1038,13 @@ class SkillAnalyzer:
 
         Returns: {"frontmatter": {...}, "body": "..."}
         """
-        # Format events for the LLM
-        event_summary = SkillAnalyzer._format_event_summary(events)
+        # P0-4 (audit R14 / spec v1.3 T10): redact secrets at the prompt
+        # boundary BEFORE anything is assembled or logged. The report never
+        # contains original values — only class names and counts.
+        redacted_events, redaction_report = redact_events(events)
+
+        # Format events for the LLM (from the redacted copy)
+        event_summary = SkillAnalyzer._format_event_summary(redacted_events)
 
         prompt = f"""## User Demonstration Analysis
 
@@ -1070,12 +1081,57 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
             if not parsed or "frontmatter" not in parsed:
                 if log_callback:
                     log_callback("SkillAnalyzer", "⚠️ LLM 응답 파싱 실패, 기본 Skill 생성", "error")
-                return SkillAnalyzer._fallback_skill(events, skill_name)
+                return _normalize_skill_data(
+                    SkillAnalyzer._fallback_skill(events, skill_name),
+                    source="fallback",
+                )
+
+            normalized = _normalize_skill_data(parsed, source="llm")
+
+            # P0-4: attach the redaction report + T10 trust-boundary flags to
+            # the envelope meta so a verifier can assert MODEL_PROMPT=false for
+            # any redacted secret. No original value is ever recorded.
+            normalized["_meta"]["redaction"] = redaction_report
+            normalized["_meta"]["trust_flags"] = build_trust_flags(
+                dom_captured=bool(events),
+                local_bridge=True,
+                model_prompt=True,
+                persisted_skill=False,  # set true by the writer after save
+                logged=False,
+                external_provider_sent=True,
+            )
+
+            # Contract relaxation (audit R14): a non-string body is RECOVERED by
+            # normalization, not rejected. Reject ONLY when the frontmatter
+            # itself is unusable (not a dict) — otherwise the writer could not
+            # produce a meaningful skill even after coercion.
+            if not isinstance(normalized["frontmatter"], dict) or not normalized["frontmatter"]:
+                if log_callback:
+                    log_callback("SkillAnalyzer", "⚠️ frontmatter 누락, 기본 Skill 생성", "error")
+                return _normalize_skill_data(
+                    SkillAnalyzer._fallback_skill(events, skill_name),
+                    source="fallback",
+                )
 
             if log_callback:
-                log_callback("SkillAnalyzer", f"✅ Skill 분석 완료: {parsed.get('frontmatter', {}).get('name', '?')}", "done")
+                meta = normalized["_meta"]
+                if redaction_report.get("redaction_applied"):
+                    log_callback(
+                        "SkillAnalyzer",
+                        f"🔒 민감정보 {redaction_report['redaction_hit_count']}건 마스킹 "
+                        f"({', '.join(redaction_report['redaction_classes'])}) — 원문은 프롬프트/로그에 남기지 않음",
+                        "warning",
+                    )
+                if meta["normalization_result"] != "noop":
+                    log_callback(
+                        "SkillAnalyzer",
+                        f"⚠️ body 타입 보정: {meta['parsed_body_type']} → str "
+                        f"(손실 없이 복구: {meta['body_length_before']} → {meta['body_length_after']} chars)",
+                        "warning",
+                    )
+                log_callback("SkillAnalyzer", f"✅ Skill 분석 완료: {normalized['frontmatter'].get('name', '?')}", "done")
 
-            return parsed
+            return normalized
         except Exception as e:
             _logger.warning("[DemoToSkill] LLM analysis failed: %s", e)
             if log_callback:
@@ -1089,9 +1145,16 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
         The enriched format gives the LLM enough context to infer
         INTENT — what the user is actually trying to accomplish —
         rather than just raw (x, y) coordinates.
+
+        P0-4 (audit R14 / spec v1.3 T10): this is the SINGLE CHOKE POINT where
+        captured secrets are redacted before the prompt is assembled. The raw
+        capture is never mutated; only the LLM-facing summary is sanitized.
         """
         if not events:
             return "(No events captured)"
+
+        # Redact secrets at the prompt boundary (single choke point).
+        events, _redaction_report = redact_events(events)
 
         def _describe(ev: dict) -> str:
             """Build a detailed description string for a single event."""
@@ -1377,6 +1440,123 @@ Output ONLY valid JSON with "frontmatter" and "body" fields."""
 
 
 # =============================================================================
+# Output normalization (audit R14 / spec v1.3 T01 contract hardening)
+# =============================================================================
+def _yaml_scalar(value) -> str:
+    """Render a single scalar for a hand-written YAML frontmatter block.
+
+    Deterministic and dependency-free (no PyYAML import) so the writer behaves
+    identically across machines. ``None`` is rendered explicitly as ``null``.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    if "\n" in text:
+        return "|\n" + "\n".join("  " + ln for ln in text.split("\n"))
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def _render_body_object(obj) -> str:
+    """Render a dict body as deterministic Markdown (key order preserved)."""
+    lines: list[str] = []
+    for key, val in obj.items():
+        header = str(key).replace("_", " ").strip().title()
+        lines.append(f"## {header}")
+        if isinstance(val, dict):
+            for k2, v2 in val.items():
+                if isinstance(v2, (dict, list)):
+                    rendered = json.dumps(v2, ensure_ascii=False, indent=2)
+                    lines.append(f"- **{k2}**:")
+                    lines.append("  ```")
+                    lines.append("  " + rendered.replace("\n", "\n  "))
+                    lines.append("  ```")
+                else:
+                    lines.append(f"- **{k2}**: {v2}")
+        elif isinstance(val, (list, tuple)):
+            for item in val:
+                if isinstance(item, (dict, list)):
+                    lines.append("- " + json.dumps(item, ensure_ascii=False))
+                else:
+                    lines.append(f"- {item}")
+        else:
+            lines.append(str(val))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _coerce_body_to_text(body) -> str:
+    """Coerce an LLM-produced ``body`` into a STRING, deterministically.
+
+    This is the P0-1 defensive layer. The prompt asks for a string body, but
+    the model occasionally returns a dict / list / int / null. ``SkillWriter``
+    must NEVER raise ``TypeError`` on a bad type — the only permitted failure
+    is real disk I/O.
+    """
+    if body is None:
+        return ""
+    if isinstance(body, str):
+        return body
+    if isinstance(body, dict):
+        # Preferred malformed shape: {"markdown": "..."} → extract markdown.
+        for key in ("markdown", "content", "text", "body", "md"):
+            val = body.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return _render_body_object(body)
+    if isinstance(body, (list, tuple)):
+        lines = []
+        for item in body:
+            if isinstance(item, (dict, list)):
+                lines.append("- " + json.dumps(item, ensure_ascii=False))
+            else:
+                lines.append(f"- {item}")
+        return "\n".join(lines)
+    # int / float / bool / any other scalar
+    return str(body)
+
+
+def _normalize_skill_data(skill_data, *, source: str = "analyzer") -> dict:
+    """Normalize ANY analyzer output into the canonical, writable envelope.
+
+    Returns ``{"frontmatter": dict, "body": str, "_meta": {...}}`` and never
+    raises. When the raw output already matches the schema the normalization
+    is a no-op (``_meta.normalization_result == "noop"``); otherwise the
+    violation is recorded in ``_meta`` for downstream receipt emission.
+    """
+    if not isinstance(skill_data, dict):
+        skill_data = {}
+
+    fm = skill_data.get("frontmatter")
+    fm_ok = isinstance(fm, dict)
+    if not fm_ok:
+        fm = {} if fm is None else {"name": str(fm)}
+
+    raw_body = skill_data.get("body")
+    body_type = type(raw_body).__name__
+    before = len(raw_body) if isinstance(raw_body, str) else None
+    body = _coerce_body_to_text(raw_body)
+
+    schema_ok = fm_ok and isinstance(raw_body, str)
+    meta = {
+        "schema_version": ANALYZER_OUTPUT_SCHEMA_VERSION,
+        "source": source,
+        "parsed_frontmatter_type": "dict" if fm_ok else type(fm).__name__,
+        "parsed_body_type": body_type,
+        "writer_expected_body_type": "str",
+        "normalization_attempted": not schema_ok,
+        "normalization_result": "noop" if isinstance(raw_body, str) else "coerced",
+        "body_length_before": before,
+        "body_length_after": len(body),
+        "schema_validation_result": "pass" if schema_ok else "fail_recovered",
+    }
+    return {"frontmatter": fm, "body": body, "_meta": meta}
+
+
+# =============================================================================
 # Skill Writer
 # =============================================================================
 class SkillWriter:
@@ -1393,10 +1573,13 @@ class SkillWriter:
         Returns:
             Path to the created .md file
         """
-        from api.skill_registry import _resolve_auto_skills_dir, _resolve_profile_auto_skills_dir
+        from api.api.skill_registry import _resolve_auto_skills_dir, _resolve_profile_auto_skills_dir
 
         frontmatter = skill_data.get("frontmatter", {})
-        body = skill_data.get("body", "")
+        # P0-1 contract hardening: SkillWriter must NEVER raise TypeError on a
+        # bad body type. Coerce whatever the analyzer/LLM produced into text;
+        # the only permitted failure is real disk I/O.
+        body = _coerce_body_to_text(skill_data.get("body"))
 
         name = skill_name or frontmatter.get("name", "auto-skill")
         name_slug = re.sub(r'[^a-z0-9-]', '-', name.lower()).strip('-')[:60]
@@ -1451,9 +1634,11 @@ class SkillWriter:
         skill_path.write_text(content, encoding="utf-8")
         _logger.info("[DemoToSkill] Skill written to: %s", skill_path)
 
-        # Register in manifest as APPROVED (user explicitly triggered save)
+        # Register in manifest as SKILL_REVIEW — a freshly distilled skill is
+        # NEVER auto-approved; it must pass human review → promote_skill().
+        # (audit R14: "Approved ≠ Verified". Lifecycle gate enforced in P0-3.)
         try:
-            from api.skill_registry import SkillRegistry, SKILL_REVIEW
+            from api.api.skill_registry import SkillRegistry, SKILL_REVIEW
             SkillRegistry.register_new_auto_skill(skill_path, lifecycle=SKILL_REVIEW)
         except Exception as e:
             _logger.warning("[DemoToSkill] Failed to register skill in manifest: %s", e)
@@ -1658,7 +1843,7 @@ class RecordingManager:
 
         # Reload skill registry so the new skill is available
         try:
-            from api.skill_registry import get_skill_registry
+            from api.api.skill_registry import get_skill_registry
             get_skill_registry().reload()
         except Exception:
             pass
@@ -1732,7 +1917,7 @@ class RecordingManager:
         skill_path = writer.write(skill_data, skill_name=skill_name)
 
         try:
-            from api.skill_registry import get_skill_registry
+            from api.api.skill_registry import get_skill_registry
             get_skill_registry().reload()
         except Exception:
             pass
@@ -1803,11 +1988,30 @@ def _call_llm_direct(prompt: str, system_instruction: str = "",
             _logger.warning("[DemoToSkill] LLM call failed: %s", res.get("error"))
             return "{}"
 
-        # Extract assistant content
+        # Extract assistant content (last assistant message wins)
         messages = res.get("messages", [])
         for msg in reversed(messages):
-            if msg.get("role") == "assistant":
-                return msg.get("content", "{}")
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Some providers return content as parts — concatenate text parts.
+                content = "".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+            if not isinstance(content, str):
+                content = str(content)
+            finish_reason = msg.get("finish_reason") or res.get("finish_reason")
+            if finish_reason in ("length", "max_tokens"):
+                _logger.warning(
+                    "[DemoToSkill] LLM output truncated (finish_reason=%s, %d chars) "
+                    "— JSON will likely be incomplete",
+                    finish_reason, len(content),
+                )
+            if content.strip():
+                return content
+            break
+        _logger.warning("[DemoToSkill] LLM returned no assistant content")
         return "{}"
     except Exception as e:
         _logger.warning("[DemoToSkill] LLM call exception: %s", e)
@@ -1816,30 +2020,63 @@ def _call_llm_direct(prompt: str, system_instruction: str = "",
 
 def _extract_json_from_response(response: str) -> Optional[dict]:
     """Extract a JSON object from LLM response (handles markdown code blocks)."""
+    if not isinstance(response, str) or not response.strip():
+        _logger.warning("[DemoToSkill] Empty/non-string LLM response")
+        return None
+
+    candidate = None
+
     # Try direct parse first
     try:
-        return json.loads(response.strip())
+        candidate = json.loads(response.strip())
     except json.JSONDecodeError:
-        pass
+        candidate = None
 
-    # Try extracting from code blocks
-    json_patterns = [
-        r'```(?:json)?\s*\n?([\s\S]*?)\n?```',
-        r'\{[\s\S]*\}',
-    ]
+    # Try extracting from code blocks / brace boundaries
+    if not isinstance(candidate, dict):
+        json_patterns = [
+            r'```(?:json)?\s*\n?([\s\S]*?)\n?```',
+            r'\{[\s\S]*\}',
+        ]
+        for pattern in json_patterns:
+            for match in re.findall(pattern, response):
+                text = match.strip()
+                if not text.startswith("{"):
+                    continue
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    candidate = parsed
+                    break
+            if isinstance(candidate, dict):
+                break
 
-    for pattern in json_patterns:
-        matches = re.findall(pattern, response)
-        for match in matches:
-            try:
-                candidate = match.strip()
-                if candidate.startswith("{"):
-                    return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
+    if not isinstance(candidate, dict):
+        _logger.warning("[DemoToSkill] Cannot extract JSON from: %.200s...", response)
+        return None
 
-    _logger.warning("[DemoToSkill] Cannot extract JSON from: %.200s...", response)
-    return None
+    # Minimal schema validation (audit R14): surface WHY it will fail upstream
+    # instead of silently returning a shape SkillWriter cannot consume.
+    if "frontmatter" not in candidate:
+        _logger.warning("[DemoToSkill] Parsed JSON missing 'frontmatter' key")
+        return None
+    if not isinstance(candidate.get("frontmatter"), dict):
+        _logger.warning(
+            "[DemoToSkill] 'frontmatter' is %s, expected dict (will be coerced downstream)",
+            type(candidate.get("frontmatter")).__name__,
+        )
+    if "body" not in candidate:
+        _logger.warning("[DemoToSkill] Parsed JSON missing 'body' key (treating as empty)")
+        candidate["body"] = ""
+    elif not isinstance(candidate["body"], str):
+        _logger.warning(
+            "[DemoToSkill] 'body' is %s, expected str (will be coerced downstream)",
+            type(candidate["body"]).__name__,
+        )
+
+    return candidate
 
 
 # =============================================================================

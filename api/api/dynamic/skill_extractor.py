@@ -93,10 +93,22 @@ def _extract_and_save_skill(task: str, plan: dict, final_output: str, run_id: st
                 skill_file.write_text(clean_text, encoding="utf-8")
                 _logger.info("Successfully saved new skill to: %s", skill_file)
                 
-                # Register as APPROVED — user explicitly approved this save
+                # Register as APPROVED — user explicitly approved this save.
+                # NOTE: approval is a LIFECYCLE decision, NOT a verification.
+                # The skill is registered at verification level A
+                # (LIFECYCLE_ONLY) because no automated check ran on it. A
+                # higher grade must be claimed explicitly by a verifier.
                 try:
-                    from api.skill_registry import SkillRegistry, SKILL_APPROVED
-                    SkillRegistry.register_new_auto_skill(skill_file, lifecycle=SKILL_APPROVED)
+                    from api.skill_registry import (
+                        SkillRegistry,
+                        SKILL_APPROVED,
+                        VERIFICATION_LEVEL_LIFECYCLE_ONLY,
+                    )
+                    SkillRegistry.register_new_auto_skill(
+                        skill_file,
+                        lifecycle=SKILL_APPROVED,
+                        verification_level=VERIFICATION_LEVEL_LIFECYCLE_ONLY,
+                    )
                 except Exception as reg_err:
                     _logger.warning("Failed to register skill in manifest: %s", reg_err)
             

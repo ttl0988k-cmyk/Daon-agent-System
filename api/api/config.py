@@ -209,7 +209,11 @@ def _load_config_value(key_path, env_var=None, default=None):
 # Server host / port
 # =============================================================================
 PORT = int(_load_config_value('server.port', 'PORT', 9090))
-HOST = _load_config_value('server.host', None, '0.0.0.0')
+# SECURITY (audit R14 / P1-2): default to loopback. A deployment without a
+# config.yaml must NOT be reachable from the LAN unauthenticated. LAN exposure
+# is now opt-in — set server.host (or the DAON_HOST env var) to 0.0.0.0
+# explicitly, and pair it with a configured password.
+HOST = _load_config_value('server.host', 'DAON_HOST', '127.0.0.1')
 
 
 # =============================================================================

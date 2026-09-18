@@ -18,9 +18,17 @@ if (net.setDefaultAutoSelectFamily) {
 
 // ── CDP 9222 Port Relaunch Guarantee ──
 // Ensure remote-debugging-port switch lands on the real command line of the main process
+//
+// SECURITY (audit R14 / P1-2): port 9222 is a CORE product dependency (internal
+// browser agent, demo recording, Playwright toolset) and MUST stay enabled. It is
+// already bound to loopback. The only hardening applied here is narrowing
+// `remote-allow-origins` from the wildcard `*` to the local server origin, so a
+// random web page cannot open a CDP WebSocket to this process. Do NOT disable the
+// port — that breaks the product.
 const NEEDED_CDP_PORT = '9222';
+const CDP_ALLOWED_ORIGINS = 'http://localhost:9090,http://127.0.0.1:9090';
 app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
-app.commandLine.appendSwitch('remote-allow-origins', '*');
+app.commandLine.appendSwitch('remote-allow-origins', CDP_ALLOWED_ORIGINS);
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-features', 'WebAuthentication');
 

@@ -55,6 +55,17 @@ _*.txt
 _*.bak
 _tmp_*
 
+# Evidence suite scratch dumps (determinism debugging — not source)
+all_a.json
+all_b.json
+run1.json
+run2.json
+t01a.json
+t01b.json
+
+# Evidence suite deterministic workdir (regenerated each run — not source)
+evidence/_workdir/
+
 # Release artifacts — ignore large binaries, keep scripts/README tracked
 release/*.exe
 release/*.zip
