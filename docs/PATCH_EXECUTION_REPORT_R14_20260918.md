@@ -24,8 +24,10 @@ T01~T13 receipt 발행기와 효과 실험 하네스를 붙여 **재검증 가�
 | 테스트 | **169 passed** |
 | Evidence ZIP | `evidence/daon_evidence.zip` + `.sha256` sidecar |
 | 결정성 digest | `d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa` |
-| 빌드 산출물 | `dist/DAON Agent System Setup 1.0.0.exe` (322.05 MB) |
-| 설치기 SHA-256 | `4F2810AD0D2FBFC2E9FA4C3EFBDD9CCAD1252D11B9305177CE4180E57CFBF603` |
+| 빌드 산출물 | `dist/DAON Agent System Setup 1.0.0.exe` (360,105,895 bytes ≈ 343.4 MB) |
+| 설치기 SHA-256 | `ED29D14A33E8A62E…` (전체: `ED29D14A33E8A62E`로 시작, 2026-09-18 23:58:32 생성) |
+| 백엔드 `server.exe` | 211,170,086 bytes, SHA-256 `F7C8B7E65466A87E…` (2026-09-18 23:56:30 생성) |
+| 빌드 파이프라인 | 3단계: `_sync_build.py` → `pyinstaller daon-server.spec` → `npm run build` |
 
 ---
 
@@ -293,6 +295,48 @@ python scripts/run_evidence_suite.py --deterministic
 python scripts/run_evidence_suite.py --deterministic
 # → digest d440a4775f6d186769146abe774475aba80621f06a5db71931b7c70836ae06aa
 ```
+
+---
+
+## 12-A. 빌드 (3단계 파이프라인)
+
+### 왜 3단계인가 (중요)
+
+`npm run build`는 **electron-builder만** 실행한다. 백엔드 `server.exe`는 PyInstaller onefile 번들이며
+electron-builder가 **생성하지 않는다** — `package.json`의 `extraResources`에서 `"from": "dist/server.exe"`로
+**입력**으로 소비된다. 따라서 `server.exe`를 먼저 빌드하지 않으면 **stale 바이너리가 그대로 복사**된다.
+
+> 이전 시도에서 `npm run build`만 실행하고 "빌드 성공"이라 보고했으나, `dist/server.exe`가
+> 새벽 빌드(12:29) 그대로여서 **오보**였다. 아래 3단계를 순서대로 실행해야 한다.
+
+### 실행 순서
+
+```powershell
+# [0] 소스 → dist_new/ 스테이징 (spec의 datas가 dist_new/를 참조)
+python _sync_build.py
+
+# [1] 백엔드 빌드 — 우리 Python 패치가 들어가는 server.exe (onefile, slim)
+pyinstaller daon-server.spec --noconfirm --clean
+
+# [2] 프론트 + 설치기 — 새 server.exe를 extraResources로 포함
+npm run build
+```
+
+### 이번 빌드 실측 (2026-09-18)
+
+| 산출물 | 크기 (bytes) | 생성 시각 | SHA-256 (앞 16) |
+|---|---|---|---|
+| `dist/server.exe` | 211,170,086 | 23:56:30 | `F7C8B7E65466A87E` |
+| `dist/win-unpacked/resources/server.exe` | 211,170,086 | 23:56:30 | `F7C8B7E65466A87E` ✅ |
+| `dist/DAON Agent System Setup 1.0.0.exe` | 360,105,895 | 23:58:32 | `ED29D14A33E8A62E` |
+| `dist/win-unpacked/resources/app.asar` | 135,384 | 23:57:08 | `02A69CD2767DBD44` |
+| `C:\daon\DAON-Portable\resources\server.exe` | 211,170,086 | 23:56:30 | `F7C8B7E65466A87E` ✅ |
+| `%LOCALAPPDATA%\Programs\daon-agent-system\resources\server.exe` | 211,170,086 | 23:56:30 | `F7C8B7E65466A87E` ✅ |
+
+- `afterPack`의 4개 sync(app.asar + server.exe → Portable/설치본) **모두 성공** (EBUSY 없음).
+- **검증 포인트**: `server.exe`의 SHA-256이 `dist`·`win-unpacked`·Portable·설치본 **4곳 모두 동일** →
+  패치된 백엔드가 실제 배포 트리에 반영됐음을 해시로 입증.
+- 이전 stale 값(server.exe 12:29 / installer 11:43)과 **완전히 상이** → 이번 빌드가 실제로 재생성됨.
 
 ---
 
