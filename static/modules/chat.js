@@ -159,6 +159,10 @@ function populateProfileSelect() {
 function renderSessionsList() {
   const list = $('sessionsList');
   list.innerHTML = '';
+  const selectMode = !!State.sessionSelectMode;
+  // 선택 모드 클래스 — CSS에서 체크박스 표시/액션 숨김을 제어한다.
+  list.classList.toggle('select-mode', selectMode);
+
   State.sessions.forEach(s => {
     const activeClass = s.session_id === State.activeSessionId ? 'active' : '';
     // [세션 동시 작업] 백그라운드에서 실행 중인 세션은 ▶ 배지로 표시해
@@ -166,13 +170,29 @@ function renderSessionsList() {
     const runningBadge = (State.sessionStreams && State.sessionStreams[s.session_id])
       ? '<span class="session-running-badge" title="이 세션에서 에이전트가 작업 중입니다">▶</span>'
       : '';
+    const checked = State.selectedSessionIds.has(s.session_id) ? 'checked' : '';
     const item = document.createElement('div');
     item.className = `session-item ${activeClass}`;
     item.dataset.sid = s.session_id;
-    item.onclick = () => selectSession(s.session_id);
+
+    // [SEL] 선택 모드에서는 클릭 = 체크 토글, 일반 모드에서는 클릭 = 세션 열기.
+    item.onclick = () => {
+      if (State.sessionSelectMode) {
+        toggleSessionSelection(s.session_id);
+      } else {
+        selectSession(s.session_id);
+      }
+    };
+
+    // [SEL] 선택 모드에서만 체크박스를 노출한다.
+    const checkboxHtml = selectMode
+      ? `<input type="checkbox" class="session-select-chk" data-sid="${s.session_id}" ${checked}
+           onclick="event.stopPropagation(); toggleSessionSelection('${s.session_id}')">`
+      : '';
 
     item.innerHTML = `
       <div class="session-title-container">
+        ${checkboxHtml}
         <span class="session-icon">💬</span>
         <span class="session-title" id="title-text-${s.session_id}">${s.title}</span>
         ${runningBadge}
@@ -184,6 +204,126 @@ function renderSessionsList() {
     `;
     list.appendChild(item);
   });
+
+  // [SEL] 일괄 삭제 바 상태 동기화 (선택 개수/전체선택 체크/버튼 활성).
+  syncSessionBulkBar();
+}
+
+// ── [SEL] 세션 다중 선택 삭제 ────────────────────────────────────────────────
+// 선택 모드 토글: 체크박스 노출 + 일괄 삭제 바 표시를 함께 제어한다.
+function toggleSessionSelectMode(force) {
+  State.sessionSelectMode = (typeof force === 'boolean') ? force : !State.sessionSelectMode;
+  if (!State.sessionSelectMode) {
+    // 선택 모드를 끄면 선택 내역을 비운다.
+    State.selectedSessionIds.clear();
+  }
+  const toggleBtn = $('sessionSelectToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('active', State.sessionSelectMode);
+    toggleBtn.textContent = State.sessionSelectMode ? '✕ 취소' : '☑ 선택';
+  }
+  const bulkBar = $('sessionBulkBar');
+  if (bulkBar) bulkBar.style.display = State.sessionSelectMode ? 'flex' : 'none';
+  renderSessionsList();
+}
+
+// 개별 세션 선택/해제 토글.
+function toggleSessionSelection(sid) {
+  if (!sid) return;
+  if (State.selectedSessionIds.has(sid)) {
+    State.selectedSessionIds.delete(sid);
+  } else {
+    State.selectedSessionIds.add(sid);
+  }
+  // 체크박스 DOM을 즉시 갱신 (전체 재렌더 없이).
+  const chk = document.querySelector(`.session-select-chk[data-sid="${sid}"]`);
+  if (chk) chk.checked = State.selectedSessionIds.has(sid);
+  syncSessionBulkBar();
+}
+
+// 전체 선택/해제.
+function toggleSelectAllSessions(checked) {
+  State.selectedSessionIds.clear();
+  if (checked) {
+    State.sessions.forEach(s => State.selectedSessionIds.add(s.session_id));
+  }
+  renderSessionsList();
+}
+
+// 일괄 삭제 바(개수/전체선택/버튼) 상태 동기화.
+function syncSessionBulkBar() {
+  const count = State.selectedSessionIds.size;
+  const countEl = $('sessionBulkCount');
+  if (countEl) countEl.textContent = `${count}개 선택`;
+  const delBtn = $('sessionBulkDeleteBtn');
+  if (delBtn) delBtn.disabled = count === 0;
+  const allChk = $('sessionSelectAllChk');
+  if (allChk) {
+    allChk.checked = State.sessions.length > 0 && count === State.sessions.length;
+    allChk.indeterminate = count > 0 && count < State.sessions.length;
+  }
+}
+
+// 선택된 세션들을 한꺼번에 삭제한다.
+async function deleteSelectedSessions() {
+  const ids = Array.from(State.selectedSessionIds);
+  if (ids.length === 0) return;
+  if (!(await showConfirmModal(`선택한 ${ids.length}개의 세션을 정말 삭제하시겠습니까?`, "세션 일괄 삭제"))) return;
+
+  // 삭제 대상에 활성 세션이 포함되어 있으면 먼저 스트림을 정리한다.
+  const activeIncluded = ids.includes(State.activeSessionId);
+  if (activeIncluded && State.currentStreamId) {
+    const streamToCancel = State.currentStreamId;
+    if (State.currentEventSource) {
+      State.currentEventSource.close();
+      State.currentEventSource = null;
+    }
+    State.currentStreamId = null;
+    api('/api/chat/cancel', {
+      method: 'POST',
+      body: { stream_id: streamToCancel }
+    }).catch(() => { /* fire-and-forget */ });
+    setChatStatus('idle', '대기 중');
+    $('sendPromptBtn').disabled = false;
+    $('cancelStreamBtn').style.display = 'none';
+  }
+
+  let okCount = 0;
+  let failCount = 0;
+  for (const sid of ids) {
+    try {
+      await api('/api/session/delete', {
+        method: 'POST',
+        body: { session_id: sid }
+      });
+      okCount++;
+    } catch (e) {
+      failCount++;
+    }
+  }
+
+  // 삭제 성공한 세션만 목록에서 제거한다.
+  State.sessions = State.sessions.filter(s => !State.selectedSessionIds.has(s.session_id));
+  State.selectedSessionIds.clear();
+
+  // 활성 세션이 삭제됐다면 다른 세션으로 이동하거나 새 세션을 만든다.
+  if (activeIncluded) {
+    State.activeSessionId = null;
+    if (State.sessions.length > 0) {
+      await selectSession(State.sessions[0].session_id);
+    } else {
+      await createNewSession();
+    }
+  }
+
+  // 선택 모드를 종료하고 목록을 다시 그린다.
+  toggleSessionSelectMode(false);
+
+  if (failCount > 0) {
+    showToast(`${okCount}개 삭제 완료, ${failCount}개 실패`);
+  } else {
+    showToast(`${okCount}개 세션을 삭제했습니다`);
+  }
 }
 
 // ── [세션 동시 작업] 유틸 ─────────────────────────────────────────────────────
@@ -2473,16 +2613,15 @@ async function _executeAgentStream(displayText, uploaded) {
             }
           } catch (_) { }
           // ── 승인 카드 가시성 보장 ──
-          // 승인 카드는 chat 스트림의 일부로 chatMessages에 렌더된다. 그런데
-          // 사용자가 harness 모드에 머문 상태에서 chat 스트림이 위험 명령을
-          // 실행하면 _resolveApprovalContainer()가 harnessConsole을 반환해
-          // 카드가 숨겨진 컨테이너에 붙어 보이지 않게 된다 ("승인 대기 중인데
-          // 승인 창이 안 뜬다" 원인). chat 모드로 강제 전환해 카드를 노출한다.
-          if (data.type === 'dangerous_command' && typeof switchMode === 'function') {
+          // [버튼 안 먹힘 근본 수정] 이제 모든 승인(위험 명령/스킬 저장/계획/
+          // 파일 변경)은 전용 슬롯(#approvalSlot)으로 렌더된다. 슬롯은
+          // chatModeContent 안에 있으므로, 사용자가 harness 모드에 머문 채
+          // 승인이 뜨면 슬롯이 숨겨져 카드가 보이지 않는다. 종류와 무관하게
+          // chat 모드로 강제 전환해 슬롯(그리고 버튼)을 반드시 노출한다.
+          if (typeof switchMode === 'function') {
             try {
               const _cc = document.getElementById('chatModeContent');
-              const _hc = document.getElementById('harnessModeContent');
-              if (_cc && _hc && _cc.style.display === 'none') {
+              if (_cc && _cc.style.display === 'none') {
                 switchMode('chat');
               }
             } catch (_swErr) { /* 무시 */ }
@@ -3069,6 +3208,17 @@ function setupEventListeners() {
 
   // New session button
   $('newSessionBtn').onclick = createNewSession;
+
+  // [SEL] 세션 다중 선택 삭제 — 토글/전체선택/일괄삭제 버튼 바인딩.
+  if ($('sessionSelectToggleBtn')) {
+    $('sessionSelectToggleBtn').onclick = () => toggleSessionSelectMode();
+  }
+  if ($('sessionSelectAllChk')) {
+    $('sessionSelectAllChk').onchange = (e) => toggleSelectAllSessions(e.target.checked);
+  }
+  if ($('sessionBulkDeleteBtn')) {
+    $('sessionBulkDeleteBtn').onclick = deleteSelectedSessions;
+  }
 
   // Model select change
   $('modelSelect').onchange = (e) => handleModelChange(e.target.value);

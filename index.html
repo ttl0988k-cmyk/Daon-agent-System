@@ -152,7 +152,19 @@
             <!-- Sessions -->
             <div class="sessions-section">
               <span class="section-label">세션</span>
-              <button class="new-session-btn" id="newSessionBtn">+ 새 대화</button>
+              <div class="sessions-section-actions">
+                <button class="session-select-toggle-btn" id="sessionSelectToggleBtn" title="여러 세션을 선택해 한꺼번에 삭제">☑ 선택</button>
+                <button class="new-session-btn" id="newSessionBtn">+ 새 대화</button>
+              </div>
+            </div>
+            <!-- [SEL] 다중 선택 일괄 삭제 바 (선택 모드에서만 표시) -->
+            <div class="session-bulk-bar" id="sessionBulkBar" style="display:none;">
+              <label class="session-bulk-all">
+                <input type="checkbox" id="sessionSelectAllChk">
+                <span>전체 선택</span>
+              </label>
+              <span class="session-bulk-count" id="sessionBulkCount">0개 선택</span>
+              <button class="session-bulk-delete-btn" id="sessionBulkDeleteBtn" disabled>🗑 선택 삭제</button>
             </div>
             <div id="sessionsList"></div>
 
@@ -1640,7 +1652,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
   <!-- DAON 모듈 (의존성 순서: core → chat → explorer → editor → panels → dashboard → git → voice → browser → harness) -->
   <script src="/static/modules/core.js?v=7"></script>
-  <script src="/static/modules/chat.js?v=61"></script>
+  <script src="/static/modules/chat.js?v=62"></script>
   <script src="/static/modules/explorer.js?v=2"></script>
   <script src="/static/modules/editor.js"></script>
   <!-- DAON Panels Sub-modules (Phase 4 Modularization) -->

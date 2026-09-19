@@ -465,6 +465,102 @@
       display: flex;
     }
 
+    /* ── [SEL] 세션 다중 선택 삭제 ─────────────────────────────── */
+    .sessions-section-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .session-select-toggle-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      transition: color 0.12s, background 0.12s, border-color 0.12s;
+    }
+
+    .session-select-toggle-btn:hover {
+      color: var(--text);
+      background: var(--bg3);
+    }
+
+    .session-select-toggle-btn.active {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* 일괄 삭제 바 — 선택 모드에서만 표시 */
+    .session-bulk-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      margin: 2px 8px 4px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+    }
+
+    .session-bulk-all {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--text2);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .session-bulk-count {
+      color: var(--muted);
+      flex: 1;
+      text-align: center;
+    }
+
+    .session-bulk-delete-btn {
+      background: rgba(239, 68, 68, .15);
+      border: 1px solid rgba(239, 68, 68, .4);
+      color: #f87171;
+      cursor: pointer;
+      padding: 3px 10px;
+      border-radius: 5px;
+      font-size: 11px;
+      transition: background 0.12s, opacity 0.12s;
+    }
+
+    .session-bulk-delete-btn:hover:not(:disabled) {
+      background: rgba(239, 68, 68, .28);
+    }
+
+    .session-bulk-delete-btn:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
+    /* 선택 모드: 체크박스 노출 + hover 액션(수정/삭제) 숨김 */
+    .session-select-chk {
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+      margin: 0 2px 0 0;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    #sessionsList.select-mode .session-item:hover .session-actions {
+      display: none;
+    }
+
+    #sessionsList.select-mode .session-item {
+      cursor: pointer;
+    }
+
     .icon-btn {
       background: none;
       border: none;
@@ -1316,15 +1412,19 @@
       box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
       transition: opacity .15s ease, transform .1s ease;
     }
+
     #chatScrollDownBtn:hover {
       background: var(--bg3);
     }
+
     #chatScrollDownBtn:active {
       transform: translateX(-50%) scale(.97);
     }
+
     #chatScrollDownBtn.visible {
       display: inline-flex;
     }
+
     /* 새 메시지가 쌓였을 때 강조 */
     #chatScrollDownBtn.has-new {
       background: var(--accent);
@@ -1380,6 +1480,17 @@
       }
     }
 
+    /* 브라우저 챗창(sidepanel.css)과 동일한 승인 카드 등장 애니메이션 */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
     /* 안전망: 자식이 전혀 없는 빈 버블은 렌더하지 않는다.
        (도구 전용 턴/잔여 live 버블이 얇은 빈 줄로 보이는 아티팩트 방지) */
     .message-bubble:empty {
@@ -1411,6 +1522,7 @@
 
     /* 모바일/모바일 앱 화면(<=768px): 도구 카드/추론 카드를 깔끔히 숨겨 여백이나 공백 잔상이 생기지 않도록 함 */
     @media (max-width: 768px) {
+
       .tool-group-card,
       .tool-announce,
       .reasoning-card,
@@ -1769,6 +1881,7 @@
       user-select: none;
       -webkit-user-select: none;
     }
+
     #cancelStreamBtn:active {
       background: rgba(239, 68, 68, .3);
       transform: scale(0.98);
@@ -4333,8 +4446,17 @@
     }
 
     @keyframes bmcPulse {
-      0%, 100% { opacity: 0.6; transform: scale(0.9); }
-      50% { opacity: 1; transform: scale(1.15); }
+
+      0%,
+      100% {
+        opacity: 0.6;
+        transform: scale(0.9);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1.15);
+      }
     }
 
     .bmc-close-btn {
@@ -4416,7 +4538,7 @@
       font-size: 11px;
       font-weight: 600;
       border-radius: 6px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     .bmc-footer {
@@ -4644,100 +4766,133 @@
        Inline Approval Cards (Roo Code-style)
        ═══════════════════════════════════════════════════════════════ */
 
+    /* [렌더링 통일] 브라우저 챗창(sidepanel.css) 승인 카드와 동일한 룩.
+       로직은 그대로 두고 색/테두리/버튼 채우기만 맞춘다. */
     .inline-approval-card {
-      margin: 8px 0;
-      border-radius: 6px;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      overflow: hidden;
+      margin: 10px 0;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      padding: 12px 14px;
+      box-shadow: 0 4px 15px rgba(245, 158, 11, 0.15);
+      animation: fadeIn 0.2s ease-out;
     }
 
     .inline-approval-card.resolved {
-      border-color: var(--border);
-      opacity: 0.75;
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(6, 78, 59, 0.2);
+      box-shadow: none;
+      opacity: 1;
       transition: opacity 0.3s;
     }
 
     .inline-approval-card.resolved.approved {
-      border-color: var(--border);
+      border-color: rgba(16, 185, 129, 0.4);
     }
 
     .inline-approval-card.resolved.rejected {
-      border-color: var(--border);
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(136, 19, 55, 0.2);
     }
 
     .inline-approval-card-inner {
-      padding: 10px 12px;
+      padding: 0;
     }
 
     .inline-approval-card-header {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .inline-approval-card-icon {
-      font-size: 14px;
+      font-size: 16px;
       flex-shrink: 0;
-      opacity: 0.8;
+      opacity: 1;
     }
 
     .inline-approval-card-title {
       font-size: 13px;
       font-weight: 600;
-      color: var(--text);
+      color: #fbbf24;
+    }
+
+    .inline-approval-card.resolved .inline-approval-card-title {
+      color: #34d399;
+    }
+
+    .inline-approval-card.resolved.rejected .inline-approval-card-title {
+      color: #f87171;
     }
 
     .inline-approval-card-body {
       font-size: 12px;
       color: var(--text2);
-      margin-bottom: 10px;
-      line-height: 1.5;
+      margin-bottom: 8px;
+      line-height: 1.45;
       word-break: break-all;
     }
 
     .inline-approval-card-body code {
-      background: var(--bg3);
+      background: rgba(0, 0, 0, 0.5);
       padding: 1px 5px;
       border-radius: 3px;
       font-size: 11px;
-      color: var(--accent2);
+      color: #a5f3fc;
     }
 
     .inline-approval-card-actions {
       display: flex;
-      gap: 6px;
+      gap: 8px;
+      margin-top: 10px;
       flex-wrap: wrap;
     }
 
-    /* 깔끔한 플랫 스타일: 채우기 없이 얇은 테두리 + 텍스트 강조만 */
+    /* 브라우저 챗창과 동일: 승인=초록 그라디언트 채움, 거부=로즈 틴트 */
     .ia-approve-btn,
     .ia-reject-btn {
-      padding: 5px 14px;
-      border-radius: 5px;
+      flex: 1;
+      padding: 7px 12px;
+      border-radius: 6px;
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text2);
-      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
     }
 
     .ia-approve-btn {
-      color: var(--accent);
-      border-color: var(--border);
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
     }
 
     .ia-approve-btn:hover {
-      background: var(--bg3);
-      border-color: var(--accent);
+      background: linear-gradient(135deg, #059669, #047857);
+      box-shadow: 0 4px 10px rgba(16, 185, 129, 0.4);
+    }
+
+    .ia-reject-btn {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: #fda4af;
     }
 
     .ia-reject-btn:hover {
-      background: var(--bg3);
-      border-color: var(--border2);
+      background: rgba(244, 63, 94, 0.25);
+      color: #fff;
+    }
+
+    .ia-approve-btn:disabled,
+    .ia-reject-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -5787,47 +5942,179 @@
     .image-lightbox-close:hover {
       opacity: 1;
     }
-/* ── DAON Connector Store ──────────────────────────────────────── */
-.conn-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; display: flex; flex-direction: column; gap: 3px; transition: border-color .15s; }
-.conn-card:hover { border-color: var(--accent); }
-.conn-head { display: flex; align-items: center; gap: 7px; }
-.conn-icon { font-size: 18px; line-height: 1; }
-.conn-name { font-size: 12px; font-weight: 700; color: var(--text); }
-.conn-badge { margin-left: auto; font-size: 9px; font-weight: 700; }
-.conn-badge.on { color: var(--success); }
-.conn-badge.off { color: var(--muted); }
-.conn-badge.err { color: var(--danger); }
-.conn-badge.soon { color: var(--warning); }
-.conn-tag { font-size: 10px; color: var(--muted); line-height: 1.35; }
-.conn-act { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
-.conn-act .pstore-btn { width: auto; padding: 4px 12px; }
-.conn-guide { font-size: 9.5px; color: var(--accent); text-decoration: none; }
-.conn-guide:hover { text-decoration: underline; }
-.conn-guide-box { font-size: 10px; color: var(--muted); background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; line-height: 1.5; }
-.conn-fields { margin: 0 0 8px; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
-.conn-fields li { font-size: 10px; color: var(--text); }
-.conn-fields input { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px 8px; background: var(--bg1); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: monospace; font-size: 11px; }
-.conn-fields input:focus { outline: none; border-color: var(--accent); }
-.conn-hint { font-size: 9px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
-.conn-modal-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
-.conn-result { margin-top: 8px; font-size: 10px; padding: 6px 8px; border-radius: 4px; background: var(--bg3); color: var(--muted); line-height: 1.5; }
-.conn-result.ok { background: rgba(76,175,80,0.12); color: var(--success); }
-.conn-result.err { background: rgba(255,77,79,0.1); color: var(--danger); }
 
-/* ── DAON Browser Action Badge ───────────────────────────────────── */
-.daon-action-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.28);
-  border-radius: 6px;
-  padding: 3px 10px;
-  margin: 4px 0;
-  font-size: 12px;
-  color: var(--accent, #818cf8);
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  vertical-align: middle;
-}
+    /* ── DAON Connector Store ──────────────────────────────────────── */
+    .conn-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      transition: border-color .15s;
+    }
 
+    .conn-card:hover {
+      border-color: var(--accent);
+    }
+
+    .conn-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .conn-icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .conn-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .conn-badge {
+      margin-left: auto;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .conn-badge.on {
+      color: var(--success);
+    }
+
+    .conn-badge.off {
+      color: var(--muted);
+    }
+
+    .conn-badge.err {
+      color: var(--danger);
+    }
+
+    .conn-badge.soon {
+      color: var(--warning);
+    }
+
+    .conn-tag {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .conn-act {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 3px;
+    }
+
+    .conn-act .pstore-btn {
+      width: auto;
+      padding: 4px 12px;
+    }
+
+    .conn-guide {
+      font-size: 9.5px;
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .conn-guide:hover {
+      text-decoration: underline;
+    }
+
+    .conn-guide-box {
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }
+
+    .conn-fields {
+      margin: 0 0 8px;
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .conn-fields li {
+      font-size: 10px;
+      color: var(--text);
+    }
+
+    .conn-fields input {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 3px;
+      padding: 6px 8px;
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    .conn-fields input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .conn-hint {
+      font-size: 9px;
+      color: var(--muted);
+      margin-top: 3px;
+      line-height: 1.4;
+    }
+
+    .conn-modal-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+
+    .conn-result {
+      margin-top: 8px;
+      font-size: 10px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      background: var(--bg3);
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .conn-result.ok {
+      background: rgba(76, 175, 80, 0.12);
+      color: var(--success);
+    }
+
+    .conn-result.err {
+      background: rgba(255, 77, 79, 0.1);
+      color: var(--danger);
+    }
+
+    /* ── DAON Browser Action Badge ───────────────────────────────────── */
+    .daon-action-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.28);
+      border-radius: 6px;
+      padding: 3px 10px;
+      margin: 4px 0;
+      font-size: 12px;
+      color: var(--accent, #818cf8);
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      vertical-align: middle;
+    }
