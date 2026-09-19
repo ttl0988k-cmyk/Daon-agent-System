@@ -317,11 +317,16 @@ class EvidenceReceiptEmitter:
         for r in self.receipts:
             if deterministic:
                 r.emitted_at = fixed_ts
-                # The fingerprint carries its own wall-clock `captured_at`,
-                # which is embedded in every receipt. It must be pinned too,
-                # otherwise the bundle is not byte-reproducible.
-                if isinstance(r.fingerprint, dict) and "captured_at" in r.fingerprint:
-                    r.fingerprint["captured_at"] = fixed_ts
+                # The fingerprint carries its own wall-clock `captured_at` and
+                # its `git_commit`, both of which are embedded in every receipt.
+                # They must be pinned too, otherwise the bundle is not
+                # byte-reproducible (captured_at drifts with the clock, and
+                # git_commit drifts whenever HEAD moves).
+                if isinstance(r.fingerprint, dict):
+                    if "captured_at" in r.fingerprint:
+                        r.fingerprint["captured_at"] = fixed_ts
+                    if "git_commit" in r.fingerprint:
+                        r.fingerprint["git_commit"] = "deterministic"
             members[f"receipts/{r.test_id}.json"] = r.to_json().encode("utf-8")
 
         member_hashes = {name: _sha256_bytes(data) for name, data in members.items()}
@@ -329,8 +334,15 @@ class EvidenceReceiptEmitter:
         # The manifest embeds the fingerprint too; its wall-clock `captured_at`
         # must be pinned under determinism or the manifest is not reproducible.
         manifest_fingerprint = asdict(self.fingerprint)
-        if deterministic and "captured_at" in manifest_fingerprint:
-            manifest_fingerprint["captured_at"] = fixed_ts
+        if deterministic:
+            if "captured_at" in manifest_fingerprint:
+                manifest_fingerprint["captured_at"] = fixed_ts
+            # `git_commit` is a wall-clock-adjacent field: it changes whenever
+            # HEAD moves, so leaving it live makes the bundle non-reproducible
+            # across commits. Pin it to a fixed sentinel under determinism so
+            # the same logical inputs always yield byte-identical members.
+            if "git_commit" in manifest_fingerprint:
+                manifest_fingerprint["git_commit"] = "deterministic"
 
         manifest = {
             "evidence_level": EVIDENCE_LEVEL_B,
@@ -344,7 +356,10 @@ class EvidenceReceiptEmitter:
             manifest, ensure_ascii=False, indent=2, sort_keys=True
         ).encode("utf-8")
 
-        # Bundle digest = sha256 over the sorted (name, hash) pairs + manifest.
+        # Internal bundle digest = sha256 over the sorted (name, hash) pairs +
+        # manifest. This is a CONTENT digest of the members, NOT the hash of the
+        # .zip file bytes (zip metadata/compression would change it). It is kept
+        # inside the manifest for tamper-evidence of the member set.
         digest_input = "".join(
             f"{name}:{member_hashes[name]}\n" for name in sorted(member_hashes)
         ).encode("utf-8") + manifest_bytes
@@ -362,8 +377,15 @@ class EvidenceReceiptEmitter:
             zf.writestr(info, manifest_bytes)
 
         # Sidecar digest file so the bundle can be verified without unzipping.
+        #
+        # IMPORTANT: the sidecar must carry the SHA-256 of the ACTUAL .zip file
+        # bytes, because external verifiers run `sha256sum -c` against the file
+        # on disk. Writing the internal content digest here (the previous bug)
+        # made every sidecar check report MISMATCH. We therefore hash the file
+        # we just wrote, and keep the internal digest inside the manifest only.
+        zip_sha256 = _sha256_file(out_path) or bundle_digest
         digest_path = out_path.with_suffix(out_path.suffix + ".sha256")
-        digest_path.write_text(f"{bundle_digest}  {out_path.name}\n", encoding="utf-8")
+        digest_path.write_text(f"{zip_sha256}  {out_path.name}\n", encoding="utf-8")
 
         return out_path
 

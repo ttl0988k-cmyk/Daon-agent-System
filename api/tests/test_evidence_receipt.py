@@ -219,6 +219,55 @@ class TestEvidenceBundle:
         assert out.name in content
         assert len(content.split()[0]) == 64
 
+    def test_sidecar_matches_actual_zip_hash(self, tmp_path):
+        """Regression: the sidecar must carry the SHA-256 of the ACTUAL .zip
+        file bytes, not the internal content digest.
+
+        External verifiers run `sha256sum -c` against the file on disk. The
+        previous bug wrote the internal bundle digest (a hash over the member
+        set + manifest) into the sidecar, so every sidecar check reported
+        MISMATCH. This test hashes the file itself and compares.
+        """
+        import hashlib
+
+        em = self._full_emitter()
+        out = em.write_bundle(tmp_path / "evidence.zip")
+        sidecar = out.with_suffix(out.suffix + ".sha256")
+        recorded = sidecar.read_text(encoding="utf-8").split()[0]
+        actual = hashlib.sha256(out.read_bytes()).hexdigest()
+        assert recorded == actual, "sidecar must equal the real .zip file hash"
+
+    def test_deterministic_pins_git_commit(self, tmp_path):
+        """Regression: `git_commit` must be pinned under determinism.
+
+        `git_commit` changes whenever HEAD moves, so leaving it live makes the
+        bundle non-reproducible across commits. Under deterministic=True it
+        must be replaced with a fixed sentinel in both the manifest and every
+        receipt's embedded fingerprint.
+        """
+        em1 = self._full_emitter()
+        em2 = self._full_emitter()
+        em1.fingerprint = BuildFingerprint(git_commit="aaaaaaa")
+        em2.fingerprint = BuildFingerprint(git_commit="bbbbbbb")
+        out1 = em1.write_bundle(tmp_path / "a.zip", deterministic=True)
+        out2 = em2.write_bundle(tmp_path / "b.zip", deterministic=True)
+        # Byte-identical despite the differing commits.
+        assert out1.read_bytes() == out2.read_bytes()
+        with zipfile.ZipFile(out1) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+            t01 = json.loads(zf.read("receipts/T01.json"))
+        assert manifest["fingerprint"]["git_commit"] == "deterministic"
+        assert t01["fingerprint"]["git_commit"] == "deterministic"
+
+    def test_non_deterministic_keeps_git_commit(self, tmp_path):
+        """Default (deterministic=False) keeps the real git_commit value."""
+        em = self._full_emitter()
+        em.fingerprint = BuildFingerprint(git_commit="deadbee")
+        out = em.write_bundle(tmp_path / "live.zip")
+        with zipfile.ZipFile(out) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["fingerprint"]["git_commit"] == "deadbee"
+
     def test_bundle_is_deterministic(self, tmp_path):
         """Same receipts -> identical member hashes (reproducible evidence)."""
         em1 = self._full_emitter()
