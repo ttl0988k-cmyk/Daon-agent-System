@@ -1,0 +1,13 @@
+name: harness-worker
+version: 0.3.0
+description: "Run Codex CLI or Claude Code as an external coding worker and delegate code tasks. Choose the LLM provider (openrouter / opencode-go / qwen-token-plan / minimax / omniroute). Codex uses a per-provider temporary CODEX_HOME; Claude Code routes through a LiteLLM gateway that exposes every provider as an alias."
+author: DAON
+tools:
+  - name: dispatch_worker
+    description: "Spawn an external coding harness (Codex CLI or Claude Code) as a non-blocking background worker."
+  - name: worker_job
+    description: "Query status, list, or terminate background worker jobs."
+  - name: worker_status
+    description: "Report readiness of Codex / Claude Code / the gateway / providers."
+  - name: worker_gateway
+    description: "Start or stop the LiteLLM gateway required by Claude Code."

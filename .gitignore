@@ -51,6 +51,7 @@ dist_old_*/
 
 # One-off analysis / diff scratch files
 _*.py
+!**/__init__.py
 _*.txt
 _*.bak
 _tmp_*

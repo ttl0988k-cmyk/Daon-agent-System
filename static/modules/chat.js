@@ -667,6 +667,20 @@ async function selectSession(sid) {
     // [H] 세션 전환 시 실행 방식(approvalMode) 토글 UI를 해당 세션 플래그에 동기화
     if (typeof syncApprovalModeUI === 'function') { try { syncApprovalModeUI(); } catch (_) { } }
 
+    // [승인 카드 세션 동기화] 이전 세션의 승인 카드가 남아있지 않도록 정리하고 새 세션 동기화
+    if (typeof syncApprovalSlotForSession === 'function') {
+      try { syncApprovalSlotForSession(sid); } catch (_) { }
+    } else {
+      const slot = document.getElementById('approvalSlot');
+      if (slot) {
+        const card = slot.querySelector('.inline-approval-card');
+        if (card && card.getAttribute('data-session-id') !== sid) {
+          card.remove();
+          slot.style.display = 'none';
+        }
+      }
+    }
+
     // Clear tabs & reload file tree
     State.openTabs = [];
     State.activeTabIndex = -1;
@@ -900,11 +914,21 @@ function renderMessages(messages, toolCalls) {
   const preservedCards = [];
   try {
     const approvalCard = document.getElementById('inlineApprovalCard');
-    if (approvalCard && approvalCard.parentNode === box) {
-      approvalCard.remove();
-      // 현재 세션의 카드만 보존 (세션 전환 시 이전 세션 카드는 제거)
-      if (approvalCard.getAttribute('data-session-id') === State.activeSessionId) {
-        preservedCards.push(approvalCard);
+    if (approvalCard) {
+      const cardSid = approvalCard.getAttribute('data-session-id');
+      if (approvalCard.parentNode === box) {
+        approvalCard.remove();
+        // 현재 세션의 카드만 보존 (세션 전환 시 이전 세션 카드는 제거)
+        if (cardSid === State.activeSessionId) {
+          preservedCards.push(approvalCard);
+        }
+      } else {
+        // [승인 슬롯 세션 격리] #approvalSlot 에 있는 카드가 현재 세션과 다르면 즉시 정리
+        if (cardSid && State.activeSessionId && cardSid !== State.activeSessionId) {
+          approvalCard.remove();
+          const slot = document.getElementById('approvalSlot');
+          if (slot && !slot.querySelector('.inline-approval-card')) slot.style.display = 'none';
+        }
       }
     }
     // 미응답 선택 카드(ask_followup_question)는 스트림 진행 중 렌더링에서만 보존
@@ -2047,13 +2071,17 @@ async function _executeAgentStream(displayText, uploaded) {
       try {
         const data = JSON.parse(e.data);
         const msg = (data && data.message) || '';
-        if (msg && asstBubble && asstBubble.parentNode) {
+        if (msg) {
           const note = document.createElement('div');
           note.className = 'text-muted';
           note.style.cssText = 'margin-top:8px;font-size:12px;';
-          note.textContent = 'ℹ️ ' + msg;
-          // 토큰 스트리밍이 버블 innerHTML을 덮어쓰므로 버블 앞 독립 요소로 삽입
-          box.insertBefore(note, asstBubble);
+          const hasIcon = msg.startsWith('ℹ️') || msg.startsWith('✅') || msg.startsWith('❌') || msg.startsWith('⚠️');
+          note.textContent = hasIcon ? msg : ('ℹ️ ' + msg);
+          if (asstBubble && asstBubble.parentNode) {
+            box.insertBefore(note, asstBubble);
+          } else if (box) {
+            box.appendChild(note);
+          }
         }
       } catch (_) { }
       resetIdleTimer();

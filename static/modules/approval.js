@@ -14,6 +14,12 @@ function showInlineApproval(data, container) {
     // [A] 위험 명령 pending 데이터는 status 필드가 없을 수 있어 type으로도 판별
     // auto_approved(자동 승인)는 type이 없어도(is_plan 하네스 등) 읽기 전용 완료 카드를 그린다.
     if (!data || (data.status !== 'pending' && data.type !== 'dangerous_command' && data.status !== 'auto_approved')) return;
+    var currentActiveSid = (typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null;
+    var sid = data.session_id || currentActiveSid;
+    // [세션 격리] 백그라운드 세션의 승인 데이터가 현재 활성 창(#approvalSlot)에 오염되지 않도록 차단
+    if (data.session_id && currentActiveSid && data.session_id !== currentActiveSid) {
+        return;
+    }
     if (typeof container === 'string') container = document.getElementById(container);
     if (!container) return;
     // ── [E] 자동 승인(auto_approved): 버튼 없는 읽기 전용 완료 카드 ──
@@ -24,6 +30,7 @@ function showInlineApproval(data, container) {
         var autoCard = document.createElement('div');
         autoCard.className = 'inline-approval-card resolved auto-approved';
         autoCard.id = 'inlineApprovalCard';
+        if (sid) autoCard.setAttribute('data-session-id', sid);
         autoCard.innerHTML =
             '<div class="inline-approval-card-inner">'
             + '<div class="inline-approval-card-header">'
@@ -38,6 +45,7 @@ function showInlineApproval(data, container) {
         if (_exAuto) _exAuto.remove();
         container.appendChild(autoCard);
         _showApprovalSlotIfIsSlot(container);
+        _syncWebviewForApprovalCard();
         _scrollContainerToBottom(container);
         _scrollChatToBottom();
         // 완료 카드는 잠시 후 자동 제거 (다음 승인/폴링에 지장 없도록)
@@ -48,8 +56,6 @@ function showInlineApproval(data, container) {
         }, 6000);
         return;
     }
-    // 이벤트가 담은 session_id 우선 (컨텍스트 압축으로 세션이 회전된 뒤에도 정확)
-    var sid = data.session_id || ((typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null);
     if (!sid) return;
     var lc = data.line_changes || {};
     var file = data.path || '';
@@ -111,6 +117,9 @@ function showInlineApproval(data, container) {
     if (existing) existing.remove();
     container.appendChild(card);
     _showApprovalSlotIfIsSlot(container);
+    // [웹뷰 클릭 가로채기 근본 수정] 카드가 그려지는 순간 웹뷰를 숨긴다.
+    // SSE/폴링 어느 경로로 이 함수에 도달하든 반드시 실행된다.
+    _syncWebviewForApprovalCard();
     _scrollContainerToBottom(container);
     _scrollChatToBottom();
 }
@@ -132,7 +141,20 @@ function _getApprovalSlot() {
     return slot;
 }
 function _showApprovalSlotIfIsSlot(container) {
-    if (container && container.id === 'approvalSlot') container.style.display = 'block';
+    if (!container || container.id !== 'approvalSlot') return;
+    container.style.display = 'block';
+    // [버튼 안 먹힘 근본 수정] 슬롯은 chatModeContent 안에 있다. 하네스 모드가
+    // 활성이라 chatModeContent 가 display:none 이면 슬롯도 함께 숨겨져
+    // 승인 카드가 보이지 않는다. 승인이 뜨는 순간 chat 모드로 강제 전환해
+    // 슬롯(그리고 버튼)이 반드시 보이도록 한다.
+    var chatContent = document.getElementById('chatModeContent');
+    if (chatContent && chatContent.style.display === 'none') {
+        if (typeof switchMode === 'function') {
+            try { switchMode('chat'); } catch (e) { chatContent.style.display = 'block'; }
+        } else {
+            chatContent.style.display = 'block';
+        }
+    }
 }
 function _scrollChatToBottom() {
     // [2026-09-15] 사용자가 위쪽을 읽는 중이면 승인 카드로 인해 끌어내리지 않는다.
@@ -144,6 +166,29 @@ function _scrollChatToBottom() {
 function _hideApprovalSlotIfEmpty() {
     var slot = document.getElementById('approvalSlot');
     if (slot && !slot.querySelector('.inline-approval-card')) slot.style.display = 'none';
+    // [웹뷰 클릭 가로채기 근본 수정] 승인 카드가 하나도 남지 않으면 승인 대기 중
+    // 숨겼던 Electron 웹뷰(WebContentsView)를 복원한다. 카드 생명주기의 "복원"
+    // 단일 지점 — 카드가 사라지는 모든 경로(승인/거절/자동승인/타임아웃)가
+    // 이 함수를 거치므로 복원 누락이 없다.
+    _restoreWebviewIfNoApprovalCard();
+}
+
+// 승인 카드가 화면에 하나라도 있으면 웹뷰를 숨기고, 없으면 복원한다.
+// Electron 의 WebContentsView 는 HTML DOM 이 아니라 OS 레이어라서 승인 카드
+// 위를 덮으면 클릭을 가로챈다(실측: respond 요청 0건 → 45초 자동 승인).
+// SSE/폴링/하네스 어느 경로로 카드가 뜨든 이 두 함수가 반드시 호출되므로
+// 경로별 분기 없이 한 곳에서 불변식을 유지한다.
+function _syncWebviewForApprovalCard() {
+    var card = document.querySelector('.inline-approval-card');
+    try {
+        if (!window.electronAPI) return;
+        if (card) window.electronAPI.setVisibility(false);
+        else window.electronAPI.setVisibility(true);
+    } catch (_) { }
+}
+function _restoreWebviewIfNoApprovalCard() {
+    if (document.querySelector('.inline-approval-card')) return;
+    try { if (window.electronAPI) window.electronAPI.setVisibility(true); } catch (_) { }
 }
 
 async function handleInlineApproval(approved, btnEl) {
@@ -200,8 +245,11 @@ async function handleInlineApproval(approved, btnEl) {
             try { if (typeof _approvalPending !== 'undefined') _approvalPending = false; } catch (e) { }
         } catch (err) {
             console.error('[InlineApproval] respond error:', err);
-            if (actions) {
+            // [버튼 안 먹힘 보강] outerHTML 교체로 card 가 DOM 에서 분리됐을 수 있으므로
+            // isConnected 를 확인한 뒤에만 actions 를 갱신한다 (죽은 노드 참조 방지).
+            if (actions && card.isConnected) {
                 actions.innerHTML = '<span style="color:var(--danger);font-size:12px;padding:8px;">오류: ' + _escInlineApproval(err.message || '') + '</span>';
+                card.removeAttribute('data-busy'); // 일시 실패 시 재시도 허용
             }
         }
         // [2026-08-27] 승인 대기 중 숨겼던 웹 뷰 복원
@@ -363,6 +411,18 @@ function _scrollContainerToBottom(container) {
 var _origShowApprovalBanner = (typeof _showApprovalBanner === 'function') ? _showApprovalBanner : null;
 _showApprovalBanner = function (data) {
     if (!data) return;
+    var curSid = (typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null;
+    // [세션 격리] 다른 세션의 이벤트인 경우 토스트 알림만 띄우고 현재 활성 창에는 카드를 그리지 않음
+    if (data.session_id && curSid && data.session_id !== curSid) {
+        if (typeof _showToast === 'function') {
+            try {
+                var sessObj = (typeof State !== 'undefined' && State.sessions) ? State.sessions.find(function (s) { return s.session_id === data.session_id; }) : null;
+                var sessName = (sessObj && sessObj.title) ? sessObj.title : '다른 세션';
+                _showToast('⚠ [' + sessName + '] 세션에서 승인 요청이 대기 중입니다.');
+            } catch (e) { }
+        }
+        return;
+    }
     // ── [H] 자율 실행 모드(autonomous): 승인 박스를 표시하지 않고 백엔드 승인 API로
     // 자동 응답(once/approve)해 에이전트를 계속 진행시킨다. 버튼 숨김(display:none)이
     // 아니라 백엔드 승인 시스템을 그대로 통과시키는 방식이다. ──
@@ -401,11 +461,17 @@ _showApprovalBanner = function (data) {
 function showHarnessApprovalCard(data, container) {
     if (typeof container === 'string') container = document.getElementById(container);
     if (!container) return;
+    var currentActiveSid = (typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null;
+    var sid = data.session_id || currentActiveSid;
+    if (data.session_id && currentActiveSid && data.session_id !== currentActiveSid) {
+        return;
+    }
     var existing = document.getElementById('inlineApprovalCard');
     if (existing) existing.remove();
     var card = document.createElement('div');
     card.className = 'inline-approval-card';
     card.id = 'inlineApprovalCard';
+    if (sid) card.setAttribute('data-session-id', sid);
     card.setAttribute('data-kind', 'harness');
     var actionsHtml = data.actions.map(function (a) {
         var val = (typeof a === 'string') ? a : (a.action || a.label || String(a));
@@ -453,6 +519,10 @@ function showHarnessApprovalCard(data, container) {
     });
     container.appendChild(card);
     _showApprovalSlotIfIsSlot(container);
+    // [웹뷰 클릭 가로채기 근본 수정] 하네스 동적 승인 카드도 그려지는 순간
+    // 웹뷰를 숨긴다. 카드를 그리는 세 함수(showInlineApproval 2분기 +
+    // showHarnessApprovalCard) 모두가 이 불변식을 지켜야 경로 누락이 없다.
+    _syncWebviewForApprovalCard();
     _scrollContainerToBottom(container);
     _scrollChatToBottom();
 }
@@ -460,26 +530,9 @@ function showHarnessApprovalCard(data, container) {
 // ── [D] Approval 폴링: SSE 이벤트를 놓쳐도 복구 ──
 var _approvalPollTimer = null;
 function _resolveApprovalContainer(data) {
-    // ── [F] 모든 chat 스트림 승인은 전용 슬롯(#approvalSlot)으로 렌더 ──
+    // ── [F] 모든 승인은 전용 슬롯(#approvalSlot)으로 통일 렌더 ──
     // 슬롯은 #chatMessages 밖에 있으므로 renderMessages()의 innerHTML 초기화로
     // 카드가 사라지는 일이 없고, 승인/거절 버튼이 항상 동작한다.
-    // 위험 명령 승인도 슬롯으로 간다 (chat.js가 pending 시 chat 모드로
-    // 강제 전환하므로 슬롯이 숨겨진 채로 남지 않는다).
-    if (data && data.type === 'dangerous_command') {
-        return _getApprovalSlot();
-    }
-    var chatContent = document.getElementById('chatModeContent');
-    var harnessContent = document.getElementById('harnessModeContent');
-    var isHarnessVisible = harnessContent && harnessContent.style.display !== 'none'
-        && (!chatContent || chatContent.style.display === 'none');
-    // ── [E] 하네스 모드가 보이는 동안 skill_save / is_plan 은 harnessConsole 로 렌더 ──
-    // 다이나믹 하네스 완료 후 뜨는 '스킬로 저장할까요' 팝업과 실행 계획 승인 카드는
-    // 채팅창이 아니라 하네스 창에서 보여야 한다. skill_save 는 언제나 하네스 산출물이고,
-    // is_plan(plan.md) 은 하네스 모드 실행 시 하네스 계획이므로 하네스 창이 적절하다.
-    if (isHarnessVisible && data && (data.type === 'skill_save' || data.is_plan)) {
-        return document.getElementById('harnessConsole');
-    }
-    if (isHarnessVisible) return document.getElementById('harnessConsole');
     return _getApprovalSlot();
 }
 async function _pollApprovalOnce() {
@@ -488,8 +541,18 @@ async function _pollApprovalOnce() {
         if (document.hidden) return;
         var sid = (typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null;
         if (!sid) return;
-        // 이미 카드가 표시되어 있으면 중복 표시 방지
-        if (document.getElementById('inlineApprovalCard')) return;
+        // [세션 격리 & 버튼 안 먹힘 근본 수정]
+        // 화면에 표시된 카드가 다른 세션의 것이라면 즉시 치우고 슬롯을 숨긴 뒤 현재 세션 폴링 진행
+        var existing = document.getElementById('inlineApprovalCard');
+        if (existing && existing.isConnected && existing.offsetParent !== null) {
+            var existingSid = existing.getAttribute('data-session-id');
+            if (existingSid && existingSid !== sid) {
+                existing.remove();
+                _hideApprovalSlotIfEmpty();
+            } else {
+                return;
+            }
+        }
         var res = await api('/api/approval/pending?session_id=' + encodeURIComponent(sid), { method: 'GET' });
         // [A] CLI 위험 명령 pending 데이터는 status 필드가 없으므로 type으로도 판별
         if (res && res.has_pending && res.pending && (res.pending.status === 'pending' || res.pending.type === 'dangerous_command')) {
@@ -503,6 +566,27 @@ async function _pollApprovalOnce() {
         }
     } catch (e) { /* 폴링 실패는 조용히 무시 */ }
 }
+
+// ── [세션 전환 시 승인 슬롯 동기화] ──
+// 세션이 바뀔 때 이전 세션의 카드를 즉시 지우고 새 세션의 승인 대기 여부를 조회한다.
+function syncApprovalSlotForSession(sid) {
+    var targetSid = sid || ((typeof State !== 'undefined') ? (State.activeSessionId || State.sessionId) : null);
+    var card = document.getElementById('inlineApprovalCard');
+    if (card) {
+        var cardSid = card.getAttribute('data-session-id');
+        if (cardSid && targetSid && cardSid !== targetSid) {
+            card.remove();
+            _hideApprovalSlotIfEmpty();
+        }
+    }
+    if (targetSid) {
+        _pollApprovalOnce();
+    }
+}
+if (typeof window !== 'undefined') {
+    window.syncApprovalSlotForSession = syncApprovalSlotForSession;
+}
+
 function ensureApprovalPolling() {
     if (_approvalPollTimer) return;
     _approvalPollTimer = setInterval(_pollApprovalOnce, 2000);
@@ -633,3 +717,37 @@ async function _autoRespondApproval(data) {
         if (container) showInlineApproval(data, container);
     }
 }
+
+// ── [버튼 안 먹힘 최종 안전망] 문서 레벨 이벤트 위임 ──────────────────────────
+// 승인/거절 버튼은 인라인 onclick="handleInlineApproval(...)" 을 쓴다. 그런데
+// 카드가 재렌더/재배치되거나 인라인 핸들러가 어떤 이유로든 죽으면 클릭이
+// 유실된다("승인/거절 버튼이 안 먹히는" 문제). 문서 레벨에서 캡처 단계로
+// 위임하면, 카드가 어디로 옮겨지든 버튼 클릭을 반드시 잡아낸다.
+// 인라인 핸들러가 이미 처리한 경우(data-busy=1)는 중복 실행하지 않는다.
+(function _installApprovalDelegation() {
+    if (typeof document === 'undefined') return;
+    if (window.__daonApprovalDelegationInstalled) return;
+    window.__daonApprovalDelegationInstalled = true;
+    document.addEventListener('click', function (ev) {
+        var btn = ev.target && ev.target.closest
+            ? ev.target.closest('.ia-approve-btn, .ia-reject-btn')
+            : null;
+        if (!btn) return;
+        var card = btn.closest('.inline-approval-card');
+        if (!card) return;
+        // 하네스 동적 승인 카드(data-action 버튼)는 자체 addEventListener 로
+        // data.onAction 을 호출한다. 여기서 가로채면 안 되므로 건너뛴다.
+        if (btn.hasAttribute('data-action')) return;
+        // 인라인 onclick 이 이미 처리 중이면 건너뛴다 (이중 실행 방지).
+        if (card.getAttribute('data-busy') === '1') return;
+        var approved = btn.classList.contains('ia-approve-btn');
+        // 인라인 핸들러가 정상 동작하면 여기서는 아무 것도 하지 않는다.
+        // (인라인 핸들러가 먼저 실행되어 data-busy=1 을 세팅하므로 위에서 걸러진다.)
+        // 인라인 핸들러가 죽어 이 시점에 도달한 경우에만 폴백 실행한다.
+        if (typeof handleInlineApproval === 'function') {
+            try { handleInlineApproval(approved, btn); } catch (e) {
+                console.error('[ApprovalDelegation] fallback error:', e);
+            }
+        }
+    }, true);
+})();
