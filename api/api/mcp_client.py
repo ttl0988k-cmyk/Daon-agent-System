@@ -373,7 +373,7 @@ class MCPServerConnection:
                 try:
                     line = self.process.stdout.readline()
                 except Exception:
-                    break
+                    continue
                 if not line:  # EOF
                     break
                 buffer = line
@@ -398,19 +398,12 @@ class MCPServerConnection:
             self._mark_disconnected_if_dead(force=True)
 
     def _mark_disconnected_if_dead(self, force: bool = False):
-        """프로세스가 사망했거나 stdout 파이프가 닫혀 통신 불능인 경우 상태를 정리한다.
-
-        _read_loop/_stderr_loop 종료 시 호출되어, subprocess 또는 파이프가 비정상 종료된
-        뒤에도 connected=True가 유지되어 call_tool이 'No response'를 반환하는
-        좀비 연결 상태를 방지한다.
-        """
+        """프로세스가 사망했거나 stdout 파이프가 닫혀 통신 불능인 경우 상태를 정리한다."""
         with self._lock:
-            # disconnect()가 이미 처리했으면 process=None → 아무것도 안 함
             if self.process is None:
                 return
             if self.transport == TRANSPORT_HTTP:
                 return
-            # force가 아니면 프로세스 생존 여부 확인
             if not force:
                 try:
                     if self.process.poll() is None:
@@ -421,7 +414,6 @@ class MCPServerConnection:
                 "MCP server '%s' process or stream ended; marking disconnected", self.label)
             self.connected = False
             self.error = "Server process exited unexpectedly"
-            # 대기 중인 요청이 무한 대기하지 않도록 해제
             for evt in self._pending.values():
                 evt.set()
             self._pending.clear()
