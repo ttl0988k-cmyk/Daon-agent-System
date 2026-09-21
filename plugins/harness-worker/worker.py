@@ -53,6 +53,8 @@ CODEX_EXE_CANDIDATES = [
 ]
 
 CLAUDE_CMD_CANDIDATES = [
+    Path(os.environ.get("APPDATA", ""))
+    / "npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
     Path(os.environ.get("APPDATA", "")) / "npm/claude.cmd",
     Path(os.environ.get("APPDATA", "")) / "npm/claude.ps1",
 ]
@@ -240,11 +242,17 @@ def find_binary(harness: str, explicit: Optional[str] = None) -> Optional[str]:
         return explicit if Path(explicit).exists() else None
 
     if harness == "codex":
+        for c in CODEX_EXE_CANDIDATES:
+            if c and Path(c).exists():
+                return str(c)
         found = shutil.which("codex")
         if found:
             return found
         candidates = CODEX_EXE_CANDIDATES
     elif harness in ("claude", "claude-code"):
+        for c in CLAUDE_CMD_CANDIDATES:
+            if c and Path(c).exists():
+                return str(c)
         found = shutil.which("claude")
         if found:
             return found
@@ -518,18 +526,31 @@ def build_command(harness: str, prompt: str, exe: str,
             ]
         if model:
             argv += ["-m", model]
-        argv.append(prompt)
+        # Windows PowerShell heredoc / 32KB argv 한계 우회 지침 주입
+        windows_directive = (
+            "[SYSTEM DIRECTIVE FOR WINDOWS POWERSHELL]:\n"
+            "- You are running autonomously in Windows PowerShell without human interaction.\n"
+            "- The Windows command-line buffer has length limits. Do NOT execute massive inline command lines (>8KB) or bash-style multiline heredocs.\n"
+            "- When creating or editing files, write files directly using Python (`python -c \"...\"`) or standard PowerShell cmdlets (`Set-Content`, `Out-File` with UTF-8).\n"
+            "- Work autonomously and complete the entire task until fully verified.\n\n"
+        )
+        argv.append(windows_directive + prompt)
         return argv
 
     # claude / claude-code - 모델은 LiteLLM alias 를 쓴다
-    argv += ["-p", prompt]
+    flags: List[str] = []
     if full_auto:
-        # -p print mode + stdin=DEVNULL: nobody can answer a permission
-        # prompt, so every Write / shell command was refused. Skip the checks.
-        argv.append("--dangerously-skip-permissions")
+        # -p print mode + stdin=DEVNULL: 승인 프롬프트로 멈추지 않도록 권한 완전 우회
+        flags += [
+            "--dangerously-skip-permissions",
+            "--permission-mode", "bypassPermissions",
+        ]
     if model:
-        argv += ["--model", model]
-    return argv
+        flags += ["--model", model]
+
+    # Claude CLI 규격: claude [options] [command] [prompt]
+    # -p 는 print 플래그이며, prompt 는 맨 마지막 위치 인자로 와야 플래그가 정상 적용됨
+    return argv + flags + ["-p", prompt]
 
 
 def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
