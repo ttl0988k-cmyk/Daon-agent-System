@@ -402,6 +402,18 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
         hdr = ", ".join(f'"{k}" = "{v}"' for k, v in headers.items())
         lines.append(f"http_headers = {{ {hdr} }}")
 
+    # MCP 서버 연동 (Context7: 최신 문서, Serena: 시맨틱 심볼 리팩터링)
+    lines += [
+        "",
+        "[mcp_servers.context7]",
+        'command = "npx"',
+        'args = ["-y", "@upstash/context7-mcp"]',
+        "",
+        "[mcp_servers.serena]",
+        'command = "uvx"',
+        'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project-from-cwd"]',
+    ]
+
     (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
