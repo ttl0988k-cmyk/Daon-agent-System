@@ -39,9 +39,9 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
 
         mcp_manager = get_mcp_manager()
 
-        # Wait up to 5 seconds for MCP servers (25 * 0.2s)
+        # Wait up to 10 seconds for MCP servers (50 * 0.2s)
         mcp_tools: List[Dict[str, Any]] = []
-        for _ in range(25):
+        for _ in range(50):
             if cancel_event.is_set():
                 _logger.info("MCP sync aborted — stream cancelled for session %s", session_id)
                 break

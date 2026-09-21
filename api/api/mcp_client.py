@@ -137,6 +137,7 @@ class MCPServerConnection:
                     env=_env,
                     text=True,
                     encoding='utf-8',
+                    errors='replace',
                     bufsize=1,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
                 )
