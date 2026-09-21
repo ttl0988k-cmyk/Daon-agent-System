@@ -412,6 +412,10 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
         "[mcp_servers.serena]",
         'command = "uvx"',
         'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--open-web-dashboard", "false"]',
+        "",
+        '[mcp_servers."daon-design"]',
+        'command = "python"',
+        'args = ["-u", "c:/daon/Daon agent System/api/api/mcp/daon_design_mcp.py"]',
     ]
 
     # Figma & Stitch: mcp_servers.json 에서 키를 동적으로 읽어 주입 (하드코딩 방지)
