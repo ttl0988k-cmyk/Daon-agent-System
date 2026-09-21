@@ -402,7 +402,7 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
         hdr = ", ".join(f'"{k}" = "{v}"' for k, v in headers.items())
         lines.append(f"http_headers = {{ {hdr} }}")
 
-    # MCP 서버 연동 (Context7: 최신 문서, Serena: 시맨틱 심볼 리팩터링)
+    # MCP 서버 연동 (Context7: 최신 문서, Serena: 심볼 리팩터링, Figma: 디자인, Stitch: UI 기획)
     lines += [
         "",
         "[mcp_servers.context7]",
@@ -411,8 +411,39 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
         "",
         "[mcp_servers.serena]",
         'command = "uvx"',
-        'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project-from-cwd"]',
+        'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project-from-cwd", "--open-web-dashboard", "false"]',
     ]
+
+    # Figma & Stitch: mcp_servers.json 에서 키를 동적으로 읽어 주입 (하드코딩 방지)
+    try:
+        _mcp_json = Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json"
+        if _mcp_json.exists():
+            with open(_mcp_json, "r", encoding="utf-8") as _f:
+                for _srv in json.load(_f):
+                    _sid = _srv.get("server_id")
+                    if _sid == "figma":
+                        _fkey = _srv.get("env", {}).get("FIGMA_API_KEY", "")
+                        if _fkey:
+                            lines += [
+                                "",
+                                "[mcp_servers.figma]",
+                                'command = "figma-mcp"',
+                                'args = []',
+                                f'env = {{ FIGMA_API_KEY = "{_fkey}" }}',
+                            ]
+                    elif _sid == "stitch":
+                        _skey = _srv.get("env", {}).get("STITCH_API_KEY", "")
+                        _gcred = _srv.get("env", {}).get("GOOGLE_APPLICATION_CREDENTIALS", "").replace("\\", "\\\\")
+                        if _skey:
+                            lines += [
+                                "",
+                                "[mcp_servers.stitch]",
+                                'command = "npx"',
+                                'args = ["-y", "@_davideast/stitch-mcp", "proxy", "--transport", "stdio"]',
+                                f'env = {{ STITCH_API_KEY = "{_skey}", GOOGLE_APPLICATION_CREDENTIALS = "{_gcred}" }}',
+                            ]
+    except Exception:
+        pass
 
     (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
