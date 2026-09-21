@@ -170,6 +170,7 @@ class ComponentCard:
     id: str = ""
     name: str = ""
     parent_card_id: str = ""  # 원본 StyleCard.id
+    source_name: str = ""  # 인간 가독성 출처 (예: "Apple", "Stripe", "Claude")
     source_url: str = ""
     created: str = ""
 
@@ -651,6 +652,7 @@ class StyleCard:
             id=f"{self.id}__{cat}",
             name=f"{self.name} ({cat})",
             parent_card_id=self.id,
+            source_name=self.source_name,
             source_url=self.source_url,
             created=self.created or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             category=cat,

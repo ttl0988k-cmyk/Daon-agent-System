@@ -248,7 +248,7 @@ def tool_design_get_component_mix(args: dict) -> dict:
                 "sub_category": comp.sub_category,
                 "similarity_score": score,
                 "brief": comp.to_brief_text()[:300],
-                "source_name": comp.source_name,
+                "source_name": getattr(comp, "source_name", comp.name),
                 "source_url": comp.source_url,
             })
 
