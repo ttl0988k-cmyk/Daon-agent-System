@@ -885,6 +885,53 @@ def kill_job(job_id: str) -> Dict[str, Any]:
     return {"ok": True, "message": f"Job {job_id} was killed.", "job": get_job(job_id)}
 
 
+def _send_windows_toast(title: str, message: str, status: str = "completed") -> None:
+    """윈도우 우측 하단 바탕화면 토스트 알림 및 알림음 재생."""
+    if sys.platform != "win32":
+        return
+
+    def _toast_worker():
+        # 1. 윈도우 기본 알림음 재생
+        try:
+            import winsound
+            snd = winsound.MB_ICONASTERISK if status == "completed" else winsound.MB_ICONHAND
+            winsound.MessageBeep(snd)
+        except Exception:
+            pass
+
+        # 2. Windows 10/11 WinRT 바탕화면 토스트 배너
+        try:
+            clean_title = title.replace('"', '""').replace("'", "''")
+            clean_msg = message.replace('"', '""').replace("'", "''")
+            ps_code = f"""
+            try {{
+                [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+                [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+                $xml = '<toast><visual><binding template="ToastGeneric"><text>{clean_title}</text><text>{clean_msg}</text></binding></visual><audio src="ms-winsoundevent:Notification.Default"/></toast>'
+                $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+                $toastXml.LoadXml($xml)
+                $toast = [Windows.UI.Notifications.ToastNotification]::new($toastXml)
+                $appId = '{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\powershell.exe'
+                [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+            }} catch {{ }}
+            """
+            creationflags = 0
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                creationflags = subprocess.CREATE_NO_WINDOW
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_code],
+                capture_output=True,
+                timeout=5,
+                creationflags=creationflags,
+                stdin=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_toast_worker, daemon=True)
+    t.start()
+
+
 def start_background_job(
     harness: str,
     prompt: str,
@@ -1063,19 +1110,27 @@ def start_background_job(
 
             _persist_jobs()
 
-            # SSE 알림 전송 (연결이 활성 상태일 때)
+            final_st = _JOBS.get(job_id, {})
+            st_kor = "완료" if final_st.get("status") == "completed" else "실패"
+            icon = "✅" if final_st.get("status") == "completed" else "❌"
+            msg = (
+                f"{icon} [워커 {st_kor}] {harness.upper()} 작업이 {st_kor}되었습니다. "
+                f"(소요: {final_st.get('elapsed')}s, 작업경로: {wd['path']})"
+            )
+
+            # 1. 윈도우 바탕화면 알림 (소리 + 우측 하단 배너)
+            _send_windows_toast(
+                title=f"DAON 워커 {st_kor} ({harness.upper()})",
+                message=f"소요 시간: {final_st.get('elapsed')}초\n경로: {wd['path']}",
+                status=final_st.get("status", "completed"),
+            )
+
+            # 2. SSE 알림 전송 (연결이 활성 상태일 때)
             if session_id:
                 try:
                     from api.config import get_stream_queue
                     q = get_stream_queue(session_id)
                     if q:
-                        final_st = _JOBS.get(job_id, {})
-                        st_kor = "완료" if final_st.get("status") == "completed" else "실패"
-                        icon = "✅" if final_st.get("status") == "completed" else "❌"
-                        msg = (
-                            f"{icon} [워커 {st_kor}] {harness.upper()} 작업이 {st_kor}되었습니다. "
-                            f"(소요: {final_st.get('elapsed')}s, 작업경로: {wd['path']})"
-                        )
                         q.put_nowait(('notice', {'message': msg, 'job_id': job_id, 'status': final_st.get('status')}))
                 except Exception:
                     pass
