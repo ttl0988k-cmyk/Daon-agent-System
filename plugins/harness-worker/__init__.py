@@ -218,6 +218,11 @@ def _json(payload: Dict[str, Any]) -> str:
 
 
 def _dispatch(args: Dict[str, Any], **_: Any) -> str:
+    try:
+        importlib.reload(worker)
+    except Exception:
+        pass
+
     harness = str(args.get("harness") or "").strip().lower()
     prompt = str(args.get("prompt") or "").strip()
 
@@ -305,6 +310,11 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
 
 
 def _worker_job(args: Dict[str, Any], **_: Any) -> str:
+    try:
+        importlib.reload(worker)
+    except Exception:
+        pass
+
     action = str(args.get("action") or "list").strip().lower()
     job_id = str(args.get("job_id") or "").strip()
 
