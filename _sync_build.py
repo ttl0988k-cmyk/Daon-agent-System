@@ -47,6 +47,7 @@ DIR_PAIRS = [
 FILE_PAIRS = [
     ('config.yaml', 'dist_new/config.yaml'),
     ('index.html', 'dist_new/index.html'),
+    ('daon_runtime/laya_service.py', 'dist_new/daon_runtime/laya_service.py'),
 ]
 
 ok, fail = [], []

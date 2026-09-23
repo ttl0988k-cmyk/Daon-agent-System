@@ -188,6 +188,9 @@ app.whenReady().then(async () => {
     // ── STEP 2: Start TTS process ──
     supervisor.startTtsProcess(TTS_PORT);
 
+    // ── STEP 2b: Start Laya Decision Engine (Port 8765) ──
+    supervisor.startLayaProcess(8765);
+
     // ── STEP 3: Start Watchdog ──
     supervisor.startWatchdog(DEFAULT_PORT);
 
@@ -276,8 +279,9 @@ app.whenReady().then(async () => {
         mlog('[RestartOrch] cycle done: ' + JSON.stringify(result));
         try {
           if (!supervisor.ttsProcess) supervisor.startTtsProcess(TTS_PORT);
+          if (!supervisor.layaProcess) supervisor.startLayaProcess(8765);
         } catch (e) {
-          merr('[RestartOrch] TTS respawn failed: ' + (e && e.message));
+          merr('[RestartOrch] TTS/Laya respawn failed: ' + (e && e.message));
         }
         if (windowManager && windowManager.mainWindow && !windowManager.mainWindow.isDestroyed()) {
           try { windowManager.mainWindow.webContents.reload(); } catch (_) { }

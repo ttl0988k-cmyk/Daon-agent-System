@@ -26,6 +26,7 @@ class ServerSupervisor {
 
     this.pythonProcess = null;
     this.ttsProcess = null;
+    this.layaProcess = null;
     this.watchdogTimer = null;
     this.watchdogRestartCount = 0;
     this.watchdogSuppressUntil = 0;
@@ -549,6 +550,100 @@ class ServerSupervisor {
     return this.ttsProcess;
   }
 
+  findPythonPath() {
+    if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
+      return process.env.PYTHON_PATH;
+    }
+    const bundledPython = path.join(process.resourcesPath || '', 'python', 'python.exe');
+    if (fs.existsSync(bundledPython)) return bundledPython;
+
+    const userProfile = process.env.USERPROFILE || 'C:\\Users\\ttl09';
+    const commonPaths = [
+      path.join(userProfile, 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'python.exe'),
+      path.join(userProfile, 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'python.exe'),
+      path.join(userProfile, 'AppData', 'Local', 'Programs', 'Python', 'Python310', 'python.exe'),
+    ];
+    for (const p of commonPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+    return 'python';
+  }
+
+  findLayaScript() {
+    const candidates = [
+      path.join(process.resourcesPath || '', 'daon_runtime', 'laya_service.py'),
+      path.join(__dirname, '..', '..', 'daon_runtime', 'laya_service.py'),
+      path.join('C:\\daon\\Daon agent System', 'daon_runtime', 'laya_service.py'),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  }
+
+  async isLayaHealthy(port = 8765) {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${port}/health`, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(500, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  }
+
+  async startLayaProcess(port = 8765) {
+    if (this.isQuitting) return null;
+
+    const alreadyHealthy = await this.isLayaHealthy(port);
+    if (alreadyHealthy) {
+      this.mlog(`[ServerSupervisor] Laya Decision Engine is already healthy on http://127.0.0.1:${port}`);
+      return null;
+    }
+
+    const layaScript = this.findLayaScript();
+    if (!layaScript) {
+      this.mlog(`[ServerSupervisor] laya_service.py not found. Laya will run in heuristic fallback mode.`);
+      return null;
+    }
+
+    const pythonPath = this.findPythonPath();
+    const cwd = path.dirname(path.dirname(layaScript));
+
+    try {
+      this.mlog(`[ServerSupervisor] Starting Laya Decision Engine: ${pythonPath} "${layaScript}" --port ${port}`);
+      this.layaProcess = spawn(pythonPath, [layaScript, '--port', port.toString()], {
+        cwd,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      this.layaProcess.on('error', (err) => {
+        this.merr(`[ServerSupervisor] Laya process error: ${err && err.message}`);
+        this.layaProcess = null;
+      });
+
+      this.layaProcess.on('exit', (code, signal) => {
+        this.mlog(`[ServerSupervisor] Laya service exited (code=${code}, signal=${signal})`);
+        this.layaProcess = null;
+      });
+
+      if (process.platform === 'win32' && this.layaProcess.pid) {
+        try {
+          exec(`powershell -NoProfile -Command "(Get-Process -Id ${this.layaProcess.pid}).PriorityClass = 'BelowNormal'"`, { windowsHide: true });
+        } catch (_) { }
+      }
+
+      return this.layaProcess;
+    } catch (err) {
+      this.merr(`[ServerSupervisor] Failed to spawn Laya process: ${err.message}`);
+      this.layaProcess = null;
+      return null;
+    }
+  }
+
   // ── Watchdog Management ──
 
   async handleWatchdogFailure(port) {
@@ -685,6 +780,10 @@ class ServerSupervisor {
     if (this.ttsProcess && this.ttsProcess.pid) {
       this.killProcessTree(this.ttsProcess.pid);
       this.ttsProcess = null;
+    }
+    if (this.layaProcess && this.layaProcess.pid) {
+      this.killProcessTree(this.layaProcess.pid);
+      this.layaProcess = null;
     }
   }
 }

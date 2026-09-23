@@ -95,6 +95,31 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+if not _INCLUDE_CUDA:
+    # [Slim Build] Exclude PyTorch CUDA DLLs from server.exe (~3.5GB reduction)
+    # Laya decision daemon (daon_runtime/laya_service.py) handles GPU on port 8765 independently.
+    # This keeps server.exe slim (~180MB instead of 2.6GB) and prevents ENOSPC disk exhaustion.
+    cuda_patterns = (
+        'torch_cuda', 'cudnn', 'cublas', 'cufft', 'curand',
+        'cusparse', 'cusolver', 'nvrtc', 'nvjitlink'
+    )
+    filtered_binaries = []
+    excluded_count = 0
+    excluded_bytes = 0
+    for entry in a.binaries:
+        name = entry[0]
+        src_path = entry[1]
+        base_lower = os.path.basename(name).lower()
+        if any(p in base_lower for p in cuda_patterns):
+            excluded_count += 1
+            if os.path.exists(src_path):
+                excluded_bytes += os.path.getsize(src_path)
+            continue
+        filtered_binaries.append(entry)
+    a.binaries = filtered_binaries
+    print(f"[spec] Slim Build: Excluded {excluded_count} PyTorch CUDA binaries ({excluded_bytes / (1024*1024):.1f} MB).")
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

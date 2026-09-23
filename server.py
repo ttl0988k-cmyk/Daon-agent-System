@@ -412,6 +412,48 @@ def main():
         except Exception as e:
             print(f"[Plugins] Startup skill env sync failed: {e}", flush=True)
 
+        # Auto-ensure Laya Decision Daemon is running on port 8765
+        try:
+            from api.laya_client import LayaClient
+            lc = LayaClient()
+            if not lc.is_healthy():
+                import subprocess
+                import shutil
+                candidates = [
+                    RUN_DIR / 'daon_runtime' / 'laya_service.py',
+                    RESOURCE_DIR / 'daon_runtime' / 'laya_service.py',
+                    Path.cwd() / 'daon_runtime' / 'laya_service.py',
+                    Path(r'C:\daon\Daon agent System\daon_runtime\laya_service.py'),
+                ]
+                laya_script = None
+                for c in candidates:
+                    if c.exists():
+                        laya_script = c
+                        break
+                if laya_script:
+                    py_bin = shutil.which('python')
+                    if not py_bin:
+                        for p in [
+                            Path(os.environ.get('USERPROFILE', '')) / 'AppData/Local/Programs/Python/Python312/python.exe',
+                            Path(os.environ.get('USERPROFILE', '')) / 'AppData/Local/Programs/Python/Python311/python.exe',
+                        ]:
+                            if p.exists():
+                                py_bin = str(p)
+                                break
+                    if not py_bin:
+                        py_bin = sys.executable
+
+                    subprocess.Popen(
+                        [py_bin, str(laya_script), '--port', '8765'],
+                        cwd=str(laya_script.parent.parent),
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+                    )
+                    print(f"[Laya] Auto-started background decision daemon on port 8765 via {py_bin}.", flush=True)
+            else:
+                print(f"[Laya] Decision engine already healthy on port 8765.", flush=True)
+        except Exception as e:
+            print(f"[Laya] Auto-start check failed: {e}", flush=True)
+
     threading.Thread(target=_background_init, name="daon-bg-init", daemon=True).start()
 
     # ── Heartbeat logger (every 30s) ──
