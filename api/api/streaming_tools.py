@@ -435,6 +435,226 @@ def inject_self_evolution_tool(
         _logger.warning("Self-evolution tool injection failed: %s", _se_inj_e)
 
 
+def inject_daon_action_tool(agent: Any) -> None:
+    """Inject daon_action tool into agent so the model can invoke browser actions natively."""
+    try:
+        from tools.registry import registry
+
+        _daon_action_schema = {
+            "type": "function",
+            "function": {
+                "name": "daon_action",
+                "description": (
+                    "실제 사용자의 구글 크롬 브라우저 활성 탭 화면에서 버튼/링크/요소를 클릭하거나, 텍스트를 입력하거나, "
+                    "URL로 이동하거나, 스크롤하거나, 스냅샷을 캡처하는 실시간 브라우저 제어 도구입니다."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["click", "type", "navigate", "scroll", "snapshot", "screenshot", "wait", "switch_tab", "close_tab", "new_tab", "hover", "press"],
+                            "description": "수행할 브라우저 동작: click(클릭), type(입력), navigate(URL 이동), scroll(스크롤), snapshot(스냅샷), screenshot(스크린샷), wait(대기), hover(마우스 올리기), press(키 입력)"
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "클릭하거나 입력할 버튼/링크/요소의 텍스트, placeholder, 식별자 (예: 'Generate Image', '로그인')"
+                        },
+                        "selector": {
+                            "type": "string",
+                            "description": "조작할 대상의 CSS 선택자 (옵션)"
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "입력할 텍스트 내용 (action이 'type'일 때 필수)"
+                        },
+                        "url": {
+                            "type": "string",
+                            "description": "이동할 URL (action이 'navigate' 또는 'new_tab'일 때)"
+                        },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["up", "down"],
+                            "description": "스크롤 방향 (action이 'scroll'일 때)"
+                        },
+                        "key": {
+                            "type": "string",
+                            "description": "입력할 키 (action이 'press'일 때, 예: 'Enter')"
+                        },
+                        "nth": {
+                            "type": "integer",
+                            "description": "동일 텍스트 요소가 여러 개일 때 순번 (1부터 시작)"
+                        },
+                        "node_id": {
+                            "type": "integer",
+                            "description": "스냅샷에서 확인된 대상 요소의 정수 번호 (옵션)"
+                        }
+                    },
+                    "required": ["action"]
+                }
+            }
+        }
+
+        # Avoid duplicates in agent.tools
+        _already_in_agent = False
+        try:
+            for _t in getattr(agent, "tools", []) or []:
+                _fn = _t.get("function", {}) if isinstance(_t, dict) else {}
+                if _fn.get("name") == "daon_action":
+                    _already_in_agent = True
+                    break
+        except Exception:
+            _already_in_agent = False
+
+        if not _already_in_agent:
+            agent.tools.append(_daon_action_schema)
+        if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("daon_action")
+
+        def _daon_action_handler(args: dict, **kwargs) -> str:
+            action = args.get('action', 'click')
+            target = args.get('target', '')
+            text = args.get('text', '')
+            selector = args.get('selector', '')
+            url = args.get('url', '')
+            direction = args.get('direction', '')
+            key = args.get('key', '')
+            nth = args.get('nth')
+            node_id = args.get('node_id')
+
+            attr_parts = [f'action="{action}"']
+            if target:
+                attr_parts.append(f'target="{target}"')
+            if text:
+                attr_parts.append(f'text="{text}"')
+            if selector:
+                attr_parts.append(f'selector="{selector}"')
+            if url:
+                attr_parts.append(f'url="{url}"')
+            if direction:
+                attr_parts.append(f'direction="{direction}"')
+            if key:
+                attr_parts.append(f'key="{key}"')
+            if nth is not None:
+                attr_parts.append(f'nth="{nth}"')
+            if node_id is not None:
+                attr_parts.append(f'node_id="{node_id}"')
+
+            tag = f"<daon_action {' '.join(attr_parts)} />"
+            _logger.info("Executed daon_action tool call: %s", tag)
+            return json.dumps({
+                "ok": True,
+                "status": "action_queued",
+                "action": action,
+                "tag": tag,
+                "message": f"브라우저에서 '{action}' 동작이 예약되었습니다: {tag}"
+            }, ensure_ascii=False)
+
+        registry.register(
+            name="daon_action",
+            toolset="browser-extension",
+            schema={
+                "name": "daon_action",
+                "description": _daon_action_schema["function"]["description"],
+                "parameters": _daon_action_schema["function"]["parameters"]
+            },
+            handler=_daon_action_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Browser action dispatcher for Chrome extension"
+        )
+        registry.register_toolset_alias("browser-extension", "browser-extension")
+        _logger.debug("Injected daon_action tool into agent.")
+    except Exception as _e:
+        _logger.warning("daon_action tool injection failed: %s", _e)
+
+
+def inject_fast_decision_tool(agent: Any) -> None:
+    """Inject Laya fast decision engine tool into agent.
+    Allows agent to classify or score bulk items without LLM token cost.
+    """
+    try:
+        from tools.registry import registry
+        from api.laya_client import laya_client
+
+        _decision_schema = {
+            "type": "function",
+            "function": {
+                "name": "fast_decision_engine",
+                "description": (
+                    "초고속 System 1 결정 엔진 (Laya/ModernBERT 기반). "
+                    "대량의 텍스트/데이터를 분류하거나 참/거짓 판단, 우선순위 채점을 "
+                    "외부 LLM 토큰 소모 없이 로컬 GPU/CPU에서 0원에 초고속으로 일괄 처리합니다. "
+                    "많은 항목(티켓, 파일, 후보군)을 필터링하거나 분류할 때 사용하세요."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "enum": ["batch_classify", "decide"],
+                            "description": "작업 종류: 'batch_classify' (여러 텍스트 분류)"
+                        },
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "batch_classify 수행 시 분류할 텍스트 항목 목록"
+                        },
+                        "categories": {
+                            "type": "object",
+                            "description": "카테고리 ID -> 설명 맵 (예: {'bug': '버그 신고', 'inquiry': '일반 문의', 'refund': '환불 요청'})"
+                        },
+                        "instruction": {
+                            "type": "string",
+                            "description": "분류 또는 판단 지침"
+                        }
+                    },
+                    "required": ["task"]
+                }
+            }
+        }
+
+        def _decision_handler(task: str = "batch_classify", items: Optional[List[str]] = None,
+                              categories: Optional[Dict[str, str]] = None, instruction: str = "", **kwargs) -> str:
+            if not laya_client.is_healthy():
+                return json.dumps({
+                    "ok": False,
+                    "error": "Laya decision service is currently offline (localhost:8765). Run scripts/start_laya.ps1."
+                }, ensure_ascii=False)
+
+            if task == "batch_classify":
+                if not items or not categories:
+                    return json.dumps({"ok": False, "error": "items and categories are required for batch_classify"})
+                results = laya_client.batch_classify(items, categories, instruction or "Classify this item")
+                return json.dumps({
+                    "ok": True,
+                    "count": len(results),
+                    "results": results
+                }, ensure_ascii=False)
+
+            return json.dumps({"ok": False, "error": f"Unknown task: {task}"})
+
+        registry.register(
+            name="fast_decision_engine",
+            toolset="decision-engine",
+            schema={
+                "name": "fast_decision_engine",
+                "description": _decision_schema["function"]["description"],
+                "parameters": _decision_schema["function"]["parameters"]
+            },
+            handler=_decision_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Laya fast decision engine for high-throughput zero-token classification"
+        )
+        registry.register_toolset_alias("decision-engine", "decision-engine")
+        if hasattr(agent, "tools") and isinstance(agent.tools, list):
+            agent.tools.append(_decision_schema)
+        _logger.debug("Injected fast_decision_engine tool into agent.")
+    except Exception as _e:
+        _logger.warning("fast_decision_engine tool injection failed: %s", _e)
+
+
 def register_all_streaming_tools(
     agent: Any,
     session: Any,
@@ -452,4 +672,6 @@ def register_all_streaming_tools(
     inject_media_generation_tools(agent)
     inject_self_update_tool(agent, session, session_id)
     inject_self_evolution_tool(agent, session_id=session_id, stream_id=stream_id)
+    inject_daon_action_tool(agent)
+    inject_fast_decision_tool(agent)
     return mcp_count

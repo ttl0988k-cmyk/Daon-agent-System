@@ -1266,15 +1266,42 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               agent, s, session_id, cancel_event, stream_id=stream_id)
 
           is_browser_session = bool(
+              getattr(s, 'surface', None) == 'chrome_extension' or
               "[실시간 브라우저 환경 컨텍스트" in (msg_text or "") or
               "[브라우저 제어 명령 규칙]" in (msg_text or "") or
               "[구글 크롬" in (msg_text or "") or
-              "[사용자 요청]" in (msg_text or "") or
               (isinstance(session_id, str) and session_id.startswith("browser_"))
           )
-          if is_browser_session and hasattr(agent, 'tools') and isinstance(agent.tools, list):
-              # 크롬 확장프로그램 사이드패널 모드일 때는 실패하는 내부 Electron 브라우저 도구를 비활성화
-              agent.tools = [t for t in agent.tools if not t.get('function', {}).get('name', '').startswith('browser_')]
+          agent._is_browser_session = is_browser_session
+          agent.surface = getattr(s, 'surface', None)
+          if is_browser_session:
+              # 크롬 확장프로그램 사이드패널 모드일 때는:
+              # 1) 내부 Electron 브라우저 도구(browser_*) 비활성화
+              # 2) 외부 브라우저 조작/화면 제어 MCP 도구(playwright, puppeteer, computer-use) 비활성화
+              # 3) 웹 탐색/폼 입력 중 오작동을 유발하는 디자인/피그마 MCP 도구 비활성화
+              _disallowed_prefixes = (
+                  'browser_',
+                  'mcp_playwright_',
+                  'mcp_puppeteer_',
+                  'mcp_windows-computer-use_',
+                  'mcp_computer-use_',
+                  'mcp_browser_',
+                  'mcp_daon-design_',
+                  'mcp_figma_',
+                  'terminal',
+                  'execute_command',
+                  'run_shell_command',
+              )
+              if hasattr(agent, 'tools') and isinstance(agent.tools, list):
+                  agent.tools = [
+                      t for t in agent.tools
+                      if not any(t.get('function', {}).get('name', '').startswith(p) for p in _disallowed_prefixes)
+                  ]
+              if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
+                  agent.valid_tool_names = {
+                      name for name in agent.valid_tool_names
+                      if not any(name.startswith(p) for p in _disallowed_prefixes)
+                  }
 
           # ── System Prompt & Multimodal Message Composition ──
           from api.streaming_prompts import compose_system_message, build_user_payload
@@ -1564,8 +1591,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # ── done 이벤트를 먼저 전송하여 UI가 즉시 잠금 해제되도록 함 ──
           put('done', {'session': s.to_response(), 'usage': usage, 'job_error': _job_has_error})
 
+          # ── 이 턴의 에이전트 실행이 정상 완료되었으므로 활성 스트림 목록에서 즉시 해제 ──
+          # 다음 턴(연속 자율 실행 등) 시작 시 불필요하게 '이전 작업 자동 취소'로 오판되는 문제를 원천 방지
+          with ACTIVE_SESSION_STREAMS_LOCK:
+              if ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
+                  ACTIVE_SESSION_STREAMS.pop(session_id, None)
+
           # ── Agent Voice Output: LLM 요약 생성 (done 이후 백그라운드로 실행) ──
           if _job_tools:
+
               def _async_voice_summary():
                   try:
                       _api_mode = getattr(agent, 'api_mode', 'chat_completions')

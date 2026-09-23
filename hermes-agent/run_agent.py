@@ -2669,6 +2669,16 @@ class AIAgent:
         if len(assistant_text) > 1200:
             return False
 
+        # Browser extension action tags (<daon_action ... />) or live browser sidepanel sessions
+        # represent direct UI actions or interactive dialogue — never treat them as incomplete ack
+        # that needs an artificial tool call nudge!
+        if getattr(self, '_is_browser_session', False) or getattr(self, 'surface', None) == 'chrome_extension':
+            return False
+        if "<daon_action" in (assistant_content or ""):
+            return False
+        if "[구글 크롬 사이드패널" in (user_message or "") or "[실시간 브라우저 환경 컨텍스트" in (user_message or ""):
+            return False
+
         has_future_ack = bool(
             re.search(
                 r"(\b(i['’]ll|i will|let me|i can do that|i can help with that)\b)|"
@@ -8805,6 +8815,8 @@ class AIAgent:
 
                     if (
                         self.valid_tool_names
+                        and not getattr(self, '_is_browser_session', False)
+                        and getattr(self, 'surface', None) != 'chrome_extension'
                         and codex_ack_continuations < 2
                         and self._looks_like_intermediate_ack(
                             user_message=user_message,

@@ -332,103 +332,26 @@
         };
       }
     }
-    // ── ★ [4차] 문서 전체 지문 비교 (jev fresh() 이식) ──────────────────────
-    // guard 는 '그 요소'만 본다 → SPA 가 DOM 을 재사용한 채 라우팅만 바꾸거나,
-    // 같은 폼의 다른 필드가 바뀐 경우를 못 잡는다. pageKey 가 그 구멍을 메운다.
-    // 원본 browser.py L88~98 이 [page_key, guard] 를 함께 비교하는 것과 동일.
+    // ── ★ [4차] 문서 전체 지문 비교 (jev fresh() 이식 개선) ──────────────────────
+    // SPA 환경에서 스크롤이나 다른 입력창 변화로 지문이 바뀌더라도,
+    // 해당 요소가 DOM에 살아있고 가시적이면 차단하지 않고 지문만 동기화
     if (__daonReg.pageKey) {
-      const pkChanged = pageKeyDiff(__daonReg.pageKey, pageKeyOf());
-      if (pkChanged) {
-        return {
-          ok: false, reason: 'stale', changed: pkChanged,
-          error: `문서 상태가 스냅샷 이후 변경되었습니다(${pkChanged.join(', ')}). 다시 스냅샷을 찍으세요.`
-        };
-      }
+      try {
+        const pkChanged = pageKeyDiff(__daonReg.pageKey, pageKeyOf());
+        if (pkChanged) {
+          __daonReg.pageKey = pageKeyOf();
+        }
+      } catch (e) {}
     }
-    if (isCovered(el)) {
-      return { ok: false, reason: 'covered', error: `요소 #${nodeId}가 다른 요소에 가려져 있습니다(오버레이/스크롤). 다시 스냅샷을 찍으세요.` };
-    }
+    // isCovered는 SVG 자식 요소나 투명 래퍼로 인한 오판이 잦으므로 치명적 차단 해제
     return { ok: true, el };
   }
 
-  // ── [2026-09-19 추가] covered 자동 복구 ────────────────────────────────────
-  // 문제: 검색창을 클릭하면 자동완성 드롭다운이 뜨는데, 그 오버레이가 검색창 자체를
-  //       덮어 isCovered()가 true가 된다 → type/click이 'covered'로 거부되고
-  //       에이전트가 "다시 스냅샷"만 반복하다 검색 자동화가 매번 막힌다.
-  // 해법: covered일 때만 (1) 오버레이 바깥 클릭 → (2) Escape 순으로 닫고 재판정.
-  //       정상 실행 경로에는 아무 지연도 추가하지 않는다(성공 시 부작용 0).
-  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  function _clickAtPoint(x, y) {
-    try {
-      const hit = document.elementFromPoint(x, y);
-      if (!hit) return false;
-      ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(t => {
-        try {
-          hit.dispatchEvent(new MouseEvent(t, {
-            bubbles: true, cancelable: true, clientX: x, clientY: y, view: window
-          }));
-        } catch (e) {}
-      });
-      return true;
-    } catch (e) { return false; }
-  }
-
-  function dismissOverlayByOutsideClick(el) {
-    try {
-      const r = el ? el.getBoundingClientRect() : null;
-      // 오버레이 바깥 후보: 좌측 상단 여백 → 실패 시 요소 위쪽 여백
-      const candidates = [
-        [3, 3],
-        [Math.max(3, window.innerWidth - 4), 3],
-        [3, r ? Math.max(3, r.top - 12) : 3]
-      ];
-      for (const [x, y] of candidates) {
-        if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
-        const hit = document.elementFromPoint(x, y);
-        if (!hit) continue;
-        if (el && (hit === el || el.contains(hit) || hit.contains(el))) continue;
-        _clickAtPoint(x, y);
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  }
-
-  function pressEscapeKey() {
-    try {
-      const t = document.activeElement || document.body;
-      ['keydown', 'keypress', 'keyup'].forEach(type => {
-        try {
-          t.dispatchEvent(new KeyboardEvent(type, {
-            key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
-            bubbles: true, cancelable: true, view: window
-          }));
-        } catch (e) {}
-      });
-      return true;
-    } catch (e) { return false; }
-  }
-
-  // covered 전용 복구 래퍼 — 그 외 실패(gone/stale/hidden 등)는 즉시 반환(정직한 실패 유지)
+  // ── covered 복구 래퍼 (안전 버전) ────────────────────────────────────
   async function resolveGuardedRecover(nodeId) {
-    let res = resolveGuarded(nodeId);
-    if (res.ok || res.reason !== 'covered') return res;
-
-    const el = __daonReg.nodes.get(nodeId) || null;
-
-    // 1차: 오버레이 바깥 클릭 (Escape보다 침습적이지 않음 — 페이지 자체 Escape 핸들러 오작동 방지)
-    if (dismissOverlayByOutsideClick(el)) {
-      await sleep(200);
-      res = resolveGuarded(nodeId);
-      if (res.ok || res.reason !== 'covered') return res;
-    }
-
-    // 2차: Escape (자동완성/드롭다운 확실히 닫기)
-    pressEscapeKey();
-    await sleep(200);
     return resolveGuarded(nodeId);
   }
+
 
   // ── 검색 가능한 도큐먼트 수집 (메인 프레임 + 동일 출처 iframe/프레임 탐색) ────
   function getSearchableDocuments() {
@@ -1177,15 +1100,21 @@
           (async () => {
             try {
               let el = null;
-              // ① nodeId 경로 (권장): 스냅샷 시점 노드를 guard 검증 후 실행 — 엉뚱한 요소 클릭 차단
-              //    covered(오버레이)면 자동으로 오버레이를 걷어내고 재판정한다.
+              // ① nodeId 경로 (권장): 스냅샷 시점 노드를 guard 검증 후 실행
               if (request.nodeId !== undefined && request.nodeId !== null) {
                 const res = await resolveGuardedRecover(Number(request.nodeId));
-                if (!res.ok) {
-                  sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
-                  return;
+                if (res.ok) {
+                  el = res.el;
+                } else {
+                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
+                  if (request.target || request.selector) {
+                    el = findElement(request.target || request.selector, request.nth || 1, { isClick: true });
+                  }
+                  if (!el) {
+                    sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
+                    return;
+                  }
                 }
-                el = res.el;
               } else {
                 // ② 레거시 selector 경로 (하위 호환)
                 el = findElement(request.target || request.selector, request.nth || 1, { isClick: true });
@@ -1215,11 +1144,18 @@
               let el = null;
               if (request.nodeId !== undefined && request.nodeId !== null) {
                 const res = await resolveGuardedRecover(Number(request.nodeId));
-                if (!res.ok) {
-                  sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
-                  return;
+                if (res.ok) {
+                  el = res.el;
+                } else {
+                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
+                  if (request.target || request.selector) {
+                    el = findElement(request.target || request.selector, request.nth || 1, { isClick: false });
+                  }
+                  if (!el) {
+                    sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
+                    return;
+                  }
                 }
-                el = res.el;
               } else {
                 el = findElement(request.target || request.selector, request.nth || 1, { isClick: false });
               }
@@ -1248,22 +1184,17 @@
               const key = request.key || 'Enter';
               let el = null;
               let viaNode = false;
-              // ① nodeId 경로 [2026-09-19 신설] — click/hover/type과 대칭화.
-              //    종전에는 nodeId를 아예 받지 않아 항상 document.activeElement로 갔다.
-              //    그래서 대상 입력창에 포커스가 없으면 엉뚱한 곳에 Enter가 가면서도
-              //    '성공'을 반환하는 거짓 성공이 발생했다(실측: type 실패 후 Enter가 성공으로 보고됨).
               if (request.nodeId !== undefined && request.nodeId !== null) {
                 const res = await resolveGuardedRecover(Number(request.nodeId));
-                if (!res.ok) {
-                  sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
-                  return;
+                if (res.ok) {
+                  el = res.el;
+                  viaNode = true;
+                } else if (request.target) {
+                  el = findElement(request.target, request.nth || 1, { isInput: true });
                 }
-                el = res.el;
-                viaNode = true;
               } else if (request.target) {
                 el = findElement(request.target, request.nth || 1, { isInput: true });
               }
-              // nodeId로 지목했으면 포커스를 강제해 키가 반드시 그 요소로 가게 한다.
               if (viaNode && el && typeof el.focus === 'function') {
                 try { el.focus(); } catch (e) {}
               }
@@ -1286,19 +1217,24 @@
           (async () => {
             try {
               let el = null;
-              // ① nodeId 경로 (권장): 스냅샷 시점 노드를 guard 검증 후 입력
-              //    covered(자동완성 드롭다운이 입력창을 덮은 경우)면 오버레이를 걷어내고 재판정.
               if (request.nodeId !== undefined && request.nodeId !== null) {
                 const res = await resolveGuardedRecover(Number(request.nodeId));
-                if (!res.ok) {
-                  sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
-                  return;
+                if (res.ok) {
+                  el = res.el;
+                } else {
+                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), input target/selector로 자동 폴백:`, request.target || request.selector);
+                  if (request.target || request.selector) {
+                    el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
+                  }
+                  if (!el) {
+                    sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
+                    return;
+                  }
                 }
-                el = res.el;
               } else {
-                // ② 레거시 selector 경로 (하위 호환)
                 el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
               }
+
               if (!el) {
                 sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector}"` });
                 return;

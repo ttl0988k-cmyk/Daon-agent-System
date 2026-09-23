@@ -11,7 +11,9 @@ __pycache__/
 *.pyc
 
 # Runtime
-daon_runtime/
+daon_runtime/*
+!daon_runtime/laya_service.py
+server.pid
 
 # Data (user-specific)
 data/

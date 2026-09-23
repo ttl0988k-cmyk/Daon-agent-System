@@ -495,21 +495,46 @@ def get_available_models() -> dict:
     from api.managers.model_manager import model_manager
 
     settings = load_settings()
-    model_cfg = settings.get('model', {})
+    default_model = settings.get('default_model') or settings.get('model')
     active_provider = None
-    default_model = None
-    if isinstance(model_cfg, str):
-        default_model = model_cfg
-    elif isinstance(model_cfg, dict):
-        active_provider = model_cfg.get('provider')
-        cfg_default = model_cfg.get('default', '')
-        if cfg_default:
-            default_model = cfg_default
+    if isinstance(default_model, dict):
+        active_provider = default_model.get('provider')
+        default_model = default_model.get('default')
+
+    # 1. 활성 프로필 config.yaml 우선 확인
+    if not default_model or not active_provider:
+        try:
+            from api.profiles import get_active_hermes_home
+            cfg_path = Path(get_active_hermes_home()) / 'config.yaml'
+            if cfg_path.exists():
+                import yaml
+                with open(cfg_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    y = yaml.safe_load(f)
+                    if isinstance(y, dict):
+                        m = y.get('model')
+                        if isinstance(m, dict):
+                            if not default_model:
+                                default_model = m.get('default')
+                            if not active_provider:
+                                active_provider = m.get('provider')
+                        elif isinstance(m, str) and not default_model:
+                            default_model = m
+        except Exception:
+            pass
+
+    if not default_model:
+        default_model = DEFAULT_MODEL
             
     env_model = os.getenv('HERMES_MODEL') or os.getenv('OPENAI_MODEL') or os.getenv('LLM_MODEL')
     if env_model:
         default_model = env_model.strip()
         
+    if default_model and not active_provider:
+        try:
+            _, active_provider, _ = resolve_model_provider(default_model)
+        except Exception:
+            pass
+
     groups = model_manager.get_available_models()
     
     if default_model:
@@ -538,6 +563,7 @@ def get_available_models() -> dict:
         'default_model': default_model,
         'groups': groups,
     }
+
 
 
 # Settings persistence

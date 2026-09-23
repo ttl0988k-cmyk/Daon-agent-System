@@ -294,16 +294,25 @@ def compose_system_message(
 
     # 8. MCP injection instructions
     if injected_mcp_count > 0:
-        base_msg += (
-            f"\n\n[MCP INJECTION ACTIVE]\n"
-            f"You have been dynamically injected with {injected_mcp_count} MCP tools from the WebUI.\n"
-            f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
-            f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
-            f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
-            f"They are fully registered in your environment; just call them directly!\n"
-            f"IMPORTANT: For ANY browser/web-page work, use the dedicated browser tools "
-            f"(browser_navigate, browser_snapshot, browser_click, etc.) instead of mcp_playwright_* "
-            f"tools — the internal browser shares the app window and is always available.\n"
-        )
+        if browser_context == "chrome_sidepanel":
+            base_msg += (
+                f"\n\n[구글 크롬 확장 사이드패널 브라우저 제어 절대 원칙]\n"
+                f"당신은 현재 사용자의 실제 구글 크롬 브라우저와 1:1로 실시간 연동되어 있습니다.\n"
+                f"1. [브라우저 전용 액션 태그 필수]: 웹페이지 조작(클릭, 입력, 페이지 이동, 탭 전환, 스냅샷, 스크롤 등)은 오직 XML 액션 태그(<daon_action ... />)만을 사용해야 실제 브라우저 화면에서 동작합니다.\n"
+                f"2. [외부 브라우저 MCP 사용 절대 금지]: Playwright, Puppeteer 등 외부 브라우저 자동화 MCP 도구는 사용자의 실제 크롬 창과 연결되어 있지 않으므로 비활성화되어 있습니다. 웹 탐색, 폼 작성, 버튼 클릭, 로그인 등 웹페이지 내의 모든 작업에 MCP 도구를 절대 호출하지 마세요.\n"
+                f"3. [실시간 화면 최우선 원칙]: 이전 대화 기록이나 과거 작업 요약(Active Task)에 어떤 내용이 있든 관계없이, [실시간 브라우저 환경 컨텍스트]와 사용자 요청 직전에 명시된 【현재 활성 탭】의 URL과 화면이 지금 사용자가 보고 있는 실제 최신 화면입니다. 사용자가 탭을 전환했거나 새 사이트로 이동한 경우 이전 작업을 즉시 중단하고 현재 활성 탭을 기준으로 응답하세요.\n"
+            )
+        else:
+            base_msg += (
+                f"\n\n[MCP INJECTION ACTIVE]\n"
+                f"You have been dynamically injected with {injected_mcp_count} MCP tools from the WebUI.\n"
+                f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
+                f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
+                f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
+                f"They are fully registered in your environment; just call them directly!\n"
+                f"IMPORTANT: For ANY browser/web-page work, use the dedicated browser tools "
+                f"(browser_navigate, browser_snapshot, browser_click, etc.) instead of mcp_playwright_* "
+                f"tools — the internal browser shares the app window and is always available.\n"
+            )
 
     return base_msg, injected_fact_ids

@@ -208,6 +208,8 @@ def handle_post_chat_start(handler, body) -> bool:
             _logger.warning("Async save failed for session %s", s.session_id, exc_info=True)
     threading.Thread(target=_save_async, daemon=True).start()
     set_last_workspace(workspace)
+    _surface_decl = str(body.get('surface') or '').strip() or 'webui'
+    s.surface = _surface_decl
     # Auto-cancel any existing stream for this session so the new message
     # doesn't have to wait for the previous run_conversation() to finish.
     from api.streaming import cancel_session_streams
@@ -216,19 +218,15 @@ def handle_post_chat_start(handler, body) -> bool:
     with _START_LOCK:
         _RECENT_STARTS[sid] = (now, stream_id)
     q = queue.Queue()
-    if cancelled_previous:
+    if cancelled_previous and _surface_decl != 'chrome_extension':
         # 이전 실행 중이던 작업이 자동 취소되었음을 새 스트림으로 안내해,
         # 사용자가 이전 작업이 왜 멈췄는지 모르게 되는 상황을 방지 (plan.md Cause D).
+        # (단, 크롬 확장의 연속 자율 실행 턴 전환 시에는 불필요한 경고 차단)
         q.put_nowait(('notice', {'message': '새 메시지 전송으로 이전 작업이 자동 취소되었습니다.'}))
     with STREAMS_LOCK:
         STREAMS[stream_id] = q
     planning_mode = body.get('planning_mode', False)
-    # 실행 표면 선언 반영 (chrome_extension | webui).
-    # 표면별 도구 강제에 쓰이므로 기존 세션도 매 요청마다 갱신한다.
-    # 미선언(빈 값) 시 'webui'로 기본 확정 — 이전 표면(chrome_extension)이
-    # 세션 JSON에 남아 WebUI 재사용 시 browser_* 도구가 계속 제거되는 것을 막는다.
-    _surface_decl = str(body.get('surface') or '').strip() or 'webui'
-    s.surface = _surface_decl
+
     open_tabs = body.get('open_tabs') or []
     media_options = body.get('media_options') or {}
     thr = threading.Thread(

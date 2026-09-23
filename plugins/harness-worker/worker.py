@@ -366,7 +366,7 @@ def prepare_workdir(workdir: Optional[str] = None, isolate: bool = False,
 # Codex: 프로바이더별 임시 CODEX_HOME
 # ---------------------------------------------------------------------------
 
-def write_codex_home(provider: str) -> Dict[str, Any]:
+def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Optional[List[str]] = None) -> Dict[str, Any]:
     """프로바이더 설정이 담긴 config.toml 을 임시 CODEX_HOME 에 쓴다.
 
     ★ 사용자의 실제 ~/.codex 는 건드리지 않는다.
@@ -374,6 +374,9 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
 
     Codex 0.152+ 는 wire_api="chat" 을 폐지했으므로 "responses" 를 쓴다.
     (OpenRouter / Qwen / opencode-go / MiniMax / omniroute 모두 /responses 지원 실측)
+
+    with_mcp: True 인 경우에만 MCP 서버를 주입한다.
+              allowed_mcps 가 지정되면 Laya가 선별한 해당 MCP 서버만 핀포인트로 주입한다.
     """
     name = resolve_provider(provider)
     spec = PROVIDERS[name]
@@ -402,52 +405,62 @@ def write_codex_home(provider: str) -> Dict[str, Any]:
         hdr = ", ".join(f'"{k}" = "{v}"' for k, v in headers.items())
         lines.append(f"http_headers = {{ {hdr} }}")
 
-    # MCP 서버 연동 (Context7: 최신 문서, Serena: 심볼 리팩터링, Figma: 디자인, Stitch: UI 기획)
-    lines += [
-        "",
-        "[mcp_servers.context7]",
-        'command = "npx"',
-        'args = ["-y", "@upstash/context7-mcp"]',
-        "",
-        "[mcp_servers.serena]",
-        'command = "uvx"',
-        'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--open-web-dashboard", "false"]',
-        "",
-        '[mcp_servers."daon-design"]',
-        'command = "python"',
-        'args = ["-u", "c:/daon/Daon agent System/api/api/mcp/daon_design_mcp.py"]',
-    ]
+    if with_mcp:
+        # Laya 스마트 선별 목록이 제공되면 해당 목록만, 아니면 전체 허용
+        targets = set(allowed_mcps) if allowed_mcps is not None else {"context7", "serena", "daon-design", "figma", "stitch"}
 
-    # Figma & Stitch: mcp_servers.json 에서 키를 동적으로 읽어 주입 (하드코딩 방지)
-    try:
-        _mcp_json = Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json"
-        if _mcp_json.exists():
-            with open(_mcp_json, "r", encoding="utf-8") as _f:
-                for _srv in json.load(_f):
-                    _sid = _srv.get("server_id")
-                    if _sid == "figma":
-                        _fkey = _srv.get("env", {}).get("FIGMA_API_KEY", "")
-                        if _fkey:
-                            lines += [
-                                "",
-                                "[mcp_servers.figma]",
-                                'command = "figma-mcp"',
-                                'args = []',
-                                f'env = {{ FIGMA_API_KEY = "{_fkey}" }}',
-                            ]
-                    elif _sid == "stitch":
-                        _skey = _srv.get("env", {}).get("STITCH_API_KEY", "")
-                        _gcred = _srv.get("env", {}).get("GOOGLE_APPLICATION_CREDENTIALS", "").replace("\\", "\\\\")
-                        if _skey:
-                            lines += [
-                                "",
-                                "[mcp_servers.stitch]",
-                                'command = "npx"',
-                                'args = ["-y", "@_davideast/stitch-mcp", "proxy", "--transport", "stdio"]',
-                                f'env = {{ STITCH_API_KEY = "{_skey}", GOOGLE_APPLICATION_CREDENTIALS = "{_gcred}" }}',
-                            ]
-    except Exception:
-        pass
+        if "context7" in targets:
+            lines += [
+                "",
+                "[mcp_servers.context7]",
+                'command = "npx"',
+                'args = ["-y", "@upstash/context7-mcp"]',
+            ]
+        if "serena" in targets:
+            lines += [
+                "",
+                "[mcp_servers.serena]",
+                'command = "uvx"',
+                'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--open-web-dashboard", "false"]',
+            ]
+        if "daon-design" in targets:
+            lines += [
+                "",
+                '[mcp_servers."daon-design"]',
+                'command = "python"',
+                'args = ["-u", "c:/daon/Daon agent System/api/api/mcp/daon_design_mcp.py"]',
+            ]
+
+        # Figma & Stitch: mcp_servers.json 에서 키를 동적으로 읽어 주입 (하드코딩 방지)
+        try:
+            _mcp_json = Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json"
+            if _mcp_json.exists():
+                with open(_mcp_json, "r", encoding="utf-8") as _f:
+                    for _srv in json.load(_f):
+                        _sid = _srv.get("server_id")
+                        if _sid == "figma" and "figma" in targets:
+                            _fkey = _srv.get("env", {}).get("FIGMA_API_KEY", "")
+                            if _fkey:
+                                lines += [
+                                    "",
+                                    "[mcp_servers.figma]",
+                                    'command = "figma-mcp"',
+                                    'args = []',
+                                    f'env = {{ FIGMA_API_KEY = "{_fkey}" }}',
+                                ]
+                        elif _sid == "stitch" and "stitch" in targets:
+                            _skey = _srv.get("env", {}).get("STITCH_API_KEY", "")
+                            _gcred = _srv.get("env", {}).get("GOOGLE_APPLICATION_CREDENTIALS", "").replace("\\", "\\\\")
+                            if _skey:
+                                lines += [
+                                    "",
+                                    "[mcp_servers.stitch]",
+                                    'command = "npx"',
+                                    'args = ["-y", "@_davideast/stitch-mcp", "proxy", "--transport", "stdio"]',
+                                    f'env = {{ STITCH_API_KEY = "{_skey}", GOOGLE_APPLICATION_CREDENTIALS = "{_gcred}" }}',
+                                ]
+        except Exception:
+            pass
 
     (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -579,7 +592,8 @@ def build_command(harness: str, prompt: str, exe: str,
             "- You are running autonomously in Windows PowerShell without human interaction.\n"
             "- The Windows command-line buffer has length limits. Do NOT execute massive inline command lines (>8KB) or bash-style multiline heredocs.\n"
             "- When creating or editing files, write files directly using Python (`python -c \"...\"`) or standard PowerShell cmdlets (`Set-Content`, `Out-File` with UTF-8).\n"
-            "- Work autonomously and complete the entire task until fully verified.\n\n"
+            "- Work autonomously and complete the entire task until fully verified.\n"
+            "- Once the required files, edits, and verification are finished, output your final response immediately. Do NOT run cleanup commands or attempt to delete build artifacts (like __pycache__ or temporary files).\n\n"
         )
         argv.append(windows_directive + prompt)
         return argv
@@ -697,6 +711,7 @@ def run_worker(
     keep: bool = False,
     api_key: Optional[str] = None,
     provider: Optional[str] = None,
+    with_mcp: bool = False,
 ) -> Dict[str, Any]:
     """워커를 한 번 실행하고 정제된 결과를 돌려준다.
 
@@ -736,11 +751,21 @@ def run_worker(
         )
         return result
 
-    # Codex 는 프로바이더별 임시 홈을 쓴다 (~/.codex 는 보존)
     codex_home = None
     if harness == "codex":
         try:
-            home = write_codex_home(prov)
+            allowed_mcps = None
+            if with_mcp:
+                try:
+                    import sys
+                    _api_dir = str(Path(__file__).resolve().parent.parent.parent / "api")
+                    if _api_dir not in sys.path:
+                        sys.path.insert(0, _api_dir)
+                    from api.laya_client import laya_client
+                    allowed_mcps = laya_client.prune_mcp(prompt, ["context7", "serena", "daon-design", "figma", "stitch"])
+                except Exception:
+                    allowed_mcps = None
+            home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)
             codex_home = home["home"]
             result["codex_home"] = home["config"]
             if not model:
@@ -785,29 +810,62 @@ def run_worker(
     result["command"] = " ".join(argv[:3]) + (" ... " if len(argv) > 3 else "")
 
     t0 = time.time()
+    out_file = None
+    err_file = None
+    proc = None
     try:
-        proc = subprocess.run(
+        # PIPE 대신 TemporaryFile 사용 — 자식 프로세스가 파이프 핸들을 상속해 EOF 미도착 hang 방지
+        out_file = tempfile.TemporaryFile(mode="w+b")
+        err_file = tempfile.TemporaryFile(mode="w+b")
+
+        proc = subprocess.Popen(
             argv,
             cwd=wd["path"],
             env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            # ★ 핵심: 이걸 빼면 두 CLI 가 입력을 기다리며 멈춘다
             stdin=subprocess.DEVNULL,
+            stdout=out_file,
+            stderr=err_file,
         )
+
+        deadline = t0 + timeout
+        while time.time() < deadline:
+            rc = proc.poll()
+            if rc is not None:
+                break
+            time.sleep(0.3)
+        else:
+            if proc:
+                try:
+                    if sys.platform == "win32":
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                       capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+                    else:
+                        proc.kill()
+                except Exception:
+                    pass
+            result["elapsed"] = round(time.time() - t0, 2)
+            result["error"] = f"타임아웃 ({timeout}초). 워커가 응답하지 않았습니다."
+            return result
+
         result["elapsed"] = round(time.time() - t0, 2)
         result["exit_code"] = proc.returncode
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
+
+        # 비동기로 남은 자식 프로세스 정리 (좀비 방지)
+        if proc and sys.platform == "win32":
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                               capture_output=True, timeout=3, stdin=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+        out_file.seek(0)
+        err_file.seek(0)
+        stdout = out_file.read().decode("utf-8", errors="replace")
+        stderr = err_file.read().decode("utf-8", errors="replace")
         raw = stdout + stderr
         result["raw_tail"] = "\n".join(raw.strip().split("\n")[-12:])
 
         # 응답은 stdout 으로, 경고/로그는 stderr 로 나온다.
-        # 합쳐서 정제하면 경고가 본문에 섞이므로 stdout 을 우선한다
-        # (stdout 이 비어 있을 때만 stderr 로 폴백).
         primary = stdout if stdout.strip() else stderr
         out = clean_output(harness, primary)
         result["output"] = out
@@ -818,13 +876,20 @@ def run_worker(
                 f"exit={proc.returncode}. 출력이 비었거나 실패했습니다. "
                 "raw_tail 을 확인하세요."
             )
-    except subprocess.TimeoutExpired:
-        result["elapsed"] = round(time.time() - t0, 2)
-        result["error"] = f"타임아웃 ({timeout}초). 워커가 응답하지 않았습니다."
     except Exception as exc:
         result["elapsed"] = round(time.time() - t0, 2)
         result["error"] = f"실행 실패: {exc}"
     finally:
+        if out_file:
+            try:
+                out_file.close()
+            except Exception:
+                pass
+        if err_file:
+            try:
+                err_file.close()
+            except Exception:
+                pass
         if wd["isolated"] and not keep:
             # 실제로 사라졌는지로 판정한다 (거짓 보고 금지)
             result["cleaned"] = _rmtree_retry(wd["path"])
@@ -908,6 +973,13 @@ def kill_job(job_id: str) -> Dict[str, Any]:
         if job.get("status") in ("completed", "failed", "killed", "timeout"):
             return {"ok": True, "message": f"Job {job_id} is already {job.get('status')}.", "job": dict(job)}
 
+        # 먼저 상태를 killed 로 설정하여 워커 스레드가 인지하도록 함
+        job["status"] = "killed"
+        job["finished_at"] = time.time()
+        job["elapsed"] = round(job["finished_at"] - job.get("started_at", job["finished_at"]), 2)
+        job["error"] = "Job was killed by user request."
+    _persist_jobs()
+
     if proc:
         try:
             if sys.platform == "win32":
@@ -922,13 +994,6 @@ def kill_job(job_id: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    with _JOBS_LOCK:
-        if job:
-            job["status"] = "killed"
-            job["finished_at"] = time.time()
-            job["elapsed"] = round(job["finished_at"] - job.get("started_at", job["finished_at"]), 2)
-            job["error"] = "Job was killed by user request."
-    _persist_jobs()
     return {"ok": True, "message": f"Job {job_id} was killed.", "job": get_job(job_id)}
 
 
@@ -991,6 +1056,7 @@ def start_background_job(
     api_key: Optional[str] = None,
     provider: Optional[str] = None,
     session_id: Optional[str] = None,
+    with_mcp: bool = False,
 ) -> Dict[str, Any]:
     """워커를 독립된 백그라운드 스레드 및 프로세스로 실행하고, 즉시 job_id 를 반환한다."""
     _ensure_jobs_loaded()
@@ -1016,7 +1082,18 @@ def start_background_job(
     codex_home: Optional[str] = None
     if harness == "codex":
         try:
-            home = write_codex_home(prov)
+            allowed_mcps = None
+            if with_mcp:
+                try:
+                    import sys
+                    _api_dir = str(Path(__file__).resolve().parent.parent.parent / "api")
+                    if _api_dir not in sys.path:
+                        sys.path.insert(0, _api_dir)
+                    from api.laya_client import laya_client
+                    allowed_mcps = laya_client.prune_mcp(prompt, ["context7", "serena", "daon-design", "figma", "stitch"])
+                except Exception:
+                    allowed_mcps = None
+            home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)
             codex_home = home["home"]
             if not model:
                 model = home["codex_model"]
@@ -1076,21 +1153,24 @@ def start_background_job(
     def _worker_thread_func():
         t0 = time.time()
         proc = None
+        out_file = None
+        err_file = None
         try:
             creationflags = 0
             if sys.platform == "win32":
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            # PIPE 대신 TemporaryFile 사용 — 자식 프로세스가 파이프 핸들을 상속해 EOF 미도착 hang 방지
+            out_file = tempfile.TemporaryFile(mode="w+b")
+            err_file = tempfile.TemporaryFile(mode="w+b")
 
             proc = subprocess.Popen(
                 argv,
                 cwd=wd["path"],
                 env=env,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                stdout=out_file,
+                stderr=err_file,
                 creationflags=creationflags,
             )
 
@@ -1101,54 +1181,97 @@ def start_background_job(
                     _JOBS[job_id]["pid"] = proc.pid
             _persist_jobs()
 
-            stdout, stderr = proc.communicate(timeout=timeout)
-            exit_code = proc.returncode
+            deadline = t0 + timeout
+            exit_code = None
+            is_timeout = False
+
+            # poll 루프로 부모 exit 감시 (communicate 블로킹 회피)
+            while True:
+                with _JOBS_LOCK:
+                    curr_st = _JOBS.get(job_id, {}).get("status")
+                if curr_st == "killed":
+                    break
+
+                rc = proc.poll()
+                if rc is not None:
+                    exit_code = rc
+                    break
+
+                if time.time() >= deadline:
+                    is_timeout = True
+                    break
+
+                time.sleep(0.3)
+
             elapsed = round(time.time() - t0, 2)
 
-            raw = (stdout or "") + (stderr or "")
-            primary = stdout if stdout and stdout.strip() else (stderr or "")
-            out = clean_output(harness, primary)
-            ok = exit_code == 0 and bool(out)
+            if is_timeout:
+                if proc:
+                    try:
+                        if sys.platform == "win32":
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                           capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+                        else:
+                            proc.kill()
+                    except Exception:
+                        pass
+                with _JOBS_LOCK:
+                    if job_id in _JOBS and _JOBS[job_id].get("status") not in ("killed", "completed"):
+                        _JOBS[job_id]["status"] = "timeout"
+                        _JOBS[job_id]["elapsed"] = elapsed
+                        _JOBS[job_id]["finished_at"] = time.time()
+                        _JOBS[job_id]["error"] = f"타임아웃 ({timeout}초). 워커가 응답하지 않았습니다."
 
-            with _JOBS_LOCK:
-                if job_id in _JOBS:
-                    _JOBS[job_id]["status"] = "completed" if ok else "failed"
-                    _JOBS[job_id]["exit_code"] = exit_code
-                    _JOBS[job_id]["elapsed"] = elapsed
-                    _JOBS[job_id]["finished_at"] = time.time()
-                    _JOBS[job_id]["output"] = out
-                    _JOBS[job_id]["raw_tail"] = "\n".join(raw.strip().split("\n")[-12:])
-                    if not ok:
-                        _JOBS[job_id]["error"] = f"exit={exit_code}. 출력이 비었거나 실패했습니다."
-
-        except subprocess.TimeoutExpired:
-            elapsed = round(time.time() - t0, 2)
-            if proc:
-                try:
-                    if sys.platform == "win32":
+            elif _JOBS.get(job_id, {}).get("status") != "killed":
+                # 남은 자식 프로세스 비동기 정리
+                if proc and sys.platform == "win32":
+                    try:
                         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                                       capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
-                    else:
-                        proc.kill()
-                except Exception:
-                    pass
-            with _JOBS_LOCK:
-                if job_id in _JOBS:
-                    _JOBS[job_id]["status"] = "timeout"
-                    _JOBS[job_id]["elapsed"] = elapsed
-                    _JOBS[job_id]["finished_at"] = time.time()
-                    _JOBS[job_id]["error"] = f"타임아웃 ({timeout}초). 워커가 응답하지 않았습니다."
+                                       capture_output=True, timeout=3, stdin=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+
+                out_file.seek(0)
+                err_file.seek(0)
+                stdout = out_file.read().decode("utf-8", errors="replace")
+                stderr = err_file.read().decode("utf-8", errors="replace")
+
+                raw = (stdout or "") + (stderr or "")
+                primary = stdout if stdout and stdout.strip() else (stderr or "")
+                out = clean_output(harness, primary)
+                ok = exit_code == 0 and bool(out)
+
+                with _JOBS_LOCK:
+                    if job_id in _JOBS and _JOBS[job_id].get("status") != "killed":
+                        _JOBS[job_id]["status"] = "completed" if ok else "failed"
+                        _JOBS[job_id]["exit_code"] = exit_code
+                        _JOBS[job_id]["elapsed"] = elapsed
+                        _JOBS[job_id]["finished_at"] = time.time()
+                        _JOBS[job_id]["output"] = out
+                        _JOBS[job_id]["raw_tail"] = "\n".join(raw.strip().split("\n")[-12:])
+                        if not ok:
+                            _JOBS[job_id]["error"] = f"exit={exit_code}. 출력이 비었거나 실패했습니다."
 
         except Exception as exc:
             elapsed = round(time.time() - t0, 2)
             with _JOBS_LOCK:
-                if job_id in _JOBS:
+                if job_id in _JOBS and _JOBS[job_id].get("status") not in ("killed", "completed"):
                     _JOBS[job_id]["status"] = "failed"
                     _JOBS[job_id]["elapsed"] = elapsed
                     _JOBS[job_id]["finished_at"] = time.time()
                     _JOBS[job_id]["error"] = f"실행 중 예외: {exc}"
 
         finally:
+            if out_file:
+                try:
+                    out_file.close()
+                except Exception:
+                    pass
+            if err_file:
+                try:
+                    err_file.close()
+                except Exception:
+                    pass
             with _ACTIVE_PROCS_LOCK:
                 _ACTIVE_PROCS.pop(job_id, None)
 

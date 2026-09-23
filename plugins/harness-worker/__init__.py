@@ -261,6 +261,8 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
 
     session_id = os.environ.get("HERMES_SESSION_KEY") or None
 
+    with_mcp = bool(args.get("with_mcp", False))
+
     if background:
         try:
             res = worker.start_background_job(
@@ -274,6 +276,7 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
                 keep=bool(args.get("keep")),
                 provider=args.get("provider") or None,
                 session_id=session_id,
+                with_mcp=with_mcp,
             )
         except Exception as exc:
             logger.exception("harness-worker: background dispatch failed")
@@ -296,6 +299,7 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
             full_auto=full_auto,
             keep=bool(args.get("keep")),
             provider=args.get("provider") or None,
+            with_mcp=with_mcp,
         )
     except Exception as exc:  # 도구는 절대 예외를 밖으로 던지지 않는다
         logger.exception("harness-worker: dispatch failed")

@@ -13,7 +13,9 @@ let autoContextEnabled = true; // 기본값: 자동 탭 및 컨텍스트 동기�
 let attachedContext = null;
 let isGenerating = false;
 let currentEventSource = null;
-let selectedModel = null;
+let selectedModel = '';
+let serverDefaultModel = 'MiniMax-M3';
+let serverActiveProfile = 'raon';
 let lastUserPrompt = '';
 let currentActiveBubble = null;
 let lastActionResults = [];
@@ -22,6 +24,29 @@ let currentGoal = null;
 let currentAutonomousStep = 0;
 const MAX_AUTONOMOUS_STEPS = 6;
 let isAutoLooping = false;
+
+// ★ 2026-09-22 긴급 수정 — daon_action 태그 중복 실행 차단 원장
+//   [증상] 매 턴마다 탭이 1개씩 무한 생성되고, 이미 실패한 클릭/이동이 영원히 반복됨.
+//   [원인] done 핸들러가 세션 이력(role:"tool") '전체'를 뒤져 .tag(daon_action 태그)를
+//          매 턴 다시 accumulatedText 에 주입 → parseAndExecuteActions 가 재실행.
+//          그중 new_tab 태그가 턴마다 재실행되며 탭이 폭증했다.
+//   [수정] 태그를 의미키로 정규화해 '1회만' 실행되도록 원장을 둔다.
+let executedActionKeys = new Set();
+
+function actionKeyOf(tag) {
+  const m = String(tag || '').match(/<daon_action\s+([^>]+?)\/?>/i);
+  if (!m) return String(tag || '');
+  const a = m[1];
+  const g = (n) => {
+    const dq = a.match(new RegExp(`\\b${n}="([^"]*)"`, 'i'));
+    if (dq) return dq[1];
+    const sq = a.match(new RegExp(`\\b${n}='([^']*)'`, 'i'));
+    return sq ? sq[1] : '';
+  };
+  return [g('action'), g('target'), g('url'), g('tab_id'), g('text'),
+          g('nodeid') || g('node_id'), g('nth'), g('key'), g('ms'), g('direction')]
+    .map(v => String(v).trim().toLowerCase()).join('|');
+}
 
 // DOM Elements
 const connectionBadge = document.getElementById('connectionBadge');
@@ -60,10 +85,11 @@ async function init() {
   await checkServerHealth();
   await checkPendingApproval(chatContainer);
 
-  // 10초마다 서버 헬스체크 및 탭 상태 최신화, 대기 중인 승인 요청 확인
+  // 5초마다 서버 헬스체크 및 탭 상태 최신화, 에이전트 모델/프로필 동기화
   setInterval(async () => {
     await checkServerHealth();
     await updateActiveTabAndTabs();
+    await syncAgentModelAndProfile();
     if (!isGenerating) {
       await checkPendingApproval(chatContainer);
     }
@@ -124,17 +150,47 @@ function setConnectionStatus(isOnline, text) {
   if (statusText) statusText.textContent = text;
 }
 
-// ── 2. 모델 & 에이전트 프로필 로드 ─────────────────────────────────────────
+// ── 2. 모델 & 에이전트 프로필 로드 및 실시간 동기화 ─────────────────────────
+async function loadActiveProfile() {
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/profile/active`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.name) {
+        serverActiveProfile = data.name;
+        if (agentProfileName) {
+          agentProfileName.textContent = data.name;
+        }
+      }
+      if (data.default_model || data.model) {
+        serverDefaultModel = data.default_model || data.model;
+      }
+    }
+  } catch (e) {
+    console.warn('프로필 로드 실패:', e);
+  }
+}
+
 async function loadAvailableModels() {
   try {
+    await loadActiveProfile();
+
     const res = await fetch(`${SERVER_BASE}/api/models`);
     if (!res.ok) return;
     const data = await res.json();
     const groups = data.groups || [];
+    if (data.default_model) {
+      serverDefaultModel = data.default_model;
+    }
 
     if (!modelSelect) return;
     modelSelect.innerHTML = '';
-    let firstModelId = null;
+
+    // ★ 최상단: 에이전트 기본 모델 자동 동기화 옵션 (기본 선택)
+    const syncOpt = document.createElement('option');
+    syncOpt.value = '';
+    syncOpt.textContent = `⚡ 에이전트 동기화 (${serverDefaultModel || 'MiniMax-M3'})`;
+    modelSelect.appendChild(syncOpt);
 
     groups.forEach(group => {
       const chatModels = (group.models || []).filter(m => m.type === 'chat' || !m.type);
@@ -148,39 +204,59 @@ async function loadAvailableModels() {
         opt.value = m.id;
         opt.textContent = m.label || m.id;
         optgroup.appendChild(opt);
-        if (!firstModelId) firstModelId = m.id;
       });
 
       modelSelect.appendChild(optgroup);
     });
 
     const stored = await chrome.storage.local.get(['daon_selected_model']);
-    if (stored.daon_selected_model) {
-      modelSelect.value = stored.daon_selected_model;
-      selectedModel = stored.daon_selected_model;
-    } else if (firstModelId) {
-      modelSelect.value = firstModelId;
-      selectedModel = firstModelId;
+    const saved = stored.daon_selected_model;
+    if (saved && saved !== '' && saved !== serverDefaultModel && saved !== 'auto') {
+      modelSelect.value = saved;
+      selectedModel = saved;
+    } else {
+      modelSelect.value = '';
+      selectedModel = '';
+      await chrome.storage.local.set({ daon_selected_model: '' });
     }
+    console.log('[DAON Agent] 모델 설정 완료:', selectedModel ? selectedModel : `(동기화: ${serverDefaultModel})`);
   } catch (err) {
     console.warn('모델 목록 로드 실패:', err);
-    if (modelSelect) modelSelect.innerHTML = '<option value="">기본 모델</option>';
+    if (modelSelect) modelSelect.innerHTML = `<option value="">⚡ 에이전트 동기화 (${serverDefaultModel || 'MiniMax-M3'})</option>`;
   }
 }
 
-async function loadActiveProfile() {
+async function syncAgentModelAndProfile() {
   try {
     const res = await fetch(`${SERVER_BASE}/api/profile/active`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.name && agentProfileName) {
-        agentProfileName.textContent = data.name;
+    if (!res.ok) return;
+    const data = await res.json();
+    let updated = false;
+
+    if (data.name && data.name !== serverActiveProfile) {
+      serverActiveProfile = data.name;
+      if (agentProfileName) agentProfileName.textContent = data.name;
+      updated = true;
+    }
+
+    const newDefModel = data.default_model || data.model;
+    if (newDefModel && newDefModel !== serverDefaultModel) {
+      serverDefaultModel = newDefModel;
+      updated = true;
+    }
+
+    if (modelSelect) {
+      const syncOpt = modelSelect.querySelector('option[value=""]');
+      if (syncOpt) {
+        const desired = `⚡ 에이전트 동기화 (${serverDefaultModel || 'MiniMax-M3'})`;
+        if (syncOpt.textContent !== desired) {
+          syncOpt.textContent = desired;
+        }
       }
     }
-  } catch (e) {
-    console.warn('프로필 로드 실패:', e);
-  }
+  } catch (_) {}
 }
+
 
 // ── 3. 세션 관리 ─────────────────────────────────────────────────────────
 async function loadSession() {
@@ -240,7 +316,7 @@ async function createNewSession() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         workspace: 'C:\\daon',
-        model: selectedModel || undefined
+        model: selectedModel ? selectedModel : (serverDefaultModel || undefined)
       })
     });
     if (res.ok) {
@@ -270,9 +346,22 @@ function clearChatUI() {
 // ── 4. 멀티탭 감지 및 활성 탭 추적 (Multi-Tab Sensor) ─────────────────────
 async function updateActiveTabAndTabs() {
   try {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    allTabsList = tabs || [];
-    activeTab = allTabsList.find(t => t.active) || allTabsList[0];
+    // 1순위: 사용자가 가장 최근에 포커스했던 브라우저 창의 활성 탭
+    let activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!activeTabs || activeTabs.length === 0) {
+      activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    }
+    activeTab = (activeTabs && activeTabs.length > 0) ? activeTabs[0] : null;
+
+    // 해당 창의 전체 탭 목록 수집
+    if (activeTab && activeTab.windowId !== undefined) {
+      allTabsList = await chrome.tabs.query({ windowId: activeTab.windowId }) || [];
+    } else {
+      allTabsList = await chrome.tabs.query({ currentWindow: true }) || [];
+    }
+    if (!activeTab && allTabsList.length > 0) {
+      activeTab = allTabsList.find(t => t.active) || allTabsList[0];
+    }
 
     if (activeTab && activeTabTitle) {
       activeTabTitle.textContent = activeTab.title || activeTab.url || '새 탭';
@@ -463,6 +552,20 @@ async function handleNavigate(url) {
 
 async function handleNewTab(url) {
   const targetUrl = url ? normalizeUrl(url) : 'chrome://newtab/';
+  // ★ 2026-09-22 안전장치 — 동일 URL 탭 중복 생성 방지.
+  //   상류(이력 재주입)에서 new_tab 태그가 반복 실행되면 탭이 무한히 늘어난다.
+  //   이미 같은 URL 탭이 있으면 새로 만들지 않고 그 탭으로 전환한다.
+  if (!targetUrl.startsWith('chrome://')) {
+    try {
+      const existing = await chrome.tabs.query({ url: targetUrl });
+      if (existing && existing.length > 0) {
+        const t = existing[0];
+        try { await chrome.tabs.update(t.id, { active: true }); } catch (_) {}
+        await updateActiveTabAndTabs();
+        return { ok: true, url: targetUrl, tabId: t.id, reused: true };
+      }
+    } catch (_) {}
+  }
   const newTab = await chrome.tabs.create({ url: targetUrl, active: true });
   if (newTab && newTab.id && !targetUrl.startsWith('chrome://')) {
     await waitForTabLoad(newTab.id, 6000);
@@ -546,7 +649,7 @@ async function settle() {
   try {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   } catch (e) {}
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 250));
 }
 
 // ── [2026-09-19 3차] content script 준비 보장 (자동 복구) ────────────────────
@@ -737,26 +840,43 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
   let fullPrompt = '';
   let contextHeader = '';
 
+  let activeTabUrl = activeTab?.url || activeTab?.pendingUrl || '';
+  let activeTabTitleStr = activeTab?.title || '활성 탭';
+
   if (autoContextEnabled) {
     // 자동 컨텍스트 수집: 전체 탭 목록 및 활성 탭 DOM 상태 실시간 수집
     await updateActiveTabAndTabs();
+    activeTabUrl = activeTab?.url || activeTab?.pendingUrl || '';
+    activeTabTitleStr = activeTab?.title || '활성 탭';
     const tabsSummary = formatTabsContext(allTabsList);
     const activeCtx = await extractTabContextSilently(activeTab);
 
+    const finalTitle = (activeCtx && activeCtx.title && activeCtx.title !== 'about:blank')
+      ? activeCtx.title
+      : activeTabTitleStr;
+    const finalUrl = (activeCtx && activeCtx.url && activeCtx.url !== 'about:blank')
+      ? activeCtx.url
+      : (activeTabUrl || '알 수 없는 URL');
+
+    activeTabTitleStr = finalTitle;
+    activeTabUrl = finalUrl;
+
     contextHeader = `[실시간 브라우저 환경 컨텍스트 (자동 수집)]\n`;
     contextHeader += `■ 현재 브라우저에 열려 있는 모든 탭 목록 (총 ${allTabsList.length}개):\n${tabsSummary}\n\n`;
+    contextHeader += `■ 현재 활성 탭 상세 정보 (#${(activeTab?.index || 0) + 1}: "${finalTitle}"):\n`;
+    contextHeader += `- URL: ${finalUrl}\n`;
     if (activeCtx) {
-      const finalTitle = (activeCtx.title && activeCtx.title !== 'about:blank') ? activeCtx.title : (activeTab?.title || '활성 탭');
-      const finalUrl = (activeCtx.url && activeCtx.url !== 'about:blank') ? activeCtx.url : (activeTab?.url || '');
-      contextHeader += `■ 현재 활성 탭 상세 정보 (#${(activeTab?.index || 0) + 1}: "${finalTitle}"):\n`;
-      contextHeader += `- URL: ${finalUrl}\n`;
       if (activeCtx.metaDesc) contextHeader += `- 요약: ${activeCtx.metaDesc}\n`;
       if (activeCtx.selectedText) contextHeader += `- 사용자가 마우스로 드래그(선택)한 텍스트:\n"""${activeCtx.selectedText}"""\n`;
       if (activeCtx.bodyText) contextHeader += `- 페이지 본문 핵심 내용:\n"""${activeCtx.bodyText}"""\n`;
       if (activeCtx.interactive?.buttons?.length > 0) contextHeader += `- 주요 버튼: ${activeCtx.interactive.buttons.join(', ')}\n`;
       if (activeCtx.interactive?.inputs?.length > 0) contextHeader += `- 주요 입력창: ${activeCtx.interactive.inputs.join(', ')}\n`;
+    } else {
+      contextHeader += `- 상태: (페이지 로딩 중이거나 특수 페이지여서 DOM 텍스트 수집 대기 중)\n`;
     }
   } else if (attachedContext) {
+    activeTabTitleStr = attachedContext.title || activeTabTitleStr;
+    activeTabUrl = attachedContext.url || activeTabUrl;
     contextHeader = `[현재 웹 브라우저 탭 수동 첨부 컨텍스트]\n- 제목: ${attachedContext.title}\n- URL: ${attachedContext.url}\n${attachedContext.selectedText ? `- 선택된 텍스트: """${attachedContext.selectedText}"""\n` : ''}- 본문: """${attachedContext.bodyText}"""\n\n`;
     attachedContext = null;
     updateAttachedPill();
@@ -802,14 +922,21 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
 5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우, 첫 번째 액션(<daon_action action="navigate" ... />)을 실행하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 단계를 이어가세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
 6. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 네이버로 이동해서 검색을 진행할게요. <daon_action action=\\"navigate\\" url=\\"https://www.naver.com\\" />")`;
 
+  const userRequestHeader = `[★ 현재 사용자가 직접 보고 있는 활성 브라우저 화면]\n` +
+    `- 페이지 제목: "${activeTabTitleStr}"\n` +
+    `- 페이지 URL: ${activeTabUrl}\n` +
+    `※ 중요 안내: 과거 대화 기록이나 이전 작업 요약에 어떤 내용이 있든 간에, 사용자는 지금 위 페이지(${activeTabUrl})를 직접 보고 있습니다! 브라우저 조작은 반드시 이 페이지와 <daon_action> 액션 태그만을 사용하세요. (외부 MCP 도구 호출 절대 금지)\n\n` +
+    `[사용자 요청]\n${text}`;
+
   if (!isAutoFollowup) {
     if (contextHeader) {
-      fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+      fullPrompt = `${contextHeader}\n${actionResultHeader}${systemGuide}\n\n${userRequestHeader}`;
     } else {
-      fullPrompt = `${actionResultHeader}${systemGuide}\n\n[사용자 요청]\n${text}`;
+      fullPrompt = `${actionResultHeader}${systemGuide}\n\n${userRequestHeader}`;
     }
   } else {
     const followupInstruction = `[연속 자율 실행 모드 — Step ${currentAutonomousStep}/${MAX_AUTONOMOUS_STEPS}]\n` +
+      `[★ 현재 활성 브라우저 화면: "${activeTabTitleStr}" | URL: ${activeTabUrl}]\n` +
       `■ 사용자의 원래 요청: "${currentGoal}"\n` +
       `■ 직전 브라우저 액션이 실행 완료되어 화면이 갱신되었습니다.\n` +
       `■ 지침: 위 [실시간 브라우저 환경 컨텍스트]의 최신 화면(URL, 제목, 본문, 버튼, 입력창)을 확인하세요.\n` +
@@ -857,7 +984,7 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
         body: JSON.stringify({
           session_id: currentSessionId,
           message: fullPrompt,
-          model: selectedModel || undefined,
+          model: selectedModel ? selectedModel : (serverDefaultModel || undefined),
           planning_mode: false,
           surface: 'chrome_extension'
         })
@@ -924,7 +1051,12 @@ function listenToStream(streamId, bubble) {
   currentEventSource.addEventListener('notice', (e) => {
     try {
       const data = JSON.parse(e.data);
-      appendActionCard(bubble, 'ℹ️ ' + (data.message || '알림'));
+      const msg = data.message || '알림';
+      if (msg.includes('이전 작업이 자동 취소') || msg.includes('새 메시지 전송으로')) {
+        console.log('[DAON Agent] notice (filtered internal transition):', msg);
+        return;
+      }
+      appendActionCard(bubble, 'ℹ️ ' + msg);
     } catch (err) {}
   });
 
@@ -977,6 +1109,47 @@ function listenToStream(streamId, bubble) {
         accumulatedText = lastAsst.content || '';
         bubble.innerHTML = renderMarkdown(accumulatedText);
       }
+
+      // 1) 어시스턴트의 함수 호출(tool_calls)에 daon_action 이 포함된 경우 태그로 변환
+      if (lastAsst && Array.isArray(lastAsst.tool_calls)) {
+        for (const tc of lastAsst.tool_calls) {
+          const fn = tc.function || tc;
+          if (fn.name === 'daon_action') {
+            try {
+              const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : (fn.arguments || {});
+              const attrParts = Object.entries(args).map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`);
+              const tag = `<daon_action ${attrParts.join(' ')} />`;
+              if (!accumulatedText.includes(tag)) {
+                accumulatedText += `\n${tag}`;
+              }
+            } catch (err) {}
+          }
+        }
+      }
+
+// 2) 툴 실행 결과(role: tool)에 태그가 포함된 경우 보강
+      //    ⚠️ 2026-09-22 긴급 수정 — 종전에는 세션 이력 '전체'를 뒤져 이미 실행한 태그까지
+      //    매 턴 다시 주입했다. 그 결과 new_tab 태그가 턴마다 재실행되어 탭이 무한 생성되고
+      //    실패한 클릭/이동이 영원히 반복됐다(대표님 실사용 사고).
+      //    원장(executedActionKeys)으로 '아직 실행하지 않은 태그'만 1회 주입한다.
+      let injectedCount = 0;
+      const MAX_HISTORY_INJECT = 6;
+      for (const m of msgs.slice().reverse()) {
+        if (m.role === 'tool' && m.content) {
+          try {
+            const parsedTool = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
+            const tag = parsedTool?.tag;
+            if (!tag) continue;
+            const key = actionKeyOf(tag);
+            if (executedActionKeys.has(key)) continue;   // ← 이미 실행한 태그 재주입 금지(핵심)
+            if (accumulatedText.includes(tag)) continue;
+            if (injectedCount >= MAX_HISTORY_INJECT) break;
+            executedActionKeys.add(key);
+            injectedCount++;
+            accumulatedText += `\n${tag}`;
+          } catch (_) {}
+        }
+      }
     } catch (err) {
       console.warn('done 데이터 파싱 실패:', err);
     }
@@ -1017,8 +1190,11 @@ async function parseAndExecuteActions(text, bubble) {
   const regex = /<daon_action\s+([^>]+?)\/?>/gi;
   let match;
 
-  while ((match = regex.exec(text)) !== null) {
+while ((match = regex.exec(text)) !== null) {
     executedAny = true;
+    // ★ 2026-09-22 — 실행한 태그를 원장에 등록한다. 이 태그가 나중에 세션 이력
+    //   (role:"tool")으로 되돌아와 재주입되어도 원장에서 걸러져 재실행되지 않는다.
+    try { executedActionKeys.add(actionKeyOf(match[0])); } catch (_) {}
     const attrStr = match[1];
     // ⚠️ 2026-09-10 패치: 속성값에 반대 따옴표가 포함된 CSS 셀렉터(input[placeholder*='x'] 등)를
     // 온전히 파싱하도록 개선. 기존 [^"']+ 패턴은 값 내부의 반대 따옴표에서 조기 종료되어
@@ -1031,9 +1207,15 @@ async function parseAndExecuteActions(text, bubble) {
     };
 
     const action = (getAttr('action') || '').toLowerCase();
-    const target = getAttr('target');
+const target = getAttr('target');
     const urlVal = getAttr('url');
-    const tabIdVal = getAttr('tab_id');
+    // ★ 2026-09-22 — tab_id 정규화. 도구 스키마에 tab_id 인자가 없어
+    //   `<daon_action action="switch_tab" tab_id="null" />` 처럼 문자열 "null"이 들어온다.
+    //   종전에는 이 문자열이 그대로 쓰여 탭 전환이 **항상 실패**했다(대표님 "탭이 안 바뀐다" 증상).
+    //   "null"/"undefined"/빈값은 없는 것으로 간주해 target 폴백이 살아나게 한다.
+    const rawTabId = getAttr('tab_id');
+    const tabIdVal = (rawTabId && rawTabId !== 'null' && rawTabId !== 'undefined' && rawTabId.trim() !== '')
+      ? rawTabId : null;
     const inputVal = getAttr('text') || '';
     const dir = getAttr('direction') || 'down';
 

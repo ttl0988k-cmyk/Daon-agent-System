@@ -46,9 +46,38 @@ def handle_get_profiles(handler, parsed) -> bool:
 
 
 def handle_get_profile_active(handler, parsed) -> bool:
-    """GET /api/profile/active — return active profile name and path."""
+    """GET /api/profile/active — return active profile name, path, default model, and provider."""
     from api.profiles import get_active_profile_name, get_active_hermes_home
-    return j(handler, {'name': get_active_profile_name(), 'path': str(get_active_hermes_home())})
+    name = get_active_profile_name()
+    home = get_active_hermes_home()
+    model = None
+    provider = None
+    cfg_path = home / 'config.yaml'
+    if cfg_path.exists():
+        try:
+            import yaml
+            with open(cfg_path, 'r', encoding='utf-8', errors='ignore') as f:
+                y = yaml.safe_load(f)
+                if isinstance(y, dict):
+                    m = y.get('model')
+                    if isinstance(m, dict):
+                        model = m.get('default')
+                        provider = m.get('provider')
+                    elif isinstance(m, str):
+                        model = m
+        except Exception:
+            pass
+    if not model:
+        from api.config import load_settings, DEFAULT_MODEL
+        model = load_settings().get('default_model') or DEFAULT_MODEL
+    return j(handler, {
+        'name': name,
+        'path': str(home),
+        'model': model,
+        'default_model': model,
+        'provider': provider
+    })
+
 
 
 # ── POST route helpers ────────────────────────────────────────────────────────
