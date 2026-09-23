@@ -99,6 +99,22 @@ function _candidateRoots() {
   // 3) 과거 버전이 사용하던 %TEMP% — 잔재 정리를 위해 유지
   roots.add(process.env.TEMP || os.tmpdir());
 
+  // 4) Electron userData 디렉터리 (AppData/Roaming/daon-agent-system/daon_runtime)
+  // [2026-09-23 긴급 대책] server.exe가 userData를 CWD로 둘 때 여기에 _MEI가 누적되어
+  // 수십 GB 디스크 고갈(ENOSPC)을 유발했다.
+  try {
+    const { app } = require('electron');
+    if (app && typeof app.getPath === 'function') {
+      const uData = app.getPath('userData');
+      if (uData) {
+        roots.add(path.join(uData, 'daon_runtime'));
+      }
+    }
+  } catch (_) { }
+  if (process.env.APPDATA) {
+    roots.add(path.join(process.env.APPDATA, 'daon-agent-system', 'daon_runtime'));
+  }
+
   return [...roots];
 }
 
