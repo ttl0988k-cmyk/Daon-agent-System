@@ -102,7 +102,15 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         content_len = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
+        raw_bytes = self.rfile.read(content_len) if content_len > 0 else b"{}"
+        try:
+            body = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                body = raw_bytes.decode("cp949")
+            except UnicodeDecodeError:
+                body = raw_bytes.decode("utf-8", errors="replace")
+
         try:
             req_data = json.loads(body)
         except Exception:
@@ -234,15 +242,63 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             })
 
     def _handle_decide(self, req_data: Dict[str, Any]):
-        state = req_data.get("state", {})
-        questions = req_data.get("questions", {})
+        raw_state = req_data.get("state", {})
+        raw_questions = req_data.get("questions", {})
         if _router is None:
             self._send_json(503, {"error": "Laya model not initialized"})
             return
 
+        # ── Normalize state: ensure string or dict with text/prompt ──
+        norm_state = {}
+        if isinstance(raw_state, str):
+            norm_state = {"text": raw_state}
+        elif isinstance(raw_state, dict):
+            norm_state = dict(raw_state)
+            if not any(k in norm_state for k in ["text", "prompt"]):
+                norm_state["text"] = " ".join(f"{k}: {v}" for k, v in norm_state.items()) or "None"
+        else:
+            norm_state = {"text": str(raw_state)}
+
+        # ── Normalize questions: ensure required Laya schema (instructions, type, criteria) ──
+        norm_questions = {}
+        if isinstance(raw_questions, dict):
+            for q_key, q_def in raw_questions.items():
+                if isinstance(q_def, dict):
+                    qd = dict(q_def)
+                    if not qd.get("instructions"):
+                        qd["instructions"] = f"Determine the answer for {q_key}"
+                    if not qd.get("type"):
+                        qd["type"] = "choice"
+                    if qd.get("type") == "choice":
+                        if "criteria" not in qd or not qd["criteria"]:
+                            qd["criteria"] = {"yes": "Yes", "no": "No"}
+                        elif isinstance(qd["criteria"], (list, tuple)):
+                            qd["criteria"] = {str(c): str(c) for c in qd["criteria"]}
+                    norm_questions[q_key] = qd
+                elif isinstance(q_def, (list, tuple)):
+                    norm_questions[q_key] = {
+                        "type": "choice",
+                        "instructions": f"Select the best option for {q_key}",
+                        "criteria": {str(opt): str(opt) for opt in q_def}
+                    }
+                elif isinstance(q_def, str):
+                    if "/" in q_def:
+                        opts = [o.strip() for o in q_def.split("/") if o.strip()]
+                        norm_questions[q_key] = {
+                            "type": "choice",
+                            "instructions": f"Determine {q_key}",
+                            "criteria": {opt: opt for opt in opts}
+                        }
+                    else:
+                        norm_questions[q_key] = {
+                            "type": "choice",
+                            "instructions": q_def,
+                            "criteria": {"yes": "Yes", "no": "No"}
+                        }
+
         t0 = time.time()
         try:
-            preds = _router.predict(state, questions)
+            preds = _router.predict(norm_state, norm_questions)
             latency_ms = round((time.time() - t0) * 1000, 1)
             self._send_json(200, {
                 "decisions": preds.get("answers", preds),

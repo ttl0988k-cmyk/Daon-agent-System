@@ -154,13 +154,69 @@ class LayaClient:
             return {"intent": "coding", "confidence": 0.8, "fallback": True}
         return {"intent": "conversation", "confidence": 0.7, "fallback": True}
 
+    @staticmethod
+    def _normalize_decide_payload(raw_state: Any, raw_questions: Any) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Normalize freeform state & questions into Laya predict schema."""
+        # 1. Normalize state: ensure dict with 'text' or 'prompt'
+        norm_state: Dict[str, Any] = {}
+        if isinstance(raw_state, str):
+            norm_state = {"text": raw_state}
+        elif isinstance(raw_state, dict):
+            norm_state = dict(raw_state)
+            if not any(k in norm_state for k in ["text", "prompt"]):
+                norm_state["text"] = " ".join(f"{k}: {v}" for k, v in norm_state.items()) or "None"
+        else:
+            norm_state = {"text": str(raw_state)}
+
+        # 2. Normalize questions: ensure required Laya schema (instructions, type, criteria)
+        norm_questions: Dict[str, Any] = {}
+        if isinstance(raw_questions, dict):
+            for q_key, q_def in raw_questions.items():
+                if isinstance(q_def, dict):
+                    qd = dict(q_def)
+                    if not qd.get("instructions"):
+                        qd["instructions"] = f"Determine the answer for {q_key}"
+                    if not qd.get("type"):
+                        qd["type"] = "choice"
+                    if qd.get("type") == "choice":
+                        if "criteria" not in qd or not qd["criteria"]:
+                            qd["criteria"] = {"yes": "Yes", "no": "No"}
+                        elif isinstance(qd["criteria"], (list, tuple)):
+                            qd["criteria"] = {str(c): str(c) for c in qd["criteria"]}
+                    norm_questions[q_key] = qd
+                elif isinstance(q_def, (list, tuple)):
+                    norm_questions[q_key] = {
+                        "type": "choice",
+                        "instructions": f"Select the best option for {q_key}",
+                        "criteria": {str(opt): str(opt) for opt in q_def}
+                    }
+                elif isinstance(q_def, str):
+                    if "/" in q_def:
+                        opts = [o.strip() for o in q_def.split("/") if o.strip()]
+                        norm_questions[q_key] = {
+                            "type": "choice",
+                            "instructions": f"Determine {q_key}",
+                            "criteria": {opt: opt for opt in opts}
+                        }
+                    else:
+                        norm_questions[q_key] = {
+                            "type": "choice",
+                            "instructions": q_def,
+                            "criteria": {"yes": "Yes", "no": "No"}
+                        }
+        return norm_state, norm_questions
+
     def decide(self, state: Dict[str, Any], questions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Perform general typed decision with Laya."""
+        """Perform general typed decision with Laya.
+        
+        Automatically normalizes freeform state and questions to match Laya predict specification.
+        """
         if not self.is_healthy():
             return None
 
         try:
-            payload = json.dumps({"state": state, "questions": questions}).encode("utf-8")
+            norm_state, norm_questions = self._normalize_decide_payload(state, questions)
+            payload = json.dumps({"state": norm_state, "questions": norm_questions}).encode("utf-8")
             req = urllib.request.Request(
                 f"{self.base_url}/decide",
                 data=payload,
