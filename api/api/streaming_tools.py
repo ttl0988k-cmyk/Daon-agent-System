@@ -30,6 +30,40 @@ def _normalize_input_schema(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return schema
 
 
+def _append_tool_if_missing(agent: Any, schema: Dict[str, Any], tool_name: str) -> None:
+    """Safely append a tool schema to agent.tools without introducing duplicates."""
+    if not hasattr(agent, "tools") or not isinstance(agent.tools, list):
+        return
+    for t in agent.tools:
+        if isinstance(t, dict):
+            fn_name = t.get("function", {}).get("name") or t.get("name")
+            if fn_name == tool_name:
+                return
+    agent.tools.append(schema)
+
+
+def _deduplicate_agent_tools(agent: Any) -> None:
+    """Ensure agent.tools has strictly unique tool names.
+
+    Strict gateways like OpenCode Go / Anthropic reject requests with HTTP 400
+    ('tools contains duplicate names: ...') if any name is duplicated.
+    """
+    if not hasattr(agent, "tools") or not isinstance(agent.tools, list):
+        return
+    seen_names = set()
+    deduped = []
+    for t in agent.tools:
+        name = None
+        if isinstance(t, dict):
+            name = t.get("function", {}).get("name") or t.get("name")
+        if name:
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+        deduped.append(t)
+    agent.tools = deduped
+
+
 def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str) -> int:
     """Inject active MCP tools from MCPManager into Hermes Registry and agent.tools."""
     injected_count = 0
@@ -72,7 +106,7 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
                     "parameters": _normalize_input_schema(t.get('inputSchema'))
                 }
             }
-            agent.tools.append(api_schema)
+            _append_tool_if_missing(agent, api_schema, mcp_func_name)
             agent.valid_tool_names.add(mcp_func_name)
 
             # 2) Flat registry schema for dispatch
@@ -148,7 +182,7 @@ def inject_patch_registry_tools(agent: Any) -> None:
                 }
             }
         }
-        agent.tools.append(_pr_query_schema)
+        _append_tool_if_missing(agent, _pr_query_schema, "query_patches")
         agent.valid_tool_names.add("query_patches")
 
         def _pr_query_handler(args: dict, **kwargs) -> str:
@@ -186,7 +220,7 @@ def inject_patch_registry_tools(agent: Any) -> None:
                 }
             }
         }
-        agent.tools.append(_pr_register_schema)
+        _append_tool_if_missing(agent, _pr_register_schema, "register_patch")
         agent.valid_tool_names.add("register_patch")
 
         def _pr_register_handler(args: dict, **kwargs) -> str:
@@ -237,7 +271,7 @@ def inject_memory_forget_tool(agent: Any) -> None:
                 }
             }
         }
-        agent.tools.append(_mf_schema)
+        _append_tool_if_missing(agent, _mf_schema, "memory_forget")
         agent.valid_tool_names.add("memory_forget")
 
         def _mf_handler(args: dict, **kwargs) -> str:
@@ -290,9 +324,9 @@ def inject_media_generation_tools(agent: Any) -> None:
         from tools.registry import registry as _mg_registry
 
         _mg_img_schema, _mg_vid_schema = _mg_register(_mg_registry)
-        agent.tools.append(_mg_img_schema)
+        _append_tool_if_missing(agent, _mg_img_schema, "generate_image")
         agent.valid_tool_names.add("generate_image")
-        agent.tools.append(_mg_vid_schema)
+        _append_tool_if_missing(agent, _mg_vid_schema, "generate_video")
         agent.valid_tool_names.add("generate_video")
         _logger.debug("Injected generate_image + generate_video tools.")
     except Exception as _mg_inj_e:
@@ -321,7 +355,7 @@ def inject_self_update_tool(agent: Any, session: Any, session_id: str) -> None:
                 }
             }
         }
-        agent.tools.append(_su_schema)
+        _append_tool_if_missing(agent, _su_schema, "request_server_update")
         agent.valid_tool_names.add("request_server_update")
 
         def _su_handler(args: dict, **kwargs) -> str:
@@ -413,23 +447,11 @@ def inject_self_evolution_tool(
             _logger.warning("Self-evolution tool injection skipped: no schema returned.")
             return
 
-        # 중복 방지: agent.tools 에 같은 이름의 스키마가 이미 있으면 append 하지 않는다.
-        _already_in_agent = False
-        try:
-            for _t in getattr(agent, "tools", []) or []:
-                _fn = _t.get("function", {}) if isinstance(_t, dict) else {}
-                if _fn.get("name") == tool_name:
-                    _already_in_agent = True
-                    break
-        except Exception:
-            _already_in_agent = False
-
-        if not _already_in_agent:
-            agent.tools.append(_se_schema)
+        _append_tool_if_missing(agent, _se_schema, tool_name)
         agent.valid_tool_names.add(tool_name)
         _logger.debug(
-            "Injected %s tool into agent (session=%s, stream=%s, reused=%s).",
-            tool_name, session_id or "-", stream_id or "-", _already_in_agent,
+            "Injected %s tool into agent (session=%s, stream=%s).",
+            tool_name, session_id or "-", stream_id or "-",
         )
     except Exception as _se_inj_e:
         _logger.warning("Self-evolution tool injection failed: %s", _se_inj_e)
@@ -495,19 +517,7 @@ def inject_daon_action_tool(agent: Any) -> None:
             }
         }
 
-        # Avoid duplicates in agent.tools
-        _already_in_agent = False
-        try:
-            for _t in getattr(agent, "tools", []) or []:
-                _fn = _t.get("function", {}) if isinstance(_t, dict) else {}
-                if _fn.get("name") == "daon_action":
-                    _already_in_agent = True
-                    break
-        except Exception:
-            _already_in_agent = False
-
-        if not _already_in_agent:
-            agent.tools.append(_daon_action_schema)
+        _append_tool_if_missing(agent, _daon_action_schema, "daon_action")
         if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
             agent.valid_tool_names.add("daon_action")
 
@@ -672,8 +682,7 @@ def inject_fast_decision_tool(agent: Any) -> None:
             description="Laya fast decision engine for high-throughput zero-token classification"
         )
         registry.register_toolset_alias("decision-engine", "decision-engine")
-        if hasattr(agent, "tools") and isinstance(agent.tools, list):
-            agent.tools.append(_decision_schema)
+        _append_tool_if_missing(agent, _decision_schema, "fast_decision_engine")
         if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
             agent.valid_tool_names.add("fast_decision_engine")
         _logger.debug("Injected fast_decision_engine tool into agent.")
@@ -700,4 +709,5 @@ def register_all_streaming_tools(
     inject_self_evolution_tool(agent, session_id=session_id, stream_id=stream_id)
     inject_daon_action_tool(agent)
     inject_fast_decision_tool(agent)
+    _deduplicate_agent_tools(agent)
     return mcp_count

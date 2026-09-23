@@ -110,16 +110,21 @@ try:
 except ImportError:
     pass
 
-# Setup paths (use RESOURCE_DIR in PyInstaller, project root otherwise)
-sys.path.insert(0, str(RESOURCE_DIR))
-sys.path.insert(0, str(RESOURCE_DIR / 'api'))
-if (RESOURCE_DIR / 'api' / 'api').exists():
-    sys.path.insert(0, str(RESOURCE_DIR / 'api' / 'api'))
+# Setup paths
 # PyInstaller bundles hermes-agent inside _MEIPASS; ensure it's on sys.path
 if hasattr(sys, '_MEIPASS'):
     _meipass = Path(sys._MEIPASS)
     sys.path.insert(0, str(_meipass / 'hermes-agent'))
     sys.path.insert(0, str(_meipass))
+
+# Loose resources in RESOURCE_DIR take highest priority over bundled files
+# allowing hotfixes and updates in resources/ to work immediately without full rebuild
+if (RESOURCE_DIR / 'hermes-agent').exists():
+    sys.path.insert(0, str(RESOURCE_DIR / 'hermes-agent'))
+if (RESOURCE_DIR / 'api' / 'api').exists():
+    sys.path.insert(0, str(RESOURCE_DIR / 'api' / 'api'))
+sys.path.insert(0, str(RESOURCE_DIR / 'api'))
+sys.path.insert(0, str(RESOURCE_DIR))
 
 from api.config import PORT, HOST, MIME_MAP, STREAMS, STREAMS_LOCK, load_settings, save_settings
 # [v4] api.agent_runner, api.managers.model_manager 제거됨 (server.py에서 미사용, import 체인이 서버 시작 차단)
