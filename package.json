@@ -92,6 +92,10 @@
       {
         "from": "api/agents",
         "to": "api/agents"
+      },
+      {
+        "from": "daon_runtime/laya_service.py",
+        "to": "daon_runtime/laya_service.py"
       }
     ]
   },

@@ -42,7 +42,11 @@ exports.default = async function afterPack(context) {
     const srcRes = path.join(context.appOutDir, 'resources');
     // server.exe = PyInstaller 백엔드 번들(핵심 버그픽스가 들어있는 파일).
     // 느슨한 리소스(spec/store)는 지인용 빌드에서 sanitize 될 수 있어 제외한다.
-    const filesToSync = ['app.asar', 'server.exe'];
+    const filesToSync = [
+        'app.asar',
+        'server.exe',
+        path.join('daon_runtime', 'laya_service.py'),
+    ];
     for (const appDir of appDirs) {
         const targetRes = path.join(appDir, 'resources');
         if (!fs.existsSync(targetRes)) { continue; }
@@ -50,7 +54,9 @@ exports.default = async function afterPack(context) {
             const src = path.join(srcRes, fname);
             if (!fs.existsSync(src)) { continue; }
             try {
-                fs.copyFileSync(src, path.join(targetRes, fname));
+                const dst = path.join(targetRes, fname);
+                fs.mkdirSync(path.dirname(dst), { recursive: true });
+                fs.copyFileSync(src, dst);
                 console.log('[afterPack] Auto-synced ' + fname + ' -> ' + targetRes);
             } catch (e) {
                 console.warn('[afterPack] Auto-sync failed for ' + fname +
