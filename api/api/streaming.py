@@ -1303,6 +1303,44 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       if not any(name.startswith(p) for p in _disallowed_prefixes)
                   }
 
+          # ── [Raon Inline Consumer] System 1 Laya Pre-routing ──
+          try:
+              from api.laya_client import laya_client
+              t_laya0 = time.time()
+              pre_route_res = laya_client.pre_route_user_prompt(msg_text or '')
+              if pre_route_res:
+                  laya_intent = pre_route_res.get("intent", "conversation")
+                  laya_conf = float(pre_route_res.get("confidence", 0.7))
+                  laya_lat = pre_route_res.get("latency_ms", round((time.time() - t_laya0) * 1000, 1))
+                  _logger.info("[Laya-Inline-Consumer] Intent: %s (conf: %.2f) in %.1fms", laya_intent, laya_conf, laya_lat)
+                  
+                  # Emit instant decision event to frontend UI (latency ~30ms)
+                  put('laya_decision', {
+                      'intent': laya_intent,
+                      'confidence': laya_conf,
+                      'latency_ms': laya_lat
+                  })
+                  
+                  # If pure conversation with high confidence, prune heavy tools so LLM attention is sharp
+                  if laya_intent == 'conversation' and laya_conf >= 0.85 and not is_browser_session:
+                      _heavy_prefixes = ('mcp_serena_', 'mcp_stitch_', 'mcp_figma_', 'mcp_daon-design_')
+                      if hasattr(agent, 'tools') and isinstance(agent.tools, list):
+                          agent.tools = [t for t in agent.tools if not any(t.get('function', {}).get('name', '').startswith(p) for p in _heavy_prefixes)]
+                      if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
+                          agent.valid_tool_names = {n for n in agent.valid_tool_names if not any(n.startswith(p) for p in _heavy_prefixes)}
+                  
+                  # Inject lightweight guidance into system prompt
+                  if laya_intent == 'coding':
+                      _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: 로컬 코드 수정 및 빌드/디버깅 작업입니다. 생성에 집중하세요."
+                  elif laya_intent == 'conversation':
+                      _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: 일반 대화 및 설명 요청입니다. 불필요한 도구 호출 없이 직관적으로 답변하세요."
+                  elif laya_intent == 'worker_task':
+                      _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: 다단계 또는 대규모 자율 작업입니다. 필요 시 하네스/워커 도구를 활용하세요."
+                  elif laya_intent == 'design_ui':
+                      _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: UI 디자인 및 프론트엔드 스타일 작업입니다. 디자인 토큰 및 스타일에 집중하세요."
+          except Exception as _e_laya:
+              _logger.debug("Laya inline consumer bypassed: %s", _e_laya)
+
           # ── System Prompt & Multimodal Message Composition ──
           from api.streaming_prompts import compose_system_message, build_user_payload
 

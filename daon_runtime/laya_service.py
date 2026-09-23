@@ -111,6 +111,8 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
         if self.path == "/prune_mcp":
             self._handle_prune_mcp(req_data)
+        elif self.path == "/pre_route":
+            self._handle_pre_route(req_data)
         elif self.path == "/decide":
             self._handle_decide(req_data)
         elif self.path == "/batch_classify":
@@ -179,6 +181,57 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             "needed_mcps": needed,
             "latency_ms": latency_ms
         })
+
+    def _handle_pre_route(self, req_data: Dict[str, Any]):
+        """System 1 inline pre-routing for Raon (streaming agent).
+        
+        Classifies prompt intent in a single ultra-fast forward pass (~30ms on GPU).
+        """
+        prompt = req_data.get("prompt", "")
+        if not prompt or _router is None:
+            self._send_json(200, {
+                "intent": "general",
+                "confidence": 0.5,
+                "latency_ms": 0.0,
+                "fallback": True
+            })
+            return
+
+        t0 = time.time()
+        question = {
+            "intent": {
+                "type": "choice",
+                "instructions": "Classify the user intent for the AI assistant",
+                "criteria": {
+                    "conversation": "General questions, greetings, chat, advice, asking explanations without wanting code or file modifications.",
+                    "coding": "Editing local files, writing code, fixing bugs, running scripts, git commands, building or debugging.",
+                    "worker_task": "Multi-step complex autonomous refactoring, heavy background tasks, repo-wide search requiring a subagent worker.",
+                    "design_ui": "Frontend styling, CSS, UI tokens, Figma design cards, layout adjustments, themes."
+                }
+            }
+        }
+        try:
+            state = {"prompt": prompt}
+            preds = _router.predict(state, question)
+            ans = preds.get("answers", {}).get("intent", {})
+            choice = ans.get("choice", "coding")
+            probs = ans.get("probabilities", {})
+            conf = float(probs.get(choice, 0.5)) if isinstance(probs, dict) else 0.5
+            elapsed = round((time.time() - t0) * 1000, 1)
+            self._send_json(200, {
+                "intent": choice,
+                "confidence": round(conf, 4),
+                "probabilities": probs,
+                "latency_ms": elapsed
+            })
+        except Exception as e:
+            _logger.warning("Laya pre_route prediction failed: %s", e)
+            self._send_json(200, {
+                "intent": "general",
+                "confidence": 0.5,
+                "latency_ms": round((time.time() - t0) * 1000, 1),
+                "fallback": True
+            })
 
     def _handle_decide(self, req_data: Dict[str, Any]):
         state = req_data.get("state", {})

@@ -118,6 +118,42 @@ class LayaClient:
 
         return needed
 
+    def pre_route_user_prompt(self, prompt: str) -> Dict[str, Any]:
+        """System 1 inline pre-routing for Raon (streaming agent).
+        
+        Evaluates prompt intent in ~30ms to decide:
+        - intent: 'conversation' | 'coding' | 'worker_task' | 'design_ui'
+        - confidence: float
+        - latency_ms: float
+        """
+        if not prompt:
+            return {"intent": "conversation", "confidence": 1.0, "latency_ms": 0.0}
+
+        if self.is_healthy():
+            try:
+                payload = json.dumps({"prompt": prompt}).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{self.base_url}/pre_route",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    if resp.status == 200:
+                        return json.loads(resp.read().decode("utf-8"))
+            except Exception as e:
+                _logger.warning("Laya pre_route request failed, using fast fallback: %s", e)
+
+        # Fallback rule-based heuristic
+        p_lower = prompt.lower()
+        if any(w in p_lower for w in ["워커", "하네스", "worker", "harness", "배경 작업", "자율 작업"]):
+            return {"intent": "worker_task", "confidence": 0.8, "fallback": True}
+        if any(w in p_lower for w in ["디자인", "css", "스타일", "figma", "피그마", "color", "layout"]):
+            return {"intent": "design_ui", "confidence": 0.8, "fallback": True}
+        if any(w in p_lower for w in ["코드", "수정", "버그", "작성", "파일", "스크립트", "git", "빌드", "테스트", "def ", "class "]):
+            return {"intent": "coding", "confidence": 0.8, "fallback": True}
+        return {"intent": "conversation", "confidence": 0.7, "fallback": True}
+
     def decide(self, state: Dict[str, Any], questions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Perform general typed decision with Laya."""
         if not self.is_healthy():
