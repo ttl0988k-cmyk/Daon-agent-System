@@ -58,6 +58,8 @@ _HERMES_CORE_TOOLS = [
     "execute_code", "delegate_task",
     # Dynamic Harness
     "execute_dynamic_harness",
+    # Fast decision engine (Laya System 1)
+    "fast_decision_engine",
     # Cronjob management
     "cronjob",
     # Cross-platform messaging (gated on gateway running via check_fn)
@@ -70,6 +72,11 @@ _HERMES_CORE_TOOLS = [
 # Core toolset definitions
 # These can include individual tools or reference other toolsets
 TOOLSETS = {
+    "decision-engine": {
+        "description": "Laya System 1 fast decision engine - zero-token bulk classification and scoring",
+        "tools": ["fast_decision_engine"],
+        "includes": []
+    },
     # Basic toolsets - individual tool categories
     "web": {
         "description": "Web research and content extraction tools",

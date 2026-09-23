@@ -650,6 +650,8 @@ def inject_fast_decision_tool(agent: Any) -> None:
         registry.register_toolset_alias("decision-engine", "decision-engine")
         if hasattr(agent, "tools") and isinstance(agent.tools, list):
             agent.tools.append(_decision_schema)
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("fast_decision_engine")
         _logger.debug("Injected fast_decision_engine tool into agent.")
     except Exception as _e:
         _logger.warning("fast_decision_engine tool injection failed: %s", _e)

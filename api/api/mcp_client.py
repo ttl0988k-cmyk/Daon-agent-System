@@ -598,6 +598,7 @@ class MCPManager:
         self._load_config()
 
     def _save_config(self):
+        tmp_path = None
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
             config_data = []
@@ -616,10 +617,36 @@ class MCPManager:
                         entry['url'] = conn.url
                         entry['auth_token'] = conn.auth_token
                     config_data.append(entry)
-            with open(self._config_path, 'w', encoding='utf-8') as f:
+
+            # 안전장치: _connections가 비어있는데 기존 정상 파일이 존재하면 클로버 방지
+            if not config_data and self._config_path.exists() and self._config_path.stat().st_size > 100:
+                _logger.warning("MCPManager._save_config: Refusing to overwrite healthy config with empty list")
+                return
+
+            # 원자적 쓰기 (Atomic write): tmp 파일에 먼저 작성 후 replace
+            tmp_path = self._config_path.with_suffix('.tmp')
+            bak_path = self._config_path.with_suffix('.bak')
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 _json.dump(config_data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # 기존 정상 파일이 있으면 .bak으로 백업 유지
+            if self._config_path.exists() and self._config_path.stat().st_size > 0:
+                try:
+                    import shutil
+                    shutil.copy2(self._config_path, bak_path)
+                except Exception:
+                    pass
+
+            os.replace(tmp_path, self._config_path)
         except Exception as e:
             _logger.error("Failed to save MCP config: %s", e)
+            if tmp_path and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
 
     @staticmethod
     def _is_jwt_expired(token: str) -> bool:
