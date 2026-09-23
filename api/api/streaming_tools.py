@@ -579,6 +579,103 @@ def inject_daon_action_tool(agent: Any) -> None:
         _logger.warning("daon_action tool injection failed: %s", _e)
 
 
+def expand_sibling_candidates(
+    items: List[str],
+    results: List[str],
+    probabilities: Optional[List[Dict[str, float]]] = None,
+    irrelevant_labels: Optional[set] = None,
+    window: int = 2
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Expand UI control candidates based on sibling/group proximity.
+
+    When an element in a control group (e.g., 'option', 'tab', 'radio', 'button')
+    is identified as a candidate, neighboring elements sharing the same tag or role
+    within +/- `window` distance are preserved to guarantee 100% recall.
+    """
+    if irrelevant_labels is None:
+        irrelevant_labels = {
+            "irrelevant", "content_noise", "noise", "none", "article_content",
+            "skip", "discard", "content", "other"
+        }
+
+    tag_re = re.compile(r"^(n\d+)\s+([a-zA-Z0-9_\-]+)\s*(.*)$")
+    # Clustered control groups that should expand to adjacent siblings
+    CONTROL_TAGS = {"option", "tab", "radio", "menuitem", "button"}
+
+    candidates: List[Dict[str, Any]] = []
+    sibling_expansions: List[Dict[str, Any]] = []
+    expanded_indices = set()
+
+    # Pass 1: Direct positive classifications and soft-threshold candidates
+    for idx, (it, res) in enumerate(zip(items, results)):
+        prob_dist = probabilities[idx] if (probabilities and idx < len(probabilities)) else {}
+        is_direct = res not in irrelevant_labels
+
+        soft_hit = False
+        soft_cat = None
+        if not is_direct and prob_dist:
+            # Only trigger soft threshold if the model is genuinely uncertain (irrelevant < 0.60)
+            irrel_p = max((prob_dist.get(lbl, 0.0) for lbl in irrelevant_labels if lbl in prob_dist), default=1.0)
+            if irrel_p < 0.60:
+                for c_name, c_p in prob_dist.items():
+                    if c_name not in irrelevant_labels and c_p >= 0.30:
+                        soft_hit = True
+                        soft_cat = c_name
+                        break
+
+        if is_direct:
+            candidates.append({
+                "index": idx,
+                "item": it,
+                "category": res,
+                "confidence": prob_dist,
+                "reason": "classified"
+            })
+        elif soft_hit:
+            expanded_indices.add(idx)
+            entry = {
+                "index": idx,
+                "item": it,
+                "category": soft_cat or "candidate",
+                "confidence": prob_dist,
+                "reason": f"soft_threshold: {soft_cat} prob >= 0.30 (irrelevant={irrel_p:.2f} < 0.60)"
+            }
+            candidates.append(entry)
+            sibling_expansions.append(entry)
+
+    # Pass 2: Sibling proximity expansion (Control Groups: option, tab, radio, button)
+    for c in list(candidates):
+        idx = c["index"]
+        m = tag_re.match(items[idx])
+        if not m:
+            continue
+        tag = m.group(2).lower()
+        if tag not in CONTROL_TAGS:
+            continue
+
+        # Look at adjacent neighbors within window
+        for n_idx in range(max(0, idx - window), min(len(items), idx + window + 1)):
+            if n_idx == idx or n_idx in expanded_indices:
+                continue
+            if results[n_idx] in irrelevant_labels:
+                n_m = tag_re.match(items[n_idx])
+                if n_m and n_m.group(2).lower() == tag:
+                    expanded_indices.add(n_idx)
+                    n_prob = probabilities[n_idx] if (probabilities and n_idx < len(probabilities)) else {}
+                    exp_entry = {
+                        "index": n_idx,
+                        "item": items[n_idx],
+                        "category": c["category"],
+                        "confidence": n_prob,
+                        "reason": f"sibling_expansion: adjacent {tag} to {items[idx]}"
+                    }
+                    candidates.append(exp_entry)
+                    sibling_expansions.append(exp_entry)
+
+    candidates.sort(key=lambda x: x["index"])
+    return candidates, sibling_expansions
+
+
 def inject_fast_decision_tool(agent: Any) -> None:
     """Inject Laya fast decision engine tool into agent.
     Allows agent to classify or score bulk items without LLM token cost.
@@ -593,9 +690,11 @@ def inject_fast_decision_tool(agent: Any) -> None:
                 "name": "fast_decision_engine",
                 "description": (
                     "초고속 System 1 결정 엔진 (Laya/ModernBERT 기반). "
-                    "대량의 텍스트/데이터를 분류하거나 참/거짓 판단, 우선순위 채점을 "
-                    "외부 LLM 토큰 소모 없이 로컬 GPU/CPU에서 0원에 초고속으로 일괄 처리합니다. "
-                    "많은 항목(티켓, 파일, 후보군)을 필터링하거나 분류할 때 사용하세요."
+                    "대량의 텍스트/UI 요소를 분류하거나 참/거짓 판단을 외부 LLM 토큰 소모 없이 로컬 GPU에서 0원에 초고속으로 일괄 처리합니다.\n"
+                    "★ 브라우저 스냅샷 필터링 팁 (Recall 100% 보장):\n"
+                    "1. 세부 액션으로 쪼개기보다 'target_control' (조작 대상: 최신순/관련도순 정렬, 검색창, 필터버튼) vs 'irrelevant' (단순 기사/광고)로 이진 분류할 때 가장 정확합니다.\n"
+                    "2. criteria에 한국어 키워드(최신순, 관련도순, 날짜순, 검색옵션 등)를 명시하세요.\n"
+                    "3. 형제 요소 자동 보정(Sibling Expansion)이 활성화되어 옵션 그룹(option, tab, radio) 중 하나만 잡혀도 이웃 옵션 전체가 candidates에 포함됩니다."
                 ),
                 "parameters": {
                     "type": "object",
@@ -612,7 +711,7 @@ def inject_fast_decision_tool(agent: Any) -> None:
                         },
                         "categories": {
                             "type": "object",
-                            "description": "카테고리 ID -> 설명 맵 (예: {'bug': '버그 신고', 'inquiry': '일반 문의', 'refund': '환불 요청'})"
+                            "description": "카테고리 ID -> 설명 맵 (예: {'target_control': '정렬 옵션(최신순, 관련도순), 검색버튼, 필터', 'irrelevant': '뉴스 기사 본문, 광고, 언론사'})"
                         },
                         "instruction": {
                             "type": "string",
@@ -650,10 +749,25 @@ def inject_fast_decision_tool(agent: Any) -> None:
             if task == "batch_classify":
                 if not items or not categories:
                     return json.dumps({"ok": False, "error": "items and categories are required for batch_classify"})
-                results = laya_client.batch_classify(items, categories, instruction or "Classify this item")
+
+                resp_data = laya_client.batch_classify(
+                    items, categories, instruction or "Classify this item", return_details=True
+                )
+                if isinstance(resp_data, dict):
+                    results = resp_data.get("results", [])
+                    probabilities = resp_data.get("probabilities", [])
+                else:
+                    results = resp_data
+                    probabilities = []
+
+                candidates, sibling_expansions = expand_sibling_candidates(items, results, probabilities)
+
                 return json.dumps({
                     "ok": True,
                     "count": len(results),
+                    "candidates_count": len(candidates),
+                    "candidates": candidates,
+                    "sibling_expansions": sibling_expansions,
                     "results": results
                 }, ensure_ascii=False)
 

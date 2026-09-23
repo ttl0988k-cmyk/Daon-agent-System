@@ -230,10 +230,23 @@ class LayaClient:
             _logger.warning("Laya decide request failed: %s", e)
         return None
 
-    def batch_classify(self, items: List[str], categories: Dict[str, str], instruction: str = "Classify this item") -> List[str]:
-        """Classify a batch of text items into one of the categories."""
+    def batch_classify(
+        self,
+        items: List[str],
+        categories: Dict[str, str],
+        instruction: str = "Classify this item",
+        return_details: bool = False
+    ) -> Union[List[str], Dict[str, Any]]:
+        """Classify a batch of text items into one of the categories.
+        
+        Args:
+            items: List of text strings to classify.
+            categories: Dict mapping category ID -> description.
+            instruction: Classification prompt/instruction.
+            return_details: If True, returns dict with results and probabilities.
+        """
         if not self.is_healthy():
-            return []
+            return {"results": [], "probabilities": []} if return_details else []
 
         try:
             payload = json.dumps({
@@ -250,10 +263,12 @@ class LayaClient:
             with urllib.request.urlopen(req, timeout=max(self.timeout, len(items) * 2.5)) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
+                    if return_details:
+                        return data
                     return data.get("results", [])
         except Exception as e:
             _logger.warning("Laya batch_classify failed: %s", e)
-        return []
+        return {"results": [], "probabilities": []} if return_details else []
 
 
 # Global singleton instance

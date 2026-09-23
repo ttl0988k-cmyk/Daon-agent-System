@@ -52,9 +52,17 @@ def init_laya_model():
         _device = "cpu"
 
     try:
+        import os
+        import glob
         import laya
         t0 = time.time()
-        _router = laya.load(MODEL_ID)
+        model_path = MODEL_ID
+        cache_pattern = os.path.expanduser(r"~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/*")
+        snapshots = glob.glob(cache_pattern)
+        if snapshots and os.path.isdir(snapshots[0]):
+            model_path = snapshots[0]
+            _logger.info("Using cached local model path: %s", model_path)
+        _router = laya.load(model_path)
         _logger.info("Laya model loaded successfully in %.2f seconds on %s", time.time() - t0, _device)
     except Exception as e:
         _logger.error("Failed to load Laya model: %s", e, exc_info=True)
@@ -324,6 +332,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
         t0 = time.time()
         results = []
+        probabilities = []
         question_def = {
             "type": "choice",
             "instructions": instruction or "Classify this item into one category",
@@ -369,12 +378,14 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                     logits_np = logits.float().cpu().numpy()[:, :k] / t_scale
                     p = np.exp(logits_np - np.max(logits_np, axis=-1, keepdims=True))
                     p = p / np.sum(p, axis=-1, keepdims=True)
-                    for choice_idx in p.argmax(axis=-1):
+                    for row_idx, choice_idx in enumerate(p.argmax(axis=-1)):
                         results.append(keys[choice_idx])
+                        probabilities.append({keys[c_idx]: round(float(p[row_idx, c_idx]), 4) for c_idx in range(k)})
 
         except Exception as e:
             _logger.warning("True batch classify failed, falling back to sequential predict: %s", e)
             results = []
+            probabilities = []
             question = {"category": question_def}
             for item in items:
                 try:
@@ -382,11 +393,21 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                     ans = pred.get("answers", {}).get("category", {})
                     choice_val = ans.get("choice") if isinstance(ans, dict) else ans
                     results.append(choice_val)
+                    if isinstance(ans, dict) and "probabilities" in ans:
+                        probabilities.append(ans["probabilities"])
+                    else:
+                        probabilities.append({})
                 except Exception:
                     results.append(None)
+                    probabilities.append({})
 
         latency_ms = round((time.time() - t0) * 1000, 1)
-        self._send_json(200, {"results": results, "count": len(results), "latency_ms": latency_ms})
+        self._send_json(200, {
+            "results": results,
+            "probabilities": probabilities,
+            "count": len(results),
+            "latency_ms": latency_ms
+        })
 
     def log_message(self, format, *args):
         # Mute standard noisy HTTP log lines
