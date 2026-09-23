@@ -22,20 +22,19 @@ let lastActionResults = [];
 let currentApprovalPollTimer = null;
 let currentGoal = null;
 let currentAutonomousStep = 0;
-const MAX_AUTONOMOUS_STEPS = 6;
+const MAX_AUTONOMOUS_STEPS = 10;
 let isAutoLooping = false;
 
-// ★ 2026-09-22 긴급 수정 — daon_action 태그 중복 실행 차단 원장
-//   [증상] 매 턴마다 탭이 1개씩 무한 생성되고, 이미 실패한 클릭/이동이 영원히 반복됨.
-//   [원인] done 핸들러가 세션 이력(role:"tool") '전체'를 뒤져 .tag(daon_action 태그)를
-//          매 턴 다시 accumulatedText 에 주입 → parseAndExecuteActions 가 재실행.
-//          그중 new_tab 태그가 턴마다 재실행되며 탭이 폭증했다.
+// ★ 2026-09-22 — daon_action 태그 중복 실행 차단 원장
 //   [수정] 태그를 의미키로 정규화해 '1회만' 실행되도록 원장을 둔다.
+//   [2026-09-24 패치] snapshot, elements, screenshot, wait, scroll 등 센서·읽기·무해 액션은
+//   매 턴 상태 관찰을 위해 정당하게 반복 실행되어야 하므로 중복 차단 대상에서 전면 면제한다.
 let executedActionKeys = new Set();
+const REPEATABLE_ACTIONS = new Set(['snapshot', 'elements', 'screenshot', 'wait', 'scroll']);
 
 function actionKeyOf(tag) {
   const m = String(tag || '').match(/<daon_action\s+([^>]+?)\/?>/i);
-  if (!m) return String(tag || '');
+  if (!m) return null;
   const a = m[1];
   const g = (n) => {
     const dq = a.match(new RegExp(`\\b${n}="([^"]*)"`, 'i'));
@@ -43,7 +42,12 @@ function actionKeyOf(tag) {
     const sq = a.match(new RegExp(`\\b${n}='([^']*)'`, 'i'));
     return sq ? sq[1] : '';
   };
-  return [g('action'), g('target'), g('url'), g('tab_id'), g('text'),
+  const action = (g('action') || '').toLowerCase();
+  // ★ 스냅샷/스크린샷/대기/스크롤 등 센서·무해 액션은 매 턴 독립 실행되어야 하므로 원장 차단 대상에서 제외 (면제)
+  if (REPEATABLE_ACTIONS.has(action)) {
+    return null;
+  }
+  return [action, g('target'), g('url'), g('tab_id'), g('text'),
           g('nodeid') || g('node_id'), g('nth'), g('key'), g('ms'), g('direction')]
     .map(v => String(v).trim().toLowerCase()).join('|');
 }
@@ -1111,40 +1115,44 @@ function listenToStream(streamId, bubble) {
       }
 
       // 1) 어시스턴트의 함수 호출(tool_calls)에 daon_action 이 포함된 경우 태그로 변환
-      if (lastAsst && Array.isArray(lastAsst.tool_calls)) {
-        for (const tc of lastAsst.tool_calls) {
-          const fn = tc.function || tc;
-          if (fn.name === 'daon_action') {
-            try {
-              const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : (fn.arguments || {});
-              const attrParts = Object.entries(args).map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`);
-              const tag = `<daon_action ${attrParts.join(' ')} />`;
-              if (!accumulatedText.includes(tag)) {
-                accumulatedText += `\n${tag}`;
-              }
-            } catch (err) {}
+      //    (현재 턴의 모든 어시스턴트 메시지에서 tool_calls 탐색)
+      const lastUserIdx = msgs.map(m => m.role).lastIndexOf('user');
+      const currentTurnMsgs = lastUserIdx >= 0 ? msgs.slice(lastUserIdx + 1) : msgs;
+
+      for (const m of currentTurnMsgs) {
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls) {
+            const fn = tc.function || tc;
+            if (fn.name === 'daon_action') {
+              try {
+                const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : (fn.arguments || {});
+                const attrParts = Object.entries(args).map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`);
+                const tag = `<daon_action ${attrParts.join(' ')} />`;
+                if (!accumulatedText.includes(tag)) {
+                  accumulatedText += `\n${tag}`;
+                }
+              } catch (err) {}
+            }
           }
         }
       }
 
-// 2) 툴 실행 결과(role: tool)에 태그가 포함된 경우 보강
-      //    ⚠️ 2026-09-22 긴급 수정 — 종전에는 세션 이력 '전체'를 뒤져 이미 실행한 태그까지
-      //    매 턴 다시 주입했다. 그 결과 new_tab 태그가 턴마다 재실행되어 탭이 무한 생성되고
-      //    실패한 클릭/이동이 영원히 반복됐다(대표님 실사용 사고).
-      //    원장(executedActionKeys)으로 '아직 실행하지 않은 태그'만 1회 주입한다.
+      // 2) 툴 실행 결과(role: tool)에 태그가 포함된 경우 보강
+      //    현재 턴의 툴 결과만 검색하여 이전 턴의 레거시 액션 재실행 방지.
+      //    key가 있는 비반복 액션(new_tab, click 등)만 원장 중복 차단 체크 (snapshot 등은 key가 null이라 항상 통과).
       let injectedCount = 0;
       const MAX_HISTORY_INJECT = 6;
-      for (const m of msgs.slice().reverse()) {
+      for (const m of currentTurnMsgs.slice().reverse()) {
         if (m.role === 'tool' && m.content) {
           try {
             const parsedTool = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
             const tag = parsedTool?.tag;
             if (!tag) continue;
             const key = actionKeyOf(tag);
-            if (executedActionKeys.has(key)) continue;   // ← 이미 실행한 태그 재주입 금지(핵심)
+            if (key && executedActionKeys.has(key)) continue;   // ← 이미 실행한 태그 재주입 금지(핵심)
             if (accumulatedText.includes(tag)) continue;
             if (injectedCount >= MAX_HISTORY_INJECT) break;
-            executedActionKeys.add(key);
+            if (key) executedActionKeys.add(key);
             injectedCount++;
             accumulatedText += `\n${tag}`;
           } catch (_) {}
@@ -1192,9 +1200,10 @@ async function parseAndExecuteActions(text, bubble) {
 
 while ((match = regex.exec(text)) !== null) {
     executedAny = true;
-    // ★ 2026-09-22 — 실행한 태그를 원장에 등록한다. 이 태그가 나중에 세션 이력
-    //   (role:"tool")으로 되돌아와 재주입되어도 원장에서 걸러져 재실행되지 않는다.
-    try { executedActionKeys.add(actionKeyOf(match[0])); } catch (_) {}
+    const actionKey = actionKeyOf(match[0]);
+    if (actionKey) {
+      try { executedActionKeys.add(actionKey); } catch (_) {}
+    }
     const attrStr = match[1];
     // ⚠️ 2026-09-10 패치: 속성값에 반대 따옴표가 포함된 CSS 셀렉터(input[placeholder*='x'] 등)를
     // 온전히 파싱하도록 개선. 기존 [^"']+ 패턴은 값 내부의 반대 따옴표에서 조기 종료되어
@@ -1374,7 +1383,7 @@ const target = getAttr('target');
       if (res && res.ok && Array.isArray(res.data)) {
         // ★ nodeId를 함께 노출 — 클릭/입력 시 selector 재탐색 대신 nodeId로 지정하면
         //   스냅샷 시점과 동일한 요소가 보장되고, 페이지가 바뀌면 실행이 거부된다.
-        const summary = res.data.slice(0, 30).map(it =>
+        const summary = res.data.slice(0, 70).map(it =>
           `[#${it.index}|nodeId=${it.nodeId}] <${it.role || it.tag}> "${it.text}"${it.value ? ` 값="${it.value}"` : ''}${it.selectValue ? ` →select="${it.selectValue}"` : ''} (${it.selector})`
         ).join('\n');
         updateActionCard(card, `✅ 스냅샷 완료 (총 ${res.data.length}개 요소 감지)`);
