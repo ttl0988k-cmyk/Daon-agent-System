@@ -614,13 +614,28 @@ def inject_fast_decision_tool(agent: Any) -> None:
             }
         }
 
-        def _decision_handler(task: str = "batch_classify", items: Optional[List[str]] = None,
-                              categories: Optional[Dict[str, str]] = None, instruction: str = "", **kwargs) -> str:
+        def _decision_handler(args: dict = None, **kwargs) -> str:
             if not laya_client.is_healthy():
                 return json.dumps({
                     "ok": False,
                     "error": "Laya decision service is currently offline (localhost:8765). Run scripts/start_laya.ps1."
                 }, ensure_ascii=False)
+
+            call_args = {}
+            if isinstance(args, dict):
+                call_args.update(args)
+            elif isinstance(args, str):
+                call_args["task"] = args
+            call_args.update(kwargs)
+
+            task = call_args.get("task", "batch_classify")
+            if isinstance(task, dict):
+                call_args.update(task)
+                task = call_args.get("task", "batch_classify")
+
+            items = call_args.get("items")
+            categories = call_args.get("categories")
+            instruction = call_args.get("instruction", "")
 
             if task == "batch_classify":
                 if not items or not categories:
@@ -630,6 +645,15 @@ def inject_fast_decision_tool(agent: Any) -> None:
                     "ok": True,
                     "count": len(results),
                     "results": results
+                }, ensure_ascii=False)
+
+            if task == "decide":
+                state = call_args.get("state", {})
+                questions = call_args.get("questions", {})
+                res = laya_client.decide(state, questions)
+                return json.dumps({
+                    "ok": res is not None,
+                    "decision": res
                 }, ensure_ascii=False)
 
             return json.dumps({"ok": False, "error": f"Unknown task: {task}"})
