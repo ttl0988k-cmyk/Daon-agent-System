@@ -3237,7 +3237,7 @@ function buildMediaOptions() {
 
 // ── [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 ────────────────────────
 function isModelSupportingReasoning(modelId) {
-  if (!modelId) return false;
+  if (!modelId) return true;
   // 1. Check data-reasoning attribute from select option
   const sel = $('modelSelect');
   if (sel) {
@@ -3272,26 +3272,75 @@ function isModelSupportingReasoning(modelId) {
     /\bclaude-3[-.]7\b/,
     /\bclaude-4\b/,
     /thinking/,
-    /\bdeepseek-r1\b/,
-    /\bdeepseek-reasoner\b/,
+    /reason/,
     /\br1\b/,
     /\bqwq\b/,
-    /reasoning/,
-    /reasoner/
+    /minimax/,
+    /deepseek/,
+    /glm/,
+    /qwen/,
+    /mimo/,
+    /auto/,
+    /gpt-oss/
   ];
   return patterns.some(re => re.test(mid));
 }
 
 function updateReasoningEffortPanel(modelId) {
   const container = $('reasoningEffortContainer');
-  if (!container) return;
+  const topContainer = $('topReasoningContainer');
+  const sel = $('reasoningEffortSelect');
+  const topSel = $('topReasoningSelect');
+
+  // Both containers are ALWAYS visible so the user can easily find them
+  if (container) container.style.display = 'flex';
+  if (topContainer) topContainer.style.display = 'inline-flex';
+
   const isReasoning = isModelSupportingReasoning(modelId);
+
+  // Wire two-way synchronization if not already bound
+  if (sel && !sel._syncBound) {
+    sel._syncBound = true;
+    sel.addEventListener('change', () => {
+      if (topSel) topSel.value = sel.value;
+    });
+  }
+  if (topSel && !topSel._syncBound) {
+    topSel._syncBound = true;
+    topSel.addEventListener('change', () => {
+      if (sel) sel.value = topSel.value;
+    });
+  }
+
   if (isReasoning) {
-    container.style.display = 'flex';
+    if (sel) {
+      sel.disabled = false;
+      sel.style.opacity = '1';
+      sel.title = '모델 추론 강도 (Thinking Effort) 조절';
+    }
+    if (topSel) {
+      topSel.disabled = false;
+      topSel.style.opacity = '1';
+      topSel.title = '모델 추론 강도 (Thinking Effort) 조절';
+    }
+    if (container) container.style.opacity = '1';
+    if (topContainer) topContainer.style.opacity = '1';
   } else {
-    container.style.display = 'none';
-    const sel = $('reasoningEffortSelect');
-    if (sel) sel.value = 'default';
+    // Non-reasoning model: keep visible, but disable with clear explanation
+    if (sel) {
+      sel.disabled = true;
+      sel.value = 'default';
+      sel.style.opacity = '0.55';
+      sel.title = '선택한 모델은 추론 강도 조절을 지원하지 않습니다 (고정 기본값)';
+    }
+    if (topSel) {
+      topSel.disabled = true;
+      topSel.value = 'default';
+      topSel.style.opacity = '0.55';
+      topSel.title = '선택한 모델은 추론 강도 조절을 지원하지 않습니다 (고정 기본값)';
+    }
+    if (container) container.style.opacity = '0.7';
+    if (topContainer) topContainer.style.opacity = '0.7';
   }
 }
 

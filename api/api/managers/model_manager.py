@@ -488,8 +488,9 @@ class ModelManager:
         which causes API 400 Bad Request errors.
         """
         if not model_id:
-            return False
+            return True
         mid = str(model_id).strip().lower()
+        pname = str(provider).strip().lower()
 
         # Explicit non-reasoning exclusions
         non_reasoning_prefixes = (
@@ -507,15 +508,23 @@ class ModelManager:
             r'\bclaude-3[-.]7\b',
             r'\bclaude-4\b',
             r'thinking',
-            r'\bdeepseek-r1\b',
-            r'\bdeepseek-reasoner\b',
+            r'reason',
             r'\br1\b',
             r'\bqwq\b',
-            r'reasoning',
-            r'reasoner',
+            r'minimax',
+            r'deepseek',
+            r'glm',
+            r'qwen',
+            r'mimo',
+            r'auto',
+            r'gpt-oss',
         )
         import re
-        return any(re.search(pat, mid) for pat in reasoning_patterns)
+        if any(re.search(pat, mid) for pat in reasoning_patterns):
+            return True
+        if pname in ('minimax', 'deepseek', 'opencode-go', 'opencode-zen', 'omniroute'):
+            return True
+        return False
 
     # ── Resolution ──────────────────────────────────────────────────────
 

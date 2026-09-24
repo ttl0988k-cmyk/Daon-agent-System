@@ -27,6 +27,16 @@
         <select id="modelSelect" style="flex:1;max-width:160px;">
           <option value="" disabled selected>-- 모델 선택 (설정 필요) --</option>
         </select>
+        <div id="topReasoningContainer" style="display:inline-flex; align-items:center; gap:4px; margin-left:6px;" title="모델 추론 강도 (Thinking Effort) 조절">
+          <label for="topReasoningSelect" style="font-size:11px; font-weight:700; color:var(--accent, #e94560); white-space:nowrap; cursor:pointer;">🧠추론</label>
+          <select id="topReasoningSelect" style="background:var(--bg3); border:1px solid var(--border2); color:var(--text); border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer; outline:none; max-width:85px;">
+            <option value="default" selected>기본</option>
+            <option value="low">낮음</option>
+            <option value="medium">보통</option>
+            <option value="high">높음</option>
+            <option value="none">끄기</option>
+          </select>
+        </div>
         <label style="margin-left: 8px;">PROFILE</label>
         <select id="rightAgentProfileSelect" style="flex:1;max-width:120px;">
         </select>
@@ -1249,8 +1259,8 @@
                   <span style="user-select:none;">플래닝 모드 🧠</span>
                 </label>
 
-                <!-- [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 (지원 모델에만 동적 노출) -->
-                <div id="reasoningEffortContainer" style="display:none; align-items:center; gap:4px; margin-left:8px; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; padding:2px 8px;">
+                <!-- [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 (항상 표시, 지원여부 스마트 제어) -->
+                <div id="reasoningEffortContainer" style="display:flex; align-items:center; gap:4px; margin-left:8px; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; padding:2px 8px;">
                   <label for="reasoningEffortSelect" title="모델 추론 강도 (Thinking Effort) 조절" style="font-size:11px; color:var(--accent, #e94560); font-weight:600; display:flex; align-items:center; gap:3px; cursor:pointer;">
                     <span>🤔 추론강도:</span>
                   </label>
