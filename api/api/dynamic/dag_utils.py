@@ -89,8 +89,12 @@ def _get_model_chain_for_node(preferred_model: str, role: str = "",
             key = _resolve_key_from_pool(p)
         except Exception:
             key = None
-        if not key:
-            key = os.getenv(f'{p.upper()}_API_KEY')
+        if p == 'omniroute':
+            if not b:
+                b = 'http://localhost:20128/v1'
+            if not key:
+                key = 'omniroute-local'
+            os.environ['OMNIROUTE_API_KEY'] = key
         return {"model": m, "provider": p, "base_url": b, "api_key": key}
 
     # 1. Preferred model (if any) — this also pins the anchor provider.
