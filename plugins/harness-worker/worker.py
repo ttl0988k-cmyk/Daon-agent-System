@@ -421,7 +421,7 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 "",
                 "[mcp_servers.serena]",
                 'command = "uvx"',
-                'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--open-web-dashboard", "false"]',
+                'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--enable-web-dashboard", "false", "--open-web-dashboard", "false", "--enable-gui-log-window", "false"]',
             ]
         if "daon-design" in targets:
             lines += [
