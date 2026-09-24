@@ -7,6 +7,7 @@
     }
 
     :root {
+      color-scheme: dark;
       --bg: #0f0f1a;
       --bg2: #16162a;
       --bg3: #1e1e35;
@@ -23,6 +24,19 @@
       --danger: #ef4444;
       --warning: #f59e0b;
       --code-bg: #0d0d1f;
+    }
+
+    select {
+      color-scheme: dark;
+    }
+
+    select option,
+    #reasoningEffortSelect option,
+    #topReasoningSelect option,
+    #modelSelect option,
+    #rightAgentProfileSelect option {
+      background-color: #1a1a2e !important;
+      color: #e2e2f2 !important;
     }
 
     /* Forest Emerald Theme */

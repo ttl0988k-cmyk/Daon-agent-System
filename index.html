@@ -29,12 +29,12 @@
         </select>
         <div id="topReasoningContainer" style="display:inline-flex; align-items:center; gap:4px; margin-left:6px;" title="모델 추론 강도 (Thinking Effort) 조절">
           <label for="topReasoningSelect" style="font-size:11px; font-weight:700; color:var(--accent, #e94560); white-space:nowrap; cursor:pointer;">🧠추론</label>
-          <select id="topReasoningSelect" style="background:var(--bg3); border:1px solid var(--border2); color:var(--text); border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer; outline:none; max-width:85px;">
-            <option value="default" selected>기본</option>
-            <option value="low">낮음</option>
-            <option value="medium">보통</option>
-            <option value="high">높음</option>
-            <option value="none">끄기</option>
+          <select id="topReasoningSelect" style="background:var(--bg3, #1e1e35); border:1px solid var(--border2); color:var(--text, #e2e2f2); border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer; outline:none; max-width:85px; color-scheme:dark;">
+            <option value="default" selected style="background-color:#1a1a2e; color:#e2e2f2;">기본</option>
+            <option value="low" style="background-color:#1a1a2e; color:#e2e2f2;">낮음</option>
+            <option value="medium" style="background-color:#1a1a2e; color:#e2e2f2;">보통</option>
+            <option value="high" style="background-color:#1a1a2e; color:#e2e2f2;">높음</option>
+            <option value="none" style="background-color:#1a1a2e; color:#e2e2f2;">끄기</option>
           </select>
         </div>
         <label style="margin-left: 8px;">PROFILE</label>
@@ -1260,16 +1260,16 @@
                 </label>
 
                 <!-- [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 (항상 표시, 지원여부 스마트 제어) -->
-                <div id="reasoningEffortContainer" style="display:flex; align-items:center; gap:4px; margin-left:8px; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; padding:2px 8px;">
+                <div id="reasoningEffortContainer" style="display:flex; align-items:center; gap:4px; margin-left:8px; background:var(--bg3, #1e1e35); border:1px solid var(--border2); border-radius:5px; padding:2px 8px;">
                   <label for="reasoningEffortSelect" title="모델 추론 강도 (Thinking Effort) 조절" style="font-size:11px; color:var(--accent, #e94560); font-weight:600; display:flex; align-items:center; gap:3px; cursor:pointer;">
                     <span>🤔 추론강도:</span>
                   </label>
-                  <select id="reasoningEffortSelect" style="background:transparent; border:none; color:var(--text); font-size:11px; font-weight:500; cursor:pointer; outline:none; font-family:inherit;">
-                    <option value="default" selected>기본</option>
-                    <option value="low">낮음 (Low)</option>
-                    <option value="medium">보통 (Medium)</option>
-                    <option value="high">높음 (High)</option>
-                    <option value="none">끄기 (Off)</option>
+                  <select id="reasoningEffortSelect" style="background:var(--bg3, #1e1e35); border:none; color:var(--text, #e2e2f2); font-size:11px; font-weight:500; cursor:pointer; outline:none; font-family:inherit; color-scheme:dark;">
+                    <option value="default" selected style="background-color:#1a1a2e; color:#e2e2f2;">기본</option>
+                    <option value="low" style="background-color:#1a1a2e; color:#e2e2f2;">낮음 (Low)</option>
+                    <option value="medium" style="background-color:#1a1a2e; color:#e2e2f2;">보통 (Medium)</option>
+                    <option value="high" style="background-color:#1a1a2e; color:#e2e2f2;">높음 (High)</option>
+                    <option value="none" style="background-color:#1a1a2e; color:#e2e2f2;">끄기 (Off)</option>
                   </select>
                 </div>
 
