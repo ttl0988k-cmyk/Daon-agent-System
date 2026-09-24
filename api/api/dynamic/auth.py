@@ -57,6 +57,10 @@ def _resolve_key_from_pool(provider: str) -> str:
                 return pool[provider][0].get("access_token", "")
     except Exception as e:
         _log.warning("Failed to read credential pool from auth.json: %s", e)
+
+    if provider == "omniroute":
+        return "omniroute-local"
+
     return ""
 
 

@@ -126,14 +126,20 @@ def _omniroute_available() -> bool:
         if now - _omniroute_probe_cache['ts'] < _OMNIROUTE_PROBE_TTL:
             return _omniroute_probe_cache['alive']
     alive = False
+    headers = {'Authorization': 'Bearer omniroute-local'}
     for url in _OMNIROUTE_PROBE_URLS:
         try:
-            req = urllib.request.Request(url, method='GET')
+            req = urllib.request.Request(url, headers=headers, method='GET')
             with urllib.request.urlopen(req, timeout=1.5) as resp:
                 code = getattr(resp, 'status', 200) or 200
                 if 200 <= int(code) < 500:
                     alive = True
                     break
+        except urllib.error.HTTPError as he:
+            # 401/403 등 HTTP 응답 자체가 온다는 것은 데몬이 포트에서 살아있음을 증명
+            if 200 <= he.code < 500:
+                alive = True
+                break
         except Exception:
             continue
     with _omni_probe_lock:
@@ -1358,6 +1364,28 @@ def _transcript(messages, max_turns: int = 20) -> str:
         return ''
 
 
+def _call_memory_direct(prompt: str, system_instruction: Optional[str] = None) -> str:
+    """기억 큐/정제 전용 LLM 호출 함수 (엄격한 무료 로컬 라우터 격리).
+
+    원칙:
+    1. 로컬 무료 라우터(OmniRoute)의 'omniroute/auto' 모델만 독점 사용한다.
+    2. OmniRoute가 꺼져 있거나 오류 발생 시 다른 유료 프로바이더(OpenRouter, MiniMax 등)로
+       절대 폴백하지 않고 빈 문자열('')을 반환하여 유료 토큰 소모를 원천 차단한다.
+    """
+    if not memory_auto_enabled():
+        return ""
+    try:
+        from api.dynamic.direct_calls import _call_direct
+        return _call_direct(
+            prompt,
+            system_instruction=system_instruction,
+            preferred_model="omniroute/auto",
+        )
+    except Exception as e:
+        print(f"[MemoryStore] OmniRoute memory direct call skipped/failed: {e}")
+        return ""
+
+
 def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dict]:
     """Phase 1-B: LLM으로 새 fact와 기존 facts의 의미 중복/모순 판정.
 
@@ -1367,7 +1395,6 @@ def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dic
     try:
         if not existing_facts:
             return None
-        from api.dynamic.direct_calls import _call_direct
         existing_lines = '\n'.join(
             f"[id={f['id']}] {f['content']}" for f in existing_facts[:50]
         )
@@ -1380,7 +1407,7 @@ def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dic
             f'기존 기억:\n{existing_lines}\n\n'
             f'새 기억: {new_content}'
         )
-        raw = _call_direct(prompt)
+        raw = _call_memory_direct(prompt)
         obj = _parse_json_object(raw)
         action = obj.get('action', 'new')
         fact_id = obj.get('fact_id')
@@ -1401,7 +1428,6 @@ def extract_and_store_facts(messages, source_session: Optional[str] = None) -> i
         transcript = _transcript(messages)
         if not transcript:
             return 0
-        from api.dynamic.direct_calls import _call_direct
         prompt = (
             '다음 대화에서 사용자의 선호, 사실, 습관, 결정사항 등 장기적으로 기억할 '
             '가치 있는 정보를 추출하라. 각 항목은 짧고 독립적인 문장으로 작성하라. '
@@ -1409,7 +1435,7 @@ def extract_and_store_facts(messages, source_session: Optional[str] = None) -> i
             '추출할 것이 없으면 빈 배열 []을 반환하라.\n\n'
             f'대화:\n{transcript}'
         )
-        raw = _call_direct(prompt)
+        raw = _call_memory_direct(prompt)
         items = _parse_json_array(raw)
         session_fact_ids = []
         for item in items:
@@ -1436,7 +1462,6 @@ def update_profile_from_messages(messages) -> int:
         transcript = _transcript(messages)
         if not transcript:
             return 0
-        from api.dynamic.direct_calls import _call_direct
         keys_hint = ', '.join(f'{k}({v})' for k, v in CANONICAL_PROFILE_KEYS.items())
         prompt = (
             '다음 대화에서 사용자의 프로필 정보를 추출하라.\n'
@@ -1447,7 +1472,7 @@ def update_profile_from_messages(messages) -> int:
             '추출할 것이 없으면 빈 객체 {}를 반환하라.\n\n'
             f'대화:\n{transcript}'
         )
-        raw = _call_direct(prompt)
+        raw = _call_memory_direct(prompt)
         obj = _parse_json_object(raw)
         for k, v in (obj or {}).items():
             # 정규 key 매핑 (LLM이 한글 key를 반환해도 매핑)
@@ -1466,13 +1491,12 @@ def summarize_session(messages, session_id: Optional[str] = None, title: Optiona
         transcript = _transcript(messages)
         if not transcript:
             return None
-        from api.dynamic.direct_calls import _call_direct
         prompt = (
             '다음 대화를 3~5문장의 한국어로 간결하게 요약하라. '
             '주요 주제, 결정사항, 결과를 포함하라. 요약 텍스트만 출력하라.\n\n'
             f'대화:\n{transcript}'
         )
-        raw = _call_direct(prompt)
+        raw = _call_memory_direct(prompt)
         summary = (raw or '').strip()
         if not summary:
             return None
@@ -1894,7 +1918,6 @@ def _run_daily_refine() -> None:
         facts = list_facts(limit=_DAILY_REFINE_MAX_FACTS, include_superseded=False)
         if len(facts) < 10:
             return
-        from api.dynamic.direct_calls import _call_direct
 
         # 1) 의미적 클러스터링
         facts_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in facts)
@@ -1904,7 +1927,7 @@ def _run_daily_refine() -> None:
             '그룹에 속하지 않는 항목은 단독 배열로. 모든 id를 포함하라.\n\n'
             f'항목:\n{facts_text}'
         )
-        raw = _call_direct(cluster_prompt)
+        raw = _call_memory_direct(cluster_prompt)
         clusters = _parse_json_array(raw)
 
         # 2) 각 클러스터: 2건 이상이면 대표 fact로 병합
@@ -1924,7 +1947,7 @@ def _run_daily_refine() -> None:
                 '핵심 정보만 남기고 중복은 제거하라. 통합 문장만 출력하라.\n\n'
                 f'{contents}'
             )
-            merged_text = (_call_direct(merge_prompt) or '').strip()
+            merged_text = (_call_memory_direct(merge_prompt) or '').strip()
             if not merged_text:
                 continue
             # 대표 fact = 가장 use_count 높은 것, 없으면 첫 번째
@@ -1958,7 +1981,7 @@ def _run_daily_refine() -> None:
                 '모순이 없으면 빈 배열 []을 반환하라.\n\n'
                 f'{af_text}'
             )
-            raw2 = _call_direct(contra_prompt)
+            raw2 = _call_memory_direct(contra_prompt)
             contradictions = _parse_json_array(raw2)
             for pair in contradictions:
                 if not isinstance(pair, list) or len(pair) != 2:
