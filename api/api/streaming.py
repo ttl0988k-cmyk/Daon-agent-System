@@ -377,7 +377,7 @@ def cancel_session_streams(session_id: str) -> bool:
     return cancelled_any
 
 
-def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None):
+def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None, reasoning_effort=None):
     """Run agent in background thread, writing SSE events to STREAMS[stream_id]."""
     q = STREAMS.get(stream_id)
     if q is None:
@@ -1232,7 +1232,21 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _oc_route_e:
               print(f"[webui] WARNING: opencode route resolution failed: {_oc_route_e}", flush=True)
 
-          print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_mode={_resolved_api_mode} api_key={'set' if resolved_api_key else 'NONE'}", flush=True)
+          # ── Reasoning config resolution (Smart reasoning model gating) ──
+          _reasoning_config = None
+          if reasoning_effort and str(reasoning_effort).strip().lower() not in ('', 'default', 'auto'):
+              try:
+                  from api.managers.model_manager import model_manager as _mm_reasoning
+                  if _mm_reasoning.supports_reasoning(resolved_model, resolved_provider):
+                      from hermes_constants import parse_reasoning_effort
+                      _reasoning_config = parse_reasoning_effort(str(reasoning_effort).strip())
+                      print(f"[webui] Reasoning config applied: {_reasoning_config} (effort={reasoning_effort}) for model={resolved_model}", flush=True)
+                  else:
+                      print(f"[webui] Model {resolved_model} does not support reasoning effort; skipping reasoning_config to prevent API errors", flush=True)
+              except Exception as _re_e:
+                  print(f"[webui] WARNING: reasoning_config resolution failed: {_re_e}", flush=True)
+
+          print(f"[webui-debug] Creating AIAgent: model={resolved_model} provider={resolved_provider} base_url={resolved_base_url} api_mode={_resolved_api_mode} api_key={'set' if resolved_api_key else 'NONE'} reasoning={_reasoning_config}", flush=True)
           agent = AIAgent(
               model=resolved_model,
               provider=resolved_provider,
@@ -1250,6 +1264,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               reasoning_callback=on_reasoning,
               api_error_callback=on_api_error,
               ephemeral_system_prompt=_ephemeral_prompt,
+              reasoning_config=_reasoning_config,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)
 

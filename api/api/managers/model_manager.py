@@ -480,6 +480,43 @@ class ModelManager:
         # Tier 3: Name-based guess
         return self._infer_model_type(model_id)
 
+    @staticmethod
+    def supports_reasoning(model_id: str, provider: str = '') -> bool:
+        """Smart detection: returns True if model supports reasoning/thinking effort.
+
+        Guards against sending reasoning_effort to non-reasoning models (gpt-4o, claude-3-5, etc.)
+        which causes API 400 Bad Request errors.
+        """
+        if not model_id:
+            return False
+        mid = str(model_id).strip().lower()
+
+        # Explicit non-reasoning exclusions
+        non_reasoning_prefixes = (
+            'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'gpt-4', 'gpt-3.5',
+            'claude-3-5', 'claude-3.5', 'claude-3-opus', 'claude-3-haiku',
+            'gemini-1.5', 'gemini-1.0',
+            'llama', 'mistral', 'codestral', 'command-r'
+        )
+        if any(mid.startswith(p) or ('/' + p) in mid for p in non_reasoning_prefixes):
+            if 'thinking' not in mid and 'reason' not in mid and 'r1' not in mid:
+                return False
+
+        reasoning_patterns = (
+            r'\bo[1-4](?:-mini|-preview)?\b',
+            r'\bclaude-3[-.]7\b',
+            r'\bclaude-4\b',
+            r'thinking',
+            r'\bdeepseek-r1\b',
+            r'\bdeepseek-reasoner\b',
+            r'\br1\b',
+            r'\bqwq\b',
+            r'reasoning',
+            r'reasoner',
+        )
+        import re
+        return any(re.search(pat, mid) for pat in reasoning_patterns)
+
     # ── Resolution ──────────────────────────────────────────────────────
 
     def _get_base_url(self, provider: str) -> Optional[str]:
@@ -682,8 +719,8 @@ class ModelManager:
                 })
                 _added_provider_keys.add(pname)
 
-        # Inject model type so the frontend can show the media-option panel
-        # (aspect ratio / count) when an image or video model is selected.
+        # Inject model type and supports_reasoning so the frontend can show the media-option panel
+        # and reasoning effort selector when applicable.
         for g in groups:
             new_models = []
             for m in g.get('models', []):
@@ -691,10 +728,16 @@ class ModelManager:
                     mc = dict(m)
                     if not mc.get('type'):
                         mc['type'] = self.get_model_type(mc.get('id', ''))
+                    mc['supports_reasoning'] = self.supports_reasoning(mc.get('id', ''), g.get('provider', ''))
                     new_models.append(mc)
                 else:
                     mid = str(m)
-                    new_models.append({'id': mid, 'label': mid, 'type': self.get_model_type(mid)})
+                    new_models.append({
+                        'id': mid,
+                        'label': mid,
+                        'type': self.get_model_type(mid),
+                        'supports_reasoning': self.supports_reasoning(mid, g.get('provider', ''))
+                    })
             g['models'] = new_models
 
         return groups

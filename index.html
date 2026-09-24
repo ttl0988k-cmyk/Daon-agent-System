@@ -1249,6 +1249,20 @@
                   <span style="user-select:none;">플래닝 모드 🧠</span>
                 </label>
 
+                <!-- [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 (지원 모델에만 동적 노출) -->
+                <div id="reasoningEffortContainer" style="display:none; align-items:center; gap:4px; margin-left:8px; background:var(--bg3); border:1px solid var(--border2); border-radius:5px; padding:2px 8px;">
+                  <label for="reasoningEffortSelect" title="모델 추론 강도 (Thinking Effort) 조절" style="font-size:11px; color:var(--accent, #e94560); font-weight:600; display:flex; align-items:center; gap:3px; cursor:pointer;">
+                    <span>🤔 추론강도:</span>
+                  </label>
+                  <select id="reasoningEffortSelect" style="background:transparent; border:none; color:var(--text); font-size:11px; font-weight:500; cursor:pointer; outline:none; font-family:inherit;">
+                    <option value="default" selected>기본</option>
+                    <option value="low">낮음 (Low)</option>
+                    <option value="medium">보통 (Medium)</option>
+                    <option value="high">높음 (High)</option>
+                    <option value="none">끄기 (Off)</option>
+                  </select>
+                </div>
+
                 <!-- [H] 실행 방식 토글: 🛡️ 일반 실행(위험 작업마다 확인) / 🤖 자율 실행(승인 자동 통과) -->
                 <button id="approvalModeToggle" onclick="toggleApprovalMode()" class="mode-normal"
                   title="일반 실행 모드: 위험 작업마다 확인합니다. 클릭하면 자율 실행으로 전환."

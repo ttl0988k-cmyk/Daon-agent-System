@@ -1384,10 +1384,18 @@
     #debateMessages {
       flex: 1;
       overflow-y: auto;
-      padding: 12px;
+      padding: 12px 14px 28px 14px;
+      scroll-padding-bottom: 28px;
       display: flex;
       flex-direction: column;
       gap: 10px;
+    }
+
+    #reasoningEffortContainer {
+      transition: all 0.2s ease;
+    }
+    #reasoningEffortContainer:hover {
+      border-color: var(--accent);
     }
 
     /* [2026-09-15] '맨 아래로' 점프 버튼 — 사용자가 위를 읽는 동안

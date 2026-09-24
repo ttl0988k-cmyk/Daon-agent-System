@@ -226,12 +226,13 @@ def handle_post_chat_start(handler, body) -> bool:
     with STREAMS_LOCK:
         STREAMS[stream_id] = q
     planning_mode = body.get('planning_mode', False)
+    reasoning_effort = body.get('reasoning_effort')
 
     open_tabs = body.get('open_tabs') or []
     media_options = body.get('media_options') or {}
     thr = threading.Thread(
         target=_run_agent_streaming,
-        args=(s.session_id, msg, model, workspace, stream_id, attachments, planning_mode, open_tabs, media_options),
+        args=(s.session_id, msg, model, workspace, stream_id, attachments, planning_mode, open_tabs, media_options, reasoning_effort),
         daemon=True,
     )
     thr.start()

@@ -54,6 +54,8 @@ async function loadInitialData() {
     State.settings = await api('/api/settings');
     State.activeModelId = (State.settings || {}).default_model || '';
     if ($('modelSelect')) $('modelSelect').value = State.activeModelId;
+    updateMediaOptionsPanel(State.activeModelId);
+    updateReasoningEffortPanel(State.activeModelId);
 
     // 2b. Modes (Roo-style)
     loadModes();
@@ -126,12 +128,19 @@ function populateModelSelect() {
       opt.value = m.id;
       opt.textContent = m.label;
       if (m.type) opt.setAttribute('data-type', m.type);
+      if (typeof m.supports_reasoning === 'boolean') {
+        opt.setAttribute('data-reasoning', String(m.supports_reasoning));
+      }
       optgroup.appendChild(opt);
     });
 
     if (sel) sel.appendChild(optgroup.cloneNode(true));
     if (modalSel) modalSel.appendChild(optgroup.cloneNode(true));
   });
+
+  if (typeof updateReasoningEffortPanel === 'function') {
+    updateReasoningEffortPanel(State.activeModelId);
+  }
 }
 
 function populateProfileSelect() {
@@ -660,6 +669,8 @@ async function selectSession(sid) {
     State.activeWorkspacePath = session.workspace;
     State.activeModelId = session.model;
     if ($('modelSelect')) $('modelSelect').value = State.activeModelId;
+    updateMediaOptionsPanel(State.activeModelId);
+    updateReasoningEffortPanel(State.activeModelId);
 
     // Load session mode
     loadSessionMode();
@@ -1012,12 +1023,14 @@ function toggleToolCard(headerEl) {
   }
 }
 
-// ── [2026-09-15 스크롤 앵커링] ──────────────────────────────────────────────
-// 문제: 에이전트가 작업/생각 중일 때 토큰·도구·상태 이벤트마다 무조건
-//       scrollTop=scrollHeight 로 이동해, 위쪽 대화를 읽을 수 없었다.
-// 해결: "사용자가 하단에 붙어 있는 동안에만" 자동 스크롤한다.
-//       위로 올리면(_chatPinned=false) 자동 스크롤을 멈추고,
-//       하단으로 돌아오거나 '맨 아래로' 버튼을 누르면 다시 붙는다.
+// ── [2026-09-15 & 2026-09-24 스크롤 앵커링 & 자동 스크롤 개선] ───────────────────
+// 1. 하단 고정(_chatPinned = true)일 때:
+//    새 메시지 전송 및 토큰 스트리밍 시 항상 스크롤을 맨 아래로 내려 마지막 말풍선이
+//    입력창이나 버튼에 가려지지 않게 완전히 보여준다 (다회차 레이아웃 안정화 스크롤).
+// 2. 사용자가 위쪽을 읽는 중(_chatPinned = false)일 때:
+//    휠을 위로 돌리거나 스크롤을 올린 순간 즉시 앵커링을 해제하여,
+//    에이전트가 답변을 출력(스트리밍)하고 있더라도 화면이 아래로 강제 이동되지 않고
+//    이전 챗을 안정적으로 읽을 수 있도록 스크롤 위치를 절대 건드리지 않고 엄격히 보존한다.
 var _chatPinned = true;        // true = 하단 고정(자동 스크롤 허용)
 var _chatPinnedInit = false;   // 최초 1회 리스너 바인딩 가드
 var _chatMissedCount = 0;      // 고정 해제 중 쌓인 신규 콘텐츠 수
@@ -1030,6 +1043,18 @@ function _isChatNearBottom(el) {
   return (el.scrollHeight - el.scrollTop - el.clientHeight) <= _CHAT_PIN_THRESHOLD;
 }
 
+function _scrollChatToBottomDirect() {
+  const chatBox = $('chatMessages');
+  if (!chatBox || chatBox.style.display === 'none') return;
+  chatBox.scrollTop = chatBox.scrollHeight + 500;
+  const last = chatBox.lastElementChild;
+  if (last && typeof last.scrollIntoView === 'function') {
+    try {
+      last.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' });
+    } catch (_) { }
+  }
+}
+
 // 사용자가 위쪽을 읽는 중인지 실시간 추적하는 리스너(최초 1회).
 function _initChatScrollListeners() {
   if (_chatPinnedInit) return;
@@ -1038,22 +1063,50 @@ function _initChatScrollListeners() {
   _chatPinnedInit = true;
 
   const onScroll = () => {
-    // ★ scroll 이벤트는 사용자 조작과 scrollTop 대입 모두 발생하므로,
-    //   현재 위치가 하단이면 pinned=true 로 수렴시킨다(자기 유발 스크롤은 무해).
+    // 사용자가 직접 스크롤바 조작 시 하단 여부 갱신
     _chatPinned = _isChatNearBottom(chatBox);
     _updateScrollDownBadge();
   };
   chatBox.addEventListener('scroll', onScroll, { passive: true });
 
-  // 휠/터치/드래그 시작 시 즉시 고정 해제 → 다음 토큰이 끌어내리지 못하게.
-  const onUserScrollIntent = () => {
-    if (!_isChatNearBottom(chatBox)) _chatPinned = false;
-  };
-  chatBox.addEventListener('wheel', onUserScrollIntent, { passive: true });
-  chatBox.addEventListener('touchstart', onUserScrollIntent, { passive: true });
-  chatBox.addEventListener('mousedown', onUserScrollIntent, { passive: true });
+  // 휠을 위로 올리는 순간(deltaY < 0) 즉각 unpin!
+  // 스트리밍 토큰이 0.1초 만에 화면을 아래로 낚아채는 현상을 원천 방지한다.
+  chatBox.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) {
+      _chatPinned = false;
+      _updateScrollDownBadge();
+    } else if (e.deltaY > 0 && _isChatNearBottom(chatBox)) {
+      _chatPinned = true;
+      _updateScrollDownBadge();
+    }
+  }, { passive: true });
+
+  chatBox.addEventListener('touchstart', (e) => {
+    chatBox._touchStartY = e.touches ? e.touches[0].clientY : 0;
+  }, { passive: true });
+
+  chatBox.addEventListener('touchmove', (e) => {
+    if (e.touches && chatBox._touchStartY) {
+      const delta = e.touches[0].clientY - chatBox._touchStartY;
+      if (delta > 10) { // 화면을 아래로 당김 = 위쪽 내용 보기
+        _chatPinned = false;
+        _updateScrollDownBadge();
+      }
+    }
+  }, { passive: true });
+
+  chatBox.addEventListener('mousedown', () => {
+    if (!_isChatNearBottom(chatBox)) {
+      _chatPinned = false;
+      _updateScrollDownBadge();
+    }
+  }, { passive: true });
+
   chatBox.addEventListener('keydown', (e) => {
-    if (['ArrowUp', 'PageUp', 'Home'].indexOf(e.key) !== -1) onUserScrollIntent();
+    if (['ArrowUp', 'PageUp', 'Home'].indexOf(e.key) !== -1) {
+      _chatPinned = false;
+      _updateScrollDownBadge();
+    }
   });
 
   _ensureScrollDownBtn(chatBox);
@@ -1071,10 +1124,7 @@ function _ensureScrollDownBtn(chatBox) {
   btn.title = '맨 아래로 (새 메시지 보기)';
   btn.textContent = '↓';
   btn.onclick = () => {
-    _chatPinned = true;
-    _chatMissedCount = 0;
-    chatBox.scrollTop = chatBox.scrollHeight;
-    _updateScrollDownBadge();
+    forceStickChatBottom();
     try { btn.blur(); } catch (_) { }
   };
   host.appendChild(btn);
@@ -1096,11 +1146,20 @@ function _updateScrollDownBadge() {
 }
 
 // 사용자가 명시적으로 "하단을 봐야 하는" 동작(메시지 전송, 세션 전환,
-// 스트림 완료)일 때 호출: 읽던 위치와 무관하게 하단 고정을 복원한다.
+// 취소 버튼 등장 등)일 때 호출: 하단 고정 복원 및 레이아웃 안정화 스크롤.
 function forceStickChatBottom() {
   _chatPinned = true;
   _chatMissedCount = 0;
-  scrollToChatBottom();
+  _initChatScrollListeners();
+  _scrollChatToBottomDirect();
+  requestAnimationFrame(() => {
+    _scrollChatToBottomDirect();
+    // DOM/취소버튼/입력창 높이 변화 레이아웃 안정화 다중 패스
+    setTimeout(_scrollChatToBottomDirect, 50);
+    setTimeout(_scrollChatToBottomDirect, 150);
+    setTimeout(_scrollChatToBottomDirect, 300);
+  });
+  _updateScrollDownBadge();
 }
 
 function scrollToChatBottom() {
@@ -1109,21 +1168,23 @@ function scrollToChatBottom() {
 
   _initChatScrollListeners();
 
-  setTimeout(() => {
-    if (chatBox && chatBox.style.display !== 'none') {
-      // ★ 사용자가 위쪽을 읽는 중이면 자동 스크롤을 건너뛴다(핵심 수정).
-      if (_chatPinned) {
-        chatBox.scrollTop = chatBox.scrollHeight;
-      } else {
-        // 읽는 중: 끌어내리지 않고, 쌓인 신규 콘텐츠 수만 알린다.
-        _chatMissedCount++;
-      }
+  if (chatBox && chatBox.style.display !== 'none') {
+    // ★ 핵심: 사용자가 위쪽을 읽는 중(_chatPinned == false)이면 절대 스크롤을 내리지 않고 유지한다!
+    if (_chatPinned) {
+      requestAnimationFrame(() => {
+        if (_chatPinned && chatBox) {
+          chatBox.scrollTop = chatBox.scrollHeight + 500;
+        }
+      });
+    } else {
+      // 읽는 중: 스크롤을 건드리지 않고, 새 콘텐츠 카운트만 증가
+      _chatMissedCount++;
+      _updateScrollDownBadge();
     }
-    if (debateBox && debateBox.style.display !== 'none') {
-      debateBox.scrollTop = debateBox.scrollHeight;
-    }
-    _updateScrollDownBadge();
-  }, 30);
+  }
+  if (debateBox && debateBox.style.display !== 'none') {
+    debateBox.scrollTop = debateBox.scrollHeight + 500;
+  }
 }
 async function sendPrompt() {
   // 네트워크 요청 처리(디스패치) 중 중복 클릭 방지
@@ -1831,6 +1892,9 @@ async function _executeAgentStream(displayText, uploaded) {
         workspace: State.activeWorkspacePath,
         attachments: uploaded.length > 0 ? uploaded : undefined,
         planning_mode: planningMode,
+        reasoning_effort: (isModelSupportingReasoning(State.activeModelId) && $('reasoningEffortSelect'))
+          ? $('reasoningEffortSelect').value
+          : undefined,
         // 실행 표면 선언: WebUI는 'webui'. 백엔드가 표면별 도구 목록을 강제한다
         // (chrome_extension은 browser_* 도구 제거). 미선언 시 이전 표면이 잔존하므로 항상 보낸다.
         surface: 'webui',
@@ -3104,6 +3168,7 @@ async function handleModelChange(newModelId) {
   State.activeModelId = newModelId;
   if ($('modelSelect')) $('modelSelect').value = newModelId;
   updateMediaOptionsPanel(newModelId);
+  updateReasoningEffortPanel(newModelId);
 
   if (State.activeSessionId) {
     try {
@@ -3168,6 +3233,66 @@ function buildMediaOptions() {
     }
   }
   return opts;
+}
+
+// ── [Smart Reasoning Effort] 스마트 감지 추론강도 옵션 ────────────────────────
+function isModelSupportingReasoning(modelId) {
+  if (!modelId) return false;
+  // 1. Check data-reasoning attribute from select option
+  const sel = $('modelSelect');
+  if (sel) {
+    const opt = Array.from(sel.options).find(o => o.value === modelId);
+    if (opt && opt.getAttribute('data-reasoning') !== null) {
+      return opt.getAttribute('data-reasoning') === 'true';
+    }
+  }
+  // 2. Check State.models
+  for (const g of (State.models || [])) {
+    for (const m of (g.models || [])) {
+      if (m.id === modelId && typeof m.supports_reasoning === 'boolean') {
+        return m.supports_reasoning;
+      }
+    }
+  }
+  // 3. Client-side smart regex detection fallback
+  const mid = String(modelId).toLowerCase();
+  const nonReasoning = [
+    'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'gpt-4', 'gpt-3.5',
+    'claude-3-5', 'claude-3.5', 'claude-3-opus', 'claude-3-haiku',
+    'gemini-1.5', 'gemini-1.0',
+    'llama', 'mistral', 'codestral', 'command-r'
+  ];
+  if (nonReasoning.some(p => mid.startsWith(p) || mid.includes('/' + p))) {
+    if (!mid.includes('thinking') && !mid.includes('reason') && !mid.includes('r1')) {
+      return false;
+    }
+  }
+  const patterns = [
+    /\bo[1-4](?:-mini|-preview)?\b/,
+    /\bclaude-3[-.]7\b/,
+    /\bclaude-4\b/,
+    /thinking/,
+    /\bdeepseek-r1\b/,
+    /\bdeepseek-reasoner\b/,
+    /\br1\b/,
+    /\bqwq\b/,
+    /reasoning/,
+    /reasoner/
+  ];
+  return patterns.some(re => re.test(mid));
+}
+
+function updateReasoningEffortPanel(modelId) {
+  const container = $('reasoningEffortContainer');
+  if (!container) return;
+  const isReasoning = isModelSupportingReasoning(modelId);
+  if (isReasoning) {
+    container.style.display = 'flex';
+  } else {
+    container.style.display = 'none';
+    const sel = $('reasoningEffortSelect');
+    if (sel) sel.value = 'default';
+  }
 }
 
 async function switchAgentProfile(name) {
