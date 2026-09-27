@@ -55,9 +55,8 @@ class CapabilityResolutionError(Exception):
 def default_skill_searcher(cap, registry=None):
     """Step 1: search the skill registry for a skill covering the capability.
 
-    Returns {"skill": <name>} on a match, or None. Matching is a conservative
-    case-insensitive token overlap between the capability text and skill
-    names/catalog, so it never fabricates a skill that is clearly unrelated.
+    Uses conservative token overlap first, then Laya System 1 semantic classification fallback.
+    Returns {"skill": <name>} on a match, or None.
     """
     cap_tokens = _tokens(cap)
     if not cap_tokens:
@@ -76,6 +75,20 @@ def default_skill_searcher(cap, registry=None):
                 best_name = name
         if best_name and best_score > 0:
             return {"skill": best_name, "score": best_score}
+
+        # ── Laya System 1 Semantic Matching Fallback (0 tokens) ──
+        try:
+            from api.laya_client import laya_client
+            if laya_client.is_healthy() and entries:
+                skill_names = list(entries.keys())[:25]
+                cats = {s: f"Skill for {s.replace('-', ' ').replace('_', ' ')}" for s in skill_names}
+                cats["none"] = "None of the above skills match this capability"
+                res = laya_client.batch_classify([str(cap)], cats, instruction="Find the best matching skill for this capability:")
+                if res and isinstance(res, list) and res[0] != "none" and res[0] in entries:
+                    return {"skill": res[0], "score": 1, "source": "laya_semantic"}
+        except Exception as _le:
+            _log.debug("Laya skill searcher fallback skipped: %s", _le)
+
     except Exception as e:  # fail-safe: lookup problems must not block the chain
         _log.warning("skill search failed for cap=%r: %s", cap, e)
     return None
@@ -85,9 +98,7 @@ def default_agent_assigner(cap, known_roles=None):
     """Step 2: decide whether an existing specialist agent can take the work.
 
     Returns {"agent": <role>} when a known role clearly matches, else None.
-    The default is conservative: novel capabilities have no pre-existing agent,
-    so this returns None and the chain proceeds to the Builder. Probes inject a
-    fake assigner to exercise the branch.
+    Uses conservative token overlap first, then Laya System 1 role classification.
     """
     cap_tokens = _tokens(cap)
     if not cap_tokens:
@@ -96,6 +107,20 @@ def default_agent_assigner(cap, known_roles=None):
     for role in roles:
         if cap_tokens & _tokens(role):
             return {"agent": role}
+
+    # Laya semantic assignment
+    if roles:
+        try:
+            from api.laya_client import laya_client
+            if laya_client.is_healthy():
+                cats = {r: f"Specialist agent role for {r}" for r in roles}
+                cats["none"] = "None of the roles match"
+                res = laya_client.batch_classify([str(cap)], cats, instruction="Select the best agent role for this capability:")
+                if res and isinstance(res, list) and res[0] != "none" and res[0] in roles:
+                    return {"agent": res[0], "source": "laya_semantic"}
+        except Exception:
+            pass
+
     return None
 
 

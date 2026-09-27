@@ -133,6 +133,46 @@ except ImportError:
 _API_SAFE_MSG_KEYS = {'role', 'content', 'tool_calls', 'tool_call_id', 'name', 'refusal'}
 
 
+def _compress_past_browser_context(content: str) -> str:
+    """과거 대화 기록에 누적된 거대한 브라우저 전체 DOM/화면 덤프를 핵심 요청으로 압축.
+
+    매 턴마다 10,000~15,000자씩 누적되어 수십 턴 대화 시 10만 토큰을 초과하는 현상을 원천 차단.
+    현재 턴의 최신 화면은 그대로 온전하게 전달되며, 과거 턴에서는 지나간 화면 덤프를 생략하고
+    사용자의 실제 질문/요청만 보존한다.
+    """
+    if not isinstance(content, str):
+        return content
+    if '[실시간 브라우저 환경 컨텍스트' not in content and '[현재 웹 브라우저' not in content:
+        return content
+
+    import re
+    # 1) [사용자 요청] 블록 추출
+    user_req = ""
+    req_match = re.search(r'\[사용자 요청\]\s*(.*)', content, re.DOTALL)
+    if req_match:
+        user_req = req_match.group(1).strip()
+    else:
+        # 2) [연속 자율 실행 모드]인 경우 원래 요청 추출
+        fol_match = re.search(r'■ 사용자의 원래 요청:\s*"([^"]+)"', content)
+        if fol_match:
+            user_req = f"(자율 실행 단계) {fol_match.group(1).strip()}"
+        else:
+            # 3) 기타 일반 텍스트
+            user_req = content[-300:].strip()
+
+    # 페이지 제목 정보가 있으면 1줄 힌트로 보존
+    tab_info = ""
+    tab_match = re.search(r'- 페이지 제목:\s*"([^"]+)"', content)
+    if tab_match:
+        tab_info = f" [화면: {tab_match.group(1)}]"
+    elif '■ 현재 활성 탭 상세 정보' in content:
+        t_match = re.search(r'■ 현재 활성 탭 상세 정보 \([^:]+: "([^"]+)"\):', content)
+        if t_match:
+            tab_info = f" [화면: {t_match.group(1)}]"
+
+    return f"[이전 브라우저 화면 컨텍스트 생략됨{tab_info}]\n{user_req}"
+
+
 def _sanitize_messages_for_api(messages):
     """Return a deep copy of messages with only API-safe fields.
 
@@ -149,10 +189,25 @@ def _sanitize_messages_for_api(messages):
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        # ?�전 모델???�스???�롬?�트 중복 주입 방�?: system 메시지???�스?�리?�서 무조�??�거
+        # 이전 모델의 시스템 프롬프트 중복 주입 방지: system 메시지는 히스토리에서 무조건 제거
         if msg.get('role') == 'system':
             continue
         sanitized = {k: v for k, v in msg.items() if k in _API_SAFE_MSG_KEYS}
+        # 과거 대화 히스토리의 거대한 브라우저 화면 덤프 압축 (토큰 누적 방지)
+        if sanitized.get('role') == 'user':
+            c = sanitized.get('content')
+            if isinstance(c, str):
+                sanitized['content'] = _compress_past_browser_context(c)
+            elif isinstance(c, list):
+                new_c = []
+                for part in c:
+                    if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
+                        part_copy = dict(part)
+                        part_copy['text'] = _compress_past_browser_context(part['text'])
+                        new_c.append(part_copy)
+                    else:
+                        new_c.append(part)
+                sanitized['content'] = new_c
         if sanitized.get('role'):
             clean.append(sanitized)
     return clean
@@ -1355,6 +1410,85 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: UI 디자인 및 프론트엔드 스타일 작업입니다. 디자인 토큰 및 스타일에 집중하세요."
           except Exception as _e_laya:
               _logger.debug("Laya inline consumer bypassed: %s", _e_laya)
+
+          # ── [Laya Browser Pre-scan] System 1 화면 요소 0토큰 사전 선별 ──
+          if is_browser_session and msg_text:
+              try:
+                  import re
+                  from api.laya_client import laya_client
+                  if laya_client.is_healthy():
+                      # 1) 사용자 실제 목적/요청 추출
+                      user_goal = ""
+                      req_m = re.search(r'\[사용자 요청\]\s*(.*)', msg_text, re.DOTALL)
+                      if req_m:
+                          user_goal = req_m.group(1).strip()
+                      else:
+                          fol_m = re.search(r'■ 사용자의 원래 요청:\s*"([^"]+)"', msg_text)
+                          if fol_m:
+                              user_goal = fol_m.group(1).strip()
+                          else:
+                              user_goal = msg_text.strip()[:100]
+
+                      # 2) 주요 대화형 버튼/입력창 추출
+                      candidate_items = []
+                      btn_m = re.search(r'- 주요 버튼:\s*([^\n]+)', msg_text)
+                      if btn_m:
+                          candidate_items.extend([b.strip() for b in btn_m.group(1).split(',') if b.strip()])
+                      inp_m = re.search(r'- 주요 입력창:\s*([^\n]+)', msg_text)
+                      if inp_m:
+                          candidate_items.extend([i.strip() for i in inp_m.group(1).split(',') if i.strip()])
+
+                      if candidate_items and user_goal:
+                          categories = {
+                              "target": "사용자의 요청/목적을 완수하기 위해 클릭하거나 입력해야 할 핵심 버튼, 메뉴, 폼 컨트롤",
+                              "irrelevant": "사용자 목적과 무관한 일반 네비게이션, 건너뛰기, 닫기, 기타 비관련 컨트롤"
+                          }
+                          instruction = f"사용자의 현재 목표: '{user_goal[:120]}'. 이 목표를 달성하기 위해 클릭/조작해야 할 대상인지 분류하라."
+                          t_scan0 = time.time()
+                          scan_res = laya_client.batch_classify(
+                              candidate_items[:35],
+                              categories,
+                              instruction=instruction,
+                              return_details=True
+                          )
+                          scan_lat = round((time.time() - t_scan0) * 1000, 1)
+
+                          top_targets = []
+                          if isinstance(scan_res, dict):
+                              res_list = scan_res.get("results", [])
+                              prob_list = scan_res.get("probabilities", [])
+                              for idx, res_cat in enumerate(res_list):
+                                  if res_cat == "target" and idx < len(candidate_items):
+                                      prob = prob_list[idx] if idx < len(prob_list) else 0.8
+                                      top_targets.append((candidate_items[idx], prob))
+                              top_targets.sort(key=lambda x: x[1], reverse=True)
+                          elif isinstance(scan_res, list):
+                              for idx, res_cat in enumerate(scan_res):
+                                  if res_cat == "target" and idx < len(candidate_items):
+                                      top_targets.append((candidate_items[idx], 0.8))
+
+                          if top_targets:
+                              target_names = [t[0] for t in top_targets[:6]]
+                              _logger.info("[Laya-Browser-PreScan] Found %d targets in %.1fms: %s", len(target_names), scan_lat, target_names)
+
+                              put('laya_decision', {
+                                  'intent': 'browser_target_scan',
+                                  'confidence': 0.95,
+                                  'latency_ms': scan_lat,
+                                  'targets': target_names
+                              })
+
+                              _laya_block = (
+                                  f"\n[★ Laya System 1 화면 분석 결과 (로컬 AI 0토큰 사전 판정)]\n"
+                                  f"- 감지된 사용자 목표: \"{user_goal[:80]}\"\n"
+                                  f"- Laya 추천 우선 조작 후보:\n"
+                                  + "\n".join(f"  • \"{tname}\"" for tname in target_names)
+                                  + "\n- 지침: 위 추천 대상을 우선적으로 스냅샷/클릭하여 조작하세요. "
+                                  "화면이 복잡하거나 더 세부적인 분류가 필요할 때는 로컬 0토큰 도구 'fast_decision_engine'을 적극 호출하세요."
+                              )
+                              _ephemeral_prompt = (_ephemeral_prompt or "") + "\n" + _laya_block
+              except Exception as _e_laya_scan:
+                  _logger.debug("Laya browser pre-scan bypassed: %s", _e_laya_scan)
 
           # ── System Prompt & Multimodal Message Composition ──
           from api.streaming_prompts import compose_system_message, build_user_payload

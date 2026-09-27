@@ -37,11 +37,12 @@ _log = get_logger(__name__)
 # 환경에서 돌려야 하는가"를 선택할 수 있도록 CEO 프롬프트에 주입하는 블록들.
 # 스킬 카탈로그 주입 패턴(get_catalog_text)을 차용했다.
 
-def _build_mcp_catalog_block() -> str:
+def _build_mcp_catalog_block(task: str = "") -> str:
     """등록된 MCP 서버 목록을 CEO 프롬프트용 텍스트 블록으로 구성한다.
 
     각 서버의 ID/라벨/연결 상태/도구 이름을 나열해, CEO가 노드별
     'mcp_servers' 필드로 선택적 바인딩을 할 수 있게 한다.
+    Laya System 1이 활성화되어 있으면 태스크에 필요한 MCP를 0토큰으로 사전 선별/추천한다.
     """
     try:
         from api.mcp_client import get_mcp_manager
@@ -51,11 +52,24 @@ def _build_mcp_catalog_block() -> str:
         return ""
     if not servers:
         return ""
+
+    recommended_sids = set()
+    if task:
+        try:
+            from api.laya_client import laya_client
+            all_sids = [s.get("server_id", "") for s in servers if s.get("server_id")]
+            needed = laya_client.prune_mcp(task, all_sids)
+            if needed:
+                recommended_sids = set(needed)
+        except Exception as _pe:
+            _log.debug("Laya prune_mcp in planner skipped: %s", _pe)
+
     lines: list[str] = []
     for srv in servers:
         sid = srv.get("server_id", "")
         label = srv.get("label", sid)
         status = "CONNECTED" if srv.get("connected") else "NOT CONNECTED"
+        rec_tag = " ★[LAYA RECOMMENDED]" if sid in recommended_sids else ""
         tool_names = [t.get("name", "") for t in (srv.get("tools") or []) if t.get("name")]
         if tool_names:
             tools_str = ", ".join(tool_names[:12])
@@ -63,7 +77,7 @@ def _build_mcp_catalog_block() -> str:
                 tools_str += f", ... (+{len(tool_names) - 12} more)"
         else:
             tools_str = "(no tools discovered)"
-        lines.append(f"  - '{sid}' [{status}] {label} — tools: {tools_str}")
+        lines.append(f"  - '{sid}' [{status}]{rec_tag} {label} — tools: {tools_str}")
     return (
         "\n[AVAILABLE MCP SERVERS — Per-Node Binding Catalog]\n"
         "MCP (Model Context Protocol) servers provide external tools (file ops, search, browser, etc.) to agents.\n"
@@ -297,6 +311,41 @@ class HermesPlanner:
 
         if mission_tracker and "check_timeout" in mission_tracker:
             mission_tracker["check_timeout"]()
+
+        # ── [Laya Fast-Path Short-Circuit] 단순 작업은 0원에 즉시 단일 노드 DAG 생성 ──
+        if not planning_mode and task:
+            try:
+                from api.laya_client import laya_client
+                if laya_client.is_healthy():
+                    pre_route = laya_client.pre_route_user_prompt(task)
+                    intent = pre_route.get("intent", "")
+                    conf = float(pre_route.get("confidence", 0.0))
+                    # 매우 단순한 대화/질문이나 단순 확인 작업인 경우 CEO LLM 호출 없이 초고속 직행
+                    if intent == "conversation" and conf >= 0.88 and len(task.strip()) < 150:
+                        _log.info("[Laya-Fast-Path] Short-circuiting planner for simple conversation/query (conf=%.2f)", conf)
+                        if log_callback:
+                            log_callback("[Laya System 1] 단순 작업 감지: 플래너 LLM 대기 없이 즉시 단일 에이전트로 초고속 직행 (0토큰)")
+                        return {
+                            "plan_summary": f"[Laya Fast-Path] Direct execution for: {task[:60]}",
+                            "skills": [],
+                            "nodes": [
+                                {
+                                    "name": "assistant",
+                                    "template_id": "general-assistant",
+                                    "role": "General Assistant",
+                                    "type": "llm",
+                                    "system_prompt": "You are a helpful AI assistant. Answer the user prompt directly and concisely.",
+                                    "subtask": task,
+                                    "input": None,
+                                    "output": "response",
+                                    "model": preferred_model or "auto",
+                                }
+                            ],
+                            "edges": [],
+                            "is_fast_path": True,
+                        }
+            except Exception as _fe:
+                _log.debug("Laya fast-path check bypassed: %s", _fe)
 
         # --- Skill Registry Integration ---
         skill_registry = get_skill_registry()
@@ -672,6 +721,16 @@ class HermesPlanner:
                 "Therefore, define the full plan (e.g. prd_planner -> plan_planner -> hyperplan_reviewer -> Developer -> code_reviewer / qa_tester) now in your response."
             )
 
+
+        mcp_catalog_block = _build_mcp_catalog_block(task)
+        plugin_catalog_block = _build_plugin_catalog_block()
+        env_options_block = _build_environment_options_block()
+        if mcp_catalog_block:
+            system_instruction += mcp_catalog_block + "\n"
+        if plugin_catalog_block:
+            system_instruction += plugin_catalog_block + "\n"
+        if env_options_block:
+            system_instruction += env_options_block + "\n"
 
         if run_dir:
             system_instruction += (

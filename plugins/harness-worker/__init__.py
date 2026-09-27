@@ -13,12 +13,22 @@
 
 [2026-09-20 프로바이더 선택식]
   provider 인자로 LLM 백엔드를 고른다:
-    openrouter(기본) | opencode-go | qwen-token-plan | minimax | omniroute
+    openrouter(기본) | chatgpt | opencode-go | qwen-token-plan | minimax | omniroute
   · Codex  : 프로바이더별 임시 CODEX_HOME 을 만들어 주입한다.
              사용자의 실제 ~/.codex 는 건드리지 않는다.
   · Claude : 게이트웨이가 모든 프로바이더 alias 를 한 번에 노출한다
              (claude-openrouter / claude-oc / claude-qwen / claude-minimax / claude-omni).
              한 번 띄우면 프로바이더를 바꿔도 재기동이 필요 없다.
+
+[2026-09-25 구독(OAuth) 경로 추가 - 대표님 지시]
+  provider='chatgpt' = 대표님이 `codex login` 으로 로그인한 ChatGPT 계정을 그대로 쓴다.
+  · API 키가 필요 없다. auth.json(OAuth)을 임시 CODEX_HOME 으로 '복사'만 한다.
+  · model_provider / base_url / env_key 를 일절 쓰지 않아 Codex 기본(OpenAI) 경로로 간다.
+  · 기본 모델 gpt-6-luna (실측: gpt-6-luna / gpt-5.6-luna / gpt-5.6-terra 동작,
+    gpt-5.5 는 404 미지원).
+  · Codex CLI 는 npm @openai/codex 네이티브 .exe 를 우선 사용한다
+    (0.152.0 WinGet 판에는 gpt-6-luna 카탈로그가 없다).
+  · Claude Code 는 이 프로바이더를 지원하지 않는다 (Anthropic 자격증명 별도).
 
 이 플러그인이 코드로 봉인하는 것 (사람이 잊으면 재발하는 것들):
   - 비대화형 실행 시 stdin 을 닫지 않아 CLI 가 멈추는 문제
@@ -27,6 +37,8 @@
   - Codex 가 전역 config.toml 을 읽어 프로바이더 전환이 안 되는 문제
   - opencode-go 가 헤더 없으면 403/400 으로 죽는 문제
   - warning/tokens used 잡음이 응답에 섞이는 문제
+  - .cmd shim 경유 시 cmd.exe 가 인자를 재파싱해 프롬프트가 유실되는 문제
+    (실측: 네이티브 .exe 직접 호출로 회피)
 
 되돌리기
   plugin_toggle(name="harness-worker", enabled=false) - 즉시 무효화.
@@ -46,10 +58,32 @@ from . import worker
 # sys.modules 캐시에 남아  코드가 계속 쓰인다 (_unload_plugins 는
 # sys.modules 를 정리하지 않는다). 명시적 reload 로 매번 디스크에서
 # 다시 읽어, worker.py 수정이 재기동 없이 반영되게 한다.
-try:
-    importlib.reload(worker)
-except Exception:  # noqa: BLE001 - 로드 실패 시 기존 모듈로 계속 동작
-    pass
+#
+# ★ [2026-09-23] reload 는 모듈 전역을 재생성하므로 _JOBS / _ACTIVE_PROCS /
+#   두 Lock 이 "새 객체로 교체"된다. 그러면 이미 돌고 있는 워커 스레드와
+#   도구 호출이 서로 다른 딕셔너리를 보게 되어
+#     (a) kill_job 이 _ACTIVE_PROCS 를 못 찾아 proc=None -> taskkill 미실행
+#     (b) 스레드가 새 _JOBS 의 status='killed' 를 인지하지 못한다
+#   실측 확인: reload 직후 _ACTIVE_PROCS 항목 소실(1 -> 0).
+#   따라서 reload 전에 상태를 백업하고 reload 후 그대로 다시 꽂는다.
+_WORKER_GLOBAL_STATE = ("_JOBS", "_ACTIVE_PROCS", "_JOBS_LOCK", "_ACTIVE_PROCS_LOCK", "_QUOTA_LOCK")
+
+
+def _reload_worker() -> None:
+    """worker 를 리로드하되, 살아있는 스레드와 공유하는 전역 상태는 보존한다."""
+    saved = {}
+    for _n in _WORKER_GLOBAL_STATE:
+        if hasattr(worker, _n):
+            saved[_n] = getattr(worker, _n)
+    try:
+        importlib.reload(worker)
+    except Exception:  # noqa: BLE001 - 로드 실패 시 기존 모듈로 계속 동작
+        return
+    for _n, _v in saved.items():
+        setattr(worker, _n, _v)
+
+
+_reload_worker()
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +103,13 @@ DISPATCH_SCHEMA: Dict[str, Any] = {
         "Use worker_job(action='status', job_id='...') to check progress or retrieve results. "
         "Set background=false if you explicitly need to wait and block for the final result synchronously. "
         "harness='codex' runs the Codex CLI; harness='claude' runs Claude Code. "
-        "provider selects the LLM backend: 'openrouter' (default), 'opencode-go', "
-        "'qwen-token-plan', 'minimax', or 'omniroute'. Codex gets an isolated CODEX_HOME "
+        "provider selects the LLM backend. 'auto' (recommended) runs an automatic fallback "
+        "chain - chatgpt(subscription) -> openrouter -> opencode-go -> minimax - so that when "
+        "one brain exhausts its quota the worker switches to the next automatically. "
+        "Other values pin a single backend: 'openrouter' (default), 'chatgpt' (your logged-in "
+        "ChatGPT subscription via OAuth - no API key needed, Codex only), 'opencode-go', "
+        "'qwen-token-plan', 'minimax', or 'omniroute'. Pass 'chain' to override the fallback order. "
+        "Codex gets an isolated CODEX_HOME "
         "per provider (your ~/.codex is never touched). Claude Code routes through LiteLLM. "
         "The worker runs in an isolated git repository by default; pass isolate=false with "
         "workdir to operate on an existing project directory."
@@ -85,12 +124,36 @@ DISPATCH_SCHEMA: Dict[str, Any] = {
             },
             "provider": {
                 "type": "string",
-                "enum": ["openrouter", "opencode-go", "qwen-token-plan",
+                "enum": ["auto", "openrouter", "chatgpt", "opencode-go", "qwen-token-plan",
                          "minimax", "omniroute"],
                 "description": (
-                    "LLM backend for the worker. Defaults to 'openrouter'. "
-                    "Short aliases also work: oc=opencode-go, qwen=qwen-token-plan, "
-                    "mm=minimax, omni=omniroute."
+                    "'auto' (권장) runs an automatic fallback chain: "
+                    "chatgpt(subscription) -> openrouter -> opencode-go -> minimax. "
+                    "When the current brain exhausts its quota, the worker switches to "
+                    "the next one automatically and cools the exhausted provider down. "
+                    "Any other value pins a single backend. Defaults to 'openrouter'. "
+                    "'chatgpt' uses your logged-in ChatGPT subscription (OAuth), "
+                    "Codex-only, default model gpt-6-luna. "
+                    "Short aliases: auto/chain/fallback=auto, gpt/openai/sub=chatgpt, "
+                    "oc=opencode-go, qwen=qwen-token-plan, mm=minimax, omni=omniroute."
+                ),
+            },
+            "chain": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional explicit fallback order for provider='auto' "
+                    "(e.g. ['chatgpt','openrouter']). Omit to use the default chain."
+                ),
+            },
+            "models": {
+                "type": "object",
+                "description": (
+                    "Optional per-provider model override, so each brain in the chain runs "
+                    "its own model instead of all sharing one. "
+                    "Example: {\"chatgpt\": \"gpt-5.6-terra\", "
+                    "\"openrouter\": \"deepseek/deepseek-v4.1-flash\"}. "
+                    "Takes precedence over the single 'model' argument."
                 ),
             },
             "prompt": {
@@ -116,7 +179,8 @@ DISPATCH_SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "Optional model override for the worker. "
-                    "Codex example: 'qwen3.8-max' (Qwen) or 'deepseek-v4.1-flash' (opencode-go). "
+                    "Codex example: 'gpt-6-luna' / 'gpt-5.6-luna' (chatgpt subscription), "
+                    "'qwen3.8-max' (Qwen) or 'deepseek-v4.1-flash' (opencode-go). "
                     "Claude must use a LiteLLM alias: 'claude-qwen', 'claude-oc', "
                     "'claude-minimax', 'claude-omni', 'claude-openrouter'."
                 ),
@@ -218,10 +282,7 @@ def _json(payload: Dict[str, Any]) -> str:
 
 
 def _dispatch(args: Dict[str, Any], **_: Any) -> str:
-    try:
-        importlib.reload(worker)
-    except Exception:
-        pass
+    _reload_worker()
 
     harness = str(args.get("harness") or "").strip().lower()
     prompt = str(args.get("prompt") or "").strip()
@@ -277,6 +338,8 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
                 provider=args.get("provider") or None,
                 session_id=session_id,
                 with_mcp=with_mcp,
+                chain=args.get("chain") or None,
+                models=args.get("models") or None,
             )
         except Exception as exc:
             logger.exception("harness-worker: background dispatch failed")
@@ -300,6 +363,8 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
             keep=bool(args.get("keep")),
             provider=args.get("provider") or None,
             with_mcp=with_mcp,
+            chain=args.get("chain") or None,
+            models=args.get("models") or None,
         )
     except Exception as exc:  # 도구는 절대 예외를 밖으로 던지지 않는다
         logger.exception("harness-worker: dispatch failed")
@@ -314,10 +379,7 @@ def _dispatch(args: Dict[str, Any], **_: Any) -> str:
 
 
 def _worker_job(args: Dict[str, Any], **_: Any) -> str:
-    try:
-        importlib.reload(worker)
-    except Exception:
-        pass
+    _reload_worker()
 
     action = str(args.get("action") or "list").strip().lower()
     job_id = str(args.get("job_id") or "").strip()

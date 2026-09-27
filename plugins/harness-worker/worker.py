@@ -45,11 +45,31 @@ PROVIDER_JSON = Path(
     r"C:\Users\ttl09\AppData\Local\DAON Agent System\data\custom_providers.json"
 )
 
+# ChatGPT 구독(OAuth) 자격증명 - `codex login` 이 만드는 파일.
+# 구독 프로바이더는 이 파일을 임시 CODEX_HOME 으로 복사해 인증을 물려준다.
+# ★ 읽기만 한다. 전역 ~/.codex 는 절대 수정하지 않는다.
+CODEX_AUTH_JSON = Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".codex" / "auth.json"
+
+# Codex CLI 탐색 순서 — ★순서가 중요하다. [2026-09-25 실측]
+#  1) npm @openai/codex 의 **네이티브 .exe** 를 최우선.
+#     · 0.156.1+ 카탈로그에 gpt-6-luna 가 있다 (WinGet 0.152.0 에는 없음)
+#     · .cmd shim / codex.js 래퍼를 쓰면 cmd.exe 가 인자를 재파싱해
+#       프롬프트 본문(줄바꿈·따옴표)이 유실된다
+#       (실측: 모델이 "SYSTEM DIRECTIVE 헤더는 보이는데 지시문 텍스트가 없다"고 답함)
+#  2) .cmd shim — 위 .exe 가 없을 때만
+#  3) WinGet 설치본 — ChatGPT 앱이 파일을 잠그고 있어 자체 업데이트 불가(0x80070020)
+_NPM_CODEX_ROOT = Path(os.environ.get("APPDATA", "")) / "npm/node_modules/@openai/codex"
+_NPM_CODEX_NATIVE = (
+    _NPM_CODEX_ROOT
+    / "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+)
+
 CODEX_EXE_CANDIDATES = [
+    _NPM_CODEX_NATIVE,
+    Path(os.environ.get("APPDATA", "")) / "npm/codex.cmd",
     Path(os.environ.get("LOCALAPPDATA", ""))
     / "Microsoft/WinGet/Packages/OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe"
     / "codex-x86_64-pc-windows-msvc.exe",
-    Path(os.environ.get("APPDATA", "")) / "npm/codex.cmd",
 ]
 
 CLAUDE_CMD_CANDIDATES = [
@@ -108,7 +128,15 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
     "openrouter": {
         "label": "OpenRouter",
         "base_url": "https://openrouter.ai/api/v1",
-        "codex_model": "deepseek/deepseek-v4.1-flash",
+        # [2026-09-24 대표님 지시] Codex 기본 모델 = GLM 5.3 Flash
+        "codex_model": "z-ai/glm-5.3-flash",
+        # ★ context_length(모델 최대 스펙 1,310,720)가 아니라
+        #   top_provider.context_length(실제 서빙 한계 1,048,576)를 쓴다.
+        #   스펙값으로 잡으면 그만큼 채우다 컨텍스트 초과로 죽는다.
+        "context_window": 1048576,
+        # claude_model 을 따로 고정하지 않으면 codex_model 을 따라가 Claude Code
+        # 워커까지 GLM 으로 끌려간다. Codex 만 교체가 지시사항이므로 분리한다.
+        "claude_model": "deepseek/deepseek-v4.1-flash",
         "claude_alias": "claude-openrouter",
         "headers": {},
     },
@@ -151,6 +179,27 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         ),
         "headers": {},
     },
+    # [2026-09-25 대표님 지시] 대표님 ChatGPT 계정 구독 경로.
+    #   base_url/env_key 를 두지 않는다 = Codex CLI 기본(OpenAI/ChatGPT OAuth) 인증을 쓴다.
+    #   임시 CODEX_HOME 에 ~/.codex/auth.json 을 복사해 넣어 구독을 그대로 물려준다.
+    # 실측(2026-09-25, CLI 0.156.1 + 대표님 ChatGPT 계정):
+    #   gpt-6-luna      → 정상 (기본값. 대표님 메인 모델)
+    #   gpt-5.6-luna    → 정상
+    #   gpt-5.6-terra   → 정상
+    #   gpt-5.5         → 404 미지원
+    "chatgpt": {
+        "label": "ChatGPT 구독 (OAuth)",
+        "mode": "subscription",
+        "codex_model": "gpt-6-luna",
+        "alt_models": ["gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra"],
+        "known_blocked": ["gpt-5.5"],
+        "claude_supported": False,
+        "claude_note": (
+            "ChatGPT 구독은 Codex 전용입니다. Claude Code 는 Anthropic 자격증명이 "
+            "필요하므로 이 프로바이더로는 쓸 수 없습니다."
+        ),
+        "headers": {},
+    },
 }
 
 DEFAULT_PROVIDER = "openrouter"
@@ -167,9 +216,225 @@ def resolve_provider(name: Optional[str]) -> str:
         "qwen": "qwen-token-plan", "qwen-token": "qwen-token-plan",
         "mini": "minimax", "mm": "minimax",
         "omni": "omniroute", "or": "openrouter",
+        "chatgpt": "chatgpt", "gpt": "chatgpt", "openai": "chatgpt",
+        "sub": "chatgpt", "subscription": "chatgpt",
     }
     key = alias.get(key, key)
     return key if key in PROVIDERS else DEFAULT_PROVIDER
+
+
+def is_subscription(provider: Optional[str]) -> bool:
+    """구독(OAuth) 프로바이더인가. API 키 대신 CLI 자체 자격증명을 쓴다."""
+    return PROVIDERS[resolve_provider(provider)].get("mode") == "subscription"
+
+
+def resolve_models_override(models: Optional[Dict[str, str]],
+                            provider: str) -> str:
+    """models 맵에서 해당 프로바이더용 모델명을 꺼낸다 (별칭 흡수).
+
+    예: models={'chatgpt':'gpt-5.6-terra','oc':'deepseek-v4.1-flash'}
+        resolve_models_override(models, 'opencode-go') -> 'deepseek-v4.1-flash'
+    """
+    if not models:
+        return ""
+    want = resolve_provider(provider)
+    for k, v in models.items():
+        if v and resolve_provider(k) == want:
+            return str(v)
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# 할당량 소진 감지 / 프로바이더 자동 폴백 (두뇌 스왑)
+# ---------------------------------------------------------------------------
+# [2026-09-25 대표님 지시] ChatGPT 구독(Free)처럼 할당량이 작은 두뇌가 소진되면
+#   다음 두뇌로 자동 교체해 워커를 계속 돌린다. (영상의 '모델 라우팅' 개념)
+#
+# 마커 출처 = Codex 바이너리 내부 오류 분류 코드 실측 추출:
+#   connection_error | network_error | http_401 | http_403 | http_429 |
+#   http_4xx | http_5xx | stream_error | context_window_exceeded |
+#   quota_exceeded | usage_not_included | retryable_api_error | rate_limit
+#
+# ★ 숫자 단독("429") 매칭은 금지 — "tokens used 11,429" 같은 토큰 수에 오탐한다.
+#   반드시 컨텍스트가 붙은 형태만 쓴다.
+QUOTA_MARKERS = (
+    "quota_exceeded", "quota exceeded",
+    "usage_not_included", "usage limit", "usage_limit",
+    "rate_limit", "rate limit", "too many requests",
+    "http_429", "status 429", "status: 429", "error 429", "code 429",
+    "insufficient_quota", "insufficient credits", "insufficient_credits",
+    "exceeded your current quota", "credit balance is too low",
+    "you've reached your", "limit reached", "exceeded your usage",
+)
+
+# 소진된 프로바이더를 기억해 두는 파일 (임시 상태 → WORKER_ROOT 하위)
+QUOTA_STORE_FILE = WORKER_ROOT / "_provider_quota.json"
+# 리셋 시각을 못 읽었을 때의 기본 쿨다운 (ChatGPT Free 리셋 주기 기준)
+QUOTA_DEFAULT_COOLDOWN_SEC = 5 * 3600
+
+# 자동 폴백 기본 순서: 구독(한도 작음) 우선 → API 키 프로바이더
+FALLBACK_CHAIN = ("chatgpt", "openrouter", "opencode-go", "minimax")
+AUTO_PROVIDER_ALIASES = ("auto", "chain", "fallback")
+
+_QUOTA_LOCK = threading.Lock()
+
+
+def detect_quota_exhausted(text: str) -> str:
+    """본문에서 할당량 소진 신호를 찾는다. 찾으면 그 마커를, 없으면 빈 문자열."""
+    if not text:
+        return ""
+    low = text.lower()
+    for m in QUOTA_MARKERS:
+        if m in low:
+            return m
+    return ""
+
+
+def parse_reset_hint(text: str) -> Optional[float]:
+    """응답에서 할당량 리셋 시각 힌트(epoch)를 읽는다. 못 읽으면 None.
+
+    Codex 응답에 resetsAt / resets_at + ISO-8601 이 실려 오는 경우가 있다.
+    ('Try again at 3:45 PM' 형태는 시간대가 불명확하므로 일부러 무시한다.)
+    """
+    if not text:
+        return None
+    m = re.search(
+        r"(?:resets?_?at|reset_at)['\"]?\s*[:=]\s*['\"]?"
+        r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)",
+        text, re.IGNORECASE,
+    )
+    if not m:
+        return None
+    raw = m.group(1).strip().replace(" ", "T")
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        ts = dt.timestamp()
+        return ts if ts > 0 else None
+    except Exception:
+        return None
+
+
+def _load_quota_store() -> Dict[str, Any]:
+    try:
+        if QUOTA_STORE_FILE.exists():
+            data = json.loads(QUOTA_STORE_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_quota_store(data: Dict[str, Any]) -> None:
+    try:
+        QUOTA_STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        QUOTA_STORE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_quota_cooldown(provider: str) -> Dict[str, Any]:
+    """쿨다운 중이면 상세를, 아니면 빈 dict 를 돌려준다."""
+    name = resolve_provider(provider)
+    with _QUOTA_LOCK:
+        ent = (_load_quota_store().get(name) or {})
+    try:
+        until = float(ent.get("until") or 0)
+    except Exception:
+        until = 0.0
+    if until > time.time():
+        return {
+            "provider": name,
+            "until": until,
+            "seconds_left": int(until - time.time()),
+            "marker": ent.get("marker", ""),
+            "reason": ent.get("reason", ""),
+            "reset_hint": ent.get("reset_hint", ""),
+        }
+    return {}
+
+
+def set_quota_cooldown(provider: str, marker: str = "", reason: str = "",
+                       seconds: Optional[int] = None,
+                       reset_hint: str = "") -> Dict[str, Any]:
+    """프로바이더를 할당량 소진 상태로 표시한다 (기본 5시간)."""
+    name = resolve_provider(provider)
+    secs = int(seconds) if seconds else QUOTA_DEFAULT_COOLDOWN_SEC
+    now = time.time()
+    ent = {
+        "until": now + secs,
+        "marked_at": now,
+        "seconds": secs,
+        "marker": marker,
+        "reason": reason,
+        "reset_hint": reset_hint,
+    }
+    with _QUOTA_LOCK:
+        d = _load_quota_store()
+        d[name] = ent
+        _save_quota_store(d)
+    return {"provider": name, **ent}
+
+
+def clear_quota_cooldown(provider: str) -> bool:
+    """쿨다운을 해제한다 (수동 복구 / 할당량 회복 확인 시)."""
+    name = resolve_provider(provider)
+    with _QUOTA_LOCK:
+        d = _load_quota_store()
+        if name in d:
+            d.pop(name, None)
+            _save_quota_store(d)
+            return True
+    return False
+
+
+def list_quota_cooldowns() -> List[Dict[str, Any]]:
+    """현재 쿨다운 중인 프로바이더 목록."""
+    out: List[Dict[str, Any]] = []
+    with _QUOTA_LOCK:
+        names = list(_load_quota_store().keys())
+    for n in names:
+        info = get_quota_cooldown(n)
+        if info:
+            out.append(info)
+    return out
+
+
+def build_fallback_chain(harness: str = "codex",
+                         explicit: Optional[List[str]] = None,
+                         include_cooling: bool = False) -> List[str]:
+    """실행할 프로바이더 순서를 만든다.
+
+    - harness 에 못 쓰는 프로바이더는 제외한다 (예: Claude Code 에 chatgpt 불가)
+    - include_cooling=False 면 쿨다운(할당량 소진) 중인 것은 건너뛴다
+    - 전부 쿨다운이면 어차피 시도해야 하므로 원래 순서를 그대로 돌려준다
+    """
+    harness = "codex" if harness == "codex" else "claude"
+    names = list(explicit) if explicit else list(FALLBACK_CHAIN)
+    ordered: List[str] = []
+    for n in names:
+        nm = resolve_provider(n)
+        if nm in ordered:
+            continue
+        if harness == "claude" and not claude_supports(nm):
+            continue
+        ordered.append(nm)
+    if not ordered:
+        ordered = [DEFAULT_PROVIDER]
+    if include_cooling:
+        return ordered
+    warm = [n for n in ordered if not get_quota_cooldown(n)]
+    return warm or ordered
+
+
+def is_auto_provider(provider: Optional[str]) -> bool:
+    """provider='auto' 계열인가 (자동 폴백 체인 요청)."""
+    return str(provider or "").strip().lower() in AUTO_PROVIDER_ALIASES
 
 
 def provider_spec(provider: Optional[str]) -> Dict[str, Any]:
@@ -187,6 +452,40 @@ def _load_providers_json(path: Optional[Path] = None) -> Dict[str, Any]:
     except Exception:
         return {}
     return data.get("providers") or {}
+
+
+def subscription_logged_in() -> Dict[str, Any]:
+    """`codex login` 으로 만든 ChatGPT 구독 자격증명이 유효한지 본다 (읽기 전용).
+
+    반환: {"ok": bool, "mode": str, "account_id": str, "reason": str}
+    """
+    p = CODEX_AUTH_JSON
+    if not p.exists():
+        return {
+            "ok": False, "mode": "", "account_id": "",
+            "reason": f"구독 로그인 파일이 없습니다: {p} (먼저 `codex login` 실행)",
+        }
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"ok": False, "mode": "", "account_id": "",
+                "reason": f"auth.json 파싱 실패: {exc}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "mode": "", "account_id": "", "reason": "auth.json 형식 오류"}
+
+    mode = str(data.get("auth_mode") or "")
+    tokens = data.get("tokens") or {}
+    access = str((tokens or {}).get("access_token") or "")
+    account = str((tokens or {}).get("account_id") or "")
+    if mode.lower() == "chatgpt" and access:
+        return {"ok": True, "mode": mode, "account_id": account, "reason": ""}
+    return {
+        "ok": False, "mode": mode, "account_id": account,
+        "reason": (
+            f"구독 자격증명이 아닙니다 (auth_mode={mode!r}). "
+            "`codex login` 으로 ChatGPT 계정 로그인을 완료하세요."
+        ),
+    }
 
 
 def read_provider_key(provider: str = DEFAULT_PROVIDER,
@@ -221,17 +520,23 @@ def available_providers() -> List[Dict[str, Any]]:
     """키가 있는 프로바이더만 골라 메타와 함께 돌려준다."""
     out: List[Dict[str, Any]] = []
     for name, spec in PROVIDERS.items():
+        sub = spec.get("mode") == "subscription"
         key = read_provider_key(name)
+        has_key = bool(key)
+        if sub:
+            has_key = bool(subscription_logged_in().get("ok"))
         out.append({
             "provider": name,
             "label": spec["label"],
-            "has_key": bool(key),
-            "base_url": spec["base_url"],
+            "has_key": has_key,
+            "base_url": spec.get("base_url", ""),
             "codex_model": spec["codex_model"],
-            "claude_alias": spec["claude_alias"],
+            "claude_alias": spec.get("claude_alias", ""),
             "claude_supported": claude_supports(name),
             "claude_note": spec.get("claude_note", ""),
             "models": read_provider_models(name),
+            "subscription": sub,
+            "cooldown": get_quota_cooldown(name) or None,
         })
     return out
 
@@ -380,25 +685,42 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
     """
     name = resolve_provider(provider)
     spec = PROVIDERS[name]
+    subscription = spec.get("mode") == "subscription"
 
     home = CODEX_HOME_ROOT / name
     home.mkdir(parents=True, exist_ok=True)
 
     env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
 
-    lines = [
-        f'model = "{spec["codex_model"]}"',
-        f'model_provider = "{name}"',
-        "model_context_window = 128000",
-        "",
-        f"[model_providers.{name}]",
-        f'name = "{spec["label"]}"',
-        f'base_url = "{spec["base_url"]}"',
-        f'env_key = "{env_key_name}"',
-        'wire_api = "responses"',
-        "request_max_retries = 2",
-        "stream_idle_timeout_ms = 60000",
-    ]
+    lines: List[str] = []
+    if subscription:
+        # ── 구독(OAuth) 경로 ──────────────────────────────────────────
+        # model_provider / base_url / env_key 를 일절 쓰지 않는다.
+        # → Codex CLI 기본(OpenAI) + auth.json 의 ChatGPT 자격증명을 쓴다.
+        # auth.json 은 '복사'만 한다. 전역 ~/.codex 는 읽기 전용 취급.
+        if spec.get("codex_model") not in (None, "", "auto"):
+            lines.append(f'model = "{spec["codex_model"]}"')
+        _src = CODEX_AUTH_JSON
+        if _src.exists():
+            try:
+                shutil.copyfile(_src, home / "auth.json")
+            except Exception:
+                pass
+        lines.append("")
+    else:
+        lines = [
+            f'model = "{spec["codex_model"]}"',
+            f'model_provider = "{name}"',
+            f'model_context_window = {spec.get("context_window", 128000)}',
+            "",
+            f"[model_providers.{name}]",
+            f'name = "{spec["label"]}"',
+            f'base_url = "{spec["base_url"]}"',
+            f'env_key = "{env_key_name}"',
+            'wire_api = "responses"',
+            "request_max_retries = 2",
+            "stream_idle_timeout_ms = 60000",
+        ]
     headers = spec.get("headers") or {}
     if headers:
         # TOML 인라인 테이블 - opencode-go 는 이게 없으면 403/400 으로 죽는다
@@ -421,6 +743,8 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 "",
                 "[mcp_servers.serena]",
                 'command = "uvx"',
+                # [2026-09-25 병합] 소스 사본에만 있던 대시보드 비활성 플래그를 이식.
+                # serena 는 uvx+git clone 으로 뜨므로 불필요한 웹/GUI 창을 꺼 시작 비용을 줄인다.
                 'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--enable-web-dashboard", "false", "--open-web-dashboard", "false", "--enable-gui-log-window", "false"]',
             ]
         if "daon-design" in targets:
@@ -464,12 +788,24 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
 
     (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    if subscription:
+        return {
+            "home": str(home),
+            "config": str(home / "config.toml"),
+            "env_key_name": "",
+            "codex_model": spec["codex_model"],
+            "base_url": "",
+            "subscription": True,
+            "auth_copied": (home / "auth.json").exists(),
+        }
+
     return {
         "home": str(home),
         "config": str(home / "config.toml"),
         "env_key_name": env_key_name,
         "codex_model": spec["codex_model"],
         "base_url": spec["base_url"],
+        "subscription": False,
     }
 
 
@@ -522,13 +858,16 @@ def write_litellm_config(path: Optional[Path] = None) -> Dict[str, Any]:
         }
 
     # Claude Code 기본 슬롯(claude-opus-5 등)은 기본 프로바이더를 가리키게 한다
+    # ★ codex_model 이 아니라 alias_map 의 실모델을 쓴다 — 그래야 Codex 만
+    #   모델을 교체해도 Claude 슬롯이 같이 끌려가지 않는다.
     default_alias = PROVIDERS[DEFAULT_PROVIDER]["claude_alias"]
+    default_model = alias_map[default_alias]["model"]
     for slot in ("claude-opus-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
                  "claude-haiku-4-5"):
         entries.append(
             f"  - model_name: {slot}\n"
             f"    litellm_params:\n"
-            f"      model: openai/{PROVIDERS[DEFAULT_PROVIDER]['codex_model']}\n"
+            f"      model: openai/{default_model}\n"
             f"      api_base: {PROVIDERS[DEFAULT_PROVIDER]['base_url']}\n"
             f"      api_key: os.environ/"
             f"{alias_map[default_alias]['env_var']}"
@@ -561,7 +900,8 @@ def claude_supports(provider: str) -> bool:
 
 
 def claude_alias_for(provider: str) -> str:
-    return PROVIDERS[resolve_provider(provider)]["claude_alias"]
+    # 구독 전용 프로바이더(chatgpt 등)는 claude_alias 가 없다 → 빈 문자열
+    return PROVIDERS[resolve_provider(provider)].get("claude_alias", "")
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +924,7 @@ def build_command(harness: str, prompt: str, exe: str,
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--skip-git-repo-check",
             ]
-        if model:
+        if model and model != "auto":
             argv += ["-m", model]
         # Windows PowerShell heredoc / 32KB argv 한계 우회 지침 주입
         windows_directive = (
@@ -632,11 +972,18 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
         # 이게 없으면 ~/.codex/config.toml(전역)이 이겨서 프로바이더 전환이 안 된다.
         if codex_home:
             env["CODEX_HOME"] = codex_home
-        env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
-        env[env_key_name] = key
-        # 하위 호환: 예전 설정이 OPENROUTER_API_KEY 를 참조할 수 있다
-        if name == "openrouter":
-            env["OPENROUTER_API_KEY"] = key
+        if is_subscription(name):
+            # ── 구독(OAuth) 경로 ──────────────────────────────────────
+            # API 키를 주입하지 않는다. 임시 CODEX_HOME 의 auth.json(OAuth)을 쓴다.
+            # 주변 환경에 키가 남아 있으면 인증 방식이 API 키로 뒤집히므로 제거한다.
+            for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY"):
+                env.pop(_k, None)
+        else:
+            env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
+            env[env_key_name] = key
+            # 하위 호환: 예전 설정이 OPENROUTER_API_KEY 를 참조할 수 있다
+            if name == "openrouter":
+                env["OPENROUTER_API_KEY"] = key
     else:
         env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{LITELLM_PORT}"
         env["ANTHROPIC_AUTH_TOKEN"] = LITELLM_MASTER_KEY
@@ -700,7 +1047,7 @@ def clean_output(harness: str, text: str) -> str:
 # 실행
 # ---------------------------------------------------------------------------
 
-def run_worker(
+def _run_single(
     harness: str,
     prompt: str,
     workdir: Optional[str] = None,
@@ -712,11 +1059,24 @@ def run_worker(
     api_key: Optional[str] = None,
     provider: Optional[str] = None,
     with_mcp: bool = False,
+    _wd_path: Optional[str] = None,
+    _job_id: Optional[str] = None,
+    models: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """워커를 한 번 실행하고 정제된 결과를 돌려준다.
+    """워커를 **한 번** 실행하고 정제된 결과를 돌려준다 (단일 프로바이더).
 
-    provider: openrouter | opencode-go | qwen-token-plan | minimax | omniroute
-              (별칭 oc / qwen / mm / omni 도 허용)
+    provider: openrouter | chatgpt | opencode-go | qwen-token-plan | minimax | omniroute
+              (별칭 oc / qwen / mm / omni / gpt / openai / sub 도 허용)
+
+    자동 폴백이 필요하면 run_worker(provider='auto') 를 쓴다.
+
+    models  : 프로바이더별 모델 지정. {'chatgpt':'gpt-5.6-terra',
+              'openrouter':'deepseek/deepseek-v4.1-flash'} 처럼 주면
+              각 두뇌가 자기에게 맞는 모델로 돈다 (전역 model 보다 우선).
+
+    _wd_path: 이미 준비된 작업 디렉터리 경로. 폴백 재시도 시 같은 폴더를
+              이어 쓰기 위해 내부에서만 넘긴다 (이미 만든 파일을 살린다).
+    _job_id : 백그라운드 잡이면 PID 를 _ACTIVE_PROCS 에 등록해 kill 이 동작하게 한다.
 
     반환 dict:
       ok, harness, provider, model, exit_code, elapsed, workdir, output,
@@ -741,9 +1101,15 @@ def run_worker(
         return result
     result["exe"] = exe
 
-    # 자격증명 - 명시 키 > 해당 프로바이더 키
+    # 자격증명 - 구독(OAuth) 프로바이더는 키가 없는 게 정상이다
+    subscription = is_subscription(prov)
     key = api_key if api_key is not None else read_provider_key(prov)
-    if not key:
+    if subscription:
+        st = subscription_logged_in()
+        if not st.get("ok"):
+            result["error"] = f"[{prov}] {st.get('reason')}"
+            return result
+    elif not key:
         result["error"] = (
             f"[{prov}] API 키를 읽지 못했습니다 "
             f"(custom_providers.json 의 providers.{prov}.api_key). "
@@ -757,8 +1123,7 @@ def run_worker(
             allowed_mcps = None
             if with_mcp:
                 try:
-                    import sys
-                    _api_dir = str(Path(__file__).resolve().parent.parent.parent / "api")
+                    _api_dir = r"c:\daon\Daon agent System\api"
                     if _api_dir not in sys.path:
                         sys.path.insert(0, _api_dir)
                     from api.laya_client import laya_client
@@ -768,7 +1133,10 @@ def run_worker(
             home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)
             codex_home = home["home"]
             result["codex_home"] = home["config"]
-            if not model:
+            _per = resolve_models_override(models, prov)
+            if _per:
+                model = _per
+            elif not model:
                 model = home["codex_model"]
         except Exception as exc:
             result["error"] = f"Codex 홈(config.toml) 생성 실패: {exc}"
@@ -796,10 +1164,19 @@ def run_worker(
             pass
         if not model:
             model = claude_alias_for(prov)
+        _per = resolve_models_override(models, prov)
+        if _per:
+            # Claude Code 는 LiteLLM alias 를 받는 게 안전하다 (--model 값)
+            model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
 
     result["model"] = model
 
-    wd = prepare_workdir(workdir=workdir, isolate=isolate, label=harness)
+    if _wd_path:
+        # 폴백 재시도 — 앞선 두뇌가 만들어 둔 작업 폴더를 그대로 이어 쓴다.
+        # (새로 만들면 이미 생성된 파일이 사라져 처음부터 다시 하게 된다)
+        wd = {"path": _wd_path, "created_repo": False, "isolated": bool(isolate)}
+    else:
+        wd = prepare_workdir(workdir=workdir, isolate=isolate, label=harness)
     result["workdir"] = wd["path"]
     result["isolated"] = wd["isolated"]
 
@@ -826,6 +1203,14 @@ def run_worker(
             stdout=out_file,
             stderr=err_file,
         )
+
+        # 백그라운드 잡이면 PID 를 등록해 kill_job 이 실제로 종료시킬 수 있게 한다
+        if _job_id:
+            try:
+                with _ACTIVE_PROCS_LOCK:
+                    _ACTIVE_PROCS[_job_id] = proc
+            except Exception:
+                pass
 
         deadline = t0 + timeout
         while time.time() < deadline:
@@ -880,6 +1265,12 @@ def run_worker(
         result["elapsed"] = round(time.time() - t0, 2)
         result["error"] = f"실행 실패: {exc}"
     finally:
+        if _job_id:
+            try:
+                with _ACTIVE_PROCS_LOCK:
+                    _ACTIVE_PROCS.pop(_job_id, None)
+            except Exception:
+                pass
         if out_file:
             try:
                 out_file.close()
@@ -900,6 +1291,143 @@ def run_worker(
                 )
 
     return result
+
+
+def _cleanup_isolated(res: Dict[str, Any], isolate: bool, keep: bool,
+                      wd_path: Optional[str]) -> Dict[str, Any]:
+    """폴백 래퍼용 정리. 최종 결과에만 적용한다 (중간 시도 폴더는 보존)."""
+    if isolate and not keep and wd_path:
+        cleaned = _rmtree_retry(wd_path)
+        res["cleaned"] = cleaned
+        if not cleaned:
+            res["cleanup_warning"] = (
+                "격리 디렉터리를 지우지 못했습니다(파일 잠금). "
+                f"수동 삭제: {wd_path}"
+            )
+    return res
+
+
+def run_worker(
+    harness: str,
+    prompt: str,
+    workdir: Optional[str] = None,
+    isolate: bool = False,
+    model: Optional[str] = None,
+    timeout: int = 300,
+    full_auto: bool = True,
+    keep: bool = False,
+    api_key: Optional[str] = None,
+    provider: Optional[str] = None,
+    with_mcp: bool = False,
+    chain: Optional[List[str]] = None,
+    _job_id: Optional[str] = None,
+    models: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """워커를 실행한다.
+
+    provider 에 단일 값을 주면 그 프로바이더로 **한 번** 실행한다 (기존 동작).
+
+    provider='auto' (또는 'chain' / 'fallback') 이면 **자동 폴백 체인**으로 돈다:
+      chatgpt(구독) → openrouter → opencode-go → minimax
+    앞의 두뇌가 할당량을 소진하면 즉시 다음 두뇌로 갈아타고,
+    소진된 프로바이더는 쿨다운으로 기록해 다음 호출부터 건너뛴다.
+    같은 작업 폴더를 이어 쓰므로 이미 만든 파일은 유지된다.
+
+    chain 인자로 순서를 직접 지정할 수 있다 (예: ["openrouter", "chatgpt"]).
+
+    반환 dict 는 _run_single 과 같고, 폴백 시 추가 키:
+      attempts[]          — 시도한 프로바이더별 결과·소진 마커
+      fallback_used       — 첫 두뇌가 아닌 다른 두뇌로 성공했는지
+      requested_provider  — 'auto'
+      chain               — 실제로 시도한 순서
+    """
+    harness = "codex" if harness == "codex" else "claude"
+
+    if not is_auto_provider(provider):
+        return _run_single(
+            harness, prompt, workdir=workdir, isolate=isolate, model=model,
+            timeout=timeout, full_auto=full_auto, keep=keep, api_key=api_key,
+            provider=provider, with_mcp=with_mcp, _job_id=_job_id,
+            models=models,
+        )
+
+    # 쿨다운으로 건너뛴 두뇌를 따로 기록한다 — 사전 제외도 '교체'이므로
+    # fallback_used 에 반영해야 대표님께 정확히 보고된다.
+    requested_chain = build_fallback_chain(harness, explicit=chain, include_cooling=True)
+    names = build_fallback_chain(harness, explicit=chain)
+    skipped_cooling = [n for n in requested_chain if n not in names]
+    attempts: List[Dict[str, Any]] = []
+    wd_path: Optional[str] = None
+    last: Dict[str, Any] = {}
+
+    for idx, prov in enumerate(names):
+        res = _run_single(
+            harness, prompt, workdir=workdir, isolate=isolate, model=model,
+            timeout=timeout, full_auto=full_auto,
+            keep=True,  # 최종 정리는 이 래퍼가 한다 (재시도 폴더 보존)
+            api_key=api_key, provider=prov, with_mcp=with_mcp,
+            _wd_path=wd_path, _job_id=_job_id, models=models,
+        )
+        if not wd_path:
+            wd_path = res.get("workdir")
+
+        blob = "\n".join([str(res.get("error") or ""), str(res.get("raw_tail") or "")])
+        marker = detect_quota_exhausted(blob)
+        hint = parse_reset_hint(blob) if marker else None
+
+        attempts.append({
+            "provider": prov,
+            "ok": bool(res.get("ok")),
+            "exit_code": res.get("exit_code"),
+            "elapsed": res.get("elapsed"),
+            "model": res.get("model"),
+            "quota_marker": marker,
+            "error": (str(res.get("error") or ""))[:300],
+        })
+
+        if res.get("ok"):
+            if marker:
+                # 응답은 받았지만 할당량 경고가 섞여 있으면 미리 표시해 둔다
+                secs = int(hint - time.time()) + 60 if hint and hint > time.time() else None
+                set_quota_cooldown(prov, marker, "응답에 할당량 경고 포함",
+                                   seconds=secs, reset_hint=str(hint or ""))
+            res.update({
+                "attempts": attempts,
+                "fallback_used": idx > 0 or bool(skipped_cooling),
+                "skipped_cooling": skipped_cooling,
+                "requested_provider": "auto",
+                "chain": list(names),
+            })
+            return _cleanup_isolated(res, isolate, keep, wd_path)
+
+        if marker:
+            secs = int(hint - time.time()) + 60 if hint and hint > time.time() else None
+            set_quota_cooldown(prov, marker, "할당량 소진",
+                               seconds=secs, reset_hint=str(hint or ""))
+        last = res
+
+        # kill 요청이면 다음 두뇌로 넘어가지 않는다 (불필요한 재시도 방지)
+        if _job_id:
+            try:
+                with _JOBS_LOCK:
+                    if _JOBS.get(_job_id, {}).get("status") == "killed":
+                        break
+            except Exception:
+                pass
+
+    out: Dict[str, Any] = dict(last) if last else {
+        "ok": False, "harness": harness, "provider": "auto",
+        "error": "실행 가능한 프로바이더가 없습니다.",
+    }
+    out["ok"] = False
+    out["attempts"] = attempts
+    out["fallback_used"] = len(attempts) > 1 or bool(skipped_cooling)
+    out["skipped_cooling"] = skipped_cooling
+    out["requested_provider"] = "auto"
+    out["chain"] = list(names)
+    out["error"] = (str(out.get("error") or "")).strip() + \
+        f" | 폴백 체인 {len(attempts)}개 모두 실패"
+    return _cleanup_isolated(out, isolate, keep, wd_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,10 +1585,135 @@ def start_background_job(
     provider: Optional[str] = None,
     session_id: Optional[str] = None,
     with_mcp: bool = False,
+    chain: Optional[List[str]] = None,
+    models: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """워커를 독립된 백그라운드 스레드 및 프로세스로 실행하고, 즉시 job_id 를 반환한다."""
     _ensure_jobs_loaded()
     harness = "codex" if harness == "codex" else "claude"
+
+    # ── 자동 폴백 체인 (provider='auto') ─────────────────────────────────
+    #   앞 두뇌가 할당량을 소진하면 다음 두뇌로 갈아탄다.
+    #   스레드가 run_worker(폴백 래퍼)를 통째로 돌리고 잡 상태만 갱신한다.
+    if is_auto_provider(provider):
+        names = build_fallback_chain(harness, explicit=chain)
+        auto_job_id = f"job_{harness}_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        auto_info: Dict[str, Any] = {
+            "job_id": auto_job_id,
+            "harness": harness,
+            "provider": "auto",
+            "chain": names,
+            "model": model or "",
+            "workdir": "",
+            "isolated": bool(isolate),
+            "prompt": prompt,
+            "command": "auto-fallback: " + " -> ".join(names),
+            "status": "running",
+            "started_at": time.time(),
+            "finished_at": None,
+            "elapsed": 0.0,
+            "pid": None,
+            "exit_code": None,
+            "output": "",
+            "raw_tail": "",
+            "error": "",
+            "session_id": session_id or "",
+            "attempts": [],
+            "fallback_used": False,
+        }
+        with _JOBS_LOCK:
+            _JOBS[auto_job_id] = auto_info
+        _persist_jobs()
+
+        def _auto_thread_func() -> None:
+            t0 = time.time()
+            try:
+                res = run_worker(
+                    harness, prompt, workdir=workdir, isolate=isolate, model=model,
+                    timeout=timeout, full_auto=full_auto, keep=keep,
+                    api_key=api_key, provider="auto", with_mcp=with_mcp,
+                    chain=chain, _job_id=auto_job_id, models=models,
+                )
+            except Exception as exc:
+                res = {"ok": False, "error": f"실행 실패: {exc}"}
+
+            elapsed = round(time.time() - t0, 2)
+            with _JOBS_LOCK:
+                j = _JOBS.get(auto_job_id)
+                if j is None:
+                    return
+                if j.get("status") != "killed":
+                    j["status"] = "completed" if res.get("ok") else "failed"
+                    j["exit_code"] = res.get("exit_code")
+                    j["output"] = res.get("output") or ""
+                    j["raw_tail"] = res.get("raw_tail") or ""
+                    j["error"] = res.get("error") or ""
+                    j["provider"] = res.get("provider") or "auto"
+                    j["model"] = res.get("model") or j.get("model") or ""
+                    j["workdir"] = res.get("workdir") or j.get("workdir") or ""
+                    j["attempts"] = res.get("attempts") or []
+                    j["fallback_used"] = bool(res.get("fallback_used"))
+                j["elapsed"] = elapsed
+                j["finished_at"] = time.time()
+                final_st = dict(j)
+            _persist_jobs()
+
+            st_raw = final_st.get("status")
+            st_kor = ("완료" if st_raw == "completed"
+                      else ("중단" if st_raw == "killed" else "실패"))
+            icon = "✅" if st_raw == "completed" else "❌"
+            used = final_st.get("attempts") or []
+            chain_txt = " → ".join(
+                f"{a.get('provider')}{'' if a.get('ok') else '(실패)'}" for a in used
+            ) or " → ".join(names)
+            msg = (
+                f"{icon} [워커 {st_kor}] {harness.upper()} 자동 폴백 작업이 {st_kor}되었습니다. "
+                f"(소요: {elapsed}s, 두뇌: {chain_txt})"
+            )
+            try:
+                _send_windows_toast(
+                    title=f"DAON 워커 {st_kor} ({harness.upper()} auto)",
+                    message=f"소요 시간: {elapsed}초\n두뇌: {chain_txt}",
+                    status=st_raw or "completed",
+                )
+            except Exception:
+                pass
+            if session_id:
+                try:
+                    from api.config import get_stream_queue
+                    q = get_stream_queue(session_id)
+                    if q:
+                        q.put_nowait(('notice', {
+                            'message': msg, 'job_id': auto_job_id,
+                            'status': st_raw,
+                        }))
+                except Exception:
+                    pass
+
+        threading.Thread(
+            target=_auto_thread_func,
+            name=f"daon-worker-auto-{auto_job_id}",
+            daemon=True,
+        ).start()
+
+        return {
+            "ok": True,
+            "status": "running",
+            "job_id": auto_job_id,
+            "harness": harness,
+            "provider": "auto",
+            "chain": names,
+            "model": model or "",
+            "isolated": bool(isolate),
+            "attempts": [],
+            "message": (
+                f"{harness.upper()} 워커가 백그라운드에서 자동 폴백 체인으로 시작되었습니다 "
+                f"(Job ID: {auto_job_id}, 순서: {' → '.join(names)}). "
+                f"앞 두뇌가 할당량을 소진하면 자동으로 다음 두뇌로 갈아탑니다. "
+                f"진행 확인은 worker_job(action='status', job_id='{auto_job_id}')."
+            ),
+        }
+
     prov = resolve_provider(provider)
 
     exe = find_binary(harness)
@@ -1071,8 +1724,20 @@ def start_background_job(
             "harness": harness,
         }
 
+    # 자격증명 - 구독(OAuth) 프로바이더는 API 키가 없는 게 정상이다.
+    # [2026-09-25] 워커 본체(run_worker)와 동일한 구독 분기를 여기에도 적용.
+    #   이게 없으면 dispatch_worker(백그라운드) 경로만 "API 키가 없습니다"로 거부된다.
+    subscription = is_subscription(prov)
     key = api_key if api_key is not None else read_provider_key(prov)
-    if not key:
+    if subscription:
+        st = subscription_logged_in()
+        if not st.get("ok"):
+            return {
+                "ok": False,
+                "error": f"[{prov}] {st.get('reason')}",
+                "harness": harness,
+            }
+    elif not key:
         return {
             "ok": False,
             "error": f"[{prov}] 프로바이더 API 키가 없습니다.",
@@ -1085,8 +1750,7 @@ def start_background_job(
             allowed_mcps = None
             if with_mcp:
                 try:
-                    import sys
-                    _api_dir = str(Path(__file__).resolve().parent.parent.parent / "api")
+                    _api_dir = r"c:\daon\Daon agent System\api"
                     if _api_dir not in sys.path:
                         sys.path.insert(0, _api_dir)
                     from api.laya_client import laya_client
@@ -1095,7 +1759,10 @@ def start_background_job(
                     allowed_mcps = None
             home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)
             codex_home = home["home"]
-            if not model:
+            _per = resolve_models_override(models, prov)
+            if _per:
+                model = _per
+            elif not model:
                 model = home["codex_model"]
         except Exception as exc:
             return {"ok": False, "error": f"Codex 홈 생성 실패: {exc}", "harness": harness}
@@ -1115,6 +1782,9 @@ def start_background_job(
             pass
         if not model:
             model = claude_alias_for(prov)
+        _per = resolve_models_override(models, prov)
+        if _per:
+            model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
 
     wd = prepare_workdir(workdir=workdir, isolate=isolate, label=harness)
     argv = build_command(harness, prompt, exe, full_auto=full_auto,
@@ -1511,6 +2181,14 @@ def worker_status() -> Dict[str, Any]:
                    "unsupported": [p["provider"] for p in provs
                                    if p["has_key"] and not p["claude_supported"]]},
         "gateway": gw,
+        "auto_fallback": {
+            "default_chain": list(FALLBACK_CHAIN),
+            "codex_chain": build_fallback_chain("codex"),
+            "claude_chain": build_fallback_chain("claude"),
+            "cooldowns": list_quota_cooldowns(),
+            "note": ("provider='auto' 로 호출하면 이 순서로 자동 교체한다. "
+                     "할당량을 소진한 두뇌는 쿨다운으로 건너뛴다."),
+        },
         "worker_root": str(WORKER_ROOT),
         "recent_runs": runs,
     }

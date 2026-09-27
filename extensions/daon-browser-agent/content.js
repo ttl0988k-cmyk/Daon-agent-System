@@ -960,8 +960,8 @@
       selectedText: selection,
       bodyText: combinedText,
       interactive: {
-        buttons: buttons.slice(0, 25),
-        inputs: inputs.slice(0, 25)
+        buttons: buttons.slice(0, 40),
+        inputs: inputs.slice(0, 30)
       }
     };
   }

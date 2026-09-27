@@ -998,10 +998,26 @@ class DynamicModelSelector:
                          task: str = "") -> str:
         """작업 난이도(light/standard/heavy)를 추론한다.
 
-        우선순위: (1) 작업 본문+역할 키워드 → (2) strength 기본값.
+        우선순위: (1) Laya System 1 시맨틱 난이도 판정 (0토큰) → (2) 작업 본문+역할 키워드 → (3) strength 기본값.
         비용 정보는 의도적으로 사용하지 않는다 — 난이도는 작업 특성만으로
         판단한다(대표님 결정 2026-08-24).
         """
+        # 1. Laya System 1 초고속 0토큰 난이도 판정
+        if task:
+            try:
+                from api.laya_client import laya_client
+                if laya_client.is_healthy():
+                    cats = {
+                        "heavy": "Complex architecture, system design, refactoring, algorithms, deep debugging, security",
+                        "light": "Simple bug fix, typo, formatting, comments, docs, minor change, boilerplate",
+                        "standard": "Standard feature implementation, component creation, normal coding",
+                    }
+                    res = laya_client.batch_classify([str(task)[:180]], cats, instruction="Classify software task difficulty:")
+                    if res and isinstance(res, list) and res[0] in cats:
+                        return res[0]
+            except Exception:
+                pass
+
         import re as _re
 
         text = f"{task or ''} {role or ''}".lower()

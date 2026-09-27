@@ -51,7 +51,26 @@ _TASK_TYPE_PATTERNS: list[tuple[str, list[str]]] = [
 
 
 def classify_task_type(task: str) -> str:
-    """Classify a task into a broad task type category using keyword matching."""
+    """Classify a task into a broad task type category using Laya System 1 or keyword fallback."""
+    if not task:
+        return "general"
+
+    # 1. Try Laya System 1 fast decision engine (0 tokens, ~10ms)
+    try:
+        from api.laya_client import laya_client
+        if laya_client.is_healthy():
+            categories = {
+                t: f"{t.replace('_', ' ')} task"
+                for t, _ in _TASK_TYPE_PATTERNS
+            }
+            categories["general"] = "general programming or conversational task"
+            res = laya_client.batch_classify([task[:200]], categories, instruction="Classify the software task type:")
+            if res and isinstance(res, list) and res[0] in categories:
+                return res[0]
+    except Exception as e:
+        _log.debug("Laya task classification fallback to keywords: %s", e)
+
+    # 2. Fallback to keyword matching
     task_lower = task.lower()
     scores: dict[str, int] = defaultdict(int)
     for task_type, keywords in _TASK_TYPE_PATTERNS:
