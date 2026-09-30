@@ -115,6 +115,7 @@ function Sync-FolderWithRobocopy([string]$sDir, [string]$tDir, [string[]]$xDirs,
 
 Sync-FolderWithRobocopy (Join-Path $src 'hermes-agent') (Join-Path $dst 'hermes-agent') @('__pycache__', '.pytest_cache', '.git', 'tests', '.venv', 'node_modules') @('*.pyc')
 Sync-FolderWithRobocopy (Join-Path $src 'api') (Join-Path $dst 'api') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
+Sync-FolderWithRobocopy (Join-Path $src 'api\api') (Join-Path $dst 'api') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 Sync-FolderWithRobocopy (Join-Path $src 'skills') (Join-Path $dst 'skills') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 
 Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills) → $dst" -ForegroundColor Green

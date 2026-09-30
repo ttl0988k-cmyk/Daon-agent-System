@@ -119,12 +119,12 @@ if hasattr(sys, '_MEIPASS'):
 
 # Loose resources in RESOURCE_DIR take highest priority over bundled files
 # allowing hotfixes and updates in resources/ to work immediately without full rebuild
-if (RESOURCE_DIR / 'hermes-agent').exists():
-    sys.path.insert(0, str(RESOURCE_DIR / 'hermes-agent'))
+sys.path.insert(0, str(RESOURCE_DIR))
+sys.path.insert(0, str(RESOURCE_DIR / 'api'))
 if (RESOURCE_DIR / 'api' / 'api').exists():
     sys.path.insert(0, str(RESOURCE_DIR / 'api' / 'api'))
-sys.path.insert(0, str(RESOURCE_DIR / 'api'))
-sys.path.insert(0, str(RESOURCE_DIR))
+if (RESOURCE_DIR / 'hermes-agent').exists():
+    sys.path.insert(0, str(RESOURCE_DIR / 'hermes-agent'))
 
 from api.config import PORT, HOST, MIME_MAP, STREAMS, STREAMS_LOCK, load_settings, save_settings
 # [v4] api.agent_runner, api.managers.model_manager 제거됨 (server.py에서 미사용, import 체인이 서버 시작 차단)
