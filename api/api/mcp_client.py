@@ -37,7 +37,7 @@ class MCPServerConnection:
     def __init__(self, server_id: str, command: str, args: list[str] = None,
                  env: dict = None, cwd: str = None, label: str = '',
                  transport: str = TRANSPORT_STDIO,
-                 url: str = '', auth_token: str = ''):
+                 url: str = '', auth_token: str = '', enabled: bool = True):
         self.server_id = server_id
         self.command = command
         self.args = args or []
@@ -47,6 +47,7 @@ class MCPServerConnection:
         self.transport = transport  # 'stdio' or 'http'
         self.url = url  # HTTP endpoint URL
         self.auth_token = auth_token  # Bearer token for HTTP auth
+        self.enabled = bool(enabled)
         self.session_id: str = ''  # Mcp-Session-Id from initialize response
         self.process: Optional[subprocess.Popen] = None
         self.tools: list[dict] = []
@@ -573,6 +574,7 @@ class MCPServerConnection:
             'command': self.command,
             'transport': self.transport,
             'connected': self.connected,
+            'enabled': getattr(self, 'enabled', True),
             'error': '' if self.connected else self.error,
             'expired': getattr(self, 'expired', False),
             'tools_count': len(self.tools),
@@ -599,10 +601,10 @@ class MCPManager:
 
     def _save_config(self):
         tmp_path = None
-        try:
-            self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_data = []
-            with self._lock:
+        with self._lock:
+            try:
+                self._config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_data = []
                 for server_id, conn in self._connections.items():
                     entry = {
                         'server_id': server_id,
@@ -612,41 +614,59 @@ class MCPManager:
                         'cwd': conn.cwd,
                         'label': conn.label,
                         'transport': conn.transport,
+                        'enabled': getattr(conn, 'enabled', True),
                     }
                     if conn.transport == TRANSPORT_HTTP:
                         entry['url'] = conn.url
                         entry['auth_token'] = conn.auth_token
                     config_data.append(entry)
 
-            # 안전장치: _connections가 비어있는데 기존 정상 파일이 존재하면 클로버 방지
-            if not config_data and self._config_path.exists() and self._config_path.stat().st_size > 100:
-                _logger.warning("MCPManager._save_config: Refusing to overwrite healthy config with empty list")
-                return
+                # 안전장치: _connections가 비어있는데 기존 정상 파일이 존재하면 클로버 방지
+                if not config_data and self._config_path.exists() and self._config_path.stat().st_size > 100:
+                    _logger.warning("MCPManager._save_config: Refusing to overwrite healthy config with empty list")
+                    return
 
-            # 원자적 쓰기 (Atomic write): tmp 파일에 먼저 작성 후 replace
-            tmp_path = self._config_path.with_suffix('.tmp')
-            bak_path = self._config_path.with_suffix('.bak')
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                _json.dump(config_data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
+                # 원자적 쓰기 (Atomic write): 고유 tmp 파일에 먼저 작성 후 replace
+                import os, uuid
+                tmp_path = self._config_path.with_suffix(f'.tmp.{uuid.uuid4().hex[:8]}')
+                bak_path = self._config_path.with_suffix('.bak')
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    _json.dump(config_data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except OSError:
+                        pass
 
-            # 기존 정상 파일이 있으면 .bak으로 백업 유지
-            if self._config_path.exists() and self._config_path.stat().st_size > 0:
+                # 기존 정상 파일이 있으면 .bak으로 백업 유지
+                if self._config_path.exists() and self._config_path.stat().st_size > 0:
+                    try:
+                        import shutil
+                        shutil.copy2(self._config_path, bak_path)
+                    except Exception:
+                        pass
+
                 try:
-                    import shutil
-                    shutil.copy2(self._config_path, bak_path)
-                except Exception:
-                    pass
-
-            os.replace(tmp_path, self._config_path)
-        except Exception as e:
-            _logger.error("Failed to save MCP config: %s", e)
-            if tmp_path and tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
+                    os.replace(tmp_path, self._config_path)
+                except (PermissionError, OSError):
+                    time.sleep(0.05)
+                    try:
+                        os.replace(tmp_path, self._config_path)
+                    except Exception:
+                        with open(self._config_path, 'w', encoding='utf-8') as f:
+                            _json.dump(config_data, f, ensure_ascii=False, indent=2)
+                        if tmp_path.exists():
+                            try:
+                                tmp_path.unlink()
+                            except Exception:
+                                pass
+            except Exception as e:
+                _logger.error("Failed to save MCP config: %s", e)
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
 
     @staticmethod
     def _is_jwt_expired(token: str) -> bool:
@@ -729,6 +749,7 @@ class MCPManager:
                 loaded_ids.add(server_id)
                 transport = srv.get('transport', TRANSPORT_STDIO)
                 auth_token = srv.get('auth_token', '')
+                enabled = srv.get('enabled', True)
                 
                 # Migration: strip --cdp-endpoint from the Playwright MCP preset.
                 # Connecting Playwright MCP to Electron's CDP port (9222) made its
@@ -760,7 +781,7 @@ class MCPManager:
                 # would spawn its own Chromium, but the app already ships a shared internal
                 # browser (browser_navigate etc.) that renders inside the app window.
                 # Only connect it when the user explicitly enables it via the MCP UI panel.
-                _auto = (not is_expired) and server_id != 'playwright'
+                _auto = enabled and (not is_expired) and server_id != 'playwright'
 
                 self.add_server(
                     server_id=server_id,
@@ -772,6 +793,7 @@ class MCPManager:
                     transport=transport,
                     url=srv.get('url', ''),
                     auth_token=auth_token,
+                    enabled=enabled,
                     auto_connect=_auto,
                     _save=False  # defer save until all servers are loaded
                 )
@@ -781,7 +803,7 @@ class MCPManager:
                     if conn:
                         conn.expired = True
                         conn.error = "Token Expired (재인증 필요)"
-                elif server_id != 'playwright':
+                elif enabled and server_id != 'playwright':
                     if server_id:
                         threading.Thread(target=self.connect_server, args=(server_id,), daemon=True).start()
 
@@ -807,7 +829,7 @@ class MCPManager:
     def add_server(self, server_id: str, command: str, args: list[str] = None,
                    env: dict = None, cwd: str = None, label: str = '',
                    transport: str = TRANSPORT_STDIO, url: str = '',
-                   auth_token: str = '', auto_connect: bool = True,
+                   auth_token: str = '', enabled: bool = True, auto_connect: bool = True,
                    _save: bool = True) -> dict:
         """Register and optionally connect to an MCP server."""
         with self._lock:
@@ -817,6 +839,7 @@ class MCPManager:
                 server_id=server_id, command=command, args=args,
                 env=env, cwd=cwd, label=label,
                 transport=transport, url=url, auth_token=auth_token,
+                enabled=enabled,
             )
             self._connections[server_id] = conn
 
@@ -847,7 +870,9 @@ class MCPManager:
         conn = self._connections.get(server_id)
         if not conn:
             return {'ok': False, 'error': 'Server not found'}
+        conn.enabled = True
         success = conn.connect()
+        self._save_config()
         result = {'ok': success, 'server': conn.to_dict()}
         if not success:
             result['error'] = conn.error or 'Failed to connect'
@@ -858,7 +883,9 @@ class MCPManager:
         conn = self._connections.get(server_id)
         if not conn:
             return {'ok': False, 'error': 'Server not found'}
+        conn.enabled = False
         conn.disconnect()
+        self._save_config()
         return {'ok': True, 'server': conn.to_dict()}
 
     def list_servers(self) -> list[dict]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -73,50 +74,68 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
 
         mcp_manager = get_mcp_manager()
 
-        # Wait up to 10 seconds for MCP servers (50 * 0.2s)
+        # Wait up to 3 seconds for active MCP servers (15 * 0.2s)
         mcp_tools: List[Dict[str, Any]] = []
-        for _ in range(50):
+        for _ in range(15):
             if cancel_event.is_set():
                 _logger.info("MCP sync aborted — stream cancelled for session %s", session_id)
                 break
             mcp_tools = mcp_manager.get_all_tools()
-            pending = sum(1 for c in mcp_manager._connections.values() if not c.connected and not c.error)
+            pending = sum(
+                1 for c in mcp_manager._connections.values()
+                if getattr(c, 'enabled', True)
+                and not getattr(c, 'expired', False)
+                and not c.connected
+                and not c.error
+                and getattr(c, 'server_id', '') != 'playwright'
+            )
             if pending == 0:
                 break
             time.sleep(0.2)
 
         registered_toolsets = set()
+        tools_by_server: Dict[str, List[Dict[str, Any]]] = {}
+
+        # Lazy MCP Router: enabled by default when total tools > 5 or env DAON_LAZY_MCP != '0'
+        use_lazy_mcp = os.getenv("DAON_LAZY_MCP", "1").strip().lower() not in ("0", "false", "no", "off")
 
         for t in mcp_tools:
             server_id = t.get('_mcp_server', 'unknown')
             orig_name = t.get('name', '')
+
+            tools_by_server.setdefault(server_id, []).append(t)
 
             safe_srv = _safe_name(server_id)
             safe_tool = _safe_name(orig_name)
             mcp_func_name = f"mcp_{safe_srv}_{safe_tool}"
             toolset_name = f"mcp-{safe_srv}"
 
-            # 1) OpenAI-format schema for agent.tools (model visibility)
-            mcp_desc = (t.get('description') or '').strip() or f"MCP tool {orig_name} from {server_id}"
-            api_schema = {
-                "type": "function",
-                "function": {
-                    "name": mcp_func_name,
-                    "description": mcp_desc,
-                    "parameters": _normalize_input_schema(t.get('inputSchema'))
-                }
-            }
-            _append_tool_if_missing(agent, api_schema, mcp_func_name)
-            agent.valid_tool_names.add(mcp_func_name)
+            # Always add to valid_tool_names so any direct call / subagent delegation is allowed
+            if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+                agent.valid_tool_names.add(mcp_func_name)
 
-            # 2) Flat registry schema for dispatch
+            mcp_desc = (t.get('description') or '').strip() or f"MCP tool {orig_name} from {server_id}"
+
+            # If not in lazy mode, push all individual schemas to agent.tools
+            if not use_lazy_mcp:
+                api_schema = {
+                    "type": "function",
+                    "function": {
+                        "name": mcp_func_name,
+                        "description": mcp_desc,
+                        "parameters": _normalize_input_schema(t.get('inputSchema'))
+                    }
+                }
+                _append_tool_if_missing(agent, api_schema, mcp_func_name)
+
+            # Flat registry schema for dispatch
             registry_schema = {
                 "name": mcp_func_name,
                 "description": mcp_desc,
                 "parameters": _normalize_input_schema(t.get('inputSchema')),
             }
 
-            # 3) Handler: call mcp_manager
+            # Handler: call mcp_manager
             def _make_handler(sid: str, tname: str):
                 def _handler(args: dict, **kwargs) -> str:
                     _logger.debug("MCP call -> server=%s tool=%s args=%s", sid, tname, list(args.keys()) if args else 'none')
@@ -130,7 +149,7 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
                         return json.dumps({"error": result.get('error', 'Unknown error')}, ensure_ascii=False)
                 return _handler
 
-            # 4) check_fn: server connectivity
+            # check_fn: server connectivity
             def _make_check_fn(sid: str):
                 def _check() -> bool:
                     conn = mcp_manager._connections.get(sid)
@@ -153,8 +172,156 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
             alias = ts.replace("mcp-", "", 1)
             registry.register_toolset_alias(alias, ts)
 
+        # ── Lazy MCP Router ──
+        # Expose only call_mcp_tool and list_mcp_tools to agent.tools
+        # saving 10,000+ tokens per turn while keeping full capability.
+        if use_lazy_mcp and injected_count > 0:
+            summary_lines = []
+            for sid, tool_list in sorted(tools_by_server.items()):
+                tnames = [tool.get('name', '') for tool in tool_list]
+                shown = tnames[:8]
+                extra = f" (+{len(tnames)-8} more)" if len(tnames) > 8 else ""
+                summary_lines.append(f"  * {sid}: {', '.join(shown)}{extra}")
+            servers_text = "\n".join(summary_lines)
+
+            call_mcp_schema = {
+                "type": "function",
+                "function": {
+                    "name": "call_mcp_tool",
+                    "description": (
+                        "Call an MCP tool on an active MCP server.\n"
+                        "Active MCP servers and tools:\n"
+                        f"{servers_text}\n"
+                        "Use `list_mcp_tools` to view parameter schemas for any server."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "server_name": {
+                                "type": "string",
+                                "description": "The target MCP server ID (e.g. 'filesystem', 'serena', 'daon-design')"
+                            },
+                            "tool_name": {
+                                "type": "string",
+                                "description": "The tool name on that MCP server (e.g. 'read_file', 'write_file')"
+                            },
+                            "arguments": {
+                                "type": "object",
+                                "description": "Arguments dictionary required by the tool"
+                            }
+                        },
+                        "required": ["server_name", "tool_name", "arguments"]
+                    }
+                }
+            }
+            _append_tool_if_missing(agent, call_mcp_schema, "call_mcp_tool")
+            if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+                agent.valid_tool_names.add("call_mcp_tool")
+
+            def _call_mcp_router_handler(args: dict, **kwargs) -> str:
+                sname = (args.get('server_name') or args.get('server') or args.get('ServerName') or '').strip()
+                tname = (args.get('tool_name') or args.get('tool') or args.get('ToolName') or '').strip()
+                cargs = args.get('arguments') or args.get('args') or args.get('Arguments') or {}
+                if not isinstance(cargs, dict):
+                    cargs = {}
+
+                # If tool_name has mcp_{server}_ prefix, normalize it
+                if sname and tname.startswith(f"mcp_{sname}_"):
+                    tname = tname[len(f"mcp_{sname}_"):]
+
+                # If server_name was omitted, try to auto-detect from tool_name
+                if not sname and tname:
+                    for sid, tool_list in tools_by_server.items():
+                        if any(t.get('name') == tname for t in tool_list):
+                            sname = sid
+                            break
+
+                if not sname or not tname:
+                    return json.dumps({
+                        "error": "Both server_name and tool_name are required.",
+                        "available_servers": list(tools_by_server.keys())
+                    }, ensure_ascii=False)
+
+                _logger.info("Lazy MCP Router call: server=%s, tool=%s, args_keys=%s", sname, tname, list(cargs.keys()))
+                result = mcp_manager.call_tool(sname, tname, cargs)
+                if result.get('ok'):
+                    payload = result.get('result', 'Success')
+                    if isinstance(payload, str):
+                        return json.dumps({"result": payload}, ensure_ascii=False)
+                    return json.dumps({"result": json.dumps(payload, ensure_ascii=False, default=str)}, ensure_ascii=False)
+                else:
+                    return json.dumps({"error": result.get('error', f"MCP tool call failed: {sname}/{tname}")}, ensure_ascii=False)
+
+            registry.register(
+                name="call_mcp_tool",
+                toolset="mcp-router",
+                schema={
+                    "name": "call_mcp_tool",
+                    "description": "Call an MCP tool on an active MCP server",
+                    "parameters": call_mcp_schema["function"]["parameters"]
+                },
+                handler=_call_mcp_router_handler,
+                check_fn=lambda: True,
+                is_async=False,
+                description="Call an MCP tool on an active MCP server",
+            )
+
+            # list_mcp_tools
+            list_mcp_schema = {
+                "type": "function",
+                "function": {
+                    "name": "list_mcp_tools",
+                    "description": "List available tools and input parameter schemas for active MCP servers.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "server_name": {
+                                "type": "string",
+                                "description": "Optional: server ID to inspect (e.g. 'filesystem'). Omit to list all."
+                            }
+                        }
+                    }
+                }
+            }
+            _append_tool_if_missing(agent, list_mcp_schema, "list_mcp_tools")
+            if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+                agent.valid_tool_names.add("list_mcp_tools")
+
+            def _list_mcp_router_handler(args: dict, **kwargs) -> str:
+                target_srv = (args.get('server_name') or args.get('server') or '').strip().lower()
+                grouped = {}
+                for sid, tool_list in tools_by_server.items():
+                    if target_srv and sid.lower() != target_srv:
+                        continue
+                    grouped[sid] = [
+                        {
+                            "name": t.get('name'),
+                            "description": (t.get('description') or '')[:120],
+                            "parameters": t.get('inputSchema', {})
+                        }
+                        for t in tool_list
+                    ]
+                return json.dumps({"servers": grouped}, ensure_ascii=False, indent=2)
+
+            registry.register(
+                name="list_mcp_tools",
+                toolset="mcp-router",
+                schema={
+                    "name": "list_mcp_tools",
+                    "description": "List available tools for active MCP servers",
+                    "parameters": list_mcp_schema["function"]["parameters"]
+                },
+                handler=_list_mcp_router_handler,
+                check_fn=lambda: True,
+                is_async=False,
+                description="List available tools for active MCP servers",
+            )
+
         if injected_count > 0:
-            _logger.info("Registered %d MCP tools into Hermes registry + agent.tools.", injected_count)
+            if use_lazy_mcp:
+                _logger.info("Registered %d MCP tools (Lazy MCP Router: call_mcp_tool & list_mcp_tools exposed to LLM).", injected_count)
+            else:
+                _logger.info("Registered %d MCP tools into Hermes registry + agent.tools (Eager mode).", injected_count)
     except Exception as e:
         _logger.warning("Failed to inject MCP tools: %s", e, exc_info=True)
 
