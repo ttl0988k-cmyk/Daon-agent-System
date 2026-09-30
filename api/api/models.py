@@ -19,22 +19,121 @@ from api.config import (
 from api.workspace import get_last_workspace
 
 
-def _write_session_index():
-    """Rebuild the session index file for O(1) future reads."""
+def _get_state_db_path() -> Path:
+    """Get the path to the active profile's Hermes state.db file."""
+    try:
+        from api.profiles import get_active_hermes_home
+        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
+    except Exception:
+        hermes_home = Path.home() / '.hermes'
+    return hermes_home / 'state.db'
+
+
+def _write_session_index(session=None, remove_id: str = None) -> None:
+    """Update or rebuild the session index file for O(1) future reads.
+
+    - If `session` is provided: incremental upsert (O(1)).
+    - If `remove_id` is provided: incremental removal (O(1)).
+    - If neither: rebuild index using SQLite state.db as primary source of truth.
+    """
     entries = []
-    for p in SESSION_DIR.glob('*.json'):
-        if p.name.startswith('_'): continue
+
+    # 1. Incremental Upsert
+    if session is not None and SESSION_INDEX_FILE.exists():
         try:
-            s = Session.load(p.stem)
-            if s: entries.append(s.compact())
+            entries = json.loads(SESSION_INDEX_FILE.read_text(encoding='utf-8'))
+            if isinstance(entries, list):
+                compact_entry = session.compact()
+                updated = False
+                for i, e in enumerate(entries):
+                    if isinstance(e, dict) and e.get('session_id') == session.session_id:
+                        entries[i] = compact_entry
+                        updated = True
+                        break
+                if not updated:
+                    entries.append(compact_entry)
+                entries.sort(key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                SESSION_INDEX_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+                return
         except Exception:
-            _logger.warning("Failed to load session %s for index rebuild", p.stem, exc_info=True)
+            _logger.warning("Incremental session index update failed, falling back to full rebuild", exc_info=True)
+
+    # 2. Incremental Removal
+    if remove_id is not None and SESSION_INDEX_FILE.exists():
+        try:
+            entries = json.loads(SESSION_INDEX_FILE.read_text(encoding='utf-8'))
+            if isinstance(entries, list):
+                entries = [e for e in entries if isinstance(e, dict) and e.get('session_id') != remove_id]
+                entries.sort(key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                SESSION_INDEX_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+                return
+        except Exception:
+            _logger.warning("Incremental session removal from index failed", exc_info=True)
+
+    # 3. Full Rebuild (SQLite elevated to source of truth)
+    entries = []
+    db_path = _get_state_db_path()
+    if db_path.exists():
+        try:
+            with sqlite3.connect(str(db_path), timeout=5) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT id, title, model, message_count, started_at, updated_at,
+                           input_tokens, output_tokens, source
+                    FROM sessions
+                    WHERE (source IS NULL OR source = 'webui')
+                      AND (parent_session_id IS NULL OR parent_session_id = '')
+                    ORDER BY COALESCE(updated_at, started_at) DESC
+                """)
+                for row in cur.fetchall():
+                    entries.append({
+                        'session_id': row['id'],
+                        'title': row['title'] or 'Untitled',
+                        'workspace': str(DEFAULT_WORKSPACE),
+                        'model': row['model'] or DEFAULT_MODEL,
+                        'message_count': row['message_count'] or 0,
+                        'created_at': row['started_at'] or time.time(),
+                        'updated_at': row['updated_at'] or row['started_at'] or time.time(),
+                        'pinned': False,
+                        'archived': False,
+                        'project_id': None,
+                        'profile': 'raon',
+                        'input_tokens': row['input_tokens'] or 0,
+                        'output_tokens': row['output_tokens'] or 0,
+                        'estimated_cost': None,
+                        'surface': 'webui',
+                    })
+        except Exception:
+            _logger.warning("Failed to query sessions from SQLite for index rebuild", exc_info=True)
+
+    # Fallback to SESSION_DIR if SQLite had no webui records
+    if not entries:
+        for p in SESSION_DIR.glob('*.json'):
+            if p.name.startswith('_'): continue
+            try:
+                s = Session.load(p.stem)
+                if s: entries.append(s.compact())
+            except Exception:
+                pass
+
     with LOCK:
         for s in SESSIONS.values():
-            if not any(e['session_id'] == s.session_id for e in entries):
-                entries.append(s.compact())
-    entries.sort(key=lambda s: s['updated_at'], reverse=True)
-    SESSION_INDEX_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+            compact_entry = s.compact()
+            found = False
+            for i, e in enumerate(entries):
+                if e.get('session_id') == s.session_id:
+                    entries[i] = compact_entry
+                    found = True
+                    break
+            if not found:
+                entries.append(compact_entry)
+
+    entries.sort(key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+    try:
+        SESSION_INDEX_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception as e:
+        _logger.warning("Failed to write rebuilt session index: %s", e)
 
 
 class Session:
@@ -74,7 +173,7 @@ class Session:
             json.dumps(self.__dict__, ensure_ascii=False, indent=2),
             encoding='utf-8',
         )
-        _write_session_index()
+        _write_session_index(self)
         _save_session_to_db(self)  # SQLite DB 에도 동기화
 
     @classmethod
@@ -160,50 +259,88 @@ def new_session(workspace=None, model=None, persist=True):
     return s
 
 def all_sessions():
-    # Phase C: try index first for O(1) read; fall back to full scan
+    # 1. Primary: read from SESSION_INDEX_FILE for O(1) instant response
     if SESSION_INDEX_FILE.exists():
         try:
             index = json.loads(SESSION_INDEX_FILE.read_text(encoding='utf-8'))
-            # Overlay any in-memory sessions that may be newer than the index
-            index_map = {s['session_id']: s for s in index}
-            with LOCK:
-                for s in SESSIONS.values():
-                    index_map[s.session_id] = s.compact()
-            result = sorted(index_map.values(), key=lambda s: (s.get('pinned', False), s['updated_at']), reverse=True)
-            # Hide empty Untitled sessions from the UI (created by tests, page refreshes, etc.)
-            # and filter out subagent/child sessions created during multi-agent delegation.
-            result = [
-                s for s in result
-                if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
-                and not s.get('parent_session_id')
-                and s.get('source') not in ('subagent', 'delegate', 'child')
-            ]
-            # Backfill: sessions created before Sprint 22 have no profile tag.
-            # Attribute them to 'default' so the client profile filter works correctly.
-            for s in result:
-                if not s.get('profile'):
-                    s['profile'] = 'default'
-            return result
+            if isinstance(index, list):
+                # Overlay in-memory sessions that may be newer than the index
+                index_map = {s['session_id']: s for s in index if isinstance(s, dict) and 'session_id' in s}
+                with LOCK:
+                    for s in SESSIONS.values():
+                        index_map[s.session_id] = s.compact()
+                result = sorted(index_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                result = [
+                    s for s in result
+                    if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
+                    and not s.get('parent_session_id')
+                    and s.get('source') not in ('subagent', 'delegate', 'child')
+                ]
+                for s in result:
+                    if not s.get('profile'):
+                        s['profile'] = 'default'
+                return result
         except Exception:
-            _logger.warning("Failed to read session index, falling back to full scan", exc_info=True)
-    # Full scan fallback
-    out = []
-    for p in SESSION_DIR.glob('*.json'):
-        if p.name.startswith('_'): continue
+            _logger.warning("Failed to read session index, falling back to SQLite", exc_info=True)
+
+    # 2. SQLite Fallback (Elevated to Source of Truth, replacing filesystem scan)
+    db_path = _get_state_db_path()
+    if db_path.exists():
         try:
-            s = Session.load(p.stem)
-            if s: out.append(s)
+            with sqlite3.connect(str(db_path), timeout=5) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT id, title, model, message_count, started_at, updated_at,
+                           input_tokens, output_tokens, source
+                    FROM sessions
+                    WHERE (source IS NULL OR source = 'webui')
+                      AND (parent_session_id IS NULL OR parent_session_id = '')
+                    ORDER BY COALESCE(updated_at, started_at) DESC
+                """)
+                out_map = {}
+                for row in cur.fetchall():
+                    sid = row['id']
+                    out_map[sid] = {
+                        'session_id': sid,
+                        'title': row['title'] or 'Untitled',
+                        'workspace': str(DEFAULT_WORKSPACE),
+                        'model': row['model'] or DEFAULT_MODEL,
+                        'message_count': row['message_count'] or 0,
+                        'created_at': row['started_at'] or time.time(),
+                        'updated_at': row['updated_at'] or row['started_at'] or time.time(),
+                        'pinned': False,
+                        'archived': False,
+                        'project_id': None,
+                        'profile': 'raon',
+                        'input_tokens': row['input_tokens'] or 0,
+                        'output_tokens': row['output_tokens'] or 0,
+                        'estimated_cost': None,
+                        'surface': 'webui',
+                    }
+                with LOCK:
+                    for s in SESSIONS.values():
+                        out_map[s.session_id] = s.compact()
+                result = sorted(out_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                result = [
+                    s for s in result
+                    if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
+                ]
+                for s in result:
+                    if not s.get('profile'):
+                        s['profile'] = 'default'
+                # Re-generate index file so future calls are O(1)
+                try:
+                    SESSION_INDEX_FILE.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception:
+                    pass
+                return result
         except Exception:
-            pass
-    for s in SESSIONS.values():
-        if all(s.session_id != x.session_id for x in out): out.append(s)
-    out.sort(key=lambda s: (getattr(s, 'pinned', False), s.updated_at), reverse=True)
-    result = [
-        s.compact() for s in out
-        if not (s.title == 'Untitled' and len(s.messages) == 0)
-        and not getattr(s, 'parent_session_id', None)
-        and getattr(s, 'source', None) not in ('subagent', 'delegate', 'child')
-    ]
+            _logger.warning("Failed to query sessions from SQLite", exc_info=True)
+
+    # 3. Minimal in-memory fallback (never scans entire filesystem)
+    with LOCK:
+        result = [s.compact() for s in SESSIONS.values()]
     for s in result:
         if not s.get('profile'):
             s['profile'] = 'default'
@@ -417,15 +554,6 @@ def delete_cli_session(sid) -> bool:
     except Exception:
         return False
 
-
-def _get_state_db_path() -> Path:
-    """Get the path to the Hermes state.db file."""
-    try:
-        from api.profiles import get_active_hermes_home
-        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
-    except ImportError:
-        hermes_home = Path.home() / '.hermes'
-    return hermes_home / 'state.db'
 
 def _save_session_to_db(session: Session) -> None:
     """

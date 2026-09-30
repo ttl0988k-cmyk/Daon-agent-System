@@ -182,8 +182,10 @@ def handle_post_sessions_cleanup(handler, body, zero_only=False) -> bool:
                 cleaned += 1
         except Exception:
             pass
-    if SESSION_INDEX_FILE.exists():
-        SESSION_INDEX_FILE.unlink(missing_ok=True)
+    try:
+        _write_session_index()
+    except Exception:
+        pass
     return j(handler, {'ok': True, 'cleaned': cleaned})
 
 
@@ -233,7 +235,7 @@ def handle_post_session_delete(handler, body) -> bool:
     except Exception:
         pass
     try:
-        SESSION_INDEX_FILE.unlink(missing_ok=True)
+        _write_session_index(remove_id=sid)
     except Exception:
         pass
     try:

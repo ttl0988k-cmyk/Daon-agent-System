@@ -1,4 +1,4 @@
-﻿"""System prompt assembly -- identity, platform hints, skills index, context files.
+"""System prompt assembly -- identity, platform hints, skills index, context files.
 
 All functions are stateless. AIAgent._build_system_prompt() calls these to
 assemble pieces, then combines them with memory and ephemeral prompts.
@@ -612,23 +612,39 @@ def build_skills_system_prompt(
     if not skills_by_category:
         result = ""
     else:
+        total_skills_count = sum(len(skills) for skills in skills_by_category.values())
+        use_compact = (
+            os.getenv("HERMES_COMPACT_SKILLS_PROMPT", "").strip().lower() in ("1", "true", "yes")
+            or total_skills_count > 40
+        )
         index_lines = []
-        for category in sorted(skills_by_category.keys()):
-            cat_desc = category_descriptions.get(category, "")
-            if cat_desc:
-                index_lines.append(f"  {category}: {cat_desc}")
-            else:
-                index_lines.append(f"  {category}:")
-            # Deduplicate and sort skills within each category
-            seen = set()
-            for name, desc in sorted(skills_by_category[category], key=lambda x: x[0]):
-                if name in seen:
-                    continue
-                seen.add(name)
-                if desc:
-                    index_lines.append(f"    - {name}: {desc}")
+        if use_compact:
+            for category in sorted(skills_by_category.keys()):
+                skill_names = sorted(set(name for name, _ in skills_by_category[category]))
+                joined_skills = ", ".join(skill_names)
+                cat_desc = category_descriptions.get(category, "")
+                if cat_desc:
+                    cat_short = cat_desc[:50].strip().rstrip(". ")
+                    index_lines.append(f"  {category} ({cat_short}): {joined_skills}")
                 else:
-                    index_lines.append(f"    - {name}")
+                    index_lines.append(f"  {category}: {joined_skills}")
+        else:
+            for category in sorted(skills_by_category.keys()):
+                cat_desc = category_descriptions.get(category, "")
+                if cat_desc:
+                    index_lines.append(f"  {category}: {cat_desc}")
+                else:
+                    index_lines.append(f"  {category}:")
+                # Deduplicate and sort skills within each category
+                seen = set()
+                for name, desc in sorted(skills_by_category[category], key=lambda x: x[0]):
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    if desc:
+                        index_lines.append(f"    - {name}: {desc}")
+                    else:
+                        index_lines.append(f"    - {name}")
 
         result = (
             "## Skills\n"
