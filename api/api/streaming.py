@@ -145,7 +145,6 @@ def _compress_past_browser_context(content: str) -> str:
     if '[실시간 브라우저 환경 컨텍스트' not in content and '[현재 웹 브라우저' not in content:
         return content
 
-    import re
     # 1) [사용자 요청] 블록 추출
     user_req = ""
     req_match = re.search(r'\[사용자 요청\]\s*(.*)', content, re.DOTALL)
@@ -1414,7 +1413,6 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # ── [Laya Browser Pre-scan] System 1 화면 요소 0토큰 사전 선별 ──
           if is_browser_session and msg_text:
               try:
-                  import re
                   from api.laya_client import laya_client
                   if laya_client.is_healthy():
                       # 1) 사용자 실제 목적/요청 추출
