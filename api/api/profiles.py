@@ -122,6 +122,7 @@ def init_profile_state() -> None:
 def list_profiles_api() -> list:
     active = get_active_profile_name()
     result = []
+    global_has_env = (_DEFAULT_HERMES_HOME / '.env').exists()
     
     # 1. Default Profile
     result.append({
@@ -129,7 +130,8 @@ def list_profiles_api() -> list:
         'path': str(_DEFAULT_HERMES_HOME),
         'is_default': True,
         'is_active': active == 'default',
-        'has_env': (_DEFAULT_HERMES_HOME / '.env').exists(),
+        'has_env': global_has_env,
+        'has_global_env': global_has_env,
         'skill_count': len(list((_DEFAULT_HERMES_HOME / 'skills').glob('*.md'))) if (_DEFAULT_HERMES_HOME / 'skills').is_dir() else 0
     })
     
@@ -144,6 +146,7 @@ def list_profiles_api() -> list:
                     'is_default': False,
                     'is_active': active == p.name,
                     'has_env': (p / '.env').exists(),
+                    'has_global_env': global_has_env,
                     'skill_count': len(list((p / 'skills').glob('*.md'))) if (p / 'skills').is_dir() else 0
                 })
     return result
@@ -234,7 +237,7 @@ def switch_profile(name: str) -> dict:
         'default_model': default_model
     }
 
-def create_profile_api(name: str, clone_config: bool = False) -> dict:
+def create_profile_api(name: str, clone_from: str = None, clone_config: bool = True) -> dict:
     if name == 'default':
         raise ValueError("Cannot create a profile named 'default'.")
     if not _PROFILE_ID_RE.match(name):
@@ -251,25 +254,38 @@ def create_profile_api(name: str, clone_config: bool = False) -> dict:
     for subdir in subdirs:
         (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
         
-    # Clone config files from default if requested
+    # Determine clone source directory (specified profile -> active profile -> default)
+    if clone_from:
+        src_dir = hermes_home_for(clone_from)
+    else:
+        src_dir = hermes_home_for(get_active_profile_name())
+    if not src_dir.is_dir():
+        src_dir = _DEFAULT_HERMES_HOME
+
+    # Clone config files from source (or default fallback)
     if clone_config:
         config_files = ['config.yaml', '.env', 'SOUL.md', 'AGENTS.md']
         for fn in config_files:
-            src = _DEFAULT_HERMES_HOME / fn
+            src = src_dir / fn
+            # If not in src_dir, check default hermes home for .env/config.yaml
+            if not src.exists() and fn in ('.env', 'config.yaml'):
+                src = _DEFAULT_HERMES_HOME / fn
             if src.exists():
                 shutil.copy2(src, profile_dir / fn)
                 
     # Create default soul if not cloned
     soul_path = profile_dir / 'SOUL.md'
     if not soul_path.exists():
-        soul_path.write_text('# SOUL.md\n\nYou are a helpful assistant.\n', encoding='utf-8')
+        soul_path.write_text(f'# SOUL.md - {name}\n\nYou are a specialized assistant named {name}.\n', encoding='utf-8')
         
+    global_has_env = (_DEFAULT_HERMES_HOME / '.env').exists()
     return {
         'name': name,
         'path': str(profile_dir),
         'is_default': False,
         'is_active': False,
         'has_env': (profile_dir / '.env').exists(),
+        'has_global_env': global_has_env,
         'skill_count': 0
     }
 

@@ -40,7 +40,11 @@ async function loadProfilesPanel() {
 
       if (p.skill_count) meta.push(p.skill_count + ' skill' + (p.skill_count !== 1 ? 's' : ''));
 
-      if (p.has_env) meta.push('API keys configured');
+      if (p.has_env) {
+        meta.push('API keys configured');
+      } else if (p.has_global_env) {
+        meta.push('전역 키 사용');
+      }
 
       const gwDot = p.gateway_running
 
