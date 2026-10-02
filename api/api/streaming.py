@@ -498,6 +498,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             HERMES_SESSION_KEY=session_id,
             HERMES_HOME=_profile_home,
         )
+        print(f"[webui] Session {session_id} bound to profile={_eff_profile} home={_profile_home}", flush=True)
         # Process-level fallback for tools that inspect os.environ directly:
         # Note: Do NOT mutate os.environ['HERMES_HOME'] globally here to avoid cross-session pollution
         # when multiple agents (Bill, Sherlock, Tony) run concurrently. Thread-local handles isolation.
@@ -1161,18 +1162,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           if _session_db_instance:
               try:
                   _stored = _session_db_instance.get_session(session_id)
-                  if (
-                      _stored
-                      and _stored.get('system_prompt')
-                      and _stored.get('model')
-                      and _stored['model'] != resolved_model
-                  ):
+                  _should_clear = False
+                  if _stored and _stored.get('system_prompt'):
+                      if _stored.get('model') and _stored['model'] != resolved_model:
+                          _should_clear = True
+                          print(f"[webui] Model changed ({_stored['model']} -> {resolved_model}): cleared cached system_prompt for session {session_id}", flush=True)
+                      elif not s.messages or len(s.messages) <= 1:
+                          _should_clear = True
+                          print(f"[webui] Session {session_id} start turn: refreshing system_prompt for profile={_eff_profile}", flush=True)
+                  if _should_clear:
                       _session_db_instance.update_system_prompt(session_id, None)
-                      print(
-                          f"[webui] Model changed ({_stored['model']} ??{resolved_model}): "
-                          f"cleared cached system_prompt for session {session_id}",
-                          flush=True,
-                      )
               except Exception as _sp_e:
                   print(f"[webui] WARNING: system_prompt invalidation failed: {_sp_e}", flush=True)
 

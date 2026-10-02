@@ -11,9 +11,17 @@ from pathlib import Path
 def get_hermes_home() -> Path:
     """Return the Hermes home directory (default: ~/.hermes).
 
-    Reads HERMES_HOME env var, falls back to ~/.hermes.
+    Reads thread-local HERMES_HOME first (for session-scoped profile isolation),
+    then falls back to HERMES_HOME env var, and finally ~/.hermes.
     This is the single source of truth — all other copies should import this.
     """
+    try:
+        from api.config import get_thread_env
+        val = str(get_thread_env("HERMES_HOME", "") or "").strip()
+        if val:
+            return Path(val)
+    except Exception:
+        pass
     val = os.environ.get("HERMES_HOME", "").strip()
     return Path(val) if val else Path.home() / ".hermes"
 
