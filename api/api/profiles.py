@@ -3,8 +3,55 @@ import shutil
 import re
 from pathlib import Path
 
-_PROFILE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,63}$')
+_PROFILE_ID_RE = re.compile(r'^[a-zA-Z0-9\u3131-\u3163\uac00-\ud7a3][a-zA-Z0-9\u3131-\u3163\uac00-\ud7a3()_\-\s]{0,63}$')
 _DEFAULT_HERMES_HOME = Path.home() / '.hermes'
+
+def _count_skills(skills_dir: Path) -> int:
+    """하위 디렉토리(SKILL.md) 및 루트 md 스킬 개수를 정확히 집계합니다."""
+    if not skills_dir.is_dir():
+        return 0
+    dirs = [d for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    if dirs:
+        return len(dirs)
+    return len(list(skills_dir.glob('*.md')))
+
+def _extract_profile_model_info(home: Path) -> tuple[str | None, str | None]:
+    """프로파일 디렉토리의 config.yaml에서 model과 provider를 파싱합니다."""
+    config_path = home / 'config.yaml'
+    model = None
+    provider = None
+    if config_path.exists():
+        try:
+            content = config_path.read_text(encoding='utf-8')
+            lines = content.splitlines()
+            model_block = False
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped.startswith('model:'):
+                    parts = line_stripped.split(':', 1)
+                    val = parts[1].strip().strip("'\"")
+                    if val:
+                        model = val
+                        break
+                    model_block = True
+                elif model_block:
+                    if line.startswith(' ') or line.startswith('\t'):
+                        if line_stripped.startswith('default:'):
+                            model = line_stripped.split(':', 1)[1].strip().strip("'\"")
+                            break
+                    else:
+                        model_block = False
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped.startswith('provider:'):
+                    parts = line_stripped.split(':', 1)
+                    val = parts[1].strip().strip("'\"")
+                    if val:
+                        provider = val
+                        break
+        except Exception:
+            pass
+    return model, provider
 
 def get_active_profile_name() -> str:
     ap_file = _DEFAULT_HERMES_HOME / 'active_profile'
@@ -125,6 +172,7 @@ def list_profiles_api() -> list:
     global_has_env = (_DEFAULT_HERMES_HOME / '.env').exists()
     
     # 1. Default Profile
+    def_model, def_provider = _extract_profile_model_info(_DEFAULT_HERMES_HOME)
     result.append({
         'name': 'default',
         'path': str(_DEFAULT_HERMES_HOME),
@@ -132,7 +180,9 @@ def list_profiles_api() -> list:
         'is_active': active == 'default',
         'has_env': global_has_env,
         'has_global_env': global_has_env,
-        'skill_count': len(list((_DEFAULT_HERMES_HOME / 'skills').glob('*.md'))) if (_DEFAULT_HERMES_HOME / 'skills').is_dir() else 0
+        'skill_count': _count_skills(_DEFAULT_HERMES_HOME / 'skills'),
+        'model': def_model,
+        'provider': def_provider,
     })
     
     # 2. Sub-profiles
@@ -140,6 +190,7 @@ def list_profiles_api() -> list:
     if profiles_dir.is_dir():
         for p in sorted(profiles_dir.iterdir()):
             if p.is_dir():
+                p_model, p_provider = _extract_profile_model_info(p)
                 result.append({
                     'name': p.name,
                     'path': str(p),
@@ -147,7 +198,9 @@ def list_profiles_api() -> list:
                     'is_active': active == p.name,
                     'has_env': (p / '.env').exists(),
                     'has_global_env': global_has_env,
-                    'skill_count': len(list((p / 'skills').glob('*.md'))) if (p / 'skills').is_dir() else 0
+                    'skill_count': _count_skills(p / 'skills'),
+                    'model': p_model,
+                    'provider': p_provider,
                 })
     return result
 
@@ -249,8 +302,8 @@ def create_profile_api(name: str, clone_from: str = None, clone_config: bool = T
         
     profile_dir.mkdir(parents=True, exist_ok=False)
     
-    # Create standard directories
-    subdirs = ['memories', 'sessions', 'skills', 'logs', 'cron']
+    # Create standard directories (including home/ for subprocess isolation, plans, skins, workspace)
+    subdirs = ['memories', 'sessions', 'skills', 'logs', 'cron', 'home', 'plans', 'skins', 'workspace']
     for subdir in subdirs:
         (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
         
@@ -279,6 +332,7 @@ def create_profile_api(name: str, clone_from: str = None, clone_config: bool = T
         soul_path.write_text(f'# SOUL.md - {name}\n\nYou are a specialized assistant named {name}.\n', encoding='utf-8')
         
     global_has_env = (_DEFAULT_HERMES_HOME / '.env').exists()
+    p_model, p_provider = _extract_profile_model_info(profile_dir)
     return {
         'name': name,
         'path': str(profile_dir),
@@ -286,7 +340,9 @@ def create_profile_api(name: str, clone_from: str = None, clone_config: bool = T
         'is_active': False,
         'has_env': (profile_dir / '.env').exists(),
         'has_global_env': global_has_env,
-        'skill_count': 0
+        'skill_count': _count_skills(profile_dir / 'skills'),
+        'model': p_model,
+        'provider': p_provider,
     }
 
 def delete_profile_api(name: str) -> dict:

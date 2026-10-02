@@ -110,19 +110,20 @@ def handle_post_profile_create(handler, body) -> bool:
     if not name:
         return bad(handler, 'name is required')
     import re as _re
-    if not _re.match(r'^[a-z0-9][a-z0-9_-]{0,63}$', name):
-        return bad(handler, 'Invalid profile name: lowercase letters, numbers, hyphens, underscores only')
+    _id_pattern = r'^[a-zA-Z0-9\u3131-\u3163\uac00-\ud7a3][a-zA-Z0-9\u3131-\u3163\uac00-\ud7a3()_\-\s]{0,63}$'
+    if not _re.match(_id_pattern, name):
+        return bad(handler, 'Invalid profile name: letters, Korean, numbers, hyphens, parentheses, underscores only')
     clone_from = body.get('clone_from')
     if clone_from is not None:
         clone_from = str(clone_from).strip()
-        if not _re.match(r'^[a-z0-9][a-z0-9_-]{0,63}$', clone_from):
+        if not _re.match(_id_pattern, clone_from):
             return bad(handler, 'Invalid clone_from name')
     try:
         from api.profiles import create_profile_api
         result = create_profile_api(
             name,
             clone_from=clone_from,
-            clone_config=bool(body.get('clone_config', False)),
+            clone_config=bool(body.get('clone_config', True)),
         )
         return j(handler, {'ok': True, 'profile': result})
     except (ValueError, FileExistsError, RuntimeError) as e:
