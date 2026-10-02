@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,11 +34,12 @@ MODEL_ID = "convaiinnovations/laya"
 _router = None
 _device = "cpu"
 _start_time = time.time()
+_ready = False  # [FIX 2026-10-01] model-loaded flag; False means "booting"
 
 
 def init_laya_model():
     """Initialize Laya model on GPU (if available) or CPU."""
-    global _router, _device
+    global _router, _device, _ready
     _logger.info("Initializing Laya Decision Model: %s ...", MODEL_ID)
     try:
         import torch
@@ -67,6 +69,8 @@ def init_laya_model():
     except Exception as e:
         _logger.error("Failed to load Laya model: %s", e, exc_info=True)
         _router = None
+    finally:
+        _ready = True  # [FIX 2026-10-01] booting -> ok/degraded
 
 
 class LayaRequestHandler(BaseHTTPRequestHandler):
@@ -99,7 +103,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                 pass
 
             self._send_json(200, {
-                "status": "ok" if _router is not None else "degraded",
+                "status": "ok" if _router is not None else ("booting" if not _ready else "degraded"),
                 "model": MODEL_ID,
                 "device": _device,
                 "vram_allocated_mb": vram_mb,
@@ -414,11 +418,45 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         pass
 
 
+class LayaHTTPServer(ThreadingHTTPServer):
+    """[FIX 2026-10-01] Single-instance lock.
+
+    On Windows, SO_REUSEADDR lets a SECOND process bind the SAME port
+    (similar to Linux SO_REUSEPORT), so two Laya daemons could coexist and
+    each hold ~1.85GB VRAM. Setting it False makes the second bind fail with
+    WinError 10048 -> the bind itself becomes the single-instance lock.
+    """
+    allow_reuse_address = False
+
+
 def main():
+    global PORT
+    # [FIX 2026-10-01] Honour --port instead of silently ignoring it (the
+    # parents already pass --port 8765). Also lets us test the single-instance
+    # lock on a throwaway port without touching the live daemon.
+    try:
+        import argparse
+        _ap = argparse.ArgumentParser(description="DAON Laya Decision Daemon")
+        _ap.add_argument("--port", type=int, default=PORT)
+        PORT = _ap.parse_args().port
+    except SystemExit:
+        raise
     print(f"=== DAON Laya Decision Daemon ===", flush=True)
-    init_laya_model()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), LayaRequestHandler)
-    print(f"[LayaService] Listening on http://127.0.0.1:{PORT}", flush=True)
+    # [FIX 2026-10-01] Bind the socket BEFORE loading the model.
+    # Old order: load model (30~60s) -> bind. During startup /health was
+    # unresponsive, so BOTH parents (Electron ServerSupervisor and
+    # server.exe) independently concluded "no Laya" and started a duplicate
+    # -> two daemons, ~1.85GB VRAM wasted.
+    # New order: bind first (second instance exits immediately), then load the
+    # model in a background thread so /health answers 200(status=booting)
+    # right away and the parents never respawn.
+    try:
+        server = LayaHTTPServer(("127.0.0.1", PORT), LayaRequestHandler)
+    except OSError as e:
+        print(f"[LayaService] Port {PORT} already in use - another Laya instance is running. Exiting. ({e})", flush=True)
+        return
+    print(f"[LayaService] Listening on http://127.0.0.1:{PORT} (model loading in background)", flush=True)
+    threading.Thread(target=init_laya_model, name="laya-model-loader", daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

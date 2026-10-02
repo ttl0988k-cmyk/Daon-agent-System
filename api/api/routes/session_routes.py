@@ -160,7 +160,12 @@ def handle_get_sessions_search(handler, parsed) -> bool:
 def handle_post_session_new(handler, body) -> bool:
     """POST /api/session/new — create a new session."""
     # persist=False: 동기 save()를 건너뛰고 아래에서 비동기로 저장 (#27 fix 확장).
-    s = new_session(workspace=body.get('workspace'), model=body.get('model'), persist=False)
+    s = new_session(
+        workspace=body.get('workspace'),
+        model=body.get('model'),
+        profile=body.get('profile'),
+        persist=False,
+    )
     _save_session_async(s)
     return j(handler, {'session': s.to_response()})
 
@@ -205,7 +210,7 @@ def handle_post_session_rename(handler, body) -> bool:
 
 
 def handle_post_session_update(handler, body) -> bool:
-    """POST /api/session/update — update session workspace/model."""
+    """POST /api/session/update — update session workspace/model/profile."""
     try:
         require(body, 'session_id')
     except ValueError as e:
@@ -217,6 +222,8 @@ def handle_post_session_update(handler, body) -> bool:
     new_ws = body.get('workspace', s.workspace)
     s.workspace = new_ws
     s.model = body.get('model', s.model)
+    if 'profile' in body:
+        s.profile = body.get('profile')
     _save_session_async(s)
     set_last_workspace(new_ws)
     return j(handler, {'session': s.to_response()})

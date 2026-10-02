@@ -196,6 +196,9 @@ def handle_post_chat_start(handler, body) -> bool:
     attachments = [str(a) for a in (body.get('attachments') or [])][:20]
     workspace = str(Path(body.get('workspace') or s.workspace).expanduser().resolve())
     model = body.get('model') or s.model
+    _profile_override = body.get('profile')
+    if _profile_override:
+        s.profile = _profile_override
     s.workspace = workspace
     s.model = model
     # #27 fix: save()를 데몬 스레드로 비동기화하여 HTTP 응답이 즉시 반환되도록 함.

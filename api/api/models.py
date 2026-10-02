@@ -240,13 +240,13 @@ def get_session(sid):
         return s
     raise KeyError(sid)
 
-def new_session(workspace=None, model=None, persist=True):
+def new_session(workspace=None, model=None, persist=True, profile=None):
     # Use _cfg.DEFAULT_MODEL (not the import-time snapshot) so save_settings() changes take effect
     try:
         from api.profiles import get_active_profile_name
-        _profile = get_active_profile_name()
+        _profile = profile or get_active_profile_name()
     except ImportError:
-        _profile = None
+        _profile = profile
     s = Session(workspace=workspace or get_last_workspace(), model=model or _cfg.DEFAULT_MODEL, profile=_profile)
     with LOCK:
         SESSIONS[s.session_id] = s

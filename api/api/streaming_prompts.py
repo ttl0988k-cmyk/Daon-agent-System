@@ -106,6 +106,7 @@ def compose_system_message(
     open_tabs: Optional[List[Dict[str, Any]]] = None,
     injected_mcp_count: int = 0,
     browser_context: Optional[str] = None,
+    profile_name: Optional[str] = None,
 ) -> Tuple[str, List[int]]:
     """Compose full system prompt with open tabs, Korean language instruction,
 
@@ -225,6 +226,16 @@ def compose_system_message(
 
     injected_fact_ids: List[int] = []
 
+    # 0. Agent Persona Injection (SOUL.md / AGENTS.md for this session's profile)
+    try:
+        from api.profiles import get_profile_persona, get_active_profile_name
+        _eff_persona_profile = profile_name or get_active_profile_name()
+        _persona_prompt = get_profile_persona(_eff_persona_profile)
+        if _persona_prompt:
+            base_msg = f"{_persona_prompt}\n\n" + base_msg
+    except Exception as _p_err:
+        _logger.warning("Agent persona prompt injection failed: %s", _p_err)
+
     # 1. Long-term memory prompt injection
     try:
         from api.memory_store import build_memory_prompt
@@ -273,7 +284,7 @@ def compose_system_message(
     try:
         from api.profiles import get_active_profile_name
         from api.memory_store import format_inbox_prompt
-        _chat_agent_name = get_active_profile_name() or 'default'
+        _chat_agent_name = profile_name or get_active_profile_name() or 'default'
         _inbox_prompt = format_inbox_prompt(_chat_agent_name)
         if _inbox_prompt:
             base_msg += "\n\n" + _inbox_prompt

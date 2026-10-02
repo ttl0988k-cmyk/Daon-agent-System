@@ -143,6 +143,16 @@ function populateModelSelect() {
   }
 }
 
+function getProfileEmoji(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('bill') || n.includes('빌')) return '🔨 ';
+  if (n.includes('sherlock') || n.includes('셜록')) return '🔍 ';
+  if (n.includes('tony') || n.includes('토니')) return '💡 ';
+  if (n.includes('prada') || n.includes('프라다')) return '🎨 ';
+  if (n.includes('raon') || n.includes('라온')) return '👑 ';
+  return '🤖 ';
+}
+
 function populateProfileSelect() {
   const sel = $('agentProfileSelect');
   const rightSel = $('rightAgentProfileSelect');
@@ -151,7 +161,8 @@ function populateProfileSelect() {
     sel.innerHTML = '';
     State.profiles.forEach(p => {
       const isAct = p.name === State.activeProfileName ? 'selected' : '';
-      const opt = `<option value="${p.name}" ${isAct}>${p.name}${p.is_default ? ' (default)' : ''}</option>`;
+      const icon = getProfileEmoji(p.name);
+      const opt = `<option value="${p.name}" ${isAct}>${icon}${p.name}${p.is_default ? ' (default)' : ''}</option>`;
       sel.insertAdjacentHTML('beforeend', opt);
     });
   }
@@ -160,7 +171,8 @@ function populateProfileSelect() {
     rightSel.innerHTML = '';
     State.profiles.forEach(p => {
       const isAct = p.name === State.activeProfileName ? 'selected' : '';
-      const opt = `<option value="${p.name}" ${isAct}>${p.name}${p.is_default ? ' (default)' : ''}</option>`;
+      const icon = getProfileEmoji(p.name);
+      const opt = `<option value="${p.name}" ${isAct}>${icon}${p.name}${p.is_default ? ' (default)' : ''}</option>`;
       rightSel.insertAdjacentHTML('beforeend', opt);
     });
   }
@@ -199,11 +211,34 @@ function renderSessionsList() {
            onclick="event.stopPropagation(); toggleSessionSelection('${s.session_id}')">`
       : '';
 
+    const profLower = (s.profile || '').toLowerCase();
+    let agentIcon = '💬';
+    let profBadge = '';
+    if (profLower.includes('bill') || profLower.includes('빌')) {
+      agentIcon = '🔨';
+      profBadge = '<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(233,69,96,0.18);color:#e94560;margin-left:4px;font-weight:600;">빌(개발)</span>';
+    } else if (profLower.includes('sherlock') || profLower.includes('셜록')) {
+      agentIcon = '🔍';
+      profBadge = '<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(79,195,247,0.18);color:#4fc3f7;margin-left:4px;font-weight:600;">셜록(검수)</span>';
+    } else if (profLower.includes('tony') || profLower.includes('토니')) {
+      agentIcon = '💡';
+      profBadge = '<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,183,77,0.18);color:#ffb74d;margin-left:4px;font-weight:600;">토니(기획)</span>';
+    } else if (profLower.includes('prada') || profLower.includes('프라다')) {
+      agentIcon = '🎨';
+      profBadge = '<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(186,104,200,0.18);color:#ba68c8;margin-left:4px;font-weight:600;">프라다(디자인)</span>';
+    } else if (profLower.includes('raon') || profLower.includes('라온')) {
+      agentIcon = '👑';
+      profBadge = '<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,215,0,0.18);color:#ffd700;margin-left:4px;font-weight:600;">라온(총괄)</span>';
+    } else if (s.profile && s.profile !== 'default') {
+      profBadge = `<span class="session-profile-badge" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--text-muted, #aaa);margin-left:4px;">${s.profile}</span>`;
+    }
+
     item.innerHTML = `
       <div class="session-title-container">
         ${checkboxHtml}
-        <span class="session-icon">💬</span>
+        <span class="session-icon">${agentIcon}</span>
         <span class="session-title" id="title-text-${s.session_id}">${s.title}</span>
+        ${profBadge}
         ${runningBadge}
       </div>
       <div class="session-actions">
@@ -671,6 +706,12 @@ async function selectSession(sid) {
     if ($('modelSelect')) $('modelSelect').value = State.activeModelId;
     updateMediaOptionsPanel(State.activeModelId);
     updateReasoningEffortPanel(State.activeModelId);
+
+    // [세션별 프로필 동기화] 세션에 저장된 프로필로 상단 프로필 드롭다운 동기화
+    const sessProfile = session.profile || 'default';
+    State.activeProfileName = sessProfile;
+    if ($('rightAgentProfileSelect')) $('rightAgentProfileSelect').value = sessProfile;
+    if ($('agentProfileSelect')) $('agentProfileSelect').value = sessProfile;
 
     // Load session mode
     loadSessionMode();
@@ -3403,6 +3444,36 @@ function findBestModelMatch(modelId) {
   return null;
 }
 
+async function handleSessionProfileChange(profileName) {
+  if (!profileName) return;
+
+  // 1) 활성 세션이 있으면 활성 세션의 프로필을 독립적으로 업데이트
+  if (State.activeSessionId) {
+    try {
+      await api('/api/session/update', {
+        method: 'POST',
+        body: { session_id: State.activeSessionId, profile: profileName }
+      });
+      const localSess = State.sessions.find(s => s.session_id === State.activeSessionId);
+      if (localSess) {
+        localSess.profile = profileName;
+      }
+      State.activeProfileName = profileName;
+      if ($('agentProfileSelect')) $('agentProfileSelect').value = profileName;
+      if ($('rightAgentProfileSelect')) $('rightAgentProfileSelect').value = profileName;
+      renderSessionsList();
+      showToast(`이 세션의 담당 에이전트가 '${profileName}'(으)로 지정되었습니다.`);
+      return;
+    } catch (e) {
+      console.warn('Failed to update session profile:', e);
+      showToast("세션 프로필 변경 실패: " + e.message);
+    }
+  }
+
+  // 2) 활성 세션이 없으면 기존 전역 스위치 실행
+  await switchAgentProfile(profileName);
+}
+
 // ── Event Listeners Binding ──
 function setupEventListeners() {
   // [2026-09-15] 스크롤 앵커링 리스너 + '맨 아래로' 버튼을 초기화 시점에 부착.
@@ -3425,9 +3496,12 @@ function setupEventListeners() {
   // Model select change
   $('modelSelect').onchange = (e) => handleModelChange(e.target.value);
 
-  // Agent profile change
+  // Agent profile change — 세션별 독립 프로필로 변경 (기존 세션 리셋 방지)
   if ($('agentProfileSelect')) {
-    $('agentProfileSelect').onchange = (e) => switchAgentProfile(e.target.value);
+    $('agentProfileSelect').onchange = (e) => handleSessionProfileChange(e.target.value);
+  }
+  if ($('rightAgentProfileSelect')) {
+    $('rightAgentProfileSelect').onchange = (e) => handleSessionProfileChange(e.target.value);
   }
 
   // Collapsible default tasks toggle

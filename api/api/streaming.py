@@ -483,10 +483,11 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             put('cancel', {'message': 'Cancelled before start'})
             return
 
-        # Resolve profile home for this agent run (snapshot at start)
+        # Resolve profile home for this agent run (session-scoped isolation)
         try:
-            from api.profiles import get_active_hermes_home
-            _profile_home = str(get_active_hermes_home())
+            from api.profiles import hermes_home_for, get_active_profile_name
+            _eff_profile = getattr(s, 'profile', None) or get_active_profile_name()
+            _profile_home = str(hermes_home_for(_eff_profile))
         except ImportError:
             _logger.debug("api.profiles not available, falling back to HERMES_HOME env var")
             _profile_home = os.environ.get('HERMES_HOME', '')
@@ -497,17 +498,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             HERMES_SESSION_KEY=session_id,
             HERMES_HOME=_profile_home,
         )
-        # Still set process-level env as fallback for tools that bypass thread-local
+        # Process-level fallback for tools that inspect os.environ directly:
+        # Note: Do NOT mutate os.environ['HERMES_HOME'] globally here to avoid cross-session pollution
+        # when multiple agents (Bill, Sherlock, Tony) run concurrently. Thread-local handles isolation.
         with _ENV_LOCK:
           old_cwd = os.environ.get('TERMINAL_CWD')
           old_exec_ask = os.environ.get('HERMES_EXEC_ASK')
           old_session_key = os.environ.get('HERMES_SESSION_KEY')
-          old_hermes_home = os.environ.get('HERMES_HOME')
           os.environ['TERMINAL_CWD'] = str(s.workspace)
           os.environ['HERMES_EXEC_ASK'] = '1'
           os.environ['HERMES_SESSION_KEY'] = session_id
-          if _profile_home:
-              os.environ['HERMES_HOME'] = _profile_home
 
         try:
           # Stateful ANSI stripping with inline regex (no external dependency).
@@ -1500,6 +1500,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               open_tabs=open_tabs,
               injected_mcp_count=injected_count,
               browser_context="chrome_sidepanel" if is_browser_session else None,
+              profile_name=getattr(s, 'profile', None),
           )
           if _ephemeral_prompt:
               workspace_system_msg += "\n\n" + _ephemeral_prompt

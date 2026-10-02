@@ -17,14 +17,61 @@ def get_active_profile_name() -> str:
             pass
     return 'default'
 
-def get_active_hermes_home() -> Path:
-    active = get_active_profile_name()
-    if active == 'default':
+def hermes_home_for(profile_name: str = None) -> Path:
+    """지정 프로파일의 home 경로를 반환합니다. 없거나 default면 _DEFAULT_HERMES_HOME."""
+    if not profile_name or profile_name == 'default':
         return _DEFAULT_HERMES_HOME
-    profile_dir = _DEFAULT_HERMES_HOME / 'profiles' / active
-    if profile_dir.is_dir():
-        return profile_dir
+
+    # 1) 정확한 디렉토리 이름 일치 확인 (~/.hermes/profiles/{profile_name})
+    p = _DEFAULT_HERMES_HOME / 'profiles' / profile_name
+    if p.is_dir():
+        return p
+
+    # 2) 별칭 / 부분 키워드 매핑 지원 (예: 'bill' -> '빌(개발)', 'sherlock' -> '셜록(검수)')
+    profile_mapping = {
+        "prada": "프라다(디자인)", "design": "프라다(디자인)", "프라다": "프라다(디자인)",
+        "bill": "빌(개발)", "dev": "빌(개발)", "개발": "빌(개발)", "빌": "빌(개발)",
+        "sherlock": "셜록(검수)", "qa": "셜록(검수)", "검수": "셜록(검수)", "셜록": "셜록(검수)",
+        "tony": "토니(기획)", "planner": "토니(기획)", "기획": "토니(기획)", "토니": "토니(기획)",
+        "raon": "raon", "라온": "raon",
+        "daon": "다온(응대)", "다온": "다온(응대)",
+    }
+    lowered = profile_name.lower().strip()
+    if lowered in profile_mapping:
+        mapped_dir = _DEFAULT_HERMES_HOME / 'profiles' / profile_mapping[lowered]
+        if mapped_dir.is_dir():
+            return mapped_dir
+
     return _DEFAULT_HERMES_HOME
+
+
+def get_profile_persona(profile_name: str = None) -> str:
+    """지정 프로파일의 SOUL.md 및 AGENTS.md를 로드하여 시스템 프롬프트용 텍스트로 결합합니다."""
+    home = hermes_home_for(profile_name)
+    soul_file = home / 'SOUL.md'
+    agents_file = home / 'AGENTS.md'
+
+    parts = []
+    eff_name = profile_name or home.name
+    if soul_file.exists():
+        try:
+            soul_text = soul_file.read_text(encoding='utf-8').strip()
+            if soul_text:
+                parts.append(f"### [Core Persona / SOUL: {eff_name}]\n{soul_text}")
+        except Exception:
+            pass
+    if agents_file.exists():
+        try:
+            agents_text = agents_file.read_text(encoding='utf-8').strip()
+            if agents_text:
+                parts.append(f"### [Operating Protocols / AGENTS: {eff_name}]\n{agents_text}")
+        except Exception:
+            pass
+    return "\n\n".join(parts)
+
+
+def get_active_hermes_home() -> Path:
+    return hermes_home_for(get_active_profile_name())
 
 def _reload_dotenv(home: Path):
     env_path = home / '.env'

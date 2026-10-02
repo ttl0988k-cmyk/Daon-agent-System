@@ -44,7 +44,11 @@ class LayaClient:
             with urllib.request.urlopen(req, timeout=0.15) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
-                    self._is_alive = (data.get("status") == "ok")
+                    # [FIX 2026-10-01] Treat "booting" as alive too. While the
+                    # Laya model loads (30~60s) the daemon already owns port
+                    # 8765, so it IS running -- respawning here used to create
+                    # a duplicate daemon (~1.85GB VRAM wasted).
+                    self._is_alive = data.get("status") in ("ok", "booting")
                     return self._is_alive
         except Exception:
             pass
