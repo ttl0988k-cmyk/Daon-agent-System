@@ -167,6 +167,14 @@ function registerIpcHandlers({ tabManager, supervisor, mainWindow, merr, mlog })
 
   // ── External Browser Links ──
   ipcMain.on('open-external', (event, url) => {
+    // SECURITY (audit R14 / P1-2): the renderer supplies url and it is handed
+    // straight to shell.openExternal. Only allow http(s) so a crafted value
+    // (file:, shell:, javascript:, custom app schemes) cannot launch arbitrary
+    // handlers — mirrors the validation done in open-system-browser below.
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
+      merr(`[IPC] open-external rejected: non-http(s) url (url=${url})`);
+      return;
+    }
     shell.openExternal(url).catch(err => merr('[IPC] openExternal failed:', err));
   });
 

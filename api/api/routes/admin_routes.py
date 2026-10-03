@@ -6,6 +6,7 @@ Extracted from api/routes.py (Phase 2 — Structuring).
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -15,7 +16,7 @@ from urllib.parse import parse_qs
 from api.config import (
     STATE_DIR, SESSION_DIR, DEFAULT_WORKSPACE, DEFAULT_MODEL,
     SESSIONS, SESSIONS_MAX, LOCK, STREAMS, STREAMS_LOCK, CANCEL_FLAGS,
-    SERVER_START_TIME, CLI_TOOLSETS, _INDEX_HTML_PATH,
+    SERVER_START_TIME, CLI_TOOLSETS, _INDEX_HTML_PATH, _MULTI_HTML_PATH,
     IMAGE_EXTS, MD_EXTS, MIME_MAP, MAX_FILE_BYTES, MAX_UPLOAD_BYTES,
     CHAT_LOCK, load_settings, save_settings, get_available_models,
 )
@@ -110,8 +111,34 @@ async function doLogin(e){
 
 def handle_get_index(handler, parsed) -> bool:
     """GET / or /index.html — serve the main index page."""
+    from api.config import BASE_DIR, _INDEX_HTML_PATH
+    loose = BASE_DIR / 'index.html'
+    if loose.exists():
+        return t(handler, loose.read_text(encoding='utf-8'),
+                 content_type='text/html; charset=utf-8')
     return t(handler, _INDEX_HTML_PATH.read_text(encoding='utf-8'),
              content_type='text/html; charset=utf-8')
+
+
+def handle_get_multi(handler, parsed) -> bool:
+    """GET /multi or /multi.html — serve the Multi-Agent Orchestrator page."""
+    from api.config import BASE_DIR, _MULTI_HTML_PATH
+    candidates = [
+        BASE_DIR / 'static' / 'multi' / 'index.html',
+        BASE_DIR / 'static' / 'multi' / 'multi.html',
+    ]
+    if hasattr(sys, '_MEIPASS'):
+        candidates.extend([
+            Path(sys._MEIPASS) / 'static' / 'multi' / 'index.html',
+            Path(sys._MEIPASS) / 'static' / 'multi' / 'multi.html',
+        ])
+    for p in candidates:
+        if p.exists():
+            return t(handler, p.read_text(encoding='utf-8'), content_type='text/html; charset=utf-8')
+    if _MULTI_HTML_PATH.exists():
+        return t(handler, _MULTI_HTML_PATH.read_text(encoding='utf-8'),
+                 content_type='text/html; charset=utf-8')
+    return bad(handler, "Multi-Agent Orchestrator HTML not found", 404)
 
 
 def handle_get_login(handler, parsed) -> bool:

@@ -425,7 +425,7 @@ class HermesPlanner:
         try:
             from api.dynamic.experience_db import get_experience_db
             _exp_db = get_experience_db()
-            experience_block = _exp_db.format_for_ceo(task, min_samples=1)
+            experience_block = _exp_db.format_for_ceo(task, min_samples=3)
         except Exception as e:
             _log.info("ExperienceDatabase unavailable: %s", e)
             experience_block = (

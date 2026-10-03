@@ -472,9 +472,15 @@ _PROVIDER_MODELS = _load_config_value('provider_models', None, {})
 # Static file path (PyInstaller-compatible)
 # =============================================================================
 if hasattr(sys, '_MEIPASS'):
-    _INDEX_HTML_PATH = Path(sys._MEIPASS) / 'index.html'
+    _INDEX_HTML_PATH = (BASE_DIR / 'index.html') if (BASE_DIR / 'index.html').exists() else (Path(sys._MEIPASS) / 'index.html')
+    _MULTI_HTML_PATH = (BASE_DIR / 'static' / 'multi' / 'index.html') if (BASE_DIR / 'static' / 'multi' / 'index.html').exists() else (
+        (BASE_DIR / 'static' / 'multi' / 'multi.html') if (BASE_DIR / 'static' / 'multi' / 'multi.html').exists() else (
+            Path(sys._MEIPASS) / 'static' / 'multi' / 'index.html'
+        )
+    )
 else:
     _INDEX_HTML_PATH = BASE_DIR / 'index.html'
+    _MULTI_HTML_PATH = (BASE_DIR / 'static' / 'multi' / 'index.html') if (BASE_DIR / 'static' / 'multi' / 'index.html').exists() else (BASE_DIR / 'static' / 'multi' / 'multi.html')
 
 # Default workspace discovery
 def _discover_default_workspace() -> Path:

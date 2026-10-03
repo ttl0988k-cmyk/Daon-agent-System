@@ -210,7 +210,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         prompt = req_data.get("prompt", "")
         if not prompt or _router is None:
             self._send_json(200, {
-                "intent": "general",
+                "intent": "conversation",
                 "confidence": 0.5,
                 "latency_ms": 0.0,
                 "fallback": True
@@ -247,7 +247,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             _logger.warning("Laya pre_route prediction failed: %s", e)
             self._send_json(200, {
-                "intent": "general",
+                "intent": "conversation",
                 "confidence": 0.5,
                 "latency_ms": round((time.time() - t0) * 1000, 1),
                 "fallback": True

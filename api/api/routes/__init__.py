@@ -13,6 +13,7 @@ _logger = logging.getLogger(__name__)
 from api.routes.admin_routes import (
     _LOGIN_PAGE_HTML,
     handle_get_index,
+    handle_get_multi,
     handle_get_login,
     handle_get_auth_status,
     handle_get_favicon,
@@ -83,6 +84,7 @@ from api.routes.session_routes import (
 )
 from api.routes.chat_routes import (
     handle_get_stream_status,
+    handle_get_active_streams,
     handle_get_chat_cancel,
     handle_post_chat_cancel,
     handle_get_sse_stream,
@@ -248,6 +250,15 @@ from api.routes.system_routes import (
     handle_get_last_restart,
     handle_post_last_restart_ack,
 )
+from api.routes.worker_routes import (
+    handle_get_workers,
+    handle_get_worker_status,
+    handle_post_worker_start,
+    handle_post_worker_prompt,
+    handle_post_worker_approve,
+    handle_post_worker_model,
+    handle_get_worker_stream,
+)
 from api.routes.skills_hub_routes import (
     handle_get_skills_hub_search,
     handle_get_skills_hub_sources,
@@ -351,6 +362,8 @@ def _handle_post_plugin_subpath(handler, body, parsed) -> bool:
 # ── O(1) GET Route Registry ──
 GET_EXACT_ROUTES = {
     '/': handle_get_index,
+    '/multi': handle_get_multi,
+    '/multi.html': handle_get_multi,
     '/api/agent/inbox': handle_get_agent_inbox,
     '/api/approval/history': handle_get_approval_history,
     '/api/approval/inject_test': _handle_get_approval_inject_test,
@@ -364,6 +377,7 @@ GET_EXACT_ROUTES = {
     '/api/capability/diagnose': handle_get_capability_diagnose,
     '/api/capability/mappings': handle_get_capability_mappings,
     '/api/capability/tests': handle_get_capability_tests,
+    '/api/chat/active': handle_get_active_streams,
     '/api/chat/cancel': handle_get_chat_cancel,
     '/api/chat/stream': handle_get_sse_stream,
     '/api/chat/stream/status': handle_get_stream_status,
@@ -435,6 +449,9 @@ GET_EXACT_ROUTES = {
     '/api/system/build-info': handle_get_build_info,
     '/api/system/last-restart': handle_get_last_restart,
     '/api/system/status': handle_get_system_status,
+    '/api/workers': handle_get_workers,
+    '/api/workers/status': handle_get_worker_status,
+    '/api/workers/stream': handle_get_worker_stream,
     '/api/workspaces': handle_get_workspaces,
     '/api/workspaces/select': handle_get_workspace_select,
     '/favicon.ico': handle_get_favicon,
@@ -596,6 +613,10 @@ POST_EXACT_ROUTES = {
     '/api/sync/hook/uninstall': handle_post_sync_hook_uninstall,
     '/api/sync/start': handle_post_sync_start,
     '/api/sync/stop': handle_post_sync_stop,
+    '/api/workers/start': handle_post_worker_start,
+    '/api/workers/prompt': handle_post_worker_prompt,
+    '/api/workers/approve': handle_post_worker_approve,
+    '/api/workers/model': handle_post_worker_model,
     '/api/workspaces/add': handle_post_workspace_add,
     '/api/workspaces/remove': handle_post_workspace_remove,
     '/api/workspaces/rename': handle_post_workspace_rename,

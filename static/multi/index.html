@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DAON Multi-Agent Orchestrator</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/multi/multi.css?v=20261003_3">
+</head>
+<body class="daon-multi-body">
+  <div id="app" class="multi-app-container">
+    <!-- Top Global Header / Command Bar -->
+    <header class="multi-header">
+      <div class="brand-group">
+        <a href="/" class="nav-return-btn" title="클래식 싱글 채팅 뷰로 돌아가기">
+          <span class="btn-icon">🏠</span> 클래식 뷰
+        </a>
+        <div class="brand-logo">
+          <span class="brand-icon">🛰️</span>
+          <span class="brand-name">DAON MULTI</span>
+        </div>
+        <span class="brand-sub">Orchestrator</span>
+        <div class="system-status-indicator" id="systemStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Engine Ready</span>
+        </div>
+      </div>
+
+      <!-- Center: Layout & Split Controls -->
+      <div class="layout-controls" id="layoutControls">
+        <span class="control-label">분할 뷰:</span>
+        <button class="layout-btn active" data-layout="2" title="2분할 (1x2)">
+          <span class="btn-icon">❚❚</span> 2분할
+        </button>
+        <button class="layout-btn" data-layout="3" title="3분할 (1+2)">
+          <span class="btn-icon">❚☵</span> 3분할
+        </button>
+        <button class="layout-btn" data-layout="4" title="4분할 (2x2)">
+          <span class="btn-icon">☷</span> 4분할
+        </button>
+        <button class="layout-btn" data-layout="6" title="6분할 (2x3)">
+          <span class="btn-icon">▦</span> 6분할
+        </button>
+      </div>
+
+      <!-- Right: Action & Utility Controls -->
+      <div class="header-actions">
+        <button class="action-btn primary" id="addAgentBtn" title="새 에이전트 창 추가">
+          <span class="btn-icon">＋</span> 에이전트 추가
+        </button>
+        <button class="action-btn" id="addWorkerBtn" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.22) 0%, rgba(99, 102, 241, 0.22) 100%); border-color: rgba(56, 189, 248, 0.45); color: #38bdf8;" title="코덱스(Codex) 외부 코딩 워커 창 추가">
+          <span class="btn-icon">⚡</span> 코덱스 워커
+        </button>
+        <button class="action-btn toggle active" id="autoScrollToggle" title="전체 자동 스크롤 ON/OFF">
+          <span class="btn-icon">⟳</span> 자동스크롤 ON
+        </button>
+        <a href="/" class="action-btn return-classic-btn" title="클래식 싱글 채팅 뷰로 돌아가기">
+          <span class="btn-icon">🏠</span> 클래식 뷰 복귀
+        </a>
+      </div>
+    </header>
+
+    <!-- Main Multiplexer Canvas Grid -->
+    <main class="multi-main">
+      <div id="grid" class="multi-grid" data-layout="2">
+        <!-- Panes will be dynamically injected here -->
+      </div>
+    </main>
+
+    <!-- Bottom Status & Flow Orchestration Bar -->
+    <footer class="multi-footer">
+      <div class="footer-section flow-section" id="flowSection">
+        <span class="section-title">⚡ DIRECT PIPELINE:</span>
+        <div class="pipeline-tags" id="pipelineTags">
+          <span class="pipeline-badge raon">👑 라온 (총괄기획)</span>
+          <span class="pipeline-arrow">──지시──▶</span>
+          <span class="pipeline-badge bill">🔨 빌 (개발구현)</span>
+          <span class="pipeline-arrow">──산출──▶</span>
+          <span class="pipeline-badge sherlock">🔍 셜록 (품질검수)</span>
+        </div>
+      </div>
+      <div class="footer-section board-section" id="boardSection">
+        <span class="section-title">👥 에이전트 보드:</span>
+        <div class="board-badges" id="boardBadges">
+          <!-- Live agent status badges inserted here -->
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Main ES Module Script -->
+  <script type="module" src="/static/multi/multi.js?v=20261003_3"></script>
+</body>
+</html>

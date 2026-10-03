@@ -168,23 +168,16 @@ def init_profile_state() -> None:
 
 def list_profiles_api() -> list:
     active = get_active_profile_name()
+    # 'default' 는 ~/.hermes 루트 자체(별도 폴더 아님)이고 실사용되지 않으므로 목록에서 숨긴다.
+    # active_profile 이 비어 'default' 로 해석되는 경우에도 raon 을 활성으로 취급한다.
+    if active == 'default':
+        active = 'raon'
     result = []
     global_has_env = (_DEFAULT_HERMES_HOME / '.env').exists()
-    
-    # 1. Default Profile
-    def_model, def_provider = _extract_profile_model_info(_DEFAULT_HERMES_HOME)
-    result.append({
-        'name': 'default',
-        'path': str(_DEFAULT_HERMES_HOME),
-        'is_default': True,
-        'is_active': active == 'default',
-        'has_env': global_has_env,
-        'has_global_env': global_has_env,
-        'skill_count': _count_skills(_DEFAULT_HERMES_HOME / 'skills'),
-        'model': def_model,
-        'provider': def_provider,
-    })
-    
+
+    # 1. Default(root) 항목은 UI 목록에 노출하지 않는다 — 전역 루트라 삭제 불가 · 미사용
+    #    (과거에 'default' 항목을 append 했으나 대표님 요청으로 2026-10-02 제거)
+
     # 2. Sub-profiles
     profiles_dir = _DEFAULT_HERMES_HOME / 'profiles'
     if profiles_dir.is_dir():
@@ -353,10 +346,13 @@ def delete_profile_api(name: str) -> dict:
     if not profile_dir.is_dir():
         raise ValueError(f"Profile '{name}' does not exist.")
         
-    # If active, switch to default first
+    # If active, switch to raon first ('default' 는 목록에서 숨긴 루트 항목이므로 사용하지 않음)
     active = get_active_profile_name()
     if active == name:
-        switch_profile('default')
+        try:
+            switch_profile('raon')
+        except (ValueError, FileNotFoundError):
+            switch_profile('default')
         
     shutil.rmtree(profile_dir)
     return {'ok': True, 'name': name}

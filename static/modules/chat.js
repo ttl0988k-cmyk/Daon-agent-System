@@ -237,12 +237,12 @@ function renderSessionsList() {
       <div class="session-title-container">
         ${checkboxHtml}
         <span class="session-icon">${agentIcon}</span>
-        <span class="session-title" id="title-text-${s.session_id}">${s.title}</span>
+        <span class="session-title" id="title-text-${s.session_id}">${esc(s.title)}</span>
         ${profBadge}
         ${runningBadge}
       </div>
       <div class="session-actions">
-        <button class="icon-btn edit-sess-btn" onclick="renameSessionPrompt(event, '${s.session_id}', '${s.title}')">✏</button>
+        <button class="icon-btn edit-sess-btn" onclick="renameSessionPrompt(event, '${s.session_id}')">✏</button>
         <button class="icon-btn delete-sess-btn" onclick="deleteSession(event, '${s.session_id}')">🗑</button>
       </div>
     `;
@@ -817,8 +817,13 @@ async function createNewSession() {
   }
 }
 
-async function renameSessionPrompt(e, sid, oldTitle) {
+async function renameSessionPrompt(e, sid) {
   e.stopPropagation();
+  // Look title up from State instead of interpolating it into the onclick
+  // attribute — session titles are LLM-generated and must never be trusted
+  // as markup/JS source. (XSS hardening 2026-10-03)
+  const _sess = State.sessions.find(x => x.session_id === sid);
+  const oldTitle = _sess ? _sess.title : '';
   const newTitle = await showInputModal("대화 제목 변경", "새 제목을 입력하세요", oldTitle);
   if (!newTitle || newTitle.trim() === '') return;
 

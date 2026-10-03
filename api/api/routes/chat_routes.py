@@ -35,6 +35,7 @@ from api.streaming import (
     _sse, _run_agent_streaming, cancel_stream,
     _COMPLETED_STREAMS, _COMPLETED_STREAMS_LOCK,
     _CANCELLED_STREAMS, _CANCELLED_STREAMS_LOCK,
+    BroadcastQueue,
 )
 
 
@@ -42,8 +43,38 @@ from api.streaming import (
 
 def handle_get_stream_status(handler, parsed) -> bool:
     """GET /api/chat/stream/status — check if a stream is active."""
-    stream_id = parse_qs(parsed.query).get('stream_id', [''])[0]
-    return j(handler, {'active': stream_id in STREAMS, 'stream_id': stream_id})
+    qs = parse_qs(parsed.query)
+    stream_id = qs.get('stream_id', [''])[0]
+    session_id = qs.get('session_id', [''])[0]
+    if not stream_id and session_id:
+        from api.config import resolve_stream_id
+        stream_id = resolve_stream_id(session_id)
+    with _CANCELLED_STREAMS_LOCK:
+        is_cancelled = bool(stream_id and stream_id in _CANCELLED_STREAMS)
+    is_active = bool(stream_id and stream_id in STREAMS and not is_cancelled)
+    return j(handler, {'active': is_active, 'stream_id': stream_id or '', 'cancelled': is_cancelled})
+
+
+def handle_get_active_streams(handler, parsed) -> bool:
+    """GET /api/chat/active — return all currently active sessions, streams, and profiles."""
+    from api.config import ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK
+    from api.models import get_session
+    with ACTIVE_SESSION_STREAMS_LOCK:
+        active_items = list(ACTIVE_SESSION_STREAMS.items())
+    with _CANCELLED_STREAMS_LOCK:
+        cancelled_set = set(_CANCELLED_STREAMS.keys())
+
+    result = []
+    for sid, stid in active_items:
+        if stid in STREAMS and stid not in cancelled_set:
+            prof = ''
+            try:
+                s = get_session(sid)
+                prof = getattr(s, 'profile', '') or ''
+            except Exception:
+                pass
+            result.append({'session_id': sid, 'stream_id': stid, 'profile': prof})
+    return j(handler, {'active_streams': result})
 
 
 def handle_get_chat_cancel(handler, parsed) -> bool:
@@ -128,6 +159,7 @@ def handle_get_sse_stream(handler, parsed) -> bool:
     # 최대 수명 방어선: 워커 크래시 등으로 done을 못 받는 스트림에서
     # 스레드가 영구 점유되는 누수를 막는다 (10분 후 강제 종료).
     _sse_started = time.time()
+    sub = q.subscribe() if hasattr(q, 'subscribe') else q
     try:
         while True:
             try:
@@ -137,7 +169,7 @@ def handle_get_sse_stream(handler, parsed) -> bool:
                 # 주의: SSE 주석(': heartbeat')은 EventSource에서 어떤 이벤트도
                 # dispatch하지 않으므로, 프론트엔드 idle 타이머가 리셋되려면
                 # 반드시 실제 이벤트여야 한다 (plan.md Cause C).
-                event, data = q.get(timeout=15)
+                event, data = sub.get(timeout=15)
             except queue.Empty:
                 if time.time() - _sse_started > 600.0:
                     handler.close_connection = True
@@ -159,6 +191,9 @@ def handle_get_sse_stream(handler, parsed) -> bool:
                 break
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
         pass
+    finally:
+        if hasattr(q, 'unsubscribe'):
+            q.unsubscribe(sub)
     return True
 
 
@@ -220,7 +255,7 @@ def handle_post_chat_start(handler, body) -> bool:
     stream_id = uuid.uuid4().hex
     with _START_LOCK:
         _RECENT_STARTS[sid] = (now, stream_id)
-    q = queue.Queue()
+    q = BroadcastQueue()
     if cancelled_previous and _surface_decl != 'chrome_extension':
         # 이전 실행 중이던 작업이 자동 취소되었음을 새 스트림으로 안내해,
         # 사용자가 이전 작업이 왜 멈췄는지 모르게 되는 상황을 방지 (plan.md Cause D).

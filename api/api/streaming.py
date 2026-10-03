@@ -71,8 +71,65 @@ _STREAM_THREADS_LOCK = threading.Lock()
 
 # Thread-local capture of the active stream's put() callable. Tool handlers
 # running inside the agent thread (e.g. the Dynamic Harness tool) call
-# get_current_thread_put() to emit extra SSE events such as 'agent_log'.
 _thread_put = threading.local()
+ 
+ 
+class BroadcastQueue:
+    """Multi-subscriber broadcast queue for SSE streams.
+
+    Allows multiple concurrent clients (e.g. Classic View and Multi View opened simultaneously)
+    to subscribe to the same stream_id without stealing tokens from each other.
+    Also retains history so newly connected clients receive past events.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.subscribers = set()
+        self.history = []
+        self._default_q = queue.Queue()
+
+    def put_nowait(self, item):
+        with self.lock:
+            self.history.append(item)
+            for sub in list(self.subscribers):
+                try:
+                    sub.put_nowait(item)
+                except Exception:
+                    pass
+            try:
+                self._default_q.put_nowait(item)
+            except Exception:
+                pass
+
+    def put(self, item, *args, **kwargs):
+        self.put_nowait(item)
+
+    def subscribe(self):
+        sub = queue.Queue()
+        with self.lock:
+            for item in self.history:
+                try:
+                    sub.put_nowait(item)
+                except Exception:
+                    pass
+            self.subscribers.add(sub)
+        return sub
+
+    def unsubscribe(self, sub):
+        with self.lock:
+            self.subscribers.discard(sub)
+
+    def get(self, *args, **kwargs):
+        return self._default_q.get(*args, **kwargs)
+
+    def get_nowait(self):
+        return self._default_q.get_nowait()
+
+    def qsize(self):
+        return self._default_q.qsize()
+
+    def empty(self):
+        return self._default_q.empty()
 
 
 class StreamEmitter:
@@ -1817,9 +1874,6 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
             if os.environ.get('HERMES_SESSION_KEY') == session_id:
                 if old_session_key is None: os.environ.pop('HERMES_SESSION_KEY', None)
                 else: os.environ['HERMES_SESSION_KEY'] = old_session_key
-            if _profile_home and os.environ.get('HERMES_HOME') == _profile_home:
-                if old_hermes_home is None: os.environ.pop('HERMES_HOME', None)
-                else: os.environ['HERMES_HOME'] = old_hermes_home
 
     except Exception as e:
         print('[webui] stream error:\n' + traceback.format_exc(), flush=True)
@@ -1912,9 +1966,25 @@ def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
         for sid in _stale:
             del _CANCELLED_STREAMS[sid]
 
+    # session_id 역방향 조회 및 즉시 세션 락 해제
+    if not session_id:
+        with ACTIVE_SESSION_STREAMS_LOCK:
+            for _sid, _sid_stream in ACTIVE_SESSION_STREAMS.items():
+                if _sid_stream == stream_id:
+                    session_id = _sid
+                    break
+
+    _force_release_session_lock(stream_id, session_id=session_id)
+
+    # 즉시 ACTIVE_SESSION_STREAMS에서 제거하여 status/active 조회가 바로 active: false를 반환하게 함
+    with ACTIVE_SESSION_STREAMS_LOCK:
+        if session_id and ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
+            ACTIVE_SESSION_STREAMS.pop(session_id, None)
+        for _sid, _sid_stream in list(ACTIVE_SESSION_STREAMS.items()):
+            if _sid_stream == stream_id:
+                ACTIVE_SESSION_STREAMS.pop(_sid, None)
+
     # NEW: Tell the AIAgent to stop its in-flight HTTP request immediately.
-    # Without this, cancel_event.set() has no way to reach the agent thread —
-    # the HTTP request keeps running until its own 120s timeout.
     with _ACTIVE_AGENTS_LOCK:
         agent = _ACTIVE_AGENTS.get(stream_id)
     if agent:
@@ -1933,33 +2003,16 @@ def cancel_stream(stream_id: str, session_id: str | None = None) -> bool:
         q = STREAMS.get(stream_id)
         if q:
             q.put_nowait(('cancel', {'message': 'Cancelled by user'}))
-        # Cleanup: 에이전트 워커 스레드가 실제로 종료될 때까지 기다렸다가
-        # STREAMS를 제거한다. 워커가 아직 정리 중(도구 중단, 세션 저장)인데
-        # 3초 만에 강제 제거하던 기존 동작은 SSE 재연결이 404를 받게 만들어
-        # 사용자에게 "에이전트 연결 끊김"으로 보였다. 정상 경로에서는 워커의
-        # finally 블록이 STREAMS를 제거하므로 이곳은 안전장치다.
+
+        # Cleanup: SSE 클라이언트가 cancel 이벤트를 수신할 수 있도록 잠시 대기 후 STREAMS 정리
         def _force_cleanup():
             with _STREAM_THREADS_LOCK:
                 worker = _STREAM_THREADS.get(stream_id)
-            # 1) 도구가 인터럽트를 반영해 스스로 종료되기를 잠시 기다린다. (1.5초)
-            _grace_deadline = time.time() + 1.5
-            while worker is not None and worker.is_alive() and time.time() < _grace_deadline:
-                time.sleep(0.3)
-            # 2) 인터럽트 전파 후에도 워커가 계속 실행 중이면(도구가 인터럽트를
-            #    반영하지 못해 run_conversation()이 아직 반환하지 않은 경우)
-            #    세션 락을 강제 해제해 다음 메시지가 즉시 진행될 수 있게 한다.
-            if worker is not None and worker.is_alive():
-                _force_release_session_lock(stream_id, session_id=session_id)
-            # 3) STREAMS 정리 안전장치 (최대 20초 대기)
-            deadline = time.time() + 20
+            deadline = time.time() + 2.0
             while worker is not None and worker.is_alive() and time.time() < deadline:
-                time.sleep(0.5)
+                time.sleep(0.2)
             with STREAMS_LOCK:
                 if stream_id in STREAMS:
-                    _logger.warning(
-                        "Force-cleaning stale stream %s (agent did not finish within 20s of cancel)",
-                        stream_id
-                    )
                     STREAMS.pop(stream_id, None)
                     CANCEL_FLAGS.pop(stream_id, None)
             with _ACTIVE_AGENTS_LOCK:

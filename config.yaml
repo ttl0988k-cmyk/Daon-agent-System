@@ -91,6 +91,7 @@ toolsets:
     - "code_execution"
     - "cronjob"
     - "delegation"
+    - "harness_worker"
     - "dynamic_harness"
     - "file"
     - "image_gen"

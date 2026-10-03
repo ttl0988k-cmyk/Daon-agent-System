@@ -971,6 +971,82 @@ def inject_fast_decision_tool(agent: Any) -> None:
         _logger.warning("fast_decision_engine tool injection failed: %s", _e)
 
 
+def inject_worker_tools(agent: Any) -> None:
+    """Inject delegate_to_worker tool for Raon and other agents to utilize external CLI workers."""
+    try:
+        from api.managers.herdr_manager import herdr_manager
+        from tools.registry import registry
+
+        _worker_schema = {
+            "type": "function",
+            "function": {
+                "name": "delegate_to_worker",
+                "description": (
+                    "외부 전문 코딩 워커(Codex 또는 Claude Code CLI)에게 독립적인 구현, "
+                    "코드 작성, 버그 수정, 리팩터링 작업을 위임하고 최종 실행 결과와 코드를 받아옵니다. "
+                    "라온(총괄기획)이 복잡한 코딩이나 CLI 기반 자율 에이전트 작업을 위임할 때 사용합니다."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "worker_name": {
+                            "type": "string",
+                            "enum": ["worker-codex", "worker-claude"],
+                            "description": "작업을 위임할 외부 워커 이름 (기본값: worker-codex)"
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "워커에게 전달할 구체적인 작업 요구사항 및 프롬프트"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "작업 완료 대기 시간(초) (기본값: 120)"
+                        }
+                    },
+                    "required": ["task"]
+                }
+            }
+        }
+
+        def _worker_handler(args: dict, **kwargs) -> str:
+            worker_name = args.get("worker_name", "worker-codex")
+            task = (args.get("task") or "").strip()
+            timeout = int(args.get("timeout") or 120)
+
+            if not task:
+                return json.dumps({"ok": False, "error": "task is required"}, ensure_ascii=False)
+
+            _logger.info(f"[delegate_to_worker] Delegating task to {worker_name}: {task[:60]}...")
+            try:
+                res = herdr_manager.execute_worker_task(name=worker_name, prompt=task, timeout=timeout)
+                return json.dumps(res, ensure_ascii=False)
+            except Exception as e:
+                _logger.error(f"[delegate_to_worker] Failed to execute worker task: {e}")
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+        registry.register(
+            name="delegate_to_worker",
+            toolset="worker-dispatch",
+            schema={
+                "name": "delegate_to_worker",
+                "description": _worker_schema["function"]["description"],
+                "parameters": _worker_schema["function"]["parameters"]
+            },
+            handler=_worker_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Delegate coding/refactoring tasks to external CLI workers (Codex / Claude Code)"
+        )
+        registry.register_toolset_alias("worker", "worker-dispatch")
+        registry.register_toolset_alias("codex", "worker-dispatch")
+        _append_tool_if_missing(agent, _worker_schema, "delegate_to_worker")
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("delegate_to_worker")
+        _logger.debug("Injected delegate_to_worker tool into agent.")
+    except Exception as e:
+        _logger.warning("Worker tool injection failed: %s", e)
+
+
 def register_all_streaming_tools(
     agent: Any,
     session: Any,
@@ -990,5 +1066,6 @@ def register_all_streaming_tools(
     inject_self_evolution_tool(agent, session_id=session_id, stream_id=stream_id)
     inject_daon_action_tool(agent)
     inject_fast_decision_tool(agent)
+    inject_worker_tools(agent)
     _deduplicate_agent_tools(agent)
     return mcp_count

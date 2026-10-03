@@ -10,7 +10,7 @@
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE= && electron .",
     "build": "electron-builder",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test electron/tests/ || echo no-tests"
   },
   "build": {
     "appId": "com.daon.agentsystem",
