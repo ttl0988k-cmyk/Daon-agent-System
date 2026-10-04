@@ -869,37 +869,51 @@ stream_idle_timeout_ms = 60000{extra_headers}
         current_content: List[str] = []
 
         skip_prefixes = (
-            "PS ",
-            "╭",
-            "│",
-            "╰",
-            "Tip:",
-            "› Ask Codex",
-            "model:",
-            "directory:",
-            "enter continue",
-            "Run npm install",
-            "See full release notes",
-            ">_ OpenAI Codex",
-            "Welcome to Claude Code",
-            "Browser didn't open?",
-            "Paste code here",
-            "https://claude.com/cai/oauth",
-            "Claude Code v2.",
-            "? for shortcuts",
-            "ctrl+c to interrupt",
+            "PS ", "╭", "│", "╰", "Tip:", "model:", "directory:",
+            "enter continue", "Run npm install", "See full release notes", ">_ OpenAI Codex",
+            "Welcome to Claude Code", "Browser didn't open?", "Paste code here",
+            "https://claude.com/cai/oauth", "Claude Code v2.", "? for shortcuts",
+            "ctrl+c to interrupt", "esc to interrupt", "▐▛", "▝▜", "▝▝",
+        )
+        noise_substrings = (
+            "Update installed", "Auto-update failed", "Restart to apply",
+            "bypass permissions", "shift+tab to cycle", "← for agents",
+            "? for shortcuts", "ctrl+c to interrupt", "esc to interrupt",
+            "API Usage Billing", "Both ANTHROPIC_AUTH_TOKEN", "to use ANTHROPIC_",
+            "이 작업 디렉터리는", "git 저장소는 아닙니다", "not a git repository",
+            "Ask Codex to do anything", "f2 to view",
         )
 
-        for line in lines:
+        # Detect and ignore bottom idle prompt section (e.g. Ask Codex footer)
+        clean_lines = []
+        for l in lines:
+            s = l.strip()
+            if "Ask Codex to do anything" in s:
+                break
+            clean_lines.append(l)
+
+        for line in clean_lines:
             stripped = line.strip()
             if not stripped:
                 continue
 
-            # Skip header boxes and boilerplate
+            # Skip header boxes, banners, ASCII art, and known prefixes
             if any(stripped.startswith(p) for p in skip_prefixes):
                 continue
-            # Skip Claude ASCII art
             if any(art_char in stripped for art_char in ("██", "░░", "▓▓", "....█")):
+                continue
+            if re.match(r"^[\─\-\=\_\s]{3,}$", stripped):
+                continue
+            if any(ns in stripped for ns in noise_substrings):
+                continue
+            # Skip CLI timing & status footers
+            if re.search(r"^[✻✔•✘]?\s*(?:Brewed|Cogitated|Worked)\s+for\b", stripped, re.I):
+                continue
+            if re.search(r"^Worked\s+for\s+\d+s", stripped, re.I):
+                continue
+            if re.search(r"^•?\s*Working\s*\(\d+s", stripped, re.I):
+                continue
+            if stripped in ("❯", "›", ">"):
                 continue
             if "·" in stripped and ("warning" in stripped.lower() or "pm" in stripped.lower() or "am" in stripped.lower()):
                 continue
@@ -907,39 +921,49 @@ stream_idle_timeout_ms = 60000{extra_headers}
                 continue
 
             # Check turn start
-            # In Codex: '› prompt', '• answer'
-            # In Claude: '❯ prompt' or '> prompt', '⏺ tool' or text
+            # In Codex: '› prompt'
+            # In Claude: '❯ prompt' or '> prompt'
             is_codex_user = stripped.startswith("› ")
             is_claude_user = (stripped.startswith("❯ ") or (stripped.startswith("> ") and not stripped.startswith(">_ "))) and "Paste code" not in stripped
-            is_user = is_codex_user or is_claude_user
 
-            is_codex_asst = stripped.startswith("• ")
-            is_claude_asst = stripped.startswith("⏺ ")
-            is_asst = is_codex_asst or is_claude_asst
-
-            if is_user:
+            if is_codex_user or is_claude_user:
+                u_text = stripped[2:].strip()
+                if not u_text or u_text in ("Ask Codex to do anything",):
+                    continue
                 if current_role and current_content:
-                    turns.append({"role": current_role, "content": "\n".join(current_content).strip()})
+                    t_val = "\n".join(current_content).strip()
+                    if t_val:
+                        turns.append({"role": current_role, "content": t_val})
                     current_content = []
                 current_role = "user"
-                user_text = stripped[2:].strip()
-                current_content.append(user_text)
-            elif is_asst:
+                current_content.append(u_text)
+                continue
+
+            is_codex_asst = stripped.startswith("• ")
+            is_claude_asst = (
+                stripped.startswith("● ") or stripped.startswith("●") or
+                stripped.startswith("⏺ ") or stripped.startswith("⏺") or
+                stripped.startswith("• ") or stripped.startswith("•")
+            )
+            if (kind == "codex" and is_codex_asst) or (kind == "claude" and is_claude_asst):
                 if current_role and current_content:
-                    turns.append({"role": current_role, "content": "\n".join(current_content).strip()})
+                    t_val = "\n".join(current_content).strip()
+                    if t_val:
+                        turns.append({"role": current_role, "content": t_val})
                     current_content = []
                 current_role = "assistant"
+                asst_text = re.sub(r"^[●⏺•]\s*", "", stripped).strip()
+                if asst_text:
+                    current_content.append(asst_text)
+                continue
+
+            if current_role:
                 current_content.append(stripped)
-            else:
-                if current_role:
-                    current_content.append(stripped)
-                elif kind == "claude" and not blocked_info:
-                    # Claude sometimes starts assistant text without prefix
-                    current_role = "assistant"
-                    current_content.append(stripped)
 
         if current_role and current_content:
-            turns.append({"role": current_role, "content": "\n".join(current_content).strip()})
+            t_val = "\n".join(current_content).strip()
+            if t_val:
+                turns.append({"role": current_role, "content": t_val})
 
         # Generate clean markdown summary
         clean_text_parts = []

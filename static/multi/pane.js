@@ -515,6 +515,7 @@ export class Pane {
     msgEl.className = 'msg assistant';
 
     const cleanedText = this.cleanWorkerText(cleanContent);
+    if (!cleanedText) return;
     let formattedText = this.renderMarkdown(cleanedText);
     let terminalDetailsHtml = '';
 
@@ -1281,12 +1282,46 @@ export class Pane {
       .replace(/\r/g, '\n');
   }
 
+  cleanUserText(str) {
+    if (!str) return '';
+    let clean = String(str);
+    // Strip [오케스트레이션 회의실 안내] and all following room instructions from user speech bubble
+    const idx = clean.indexOf('[오케스트레이션 회의실 안내]');
+    if (idx !== -1) {
+      clean = clean.substring(0, idx).trim();
+    }
+    return clean;
+  }
+
   cleanWorkerText(str) {
     if (!str) return '';
     let clean = this.stripAnsi(str);
+    // Strip scrollback & TUI prompt artifacts
     clean = clean.replace(/↓\s*Back to bottom\s*·\s*esc/gi, '');
     clean = clean.replace(/New activity\s*·\s*↓\s*Back to bottom\s*·\s*esc/gi, '');
     clean = clean.replace(/Type a prompt to continue/gi, '');
+    clean = clean.replace(/›\s*Ask Codex to do anything/gi, '');
+    clean = clean.replace(/Ask Codex to do anything/gi, '');
+    // Strip CLI done footers & timing
+    clean = clean.replace(/[✻✔•✘]?\s*(?:Brewed|Cogitated|Worked)\s+for\b[^\n]*/gi, '');
+    clean = clean.replace(/Worked for \d+s •[^\n]*/gi, '');
+    clean = clean.replace(/•?\s*Working\s*\(\d+s[^\n]*/gi, '');
+    // Strip update notices & warnings
+    clean = clean.replace(/.*Update installed[^\n]*/gi, '');
+    clean = clean.replace(/.*Auto-update failed[^\n]*/gi, '');
+    clean = clean.replace(/.*Restart to apply[^\n]*/gi, '');
+    // Strip permission & shortcut hints
+    clean = clean.replace(/.*bypass permissions on[^\n]*/gi, '');
+    clean = clean.replace(/.*← for agents[^\n]*/gi, '');
+    clean = clean.replace(/.*\? for shortcuts[^\n]*/gi, '');
+    clean = clean.replace(/.*⚠ \d+ warning · f2 to view[^\n]*/gi, '');
+    // Strip preamble notices
+    clean = clean.replace(/이 작업 디렉터리는[^\n]*git 저장소는 아닙니다\./gi, '');
+    clean = clean.replace(/This directory is[^\n]*not a git repository\./gi, '');
+    // Strip terminal divider lines
+    clean = clean.replace(/^[\─\-\=\_\s]{3,}$/gm, '');
+    // Strip lone prompt markers
+    clean = clean.replace(/^[❯›>]\s*$/gm, '');
     return clean.trim();
   }
 
@@ -1496,9 +1531,15 @@ export class Pane {
     msgEl.className = `msg ${role}`;
     const sender = role === 'user' ? '👤 나 (대표님)' : `${meta.icon} ${this.profile}`;
 
+    let displayText = text;
+    if (role === 'user') {
+      displayText = this.cleanUserText(text);
+      if (!displayText) return;
+    }
+
     msgEl.innerHTML = `
       <div class="msg-sender">${sender}</div>
-      <div class="msg-bubble">${this.renderMarkdown(text)}</div>
+      <div class="msg-bubble">${this.renderMarkdown(displayText)}</div>
     `;
     this.bodyEl.appendChild(msgEl);
     this.scrollToBottom();
