@@ -62,11 +62,11 @@ class HerdrManager:
         self._state_lock = threading.Lock()
         self._bg_threads: Dict[str, threading.Thread] = {}
 
-        # Register default worker slots
+        # Register default worker slots using detected/configured custom models
         self._workers["worker-codex"] = {
             "name": "worker-codex",
             "kind": "codex",
-            "model": "GPT-6-Luna (Free OAuth)",
+            "model": self._detect_current_codex_model(),
             "status": "idle",
             "pane_id": "w1:p1",
             "last_prompt": "",
@@ -79,7 +79,7 @@ class HerdrManager:
         self._workers["worker-claude"] = {
             "name": "worker-claude",
             "kind": "claude",
-            "model": "Claude 3.7 Sonnet (OAuth)",
+            "model": self._detect_current_claude_model(),
             "status": "idle",
             "pane_id": "w1:p2",
             "last_prompt": "",
@@ -89,6 +89,74 @@ class HerdrManager:
             "turns": [],
             "updated_at": time.time(),
         }
+
+    def _detect_current_codex_model(self) -> str:
+        """Inspect ~/.codex/config.toml to display the active custom model."""
+        config_path = Path.home() / ".codex" / "config.toml"
+        if config_path.exists():
+            try:
+                model = None
+                provider = None
+                for line in config_path.read_text(encoding="utf-8").splitlines():
+                    s = line.strip()
+                    if s.startswith("model ="):
+                        model = s.split("=", 1)[1].strip().strip('"').strip("'")
+                    elif s.startswith("model_provider ="):
+                        provider = s.split("=", 1)[1].strip().strip('"').strip("'")
+                if model:
+                    prov_label = {
+                        "minimax": "MiniMax",
+                        "opencode-go": "OpenCode Go",
+                        "openrouter": "OpenRouter",
+                        "qwen-token-plan": "Qwen",
+                    }.get(provider or "", provider or "Custom")
+                    return f"{model} ({prov_label})"
+            except Exception:
+                pass
+        return "MiniMax-M3.1-Flash-Preview (MiniMax)"
+
+    def _detect_current_claude_model(self) -> str:
+        """Return the default custom model for Claude Code (via LiteLLM proxy)."""
+        return "deepseek-v4.1-flash (OpenCode Go)"
+
+    def ensure_litellm_gateway(self) -> bool:
+        """Ensure LiteLLM proxy is running on port 4000 to bridge Claude Code to custom providers."""
+        import urllib.request
+        try:
+            req = urllib.request.Request("http://127.0.0.1:4000/health/liveliness")
+            with urllib.request.urlopen(req, timeout=1.2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+
+        import sys
+        worker_plugin_dir = Path(r"c:\daon\Daon agent System\plugins\harness-worker")
+        if str(worker_plugin_dir) not in sys.path:
+            sys.path.insert(0, str(worker_plugin_dir))
+        try:
+            import worker
+            worker.write_litellm_config()
+            res = worker.gateway_up(wait_seconds=15)
+            _logger.info(f"[HerdrManager] Started LiteLLM gateway: {res}")
+            return bool(res.get("ok"))
+        except Exception as e:
+            _logger.error(f"[HerdrManager] Failed to launch LiteLLM gateway: {e}")
+            return False
+
+    def _kill_pane_foreground_process(self, pane_id: str):
+        """Cleanly kill foreground process in pane without killing the shell."""
+        try:
+            res = self._run_cmd(["pane", "process-info", "--pane", pane_id], timeout=3)
+            if res["ok"] and res.get("json"):
+                fg_list = res["json"].get("result", {}).get("process_info", {}).get("foreground_processes", [])
+                for proc in fg_list:
+                    pid = proc.get("pid")
+                    if pid:
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5)
+        except Exception:
+            pass
+        self._run_cmd(["pane", "send-keys", pane_id, "c-c"], timeout=2)
 
     def _normalize_worker_name(self, name: str) -> str:
         """Map aliases ('claude', 'worker-claude', 'codex') to canonical worker keys."""
@@ -314,7 +382,38 @@ class HerdrManager:
                 target_pane = "w1:p2" if kind == "claude" else "w1:p1"
 
         herdr_agent_name = "claude" if kind == "claude" else "codex"
-        self._run_cmd(["agent", "start", herdr_agent_name, "--kind", kind, "--pane", target_pane, "--timeout", "30000"], timeout=35)
+        if kind == "claude":
+            self.ensure_litellm_gateway()
+            env_cmd = (
+                '$env:ANTHROPIC_BASE_URL="http://127.0.0.1:4000"; '
+                '$env:ANTHROPIC_API_KEY="sk-daon-harness-worker"; '
+                '$env:ANTHROPIC_SMALL_FAST_MODEL="claude-haiku-4-5"; '
+                '$env:CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT="1"'
+            )
+            self._run_cmd(["pane", "run", target_pane, env_cmd], timeout=5)
+            time.sleep(0.5)
+
+            # Determine alias based on model
+            claude_model = self._workers.get(worker_key, {}).get("model", "")
+            claude_alias = "claude-oc"
+            if "minimax" in claude_model.lower():
+                claude_alias = "claude-minimax"
+            elif "openrouter" in claude_model.lower():
+                claude_alias = "claude-openrouter"
+            elif "qwen" in claude_model.lower():
+                claude_alias = "claude-qwen"
+
+            self._run_cmd([
+                "agent", "start", herdr_agent_name,
+                "--kind", kind,
+                "--pane", target_pane,
+                "--timeout", "35000",
+                "--",
+                "--model", claude_alias,
+                "--dangerously-skip-permissions"
+            ], timeout=40)
+        else:
+            self._run_cmd(["agent", "start", herdr_agent_name, "--kind", kind, "--pane", target_pane, "--timeout", "30000"], timeout=35)
         
         with self._state_lock:
             if worker_key in self._workers:
@@ -336,6 +435,9 @@ class HerdrManager:
         self.ensure_server()
         worker_key = self._normalize_worker_name(name)
         target = self._resolve_target(worker_key)
+
+        if "claude" in worker_key:
+            self.ensure_litellm_gateway()
 
         curr = self.sync_worker_state(worker_key)
         # Pre-check: if worker is stuck in spurious scrollback blocked state, clear with esc
@@ -389,6 +491,9 @@ class HerdrManager:
         self.ensure_server()
         worker_key = self._normalize_worker_name(name)
         target = self._resolve_target(worker_key)
+
+        if "claude" in worker_key:
+            self.ensure_litellm_gateway()
 
         with self._state_lock:
             worker = self._workers.get(worker_key)
@@ -537,6 +642,8 @@ class HerdrManager:
         chatgpt_models = ("gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-reserve")
         is_chatgpt = any(target_model_id.lower() == cm.lower() for cm in chatgpt_models)
 
+        pane_id = worker.get("pane_id", "w1:p1") or "w1:p1"
+
         if kind == "codex":
             self._apply_codex_model_config(
                 target_model_id,
@@ -545,26 +652,55 @@ class HerdrManager:
                 api_key=api_key if not is_chatgpt else None,
                 label=label if not is_chatgpt else None,
             )
-
-        # 2. Restart worker in Herdr
-        # Exit current running agent in pane
-        self._run_cmd(["agent", "prompt", name, "/exit"], timeout=5)
-        time.sleep(1.2)
-        pane_id = worker.get("pane_id", "w1:p1") or "w1:p1"
-        self._run_cmd(["pane", "send-keys", pane_id, "c-c"], timeout=3)
-        time.sleep(0.5)
-
-        # Inject environment variable into pane shell so codex has the API key
-        if prov_key and api_key:
-            env_key = f"{prov_key.upper().replace('-', '_')}_API_KEY"
-            self._run_cmd(["pane", "send-keys", pane_id, f'$env:{env_key}="{api_key}"', "enter"], timeout=3)
+            self._run_cmd(["agent", "prompt", name, "/exit"], timeout=3)
+            time.sleep(0.8)
+            self._kill_pane_foreground_process(pane_id)
             time.sleep(0.5)
 
-        # Start agent again with updated model
-        self._run_cmd(["agent", "start", name, "--kind", kind, "--pane", pane_id], timeout=15)
-        time.sleep(1.2)
+            if prov_key and api_key:
+                env_key = f"{prov_key.upper().replace('-', '_')}_API_KEY"
+                self._run_cmd(["pane", "run", pane_id, f'$env:{env_key}="{api_key}"'], timeout=3)
+                time.sleep(0.5)
 
-        # Check folder trust prompt auto-approval
+            self._run_cmd(["agent", "start", name, "--kind", kind, "--pane", pane_id, "--timeout", "30000"], timeout=35)
+        else:
+            # Claude: map provider to LiteLLM proxy alias
+            claude_alias = "claude-oc"
+            if prov_key == "minimax":
+                claude_alias = "claude-minimax"
+            elif prov_key == "openrouter":
+                claude_alias = "claude-openrouter"
+            elif prov_key == "qwen-token-plan":
+                claude_alias = "claude-qwen"
+            elif prov_key == "opencode-go":
+                claude_alias = "claude-oc"
+
+            self.ensure_litellm_gateway()
+            self._run_cmd(["agent", "prompt", name, "/exit"], timeout=3)
+            time.sleep(0.8)
+            self._kill_pane_foreground_process(pane_id)
+            time.sleep(0.5)
+
+            env_cmd = (
+                '$env:ANTHROPIC_BASE_URL="http://127.0.0.1:4000"; '
+                '$env:ANTHROPIC_API_KEY="sk-daon-harness-worker"; '
+                '$env:ANTHROPIC_SMALL_FAST_MODEL="claude-haiku-4-5"; '
+                '$env:CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT="1"'
+            )
+            self._run_cmd(["pane", "run", pane_id, env_cmd], timeout=3)
+            time.sleep(0.5)
+
+            self._run_cmd([
+                "agent", "start", name,
+                "--kind", kind,
+                "--pane", pane_id,
+                "--timeout", "35000",
+                "--",
+                "--model", claude_alias,
+                "--dangerously-skip-permissions"
+            ], timeout=40)
+
+        time.sleep(1.2)
         st = self.sync_worker_state(name)
         if st.get("blocked_info") and st["blocked_info"].get("type") == "folder_trust":
             self.approve(name, decision="approve")

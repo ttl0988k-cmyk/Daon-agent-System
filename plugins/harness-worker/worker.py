@@ -835,13 +835,15 @@ def write_litellm_config(path: Optional[Path] = None) -> Dict[str, Any]:
         alias = spec["claude_alias"]
         # claude_model 이 따로 있으면 그걸 쓴다 (auto/* 라우팅 모델 회피용)
         model = spec.get("claude_model") or spec["codex_model"]
+        actual_key = read_provider_key(name)
+        key_val = actual_key if actual_key else f"os.environ/{env_var}"
 
         block = [
             f"  - model_name: {alias}",
             "    litellm_params:",
             f"      model: openai/{model}",
             f"      api_base: {spec['base_url']}",
-            f"      api_key: os.environ/{env_var}",
+            f"      api_key: {key_val}",
         ]
         headers = spec.get("headers") or {}
         if headers:
@@ -858,10 +860,10 @@ def write_litellm_config(path: Optional[Path] = None) -> Dict[str, Any]:
         }
 
     # Claude Code 기본 슬롯(claude-opus-5 등)은 기본 프로바이더를 가리키게 한다
-    # ★ codex_model 이 아니라 alias_map 의 실모델을 쓴다 — 그래야 Codex 만
-    #   모델을 교체해도 Claude 슬롯이 같이 끌려가지 않는다.
     default_alias = PROVIDERS[DEFAULT_PROVIDER]["claude_alias"]
     default_model = alias_map[default_alias]["model"]
+    default_key = read_provider_key(DEFAULT_PROVIDER)
+    default_key_val = default_key if default_key else f"os.environ/{alias_map[default_alias]['env_var']}"
     for slot in ("claude-opus-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
                  "claude-haiku-4-5"):
         entries.append(
@@ -869,14 +871,13 @@ def write_litellm_config(path: Optional[Path] = None) -> Dict[str, Any]:
             f"    litellm_params:\n"
             f"      model: openai/{default_model}\n"
             f"      api_base: {PROVIDERS[DEFAULT_PROVIDER]['base_url']}\n"
-            f"      api_key: os.environ/"
-            f"{alias_map[default_alias]['env_var']}"
+            f"      api_key: {default_key_val}"
         )
 
     body = (
         "# LiteLLM gateway - DAON harness-worker\n"
-        "# 자동 생성 파일. 직접 편집하지 말 것 (worker.write_litellm_config 가 덮어쓴다).\n"
-        "# 모든 프로바이더를 claude-* alias 로 노출한다.\n"
+        "# Auto-generated configuration. Do not edit directly.\n"
+        "# Exposes registered providers as claude-* aliases.\n"
         "# Claude Code: claude --model claude-qwen / claude-oc / claude-minimax ...\n"
         "\n"
         "model_list:\n" + "\n\n".join(entries) + "\n"
@@ -2094,34 +2095,28 @@ def gateway_up(wait_seconds: int = 45) -> Dict[str, Any]:
 
     try:
         LITELLM_LOG.parent.mkdir(parents=True, exist_ok=True)
-        # ★ 이 프로세스는 '독립'이어야 한다.
-        #   Popen(creationflags=DETACHED_PROCESS) 만으로는 부모가 Job Object 에
-        #   묶여 있을 때(에이전트 터미널 등) 부모 종료와 함께 회수된다.
-        #   실측: 게이트웨이가 뜨고 요청까지 처리한 뒤 부모가 끝나자 함께 사라짐.
-        #   → 검증된 우회책인 PowerShell Start-Process 로 띄운다.
-        #     (커넥터 daon_connector_hidden.vbs 와 같은 계열의 해법)
         log_out = str(LITELLM_LOG)
         log_err = str(LITELLM_LOG.with_suffix(".err.log"))
-        ps_cmd = (
-            f"$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'; "
-            f"Start-Process -FilePath '{litellm}' "
-            f"-ArgumentList '--config','{LITELLM_CONFIG}','--port','{LITELLM_PORT}',"
-            f"'--host','127.0.0.1' "
-            f"-WindowStyle Hidden "
-            f"-RedirectStandardOutput '{log_out}' "
-            f"-RedirectStandardError '{log_err}'"
+        
+        # Windows CP949 환경에서 LiteLLM 배너의 특수문자(█) 출력 시 UnicodeEncodeError 방지를 위해
+        # python.exe에 -X utf8 플래그를 주고 WScript.Shell(독립 데몬)로 기동합니다.
+        py_exe = sys.executable or str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python/Python312/python.exe")
+        vbs_path = Path(r"C:\daon\_harness-ab-test\start_litellm.vbs")
+        vbs_content = (
+            f'Set WshShell = CreateObject("WScript.Shell")\r\n'
+            f'WshShell.Run "{py_exe} -X utf8 -c ""import litellm.proxy.proxy_cli, sys; '
+            f'sys.argv = [\'litellm\', \'--config\', \'{LITELLM_CONFIG}\', \'--port\', \'{LITELLM_PORT}\', \'--host\', \'127.0.0.1\']; '
+            f'litellm.proxy.proxy_cli.run_server()""", 0, False\r\n'
         )
-        proc = subprocess.Popen(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-        )
+        vbs_path.write_text(vbs_content, encoding="utf-8")
+        
+        proc = subprocess.Popen(["wscript.exe", str(vbs_path)], env=env)
     except Exception as exc:
         return {"ok": False, "error": f"기동 실패: {exc}"}
 
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
-        time.sleep(2)
+        time.sleep(1.5)
         if _http_get(f"http://127.0.0.1:{LITELLM_PORT}/health/liveliness") == 200:
             return {"ok": True, "launched_pid": proc.pid,
                     "config_written": gen["config"],
