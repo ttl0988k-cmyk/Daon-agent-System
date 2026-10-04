@@ -181,6 +181,7 @@ export class Pane {
           <span class="dispatch-tag" data-target="셜록">@셜록</span>
           <span class="dispatch-tag" data-target="토니">@토니</span>
           <span class="dispatch-tag" data-target="코덱스">@코덱스</span>
+          <span class="dispatch-tag" data-target="클로드">@클로드</span>
         </div>
         <div class="pane-input-bar">
           <textarea 
@@ -555,6 +556,44 @@ export class Pane {
     const card = document.createElement('div');
     card.className = 'inline-approval-card';
     card.id = `${this.id}-approval-card`;
+
+    if (blockedInfo.type === 'oauth_login') {
+      const authUrl = blockedInfo.auth_url || 'https://claude.com/cai/oauth';
+      card.innerHTML = `
+        <div class="inline-approval-card-inner oauth-inner" style="border-left: 3px solid #fb923c; background: rgba(249, 115, 22, 0.08);">
+          <div class="inline-approval-card-header">
+            <span class="inline-approval-card-icon">🔐</span>
+            <span class="inline-approval-card-title" style="color: #fb923c; font-weight: 600;">Claude Code 최초 계정 연동(OAuth) 인증</span>
+          </div>
+          <div class="inline-approval-card-body" style="font-size: 13px; line-height: 1.6; color: #e2e8f0; margin-top: 6px;">
+            <p style="margin: 0 0 8px 0;">Claude Code를 사용하기 위해 최초 1회 브라우저 로그인이 필요합니다.</p>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+              <a href="${authUrl}" target="_blank" rel="noopener noreferrer" class="approval-btn ia-approve-btn" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; background: #ea580c; color: #fff;">
+                🌐 브라우저에서 인증 페이지 열기
+              </a>
+              <button class="approval-btn" id="${this.id}-copy-oauth-btn" style="background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.2);">
+                📋 링크 복사
+              </button>
+            </div>
+            <p style="margin: 0; font-size: 12px; color: #94a3b8;">
+              👉 브라우저 로그인 후 화면에 표시되는 <strong>인증 코드(code)</strong>를 복사하여 아래 채팅 입력창에 붙여넣고 <strong>전송(Enter)</strong>하시면 인증이 완료됩니다.
+            </p>
+          </div>
+        </div>
+      `;
+      this.bodyEl.appendChild(card);
+      this.scrollToBottom();
+
+      const copyBtn = card.querySelector(`#${this.id}-copy-oauth-btn`);
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(authUrl);
+          copyBtn.textContent = '✅ 복사 완료!';
+          setTimeout(() => { copyBtn.textContent = '📋 링크 복사'; }, 2000);
+        });
+      }
+      return;
+    }
 
     const title = blockedInfo.type === 'folder_trust' ? '작업 폴더 신뢰 승인 요청' : '도구 / 터미널 명령 실행 승인 요청';
     const question = blockedInfo.question || '작업을 진행하기 위해 승인이 필요합니다.';

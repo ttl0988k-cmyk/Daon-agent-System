@@ -116,6 +116,12 @@ class MultiApp {
       addWorkerBtn.addEventListener('click', () => this.handleAddWorker('코덱스 (Codex)'));
     }
 
+    // Add Claude Worker Button (Claude Code / Herdr)
+    const addClaudeWorkerBtn = document.getElementById('addClaudeWorkerBtn');
+    if (addClaudeWorkerBtn) {
+      addClaudeWorkerBtn.addEventListener('click', () => this.handleAddWorker('클로드 (Claude)'));
+    }
+
     // Auto-Scroll Toggle
     this.autoScrollToggle.addEventListener('click', () => {
       this.globalAutoScroll = !this.globalAutoScroll;
@@ -292,7 +298,13 @@ class MultiApp {
     }
 
     // Check if worker pane is already open; if so, highlight it
-    const existing = Array.from(this.panes.values()).find(p => (p.profile || '').toLowerCase().includes('codex'));
+    const isClaude = (profileName || '').toLowerCase().includes('claude') || (profileName || '').toLowerCase().includes('클로드');
+    const existing = Array.from(this.panes.values()).find(p => {
+      const pLower = (p.profile || '').toLowerCase();
+      return isClaude
+        ? (pLower.includes('claude') || pLower.includes('클로드'))
+        : (pLower.includes('codex') || pLower.includes('코덱스'));
+    });
     if (existing) {
       const el = document.getElementById(existing.id);
       if (el) {

@@ -79,9 +79,9 @@ class HerdrManager:
         self._workers["worker-claude"] = {
             "name": "worker-claude",
             "kind": "claude",
-            "model": "DeepSeek-v4.1-Flash (Proxy)",
-            "status": "not_started",
-            "pane_id": "",
+            "model": "Claude 3.7 Sonnet (OAuth)",
+            "status": "idle",
+            "pane_id": "w1:p2",
             "last_prompt": "",
             "clean_response": "",
             "raw_terminal": "",
@@ -89,6 +89,38 @@ class HerdrManager:
             "turns": [],
             "updated_at": time.time(),
         }
+
+    def _normalize_worker_name(self, name: str) -> str:
+        """Map aliases ('claude', 'worker-claude', 'codex') to canonical worker keys."""
+        s = (name or "").lower().strip()
+        if "claude" in s or "클로드" in s or s == "w1:p2":
+            return "worker-claude"
+        return "worker-codex"
+
+    def _resolve_target(self, name: str) -> str:
+        """Resolve worker name to an active Herdr target (pane_id or agent name)."""
+        norm_key = self._normalize_worker_name(name)
+        target_kind = "claude" if norm_key == "worker-claude" else "codex"
+
+        # Check Herdr agent list
+        res = self._run_cmd(["agent", "list"], timeout=5)
+        if res["ok"] and res["json"] and "result" in res["json"]:
+            agents = res["json"]["result"].get("agents", [])
+            for ag in agents:
+                ag_name = (ag.get("name") or "").lower()
+                ag_kind = (ag.get("agent") or "").lower()
+                pane_id = ag.get("pane_id") or ""
+                if target_kind in ag_name or target_kind == ag_kind:
+                    # Prefer agent name if exists, else pane_id
+                    return ag.get("name") or pane_id
+
+        # Fallback to configured pane_id in local worker state
+        with self._state_lock:
+            w = self._workers.get(norm_key)
+            if w and w.get("pane_id"):
+                return w["pane_id"]
+
+        return "w1:p2" if target_kind == "claude" else "w1:p1"
 
     # -------------------------------------------------------------------------
     # CLI Command Execution Helpers
@@ -186,21 +218,25 @@ class HerdrManager:
 
     def sync_worker_state(self, name: str) -> Dict[str, Any]:
         """Query herdr agent get and agent read to update local state."""
-        res = self._run_cmd(["agent", "get", name], timeout=5)
+        worker_key = self._normalize_worker_name(name)
+        target = self._resolve_target(worker_key)
+
+        res = self._run_cmd(["agent", "get", target], timeout=5)
         with self._state_lock:
-            worker = self._workers.get(name)
+            worker = self._workers.get(worker_key)
             if not worker:
-                return {"name": name, "status": "unknown"}
+                return {"name": worker_key, "status": "unknown"}
 
             agent_status = "unknown"
             if res["ok"] and res["json"] and "result" in res["json"]:
                 agent_info = res["json"]["result"].get("agent", {})
                 agent_status = agent_info.get("agent_status", "unknown")
                 pane_id = agent_info.get("pane_id", worker.get("pane_id", ""))
-                worker["pane_id"] = pane_id
+                if pane_id:
+                    worker["pane_id"] = pane_id
 
             # Read terminal snapshot
-            read_res = self._run_cmd(["agent", "read", name, "--lines", "60"], timeout=5)
+            read_res = self._run_cmd(["agent", "read", target, "--lines", "60"], timeout=5)
             if read_res["ok"]:
                 raw = read_res["stdout"]
                 worker["raw_terminal"] = raw
@@ -209,14 +245,14 @@ class HerdrManager:
                 worker["blocked_info"] = parsed["blocked_info"]
                 worker["turns"] = parsed["turns"]
 
-                # 🔴 문제 1 해결: blocked는 실제 승인 질문(blocked_info)이 감지되었을 때만 세트!
+                # 🔴 blocked 처리: 실제 승인 질문/OAuth(blocked_info)이 감지되었을 때만 세트!
                 if parsed["blocked_info"]:
                     worker["status"] = "blocked"
                 elif agent_status == "blocked":
-                    # Herdr는 blocked로 보지만 파서에는 승인 문구가 없음
-                    # (Codex TUI 스크롤백 'New activity · ↓ Back to bottom · esc' 상태이거나 대기 오탐)
-                    _logger.info(f"[HerdrManager] Worker {name} reported blocked by Herdr but no approval prompt found. Escaping scrollback with esc and demoting to idle.")
-                    self._run_cmd(["agent", "send-keys", name, "esc"], timeout=3)
+                    if worker.get("kind") == "codex":
+                        # Herdr는 blocked로 보지만 파서에는 승인 문구가 없음 (스크롤백 오탐)
+                        _logger.info(f"[HerdrManager] Worker {worker_key} reported blocked by Herdr but no approval prompt found. Escaping with esc.")
+                        self._run_cmd(["agent", "send-keys", target, "esc"], timeout=3)
                     worker["status"] = "idle"
                 else:
                     worker["status"] = agent_status
@@ -230,31 +266,67 @@ class HerdrManager:
         """Start or attach worker in Herdr."""
         self.ensure_server()
 
+        worker_key = self._normalize_worker_name(name)
+        kind = "claude" if worker_key == "worker-claude" else "codex"
+        target = self._resolve_target(worker_key)
+
         # Check if agent already exists
-        chk = self._run_cmd(["agent", "get", name], timeout=5)
+        chk = self._run_cmd(["agent", "get", target], timeout=5)
         if chk["ok"]:
-            return self.sync_worker_state(name)
+            return self.sync_worker_state(worker_key)
 
-        # Get or create pane
+        # Determine target pane without conflicting with other agents
         panes_res = self._run_cmd(["pane", "list"], timeout=5)
-        pane_id = "w1:p1"
-        if panes_res["ok"] and panes_res["json"]:
-            panes = panes_res["json"].get("result", {}).get("panes", [])
-            if panes:
-                pane_id = panes[0].get("pane_id", "w1:p1")
+        agents_res = self._run_cmd(["agent", "list"], timeout=5)
 
-        # Start agent
-        start_res = self._run_cmd(["agent", "start", name, "--kind", kind, "--pane", pane_id], timeout=15)
+        used_panes = set()
+        if agents_res["ok"] and agents_res["json"]:
+            for ag in agents_res["json"].get("result", {}).get("agents", []):
+                p = ag.get("pane_id")
+                if p:
+                    used_panes.add(p)
+
+        target_pane = None
+        if panes_res["ok"] and panes_res["json"]:
+            all_panes = [p.get("pane_id") for p in panes_res["json"].get("result", {}).get("panes", []) if p.get("pane_id")]
+            for p in all_panes:
+                if p not in used_panes:
+                    target_pane = p
+                    break
+
+        if not target_pane:
+            # Need to split a pane to create a new one
+            split_from = "w1:p1"
+            if panes_res["ok"] and panes_res["json"]:
+                panes = panes_res["json"].get("result", {}).get("panes", [])
+                if panes:
+                    split_from = panes[-1].get("pane_id", "w1:p1")
+            self._run_cmd(["pane", "split", split_from, "--direction", "right"], timeout=10)
+            time.sleep(0.5)
+            p_after = self._run_cmd(["pane", "list"], timeout=5)
+            if p_after["ok"] and p_after["json"]:
+                for p in p_after["json"].get("result", {}).get("panes", []):
+                    pid = p.get("pane_id")
+                    if pid and pid not in used_panes:
+                        target_pane = pid
+                        break
+            if not target_pane:
+                target_pane = "w1:p2" if kind == "claude" else "w1:p1"
+
+        herdr_agent_name = "claude" if kind == "claude" else "codex"
+        self._run_cmd(["agent", "start", herdr_agent_name, "--kind", kind, "--pane", target_pane, "--timeout", "30000"], timeout=35)
         
-        # Check if startup asked for folder trust
-        time.sleep(1)
-        st = self.sync_worker_state(name)
+        with self._state_lock:
+            if worker_key in self._workers:
+                self._workers[worker_key]["pane_id"] = target_pane
+
+        time.sleep(1.5)
+        st = self.sync_worker_state(worker_key)
         if st.get("blocked_info") and st["blocked_info"].get("type") == "folder_trust":
-            # Auto trust workspace folder on start
-            _logger.info(f"[HerdrManager] Auto-approving folder trust for {name}")
-            self.approve(name, decision="approve")
+            _logger.info(f"[HerdrManager] Auto-approving folder trust for {worker_key}")
+            self.approve(worker_key, decision="approve")
             time.sleep(1.5)
-            st = self.sync_worker_state(name)
+            st = self.sync_worker_state(worker_key)
 
         self._broadcast({"event": "worker_started", "worker": st})
         return st
@@ -262,38 +334,52 @@ class HerdrManager:
     def prompt_worker(self, name: str, prompt: str) -> Dict[str, Any]:
         """Submit a prompt to the worker asynchronously and track in background thread."""
         self.ensure_server()
-        # Pre-check: if worker is stuck in spurious scrollback blocked state, clear it with esc
-        curr = self.sync_worker_state(name)
+        worker_key = self._normalize_worker_name(name)
+        target = self._resolve_target(worker_key)
+
+        curr = self.sync_worker_state(worker_key)
+        # Pre-check: if worker is stuck in spurious scrollback blocked state, clear with esc
         if curr.get("status") == "blocked" and not curr.get("blocked_info"):
-            self._run_cmd(["agent", "send-keys", name, "esc"], timeout=3)
+            self._run_cmd(["agent", "send-keys", target, "esc"], timeout=3)
             time.sleep(0.3)
 
         prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
 
+        # If worker was waiting for OAuth code (blocked with oauth_login):
+        is_oauth_code = (
+            curr.get("blocked_info") is not None
+            and curr.get("blocked_info", {}).get("type") == "oauth_login"
+        )
+
         with self._state_lock:
-            worker = self._workers.get(name)
+            worker = self._workers.get(worker_key)
             if not worker:
-                raise ValueError(f"Unknown worker '{name}'")
+                raise ValueError(f"Unknown worker '{worker_key}'")
             worker["status"] = "working"
             worker["last_prompt"] = prompt
             worker["blocked_info"] = None
             worker["updated_at"] = time.time()
 
-        self._broadcast({"event": "worker_status", "name": name, "status": "working", "prompt": prompt})
+        self._broadcast({"event": "worker_status", "name": worker_key, "status": "working", "prompt": prompt})
 
-        # Submit prompt via herdr agent prompt in a background thread
+        # Submit prompt in a background thread
         def _prompt_thread():
-            # Submit prompt
-            res = self._run_cmd(["agent", "prompt", name, prompt, "--wait", "--timeout", "180000"], timeout=200)
-            # Sync final state
-            final_st = self.sync_worker_state(name)
+            if is_oauth_code:
+                # Send code via send-keys directly into the prompt
+                _logger.info(f"[HerdrManager] Sending OAuth code to {target} via send-keys...")
+                self._run_cmd(["agent", "send-keys", target, prompt, "enter"], timeout=10)
+                time.sleep(3.0)
+            else:
+                self._run_cmd(["agent", "prompt", target, prompt, "--wait", "--timeout", "180000"], timeout=200)
+
+            final_st = self.sync_worker_state(worker_key)
             self._broadcast({"event": "worker_done", "worker": final_st})
 
         t = threading.Thread(target=_prompt_thread, daemon=True)
-        self._bg_threads[name] = t
+        self._bg_threads[worker_key] = t
         t.start()
 
-        return self.get_worker(name)
+        return self.get_worker(worker_key)
 
     def execute_worker_task(self, name: str = "worker-codex", prompt: str = "", timeout: int = 120) -> Dict[str, Any]:
         """
@@ -301,28 +387,23 @@ class HerdrManager:
         and wait for completion. Used by Raon and other orchestration agents.
         """
         self.ensure_server()
+        worker_key = self._normalize_worker_name(name)
+        target = self._resolve_target(worker_key)
+
         with self._state_lock:
-            worker = self._workers.get(name)
+            worker = self._workers.get(worker_key)
             if not worker:
-                if "claude" in name.lower():
-                    name = "worker-claude"
-                else:
-                    name = "worker-codex"
-                worker = self._workers.get(name)
+                raise ValueError(f"Unknown worker '{worker_key}'")
 
-            if not worker:
-                raise ValueError(f"Unknown worker '{name}'")
-
-            # Check if agent is alive in Herdr; if not, start it
-            chk = self._run_cmd(["agent", "get", name], timeout=5)
+            chk = self._run_cmd(["agent", "get", target], timeout=5)
             if not chk["ok"]:
-                _logger.info(f"[HerdrManager] Worker {name} not active in Herdr. Starting...")
-                self.start_worker(name=name, kind=worker.get("kind", "codex"))
+                _logger.info(f"[HerdrManager] Worker {worker_key} ({target}) not active in Herdr. Starting...")
+                self.start_worker(name=worker_key, kind=worker.get("kind", "codex"))
+                target = self._resolve_target(worker_key)
 
-            # Pre-check spurious blocked state
-            curr = self.sync_worker_state(name)
+            curr = self.sync_worker_state(worker_key)
             if curr.get("status") == "blocked" and not curr.get("blocked_info"):
-                self._run_cmd(["agent", "send-keys", name, "esc"], timeout=3)
+                self._run_cmd(["agent", "send-keys", target, "esc"], timeout=3)
                 time.sleep(0.3)
 
             prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
@@ -332,12 +413,12 @@ class HerdrManager:
             worker["blocked_info"] = None
             worker["updated_at"] = time.time()
 
-        self._broadcast({"event": "worker_status", "name": name, "status": "working", "prompt": prompt})
+        self._broadcast({"event": "worker_status", "name": worker_key, "status": "working", "prompt": prompt})
 
         timeout_ms = str(max(10, timeout) * 1000)
-        res = self._run_cmd(["agent", "prompt", name, prompt, "--wait", "--timeout", timeout_ms], timeout=timeout + 20)
+        res = self._run_cmd(["agent", "prompt", target, prompt, "--wait", "--timeout", timeout_ms], timeout=timeout + 20)
 
-        final_st = self.sync_worker_state(name)
+        final_st = self.sync_worker_state(worker_key)
         self._broadcast({"event": "worker_done", "worker": final_st})
 
         # Extract only the latest assistant response turn if available
@@ -353,7 +434,7 @@ class HerdrManager:
 
         return {
             "ok": res.get("ok", False),
-            "worker": name,
+            "worker": worker_key,
             "model": final_st.get("model", ""),
             "status": final_st.get("status", "idle"),
             "result": clean_text,
@@ -362,17 +443,25 @@ class HerdrManager:
 
     def approve(self, name: str, decision: str = "approve", custom_key: Optional[str] = None) -> Dict[str, Any]:
         """Approve or deny an interactive prompt (enter, esc, y, n)."""
+        worker_key = self._normalize_worker_name(name)
+        target = self._resolve_target(worker_key)
+
+        is_claude = "claude" in worker_key
         key = "enter"
         if custom_key:
             key = custom_key
         elif decision in ("approve", "yes", "y"):
-            key = "enter"
+            key = "enter" if not is_claude else "y"
         elif decision in ("reject", "no", "deny", "n"):
-            key = "esc"
+            key = "esc" if not is_claude else "n"
 
-        res = self._run_cmd(["agent", "send-keys", name, key], timeout=5)
+        res = self._run_cmd(["agent", "send-keys", target, key], timeout=5)
+        if is_claude and key in ("y", "n"):
+            time.sleep(0.2)
+            self._run_cmd(["agent", "send-keys", target, "enter"], timeout=3)
+
         time.sleep(1)
-        st = self.sync_worker_state(name)
+        st = self.sync_worker_state(worker_key)
         self._broadcast({"event": "worker_approved", "decision": decision, "worker": st})
         return {"ok": res["ok"], "worker": st}
 
@@ -581,16 +670,34 @@ stream_idle_timeout_ms = 60000{extra_headers}
         # 1. Strip ANSI escape sequences
         clean = ANSI_ESCAPE_RE.sub("", raw)
 
-        # 2. Check for blocked questions
+        # 2. Check for blocked questions / interactive prompts
         blocked_info = None
-        if "Trust this folder?" in clean or "Trust this directory?" in clean:
+
+        # 2-A. Claude OAuth Login Prompt
+        oauth_start = clean.find("https://claude.com/cai/oauth/authorize")
+        if oauth_start != -1 or "Paste code here if prompted" in clean:
+            auth_url = ""
+            if oauth_start != -1:
+                rest = clean[oauth_start:]
+                paste_idx = rest.find("Paste code")
+                url_blob = rest[:paste_idx] if paste_idx != -1 else rest[:600]
+                auth_url = re.sub(r'[\r\n\s]+', '', url_blob)
+            blocked_info = {
+                "type": "oauth_login",
+                "provider": "claude",
+                "question": "Claude Code 계정 연동(OAuth) 인증이 필요합니다. 아래 링크를 브라우저에서 열어 로그인 및 승인 후, 발급된 코드를 채팅창에 입력해주세요.",
+                "auth_url": auth_url or "https://claude.com/cai/oauth",
+                "options": [
+                    {"id": "open_url", "label": "🌐 브라우저에서 인증 페이지 열기", "url": auth_url}
+                ],
+            }
+        elif "Trust this folder?" in clean or "Trust this directory?" in clean:
             blocked_info = {
                 "type": "folder_trust",
-                "question": "Codex가 현재 작업 디렉터리에 대한 접근/실행 권한 승인을 요청했습니다.",
+                "question": f"{kind.title()}가 현재 작업 디렉터리에 대한 접근/실행 권한 승인을 요청했습니다.",
                 "options": [{"id": "approve", "label": "신뢰하고 계속 (Enter)"}, {"id": "reject", "label": "거부 (Esc)"}],
             }
         elif "Would you like to run the following command?" in clean or "Press enter to confirm or esc to cancel" in clean or "Yes, proceed" in clean:
-            # Extract reason and command if present
             reason_m = re.search(r"Reason:\s*([^\n]+)", clean)
             cmd_m = re.search(r"\$\s*([^\n]+)", clean)
             desc_parts = []
@@ -598,13 +705,13 @@ stream_idle_timeout_ms = 60000{extra_headers}
                 desc_parts.append(f"이유: {reason_m.group(1).strip()}")
             if cmd_m:
                 desc_parts.append(f"명령: {cmd_m.group(1).strip()}")
-            question = "\n".join(desc_parts) if desc_parts else "Codex가 외부 명령 또는 파일 생성/수정 작업 승인을 요청했습니다."
+            question = "\n".join(desc_parts) if desc_parts else f"{kind.title()}가 외부 명령 또는 파일 생성/수정 작업 승인을 요청했습니다."
             blocked_info = {
                 "type": "command_approval",
                 "question": question,
                 "options": [{"id": "approve", "label": "승인하고 실행 (Enter)"}, {"id": "reject", "label": "거부 (Esc)"}],
             }
-        elif re.search(r"Allow\s+(?:command|execution|file write|access|this)", clean, re.I):
+        elif re.search(r"Allow\s+(?:Claude to|command|execution|file write|access|this)", clean, re.I):
             m = re.search(r"(Allow[^\n]+(?:\n[^\n]+)?)", clean)
             question = m.group(1).strip() if m else "작업 승인이 필요합니다."
             blocked_info = {
@@ -620,9 +727,6 @@ stream_idle_timeout_ms = 60000{extra_headers}
             }
 
         # 3. Parse conversation turns from terminal output
-        # In Codex:
-        # User prompt begins with '› <prompt>'
-        # Model output begins with '• <answer>'
         lines = clean.splitlines()
         turns: List[Dict[str, str]] = []
         current_role: Optional[str] = None
@@ -641,6 +745,13 @@ stream_idle_timeout_ms = 60000{extra_headers}
             "Run npm install",
             "See full release notes",
             ">_ OpenAI Codex",
+            "Welcome to Claude Code",
+            "Browser didn't open?",
+            "Paste code here",
+            "https://claude.com/cai/oauth",
+            "Claude Code v2.",
+            "? for shortcuts",
+            "ctrl+c to interrupt",
         )
 
         for line in lines:
@@ -651,27 +762,44 @@ stream_idle_timeout_ms = 60000{extra_headers}
             # Skip header boxes and boilerplate
             if any(stripped.startswith(p) for p in skip_prefixes):
                 continue
+            # Skip Claude ASCII art
+            if any(art_char in stripped for art_char in ("██", "░░", "▓▓", "....█")):
+                continue
             if "·" in stripped and ("warning" in stripped.lower() or "pm" in stripped.lower() or "am" in stripped.lower()):
                 continue
             if TIME_STAMP_RE.match(stripped):
                 continue
 
             # Check turn start
-            if stripped.startswith("› "):
-                # Finish previous
+            # In Codex: '› prompt', '• answer'
+            # In Claude: '❯ prompt' or '> prompt', '⏺ tool' or text
+            is_codex_user = stripped.startswith("› ")
+            is_claude_user = (stripped.startswith("❯ ") or (stripped.startswith("> ") and not stripped.startswith(">_ "))) and "Paste code" not in stripped
+            is_user = is_codex_user or is_claude_user
+
+            is_codex_asst = stripped.startswith("• ")
+            is_claude_asst = stripped.startswith("⏺ ")
+            is_asst = is_codex_asst or is_claude_asst
+
+            if is_user:
                 if current_role and current_content:
                     turns.append({"role": current_role, "content": "\n".join(current_content).strip()})
                     current_content = []
                 current_role = "user"
-                current_content.append(stripped[2:].strip())
-            elif stripped.startswith("• "):
+                user_text = stripped[2:].strip()
+                current_content.append(user_text)
+            elif is_asst:
                 if current_role and current_content:
                     turns.append({"role": current_role, "content": "\n".join(current_content).strip()})
                     current_content = []
                 current_role = "assistant"
-                current_content.append(stripped[2:].strip())
+                current_content.append(stripped)
             else:
                 if current_role:
+                    current_content.append(stripped)
+                elif kind == "claude" and not blocked_info:
+                    # Claude sometimes starts assistant text without prefix
+                    current_role = "assistant"
                     current_content.append(stripped)
 
         if current_role and current_content:
@@ -683,7 +811,7 @@ stream_idle_timeout_ms = 60000{extra_headers}
             if t["role"] == "user":
                 clean_text_parts.append(f"**대표님:** {t['content']}")
             else:
-                clean_text_parts.append(f"**워커 ({kind}):**\n{t['content']}")
+                clean_text_parts.append(f"**워커 ({kind.title()}):**\n{t['content']}")
 
         clean_text = "\n\n---\n\n".join(clean_text_parts) if clean_text_parts else clean.strip()
 
