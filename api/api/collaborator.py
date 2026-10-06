@@ -59,7 +59,7 @@ def normalize_agent_profile(name: str) -> str:
 def find_or_create_agent_session(profile_name: str, workspace: Optional[str] = None, parent_session_id: Optional[str] = None) -> Any:
     """Find the most recent active session for the given profile or create a fresh one."""
     from api.models import all_sessions, get_session, new_session
-    from api.config import get_last_workspace
+    from api.workspace import get_last_workspace
 
     canonical = normalize_agent_profile(profile_name)
     eff_workspace = workspace or get_last_workspace()
