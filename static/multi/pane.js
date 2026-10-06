@@ -1031,7 +1031,18 @@ export class Pane {
           backendMessage = `${text}\n\n${roomCtx}`;
         }
       }
-      const res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel);
+      let res;
+      try {
+        res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel);
+      } catch (chatErr) {
+        if (chatErr.message && (chatErr.message.includes('Session not found') || chatErr.message.includes('404'))) {
+          console.warn(`[Pane ${this.profile}] Session ${this.sessionId} not found on server, auto-recreating session...`);
+          await this.setupNewSession();
+          res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel);
+        } else {
+          throw chatErr;
+        }
+      }
       this.currentStreamId = res.stream_id;
       if (this.currentStreamId) {
         this._attachedStreams.add(this.currentStreamId);
