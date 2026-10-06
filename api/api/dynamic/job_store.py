@@ -89,7 +89,8 @@ class HarnessJobStore:
                             clarification TEXT,
                             approval_message TEXT,
                             available_actions TEXT,
-                            approval_action TEXT
+                            approval_action TEXT,
+                            plan_json TEXT
                         );
 
                         CREATE TABLE IF NOT EXISTS dynamic_job_logs (
@@ -118,6 +119,14 @@ class HarnessJobStore:
                         CREATE INDEX IF NOT EXISTS idx_lineage_root ON dynamic_lineage(root_run_id);
                     """)
                     conn.commit()
+
+                    # Schema migration: ensure plan_json column exists
+                    cur = conn.execute("PRAGMA table_info(dynamic_jobs)")
+                    cols = {row[1] for row in cur.fetchall()}
+                    if "plan_json" not in cols:
+                        conn.execute("ALTER TABLE dynamic_jobs ADD COLUMN plan_json TEXT")
+                        conn.commit()
+                        _logger.info("[HarnessJobStore] Migrated dynamic_jobs table: added plan_json column")
                 finally:
                     conn.close()
         except Exception as e:
@@ -234,6 +243,12 @@ class HarnessJobStore:
                                 spawn_reason = excluded.spawn_reason
                         """, (run_id, parent_run_id, root_run_id, int(depth), str(spawn_reason or ""), created_at))
 
+                    elif action == "save_plan":
+                        run_id, plan_json_str = payload
+                        conn.execute("""
+                            UPDATE dynamic_jobs SET plan_json = ? WHERE run_id = ?
+                        """, (plan_json_str, run_id))
+
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -282,6 +297,7 @@ class HarnessJobStore:
                         "approval_message": row["approval_message"],
                         "available_actions": json.loads(row["available_actions"]) if row["available_actions"] else None,
                         "approval_action": row["approval_action"],
+                        "plan_json": row["plan_json"] if "plan_json" in row.keys() else None,
                         "logs": [],
                     }
 
@@ -352,6 +368,41 @@ class HarnessJobStore:
             self._execute_batch([("save_lineage", payload)])
         else:
             self._write_queue.put(("save_lineage", payload))
+
+    def save_plan(self, run_id: str, plan_data: Any, sync: bool = False) -> None:
+        """Persist generated DAG execution plan (nodes + edges) for run_id."""
+        if not run_id:
+            return
+        if isinstance(plan_data, (dict, list)):
+            plan_str = json.dumps(plan_data, ensure_ascii=False)
+        elif isinstance(plan_data, str):
+            plan_str = plan_data
+        else:
+            plan_str = None
+        if sync:
+            self._execute_batch([("save_plan", (run_id, plan_str))])
+        else:
+            self._write_queue.put(("save_plan", (run_id, plan_str)))
+
+    def get_plan(self, run_id: str) -> Optional[Any]:
+        """Retrieve execution plan JSON for a given run_id."""
+        if not run_id:
+            return None
+        self.flush()
+        try:
+            with self._lock:
+                conn = self._connect()
+                try:
+                    cur = conn.execute("SELECT plan_json FROM dynamic_jobs WHERE run_id = ?", (run_id,))
+                    row = cur.fetchone()
+                    if not row or not row["plan_json"]:
+                        return None
+                    return json.loads(row["plan_json"])
+                finally:
+                    conn.close()
+        except Exception as e:
+            _logger.error(f"[HarnessJobStore] Error getting plan for {run_id}: {e}")
+            return None
 
     def get_lineage(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve lineage metadata for a given run_id."""

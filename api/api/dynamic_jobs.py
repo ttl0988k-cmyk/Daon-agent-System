@@ -11,6 +11,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from typing import Any, Optional
 
 import sys
 
@@ -271,6 +272,26 @@ def init_job(run_id: str, session_id: str = None) -> dict:
         _DYNAMIC_JOBS[run_id] = job
     _job_store.save_job(run_id, job)
     return job
+
+
+def save_plan(run_id: str, plan: Any) -> None:
+    """Save the dynamic execution plan (DAG) into memory cache and SQLite job_store."""
+    if not run_id:
+        return
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS:
+            _DYNAMIC_JOBS[run_id]['plan'] = plan
+    _job_store.save_plan(run_id, plan)
+
+
+def get_plan(run_id: str) -> Any:
+    """Retrieve execution plan from memory or fallback to SQLite job_store."""
+    if not run_id:
+        return None
+    with _DYNAMIC_JOBS_LOCK:
+        if run_id in _DYNAMIC_JOBS and 'plan' in _DYNAMIC_JOBS[run_id]:
+            return _DYNAMIC_JOBS[run_id]['plan']
+    return _job_store.get_plan(run_id)
 
 
 def set_job_clarifying(run_id: str, questions: list[str], turn: int):

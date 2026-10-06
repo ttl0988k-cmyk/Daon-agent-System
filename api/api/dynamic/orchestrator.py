@@ -742,6 +742,13 @@ class HermesDynamicRunner:
                     log_callback("CEO", f"⚠️ 플래너 예외 발생 ({_plan_err}) — 최소 실행 DAG로 복구합니다.", "warning")
                 plan = self.planner.generate_fallback_dag(task, run_dir=run_dir, planning_mode=planning_mode, error_context=str(_plan_err))
 
+            # Persist DAG plan to SQLite (plan_json) so restarting doesn't lose the graph
+            try:
+                from api.dynamic_jobs import save_plan
+                save_plan(run_id, plan)
+            except Exception as _sp_err:
+                _log.warning("[Orchestrator] Failed to persist execution plan for %s: %s", run_id, _sp_err)
+
             if log_callback:
                 log_callback("CEO", f"Generated plan: {plan.get('plan_summary')}", "running")
             # Determine if we have planner nodes in the plan.
