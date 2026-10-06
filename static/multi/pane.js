@@ -12,6 +12,54 @@
 import { api } from './api.js';
 import { AgentStream } from './stream.js';
 
+const _TOOL_DESC_KO = {
+  'read_file': '파일 내용을 읽습니다',
+  'write_file': '파일을 생성/수정합니다',
+  'patch': '코드를 수정합니다',
+  'apply_diff': '코드 변경사항을 적용합니다',
+  'search_files': '파일을 검색합니다',
+  'list_dir': '디렉터리 목록을 조회합니다',
+  'execute_command': '터미널 명령을 실행합니다',
+  'run_command': '터미널 명령을 실행합니다',
+  'bash': '터미널 명령을 실행합니다',
+  'terminal': '터미널 명령을 실행합니다',
+  'web_search': '웹을 검색합니다',
+  'browser': '웹 브라우저를 조작합니다',
+  'skill_view': '스킬 정보를 확인합니다',
+  'skill_manage': '스킬을 관리합니다',
+  'todo': '작업 계획을 관리합니다',
+  'memory': '메모리를 검색/저장합니다',
+  'clarify': '사용자에게 확인합니다',
+  'delegate_task': '하위 작업을 위임합니다',
+  'image_generate': '이미지를 생성합니다',
+  'video_generate': '영상을 생성합니다',
+  'text_to_speech': '음성을 생성합니다',
+};
+function _toolDescKo(name) { return _TOOL_DESC_KO[name] || ''; }
+function _toolArgsSummary(args) {
+  if (!args) return '';
+  if (typeof args === 'string') {
+    const s = args.trim().replace(/\s+/g, ' ');
+    return s.length > 70 ? s.slice(0, 70) + '…' : s;
+  }
+  if (typeof args !== 'object') return '';
+  const keys = ['command', 'url', 'path', 'file_path', 'pattern', 'query', 'goal', 'task', 'prompt', 'text', 'message', 'name'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = args[keys[i]];
+    if (typeof v === 'string' && v.trim()) {
+      const s = v.trim().replace(/\s+/g, ' ');
+      return s.length > 70 ? s.slice(0, 70) + '…' : s;
+    }
+  }
+  for (const k in args) {
+    if (typeof args[k] === 'string' && args[k].trim()) {
+      const s = args[k].trim().replace(/\s+/g, ' ');
+      return s.length > 70 ? s.slice(0, 70) + '…' : s;
+    }
+  }
+  return '';
+}
+
 export class Pane {
   constructor(options = {}) {
     this.id = options.id || `pane-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -91,6 +139,20 @@ export class Pane {
     return 'worker-codex';
   }
 
+  async findLatestSessionForProfile(profile) {
+    try {
+      const res = await api.getSessions();
+      const sessions = (res && res.sessions) ? res.sessions : [];
+      const pLower = (profile || '').toLowerCase();
+      const match = sessions.find(s => 
+        (s.profile || '').toLowerCase() === pLower && !s.archived
+      );
+      return match ? match.session_id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async init() {
     this.render();
     this.bindEvents();
@@ -101,7 +163,14 @@ export class Pane {
         const ok = await this.loadSession(this.sessionId);
         if (!ok) await this.setupNewSession();
       } else {
-        await this.setupNewSession();
+        const existingSid = await this.findLatestSessionForProfile(this.profile);
+        let ok = false;
+        if (existingSid) {
+          ok = await this.loadSession(existingSid);
+        }
+        if (!ok) {
+          await this.setupNewSession();
+        }
       }
     }
     // Signal that init is fully complete — unblocks attachToStream / checkExternalStream
@@ -468,6 +537,7 @@ export class Pane {
             <div class="msg-bubble">
               <strong>${this.profile}</strong> 워커가 준비되었습니다. (두뇌: <strong>${worker.model || 'MiniMax-M3'}</strong>)<br>
               <span style="font-size:12px; color:var(--text-dim); display:inline-block; margin-top:4px;">
+                ⚡ <strong>무중단 완주 모드:</strong> 백그라운드 승인 요청(폴더 신뢰/명령 실행/도구 호출) 없이 작업을 끝까지 완주합니다.<br>
                 ✨ 상단 모델 선택창에서 언제든 원하는 프로바이더/모델로 즉시 변경할 수 있습니다.
               </span>
             </div>
@@ -683,6 +753,18 @@ export class Pane {
           this.renderWorkerState(d.worker);
         }
       });
+      this._workerEventSource.addEventListener('worker_auto_approved', (e) => {
+        const d = JSON.parse(e.data);
+        if (d.name === this.workerName) {
+          const toast = document.createElement('div');
+          toast.className = 'worker-auto-approved-notice';
+          toast.style.cssText = 'background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); color: #86efac; border-radius: 6px; padding: 6px 10px; margin: 6px 0; font-size: 12px; display: flex; align-items: center; gap: 6px;';
+          toast.innerHTML = `<span>⚡</span> <span><strong>백그라운드 자동 승인:</strong> ${this.escapeHtml(d.type || '작업 승인')} 요청을 통과하고 작업을 중단 없이 계속 진행합니다.</span>`;
+          this.bodyEl.appendChild(toast);
+          this.scrollToBottom();
+          setTimeout(() => { toast.remove(); }, 6000);
+        }
+      });
       this._workerEventSource.onerror = () => {
         // SSE disconnected, fallback to active status poll
         this.startWorkerStatusPoll();
@@ -763,13 +845,13 @@ export class Pane {
         msgEl.className = 'msg assistant';
         let inner = `<div class="msg-sender">${meta.icon} ${this.profile}</div><div class="msg-bubble">`;
 
-        // Reasoning / Thinking (Clean collapsed card)
+        // Reasoning / Thinking (Clean collapsed card matching 9090 webapp)
         const reasoning = m.reasoning_content || m.thinking;
         if (reasoning) {
           inner += `
             <details class="tool-card reasoning-card">
               <summary>
-                <span class="tool-group-label">💭 사고 과정 (클릭하여 보기)</span>
+                <span class="tool-group-label">💭 생각 완료 (클릭하여 보기)</span>
                 <span class="tool-group-chevron">▶</span>
               </summary>
               <div class="tool-card-body">
@@ -784,6 +866,7 @@ export class Pane {
           let itemsHtml = '';
           m.tool_calls.forEach(tc => {
             const fname = (tc.function && tc.function.name) || tc.name || 'tool';
+            const tDesc = _toolDescKo(fname);
             let argsStr = '';
             try {
               const parsed = typeof tc.function?.arguments === 'string' ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || tc.args);
@@ -795,6 +878,7 @@ export class Pane {
               <div class="tool-group-item">
                 <span class="tgi-icon">✅</span>
                 <span class="tgi-name">${this.escapeHtml(fname)}</span>
+                ${tDesc ? `<span class="tgi-desc">${this.escapeHtml(tDesc)}</span>` : ''}
                 <span class="tgi-args" title="${this.escapeHtml(String(argsStr))}">${this.escapeHtml(String(argsStr))}</span>
                 <span class="tgi-status">완료</span>
               </div>
@@ -1012,6 +1096,11 @@ export class Pane {
     this.activeReasoningCard = null;
     this.activeReasoningBody = null;
     this.activeReasoningRaw = '';
+    this.reasoningStartTs = 0;
+    if (this.reasoningTimer) {
+      clearInterval(this.reasoningTimer);
+      this.reasoningTimer = null;
+    }
     this.activeToolCard = null;
     this.activeToolItemsEl = null;
     this.activeToolMap = {};
@@ -1020,16 +1109,29 @@ export class Pane {
     this.scrollToBottom();
   }
 
-  handleToken(token) {
-    if (!this.activeAssistantMsgEl) return;
-
-    // Auto-collapse reasoning card when final answer generation begins
-    if (this.activeReasoningCard && this.activeReasoningCard.open) {
+  _stopReasoning() {
+    if (this.reasoningTimer) {
+      clearInterval(this.reasoningTimer);
+      this.reasoningTimer = null;
+    }
+    if (this.activeReasoningCard) {
+      const elapsed = this.reasoningStartTs ? Math.max(0, Math.floor((Date.now() - this.reasoningStartTs) / 1000)) : 0;
       this.activeReasoningCard.open = false;
       const spinner = this.activeReasoningCard.querySelector('.reasoning-spinner');
       if (spinner) spinner.style.display = 'none';
       const label = this.activeReasoningCard.querySelector('.reasoning-summary-title');
-      if (label) label.textContent = '💭 사고 과정 완료 (클릭하여 보기)';
+      if (label) {
+        label.textContent = `💭 생각 완료 (${elapsed}초) (클릭하여 보기)`;
+      }
+    }
+  }
+
+  handleToken(token) {
+    if (!this.activeAssistantMsgEl) return;
+
+    // Auto-collapse reasoning card with timer when text starts
+    if (this.activeReasoningCard && this.activeReasoningCard.open) {
+      this._stopReasoning();
     }
 
     this.activeAssistantRawText = (this.activeAssistantRawText || '') + token;
@@ -1038,14 +1140,17 @@ export class Pane {
   }
 
   handleReasoning(chunk) {
+    if (!this.activeAssistantMsgEl) return;
+
     if (!this.activeReasoningCard) {
+      this.reasoningStartTs = Date.now();
       const card = document.createElement('details');
       card.className = 'tool-card reasoning-card';
       card.open = true;
       card.innerHTML = `
         <summary>
           <span class="tool-group-spinner reasoning-spinner"></span>
-          <span class="tool-group-label reasoning-summary-title">💭 생각 중... (사고 과정)</span>
+          <span class="tool-group-label reasoning-summary-title">💭 생각 중... (0초)</span>
           <span class="tool-group-chevron">▶</span>
         </summary>
         <div class="tool-card-body">
@@ -1056,7 +1161,18 @@ export class Pane {
       this.activeReasoningCard = card;
       this.activeReasoningBody = card.querySelector('.reasoning-text');
       this.activeReasoningRaw = '';
+
+      if (this.reasoningTimer) clearInterval(this.reasoningTimer);
+      this.reasoningTimer = setInterval(() => {
+        if (!this.activeReasoningCard || !this.reasoningStartTs) return;
+        const elapsed = Math.max(0, Math.floor((Date.now() - this.reasoningStartTs) / 1000));
+        const label = this.activeReasoningCard.querySelector('.reasoning-summary-title');
+        if (label && this.activeReasoningCard.open) {
+          label.textContent = `💭 생각 중... (${elapsed}초)`;
+        }
+      }, 1000);
     }
+
     if (this.activeReasoningBody) {
       this.activeReasoningRaw = (this.activeReasoningRaw || '') + chunk;
       this.activeReasoningBody.textContent = this.activeReasoningRaw;
@@ -1066,11 +1182,7 @@ export class Pane {
 
   _ensureToolCard() {
     if (this.activeReasoningCard && this.activeReasoningCard.open) {
-      this.activeReasoningCard.open = false;
-      const spinner = this.activeReasoningCard.querySelector('.reasoning-spinner');
-      if (spinner) spinner.style.display = 'none';
-      const label = this.activeReasoningCard.querySelector('.reasoning-summary-title');
-      if (label) label.textContent = '💭 사고 과정 완료 (클릭하여 보기)';
+      this._stopReasoning();
     }
 
     if (!this.activeToolCard) {
@@ -1080,9 +1192,9 @@ export class Pane {
       card.innerHTML = `
         <summary>
           <span class="tool-group-icon">🔧</span>
-          <span class="tool-group-spinner"></span>
           <span class="tool-group-label">도구 작업 중...</span>
           <span class="tool-group-counter">0</span>
+          <span class="tool-group-spinner"></span>
           <span class="tool-group-chevron">▶</span>
         </summary>
         <div class="tool-group-items"></div>
@@ -1113,21 +1225,8 @@ export class Pane {
     const isDone = data.event === 'tool.completed' || data.type === 'done';
     const tName = data.name || data.tool || '도구 작업';
     const tid = data.tool_call_id || (tName + '_' + this.activeToolCount);
-
-    let argSummary = '';
-    if (data.args) {
-      if (typeof data.args === 'string') argSummary = data.args;
-      else if (data.args.command) argSummary = data.args.command;
-      else if (data.args.path) argSummary = data.args.path;
-      else if (data.args.filename) argSummary = data.args.filename;
-      else if (data.args.query) argSummary = data.args.query;
-      else {
-        const keys = Object.keys(data.args);
-        if (keys.length > 0) argSummary = String(data.args[keys[0]]);
-      }
-    } else if (data.desc) {
-      argSummary = data.desc;
-    }
+    const tDesc = _toolDescKo(tName);
+    const argSummary = _toolArgsSummary(data.args) || data.desc || '';
 
     if (isStart) {
       this.activeToolCount++;
@@ -1137,11 +1236,18 @@ export class Pane {
       item.innerHTML = `
         <span class="tgi-icon">⏳</span>
         <span class="tgi-name">${this.escapeHtml(tName)}</span>
-        <span class="tgi-args" title="${this.escapeHtml(argSummary)}">${this.escapeHtml(argSummary)}</span>
+        ${tDesc ? `<span class="tgi-desc">${this.escapeHtml(tDesc)}</span>` : ''}
+        ${argSummary ? `<span class="tgi-args" title="${this.escapeHtml(argSummary)}">${this.escapeHtml(argSummary)}</span>` : ''}
         <span class="tgi-status">실행 중</span>
       `;
       this.activeToolMap[tid] = item;
       this.activeToolItemsEl.appendChild(item);
+
+      // Update header label with current running tool (Roo style)
+      const lbl = this.activeToolCard.querySelector('.tool-group-label');
+      if (lbl) {
+        lbl.textContent = `도구 실행 중: ${tDesc || tName}...`;
+      }
 
       // Live terminal preview if command execution
       if (/terminal|execute_command|run_command|bash|cmd|powershell/i.test(tName)) {
@@ -1202,7 +1308,9 @@ export class Pane {
     if (counter) counter.textContent = String(this.activeToolCount);
     if (label) {
       if (running > 0) {
-        label.textContent = `도구 작업 중... (${this.activeToolDone}/${this.activeToolCount} 완료)`;
+        if (!label.textContent.startsWith('도구 실행 중:')) {
+          label.textContent = `도구 작업 중... (${this.activeToolDone}/${this.activeToolCount} 완료)`;
+        }
         if (spinner) spinner.style.display = 'inline-block';
       } else {
         label.textContent = `도구 실행 완료 (${this.activeToolCount}개)`;
@@ -1213,27 +1321,57 @@ export class Pane {
   }
 
   handleApproval(approval) {
+    // 1. Deduplication: if an active (unresolved) approval card already exists, update text and don't create duplicate
+    const existing = this.bodyEl.querySelector('.inline-approval-card:not(.resolved)');
+    if (existing) {
+      return;
+    }
+
+    const lc = approval.line_changes || {};
+    const file = approval.path || '';
+    const added = lc.added || 0;
+    const removed = lc.removed || 0;
+    const isPlan = approval.is_plan || false;
+    const isSkillSave = approval.type === 'skill_save';
+    const isDangerous = approval.type === 'dangerous_command';
+
+    const icon = '⚠️';
+    const title = '승인 필요';
+    let body = '';
+
+    if (isSkillSave) {
+      body = `💾 작업을 스킬로 저장할까요?<br><span style="color:var(--text-muted);font-size:12px;">${this.escapeHtml(approval.message || `'${(approval.task || '').slice(0, 60)}' 실행 결과를 재사용 가능한 스킬로 저장합니다.`)}</span>`;
+    } else if (isDangerous) {
+      body = `
+        <div style="margin-bottom:6px;font-size:12px;">명령 실행을 허용할까요?</div>
+        ${approval.description ? `<div style="margin-bottom:6px;color:var(--text-muted);font-size:12px;">${this.escapeHtml(approval.description)}</div>` : ''}
+        <pre style="margin:0;padding:8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-all;">${this.escapeHtml(approval.command || '')}</pre>
+      `;
+    } else if (isPlan) {
+      body = `📋 실행 계획을 검토하고 승인해주세요.<br><span style="color:var(--text-muted);font-size:12px;">${this.escapeHtml(approval.message || '')}</span>`;
+    } else {
+      body = `
+        <div style="margin-bottom:6px;font-size:12px;">📄 파일 변경을 승인할까요?</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <code style="font-size:11px;word-break:break-all;">${this.escapeHtml(file || 'unknown')}</code>
+          ${added ? `<span style="color:#10b981;font-weight:600;font-size:11px;">+${added}</span>` : ''}
+          ${removed ? `<span style="color:#ef4444;font-weight:600;font-size:11px;">-${removed}</span>` : ''}
+        </div>
+      `;
+    }
+
     const card = document.createElement('div');
     card.className = 'inline-approval-card';
-    card.id = `${this.id}-approval-card`;
-
-    const title = approval.type === 'dangerous_command' ? '⚠️ 위험 명령 실행 승인 대기' : '🛡️ 시스템 명령 승인 대기 (Approval Required)';
-    const cmd = approval.command || (approval.args ? JSON.stringify(approval.args) : '');
-    const desc = approval.message || approval.reason || '시스템 보안 설정에 따라 사용자의 확인 및 승인이 필요합니다.';
-
     card.innerHTML = `
       <div class="inline-approval-card-inner">
         <div class="inline-approval-card-header">
-          <span class="inline-approval-card-icon">🛡️</span>
+          <span class="inline-approval-card-icon">${icon}</span>
           <span class="inline-approval-card-title">${title}</span>
         </div>
-        <div class="inline-approval-card-body">
-          ${cmd ? `<code>${this.escapeHtml(cmd)}</code>` : ''}
-          <div class="ia-desc">${this.escapeHtml(desc)}</div>
-        </div>
+        <div class="inline-approval-card-body">${body}</div>
         <div class="inline-approval-card-actions">
-          <button class="approval-btn ia-approve-btn" id="${this.id}-btn-allow">✅ 승인 (Allow)</button>
-          <button class="approval-btn ia-reject-btn" id="${this.id}-btn-deny">❌ 거부 (Deny)</button>
+          <button class="approval-btn ia-approve-btn">승인</button>
+          <button class="approval-btn ia-reject-btn">거부</button>
         </div>
       </div>
     `;
@@ -1241,33 +1379,43 @@ export class Pane {
     this.bodyEl.appendChild(card);
     this.scrollToBottom();
 
-    card.querySelector(`#${this.id}-btn-allow`).addEventListener('click', async () => {
+    card.querySelector('.ia-approve-btn').addEventListener('click', async () => {
       card.className = 'inline-approval-card resolved approved';
       card.querySelector('.inline-approval-card-header').innerHTML = `
         <span class="inline-approval-card-icon">✅</span>
-        <span class="inline-approval-card-title">명령 실행이 승인되었습니다 (작업 진행 중)</span>
+        <span class="inline-approval-card-title">승인 완료 (작업 진행 중)</span>
       `;
       const actions = card.querySelector('.inline-approval-card-actions');
       if (actions) actions.remove();
       this.setStatus('working');
       try {
         await api.respondApproval(this.sessionId, true);
+        fetch('/api/approval/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: this.sessionId, preview_id: approval.preview_id || '' })
+        }).catch(() => {});
       } catch (err) {
         console.error('Approval failed:', err);
       }
     });
 
-    card.querySelector(`#${this.id}-btn-deny`).addEventListener('click', async () => {
+    card.querySelector('.ia-reject-btn').addEventListener('click', async () => {
       card.className = 'inline-approval-card resolved rejected';
       card.querySelector('.inline-approval-card-header').innerHTML = `
         <span class="inline-approval-card-icon">❌</span>
-        <span class="inline-approval-card-title">명령 실행이 거부되었습니다</span>
+        <span class="inline-approval-card-title">거부되었습니다</span>
       `;
       const actions = card.querySelector('.inline-approval-card-actions');
       if (actions) actions.remove();
       this.setStatus('idle');
       try {
         await api.respondApproval(this.sessionId, false);
+        fetch('/api/approval/reject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: this.sessionId, reason: '사용자 거부' })
+        }).catch(() => {});
       } catch (err) {
         console.error('Reject failed:', err);
       }
@@ -1419,16 +1567,12 @@ export class Pane {
   }
 
   async handleDone() {
+    this._stopReasoning();
     if (this.currentStreamId) {
       this._attachedStreams.add(this.currentStreamId);
     }
     this.currentStreamId = null;
     this.setStatus('idle');
-    if (this.activeReasoningCard) {
-      this.activeReasoningCard.open = false;
-      const spinner = this.activeReasoningCard.querySelector('.reasoning-spinner');
-      if (spinner) spinner.style.display = 'none';
-    }
     if (this.activeToolCard) {
       const spinner = this.activeToolCard.querySelector('.tool-group-spinner');
       if (spinner) spinner.style.display = 'none';

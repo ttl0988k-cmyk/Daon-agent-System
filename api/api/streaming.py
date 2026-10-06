@@ -948,15 +948,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                               print(f"[DiffPreview] WARNING: internal preview failed: {_dp_e}", flush=True)
                       except Exception as _lc_e:
                           print(f"[DiffPreview] WARNING: line_changes compute failed: {_lc_e}", flush=True)
-              # also check for pending approval and surface it immediately
-              try:
-                  from api.approval import has_pending as _has_pending, get_pending as _get_pending
-                  if _has_pending(session_id):
-                      p = _get_pending(session_id)
-                      if p:
-                          put('approval', p)
-              except Exception:
-                  pass  # api.approval not available
+              # Pending approvals are emitted once when created above; avoid spamming on every tool event.
 
               # ── Patch Registry: 파일 편집 전 등록된 패치 경고 주입 ──
               if event_type == 'tool.started' and tool_name in ('write_file', 'write_to_file', 'patch', 'apply_diff') and isinstance(args, dict):
@@ -1231,6 +1223,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       _session_db_instance.update_system_prompt(session_id, None)
               except Exception as _sp_e:
                   print(f"[webui] WARNING: system_prompt invalidation failed: {_sp_e}", flush=True)
+
+          # Reset collaborative relay loop guard on user message turn
+          if hasattr(s, "_relay_count"):
+              s._relay_count = 0
 
           # ── Inject Browser Context if active ──
           _ephemeral_prompt = None
@@ -1806,6 +1802,33 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       if base_text[:60] in content or content[:60] in msg_text:
                           m['attachments'] = attachments
                           break
+          # ── 에이전트 간 메시징 파싱 및 자동 디스패치 (Agent-to-Agent Inbox Dispatch) ──
+          dispatched_reports = []
+          try:
+              from api.memory_store import parse_and_dispatch_messages
+              from api.profiles import get_active_profile_name
+              _sender_profile = getattr(s, 'profile', None) or get_active_profile_name() or 'default'
+
+              for m in reversed(s.messages):
+                  if m.get('role') == 'assistant':
+                      content = str(m.get('content') or '')
+                      if '[MSG' in content:
+                          cleaned_content, sent_count, details = parse_and_dispatch_messages(
+                              sender=_sender_profile,
+                              text=content,
+                              run_id=s.session_id,
+                              return_details=True,
+                          )
+                          if sent_count > 0:
+                              m['content'] = cleaned_content
+                              dispatched_reports = details
+                              _logger.info(
+                                  f"[AgentMessaging] {_sender_profile} dispatched {sent_count} message(s) from session {s.session_id}"
+                              )
+                      break
+          except Exception as _dispatch_err:
+              _logger.warning("Agent message dispatch failed: %s", _dispatch_err)
+
           s.save()
           # Sync to state.db for /insights (opt-in setting)
           try:
@@ -1838,6 +1861,24 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           with ACTIVE_SESSION_STREAMS_LOCK:
               if ACTIVE_SESSION_STREAMS.get(session_id) == stream_id:
                   ACTIVE_SESSION_STREAMS.pop(session_id, None)
+
+          # ── 자동 보고 릴레이: 동료가 라온에게 보고서를 보낸 경우 라온 자동 웨이크업 ──
+          if dispatched_reports:
+              try:
+                  _is_sender_raon = str(_sender_profile).lower().startswith('raon') or '라온' in str(_sender_profile)
+                  has_report_for_raon = any(
+                      str(r.get('recipient', '')).lower() in ('raon', '라온')
+                      for r in dispatched_reports
+                  )
+                  if has_report_for_raon and not _is_sender_raon:
+                      from api.collaborator import relay_report_to_raon
+                      relay_report_to_raon(
+                          sender=_sender_profile,
+                          dispatched_reports=dispatched_reports,
+                          workspace=s.workspace,
+                      )
+              except Exception as _relay_err:
+                  _logger.warning("Auto-report relay to Raon failed: %s", _relay_err)
 
           # ── Agent Voice Output: LLM 요약 생성 (done 이후 백그라운드로 실행) ──
           if _job_tools:

@@ -59,7 +59,7 @@ class HerdrManager:
         self._server_proc: Optional[subprocess.Popen] = None
         self._workers: Dict[str, Dict[str, Any]] = {}
         self._subscribers: List[queue.Queue] = []
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._bg_threads: Dict[str, threading.Thread] = {}
 
         # Register default worker slots using detected/configured custom models
@@ -90,6 +90,61 @@ class HerdrManager:
             "updated_at": time.time(),
         }
 
+        # ⚡ 무중단 완주 모드: 백그라운드 작업 시 승인 요청(폴더/명령/도구)을 자동 통과시킴
+        self.auto_approve: bool = True
+        self._monitor_running: bool = True
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._start_auto_approve_monitor()
+
+    def _start_auto_approve_monitor(self):
+        """Start background daemon thread that auto-approves worker prompts for uninterrupted execution."""
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            return
+
+        def _monitor_loop():
+            while self._monitor_running:
+                try:
+                    time.sleep(1.2)
+                    if not getattr(self, "auto_approve", True):
+                        continue
+
+                    # Only inspect workers that are working or blocked
+                    candidates = []
+                    with self._state_lock:
+                        for w_name, w in self._workers.items():
+                            if w.get("status") in ("working", "blocked"):
+                                candidates.append(w_name)
+
+                    for w_name in candidates:
+                        try:
+                            self.sync_worker_state(w_name)
+                        except Exception:
+                            pass
+                except Exception:
+                    time.sleep(2.0)
+
+        t = threading.Thread(target=_monitor_loop, daemon=True, name="HerdrAutoApproveMonitor")
+        self._monitor_thread = t
+        t.start()
+
+    def _send_approval_keys(self, target: str, kind: str, blocked_info: Optional[Dict[str, Any]] = None):
+        """Send approval keystrokes directly to the target pane/agent without recursion."""
+        is_claude = (kind == "claude")
+        q = (blocked_info.get("question", "") if blocked_info else "").lower()
+
+        if is_claude:
+            if "y/n" in q or "(y)" in q or "y/n" in q:
+                self._run_cmd(["agent", "send-keys", target, "y"], timeout=3)
+                time.sleep(0.15)
+                self._run_cmd(["agent", "send-keys", target, "enter"], timeout=3)
+            else:
+                self._run_cmd(["agent", "send-keys", target, "enter"], timeout=3)
+                time.sleep(0.15)
+                self._run_cmd(["agent", "send-keys", target, "y"], timeout=2)
+                self._run_cmd(["agent", "send-keys", target, "enter"], timeout=2)
+        else:
+            self._run_cmd(["agent", "send-keys", target, "enter"], timeout=3)
+
     def _detect_current_codex_model(self) -> str:
         """Inspect ~/.codex/config.toml to display the active custom model."""
         config_path = Path.home() / ".codex" / "config.toml"
@@ -107,6 +162,7 @@ class HerdrManager:
                     prov_label = {
                         "minimax": "MiniMax",
                         "opencode-go": "OpenCode Go",
+                        "opencode-zen": "OpenCode Zen",
                         "openrouter": "OpenRouter",
                         "qwen-token-plan": "Qwen",
                     }.get(provider or "", provider or "Custom")
@@ -161,7 +217,7 @@ class HerdrManager:
     def _normalize_worker_name(self, name: str) -> str:
         """Map aliases ('claude', 'worker-claude', 'codex') to canonical worker keys."""
         s = (name or "").lower().strip()
-        if "claude" in s or "클로드" in s or s == "w1:p2":
+        if "claude" in s or "클로드" in s or s in ("w1:p2", "w1:p3"):
             return "worker-claude"
         return "worker-codex"
 
@@ -188,7 +244,7 @@ class HerdrManager:
             if w and w.get("pane_id"):
                 return w["pane_id"]
 
-        return "w1:p2" if target_kind == "claude" else "w1:p1"
+        return "w1:p3" if target_kind == "claude" else "w1:p1"
 
     # -------------------------------------------------------------------------
     # CLI Command Execution Helpers
@@ -313,9 +369,22 @@ class HerdrManager:
                 worker["blocked_info"] = parsed["blocked_info"]
                 worker["turns"] = parsed["turns"]
 
-                # 🔴 blocked 처리: 실제 승인 질문/OAuth(blocked_info)이 감지되었을 때만 세트!
+                # 🔴 blocked 처리: 실제 승인 질문/OAuth(blocked_info)이 감지되었을 때
                 if parsed["blocked_info"]:
-                    worker["status"] = "blocked"
+                    b_type = parsed["blocked_info"].get("type")
+                    if b_type != "oauth_login" and getattr(self, "auto_approve", True):
+                        _logger.info(f"[HerdrManager] ⚡ Auto-approving {b_type} for {worker_key} to ensure uninterrupted background execution")
+                        self._send_approval_keys(target, worker.get("kind", "codex"), parsed["blocked_info"])
+                        worker["status"] = "working"
+                        worker["blocked_info"] = None
+                        self._broadcast({
+                            "event": "worker_auto_approved",
+                            "name": worker_key,
+                            "type": b_type,
+                            "question": parsed["blocked_info"].get("question", "")
+                        })
+                    else:
+                        worker["status"] = "blocked"
                 elif agent_status == "blocked":
                     if worker.get("kind") == "codex":
                         # Herdr는 blocked로 보지만 파서에는 승인 문구가 없음 (스크롤백 오탐)
@@ -327,6 +396,7 @@ class HerdrManager:
             else:
                 worker["status"] = "idle" if agent_status == "blocked" else agent_status
 
+            worker["auto_approve"] = getattr(self, "auto_approve", True)
             worker["updated_at"] = time.time()
             return dict(worker)
 
@@ -402,6 +472,10 @@ class HerdrManager:
                 claude_alias = "claude-openrouter"
             elif "qwen" in claude_model.lower():
                 claude_alias = "claude-qwen"
+            elif "opencode-zen" in claude_model.lower() or "zen" in claude_model.lower():
+                claude_alias = "claude-zen"
+            elif "opencode" in claude_model.lower():
+                claude_alias = "claude-oc"
 
             self._run_cmd([
                 "agent", "start", herdr_agent_name,
@@ -410,10 +484,19 @@ class HerdrManager:
                 "--timeout", "35000",
                 "--",
                 "--model", claude_alias,
-                "--dangerously-skip-permissions"
+                "--dangerously-skip-permissions",
+                "--permission-mode", "bypassPermissions"
             ], timeout=40)
         else:
-            self._run_cmd(["agent", "start", herdr_agent_name, "--kind", kind, "--pane", target_pane, "--timeout", "30000"], timeout=35)
+            self._run_cmd([
+                "agent", "start", herdr_agent_name,
+                "--kind", kind,
+                "--pane", target_pane,
+                "--timeout", "30000",
+                "--",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--ask-for-approval", "never"
+            ], timeout=35)
         
         with self._state_lock:
             if worker_key in self._workers:
@@ -421,14 +504,81 @@ class HerdrManager:
 
         time.sleep(1.5)
         st = self.sync_worker_state(worker_key)
-        if st.get("blocked_info") and st["blocked_info"].get("type") == "folder_trust":
-            _logger.info(f"[HerdrManager] Auto-approving folder trust for {worker_key}")
-            self.approve(worker_key, decision="approve")
-            time.sleep(1.5)
+        if st.get("blocked_info") and st["blocked_info"].get("type") != "oauth_login":
+            _logger.info(f"[HerdrManager] Auto-approving startup prompt for {worker_key} ({st['blocked_info'].get('type')})")
+            self._send_approval_keys(target, kind, st.get("blocked_info"))
+            time.sleep(1.0)
             st = self.sync_worker_state(worker_key)
 
         self._broadcast({"event": "worker_started", "worker": st})
         return st
+
+    def _dispatch_worker_report_to_raon(
+        self,
+        worker_key: str,
+        task_prompt: str,
+        response_text: str,
+        trigger_relay: bool = False
+    ) -> None:
+        """
+        Record worker's completion report into Raon's agent inbox,
+        and optionally wake up Raon via relay_report_to_raon (for background jobs).
+        """
+        try:
+            from api.memory_store import send_agent_message, parse_and_dispatch_messages
+            from api.collaborator import relay_report_to_raon
+        except Exception as e:
+            _logger.warning("[HerdrManager] Failed to import reporting modules: %s", e)
+            return
+
+        sender_label = "코덱스(Codex)" if "codex" in worker_key.lower() else "클로드(Claude)"
+        body_to_report = (response_text or "").strip()
+        if not body_to_report:
+            body_to_report = "작업이 완료되었으나 워커 텍스트 출력이 비어 있습니다."
+
+        dispatched = []
+        # 1. First attempt to parse explicit [MSG to=raon ...] tags
+        try:
+            cleaned, sent, details = parse_and_dispatch_messages(sender=sender_label, text=body_to_report, return_details=True)
+            if details:
+                for d in details:
+                    r_target = (d.get("recipient") or "").lower()
+                    if r_target in ("raon", "라온"):
+                        dispatched.append(d)
+        except Exception as e:
+            _logger.warning("[HerdrManager] Error parsing [MSG] tags from worker: %s", e)
+
+        # 2. Fallback: If no explicit [MSG] tag was found, synthesize a clean completion report
+        if not dispatched:
+            clean_lines = [ln.strip() for ln in task_prompt.strip().splitlines() if ln.strip() and not ln.strip().startswith("[DAON")]
+            task_summary = clean_lines[0][:80] if clean_lines else "작업 지시"
+            synthetic_body = (
+                f"[작업 내용]: {task_summary}\n\n"
+                f"[실행 결과 및 보고]:\n{body_to_report[:3000]}"
+            )
+            try:
+                send_agent_message(
+                    sender=sender_label,
+                    recipient="raon",
+                    body=synthetic_body
+                )
+                dispatched.append({
+                    "recipient": "raon",
+                    "task": task_summary,
+                    "body": synthetic_body
+                })
+                _logger.info("[HerdrManager] Synthesized fallback completion report from %s to Raon inbox.", sender_label)
+            except Exception as e:
+                _logger.warning("[HerdrManager] Failed to save fallback worker report to inbox: %s", e)
+
+        # 3. If trigger_relay is True (e.g. background job completed), wake up Raon autonomously
+        if trigger_relay and dispatched:
+            try:
+                relayed = relay_report_to_raon(sender=sender_label, dispatched_reports=dispatched)
+                if relayed:
+                    _logger.info("[HerdrManager] 🚀 Successfully relayed worker completion report to wake up Raon.")
+            except Exception as e:
+                _logger.warning("[HerdrManager] Failed to trigger autonomous relay to Raon: %s", e)
 
     def prompt_worker(self, name: str, prompt: str) -> Dict[str, Any]:
         """Submit a prompt to the worker asynchronously and track in background thread."""
@@ -453,6 +603,20 @@ class HerdrManager:
             and curr.get("blocked_info", {}).get("type") == "oauth_login"
         )
 
+        # Inject Raon report directive into worker prompt if not already present
+        worker_prompt = prompt
+        if not is_oauth_code and "[MSG to=raon" not in prompt:
+            worker_prompt = (
+                f"{prompt}\n\n"
+                "[DAON 시스템 지침 - 총괄기획 라온 보고]\n"
+                "작업을 완수한 후, 반드시 응답의 맨 끝에 라온(총괄기획)에게 보낼 작업 완료 보고 블록을 다음 태그로 작성하십시오:\n"
+                "[MSG to=raon task=\"작업 요약\"]\n"
+                "• 수행 내역 및 수정한 파일:\n"
+                "• 실행/검증 결과:\n"
+                "• 다음 단계 제안(필요시):\n"
+                "[/MSG]"
+            )
+
         with self._state_lock:
             worker = self._workers.get(worker_key)
             if not worker:
@@ -472,10 +636,29 @@ class HerdrManager:
                 self._run_cmd(["agent", "send-keys", target, prompt, "enter"], timeout=10)
                 time.sleep(3.0)
             else:
-                self._run_cmd(["agent", "prompt", target, prompt, "--wait", "--timeout", "180000"], timeout=200)
+                self._run_cmd(["agent", "prompt", target, worker_prompt, "--wait", "--timeout", "180000"], timeout=200)
 
             final_st = self.sync_worker_state(worker_key)
             self._broadcast({"event": "worker_done", "worker": final_st})
+
+            # Extract clean output and dispatch report to Raon (with autonomous wake-up relay)
+            clean_text = ""
+            turns = final_st.get("turns", [])
+            if turns:
+                for turn in reversed(turns):
+                    if turn.get("role") == "assistant":
+                        clean_text = turn.get("content", "")
+                        break
+            if not clean_text:
+                clean_text = final_st.get("clean_response", "")
+
+            if not is_oauth_code:
+                self._dispatch_worker_report_to_raon(
+                    worker_key=worker_key,
+                    task_prompt=prompt,
+                    response_text=clean_text,
+                    trigger_relay=True
+                )
 
         t = threading.Thread(target=_prompt_thread, daemon=True)
         self._bg_threads[worker_key] = t
@@ -499,29 +682,47 @@ class HerdrManager:
             worker = self._workers.get(worker_key)
             if not worker:
                 raise ValueError(f"Unknown worker '{worker_key}'")
+            worker_kind = worker.get("kind", "codex")
 
-            chk = self._run_cmd(["agent", "get", target], timeout=5)
-            if not chk["ok"]:
-                _logger.info(f"[HerdrManager] Worker {worker_key} ({target}) not active in Herdr. Starting...")
-                self.start_worker(name=worker_key, kind=worker.get("kind", "codex"))
-                target = self._resolve_target(worker_key)
+        chk = self._run_cmd(["agent", "get", target], timeout=5)
+        if not chk["ok"]:
+            _logger.info(f"[HerdrManager] Worker {worker_key} ({target}) not active in Herdr. Starting...")
+            self.start_worker(name=worker_key, kind=worker_kind)
+            target = self._resolve_target(worker_key)
 
-            curr = self.sync_worker_state(worker_key)
-            if curr.get("status") == "blocked" and not curr.get("blocked_info"):
-                self._run_cmd(["agent", "send-keys", target, "esc"], timeout=3)
-                time.sleep(0.3)
+        curr = self.sync_worker_state(worker_key)
+        if curr.get("status") == "blocked" and not curr.get("blocked_info"):
+            self._run_cmd(["agent", "send-keys", target, "esc"], timeout=3)
+            time.sleep(0.3)
 
-            prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
+        prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
 
-            worker["status"] = "working"
-            worker["last_prompt"] = prompt
-            worker["blocked_info"] = None
-            worker["updated_at"] = time.time()
+        # Inject Raon report directive into worker prompt if not already present
+        worker_prompt = prompt
+        if "[MSG to=raon" not in prompt:
+            worker_prompt = (
+                f"{prompt}\n\n"
+                "[DAON 시스템 지침 - 총괄기획 라온 보고]\n"
+                "작업을 완수한 후, 반드시 응답의 맨 끝에 라온(총괄기획)에게 보낼 작업 완료 보고 블록을 다음 태그로 작성하십시오:\n"
+                "[MSG to=raon task=\"작업 요약\"]\n"
+                "• 수행 내역 및 수정한 파일:\n"
+                "• 실행/검증 결과:\n"
+                "• 다음 단계 제안(필요시):\n"
+                "[/MSG]"
+            )
+
+        with self._state_lock:
+            worker = self._workers.get(worker_key)
+            if worker:
+                worker["status"] = "working"
+                worker["last_prompt"] = prompt
+                worker["blocked_info"] = None
+                worker["updated_at"] = time.time()
 
         self._broadcast({"event": "worker_status", "name": worker_key, "status": "working", "prompt": prompt})
 
         timeout_ms = str(max(10, timeout) * 1000)
-        res = self._run_cmd(["agent", "prompt", target, prompt, "--wait", "--timeout", timeout_ms], timeout=timeout + 20)
+        res = self._run_cmd(["agent", "prompt", target, worker_prompt, "--wait", "--timeout", timeout_ms], timeout=timeout + 20)
 
         final_st = self.sync_worker_state(worker_key)
         self._broadcast({"event": "worker_done", "worker": final_st})
@@ -537,6 +738,14 @@ class HerdrManager:
         if not clean_text:
             clean_text = final_st.get("clean_response", "")
 
+        # Dispatch report to Raon's inbox for persistent tracking (no duplicate wake-up since Raon is synchronously awaiting)
+        self._dispatch_worker_report_to_raon(
+            worker_key=worker_key,
+            task_prompt=prompt,
+            response_text=clean_text,
+            trigger_relay=False
+        )
+
         return {
             "ok": res.get("ok", False),
             "worker": worker_key,
@@ -545,6 +754,7 @@ class HerdrManager:
             "result": clean_text,
             "raw_terminal_preview": (final_st.get("raw_terminal", "") or "")[-500:]
         }
+
 
     def approve(self, name: str, decision: str = "approve", custom_key: Optional[str] = None) -> Dict[str, Any]:
         """Approve or deny an interactive prompt (enter, esc, y, n)."""
@@ -607,7 +817,20 @@ class HerdrManager:
         target_model_id = (model_id or "").strip()
 
         # Check custom providers first (user-registered with active API keys)
-        for p_name, p_cfg in providers.items():
+        # Prioritize matching provider by name first (e.g. minimax -> minimax, qwen -> qwen-token-plan)
+        # to avoid proxy providers (like opencode-go) that do not support the /responses wire protocol for non-deepseek models
+        tl = target_model_id.lower()
+        provider_items = list(providers.items())
+        if "minimax" in tl:
+            provider_items.sort(key=lambda x: 0 if x[0] == "minimax" else 1)
+        elif "qwen" in tl:
+            provider_items.sort(key=lambda x: 0 if "qwen" in x[0] else 1)
+        elif "zen" in tl:
+            provider_items.sort(key=lambda x: 0 if x[0] == "opencode-zen" else 1)
+        elif "deepseek" in tl or "go" in tl:
+            provider_items.sort(key=lambda x: 0 if x[0] == "opencode-go" else 1)
+
+        for p_name, p_cfg in provider_items:
             m_list = p_cfg.get("models", [])
             for m in m_list:
                 m_id = m.get("id") if isinstance(m, dict) else str(m)
@@ -672,6 +895,8 @@ class HerdrManager:
                 claude_alias = "claude-openrouter"
             elif prov_key == "qwen-token-plan":
                 claude_alias = "claude-qwen"
+            elif prov_key == "opencode-zen":
+                claude_alias = "claude-zen"
             elif prov_key == "opencode-go":
                 claude_alias = "claude-oc"
 
@@ -737,9 +962,12 @@ class HerdrManager:
 
         lines = content.splitlines()
 
-        # Remove existing model, model_provider, model_context_window at the top
-        new_header = []
-        skip_header_keys = ("model =", "model_provider =", "model_context_window =")
+        # Ensure approval_policy = never and sandbox_mode = danger-full-access are preserved at the top
+        new_header = [
+            'approval_policy = "never"',
+            'sandbox_mode = "danger-full-access"',
+        ]
+        skip_header_keys = ("approval_policy =", "sandbox_mode =", "model =", "model_provider =", "model_context_window =")
         filtered_lines = []
         for line in lines:
             if any(line.strip().startswith(k) for k in skip_header_keys):
@@ -764,7 +992,7 @@ class HerdrManager:
             prov_section_header = f"[model_providers.{prov_key}]"
             if prov_section_header not in full_text:
                 extra_headers = ""
-                if prov_key == "opencode-go":
+                if prov_key in ("opencode-go", "opencode-zen"):
                     extra_headers = '\nhttp_headers = { "x-opencode-session" = "daon-harness-worker" }'
                 prov_block = f"""
 {prov_section_header}

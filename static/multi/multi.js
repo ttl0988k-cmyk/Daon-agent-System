@@ -355,14 +355,14 @@ class MultiApp {
         for (const [id, p] of this.panes.entries()) {
           if (id !== callerPaneId) {
             if (p.isWorker) {
-              peers.push(`- ${p.profile} (코딩 워커): delegate_to_worker(worker_name="${p.workerName}", prompt="...") 도구로 지시하세요.`);
+              peers.push(`- ${p.profile} (코딩 워커): delegate_to_worker(worker_name="${p.workerName}", prompt="...") 도구로 위임`);
             } else if (p.sessionId) {
-              peers.push(`- ${p.profile} (협업 에이전트): session_id="${p.sessionId}"`);
+              peers.push(`- ${p.profile} (협업 에이전트): delegate_to_agent(agent_name="${p.profile}", task="...") 도구로 위임`);
             }
           }
         }
         if (peers.length === 0) return '';
-        return `[오케스트레이션 회의실 안내]\n현재 대표님 화면에 열려있는 동료 에이전트:\n${peers.join('\n')}\n* 코딩 워커(코덱스/클로드)에게 실제 코딩/파일 생성/터미널 작업을 시킬 때는 반드시 delegate_to_worker 도구를 사용하여 직접 명령을 전달하세요.\n* 일반 협업 에이전트(빌/셜록/토니 등)에게 작업을 전달할 때는 위 session_id로 /api/chat/start를 호출하여 지시하세요. 그래야 대표님 분할 화면에서 실시간으로 일하는 모습이 보입니다.`;
+        return `[오케스트레이션 회의실 안내]\n현재 대표님 화면에 열려있는 동료 에이전트:\n${peers.join('\n')}\n* 전문 동료 에이전트(빌/셜록/토니/프라다 등)에게 작업을 맡길 때는 반드시 delegate_to_agent(agent_name="...", task="...") 도구를 사용하여 직접 지시하세요. 대표님 화면의 분할 창에서 실시간으로 일하는 모습이 스트리밍되며, 작업이 끝나면 결과가 자동으로 보고됩니다.\n* 코딩 워커(코덱스/클로드)에게 실제 파일 생성이나 터미널 빌드/테스트를 시킬 때는 delegate_to_worker(worker_name="...", prompt="...") 도구를 사용하세요.`;
       }
     });
 

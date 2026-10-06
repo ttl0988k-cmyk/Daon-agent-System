@@ -104,6 +104,14 @@ def handle_post_worker_model(handler, body: Dict[str, Any]) -> bool:
 
 
 
+def handle_post_worker_auto_approve(handler, body: Dict[str, Any]) -> bool:
+    """POST /api/workers/auto-approve — Toggle or set auto-approve policy."""
+    enabled = body.get("enabled", True)
+    herdr_manager.auto_approve = bool(enabled)
+    _logger.info(f"[worker_routes] Set worker auto_approve to {herdr_manager.auto_approve}")
+    return j_ok(handler, auto_approve=herdr_manager.auto_approve)
+
+
 def handle_get_worker_stream(handler, parsed) -> bool:
     """GET /api/workers/stream — Real-time SSE stream of worker status and terminal updates."""
     handler.send_response(200)

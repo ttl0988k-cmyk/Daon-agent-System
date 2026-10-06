@@ -328,6 +328,42 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
     return injected_count
 
 
+def inject_mcp_manage_tool(agent: Any) -> None:
+    """Inject mcp_manage tool so the agent can connect, disconnect, and list MCP servers dynamically."""
+    try:
+        from tools.mcp_manager_tool import MCP_MANAGE_SCHEMA, _dispatch, _result
+        from tools.registry import registry
+
+        mcp_manage_schema = {
+            "type": "function",
+            "function": {
+                "name": "mcp_manage",
+                "description": (
+                    "Manage MCP servers at runtime: connect, disconnect, list, add, remove, tools. "
+                    "Allows the agent to turn MCP servers ON or OFF as needed (e.g. action='connect', action='disconnect', action='list')."
+                ),
+                "parameters": MCP_MANAGE_SCHEMA,
+            },
+        }
+        _append_tool_if_missing(agent, mcp_manage_schema, "mcp_manage")
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("mcp_manage")
+
+        if "mcp_manage" not in registry._tools:
+            registry.register(
+                name="mcp_manage",
+                toolset="mcp",
+                schema=MCP_MANAGE_SCHEMA,
+                handler=lambda args, **kw: _result(_dispatch(args)),
+                check_fn=lambda: True,
+                emoji="🧩",
+                description="Manage MCP servers at runtime: connect, disconnect, list, add, remove.",
+            )
+        _logger.info("Injected mcp_manage tool into agent tools.")
+    except Exception as e:
+        _logger.warning("mcp_manage injection failed: %s", e)
+
+
 def inject_patch_registry_tools(agent: Any) -> None:
     """Inject query_patches and register_patch tools into agent."""
     try:
@@ -996,25 +1032,28 @@ def inject_worker_tools(agent: Any) -> None:
                         },
                         "task": {
                             "type": "string",
-                            "description": "워커에게 전달할 구체적인 작업 요구사항 및 프롬프트"
+                            "description": "워커에게 전달할 구체적인 작업 요구사항 및 프롬프트 (prompt 파라미터와 동일)"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "워커에게 전달할 프롬프트 (task 파라미터와 동일)"
                         },
                         "timeout": {
                             "type": "integer",
                             "description": "작업 완료 대기 시간(초) (기본값: 120)"
                         }
-                    },
-                    "required": ["task"]
+                    }
                 }
             }
         }
 
         def _worker_handler(args: dict, **kwargs) -> str:
             worker_name = args.get("worker_name", "worker-codex")
-            task = (args.get("task") or "").strip()
+            task = (args.get("task") or args.get("prompt") or args.get("instruction") or args.get("message") or "").strip()
             timeout = int(args.get("timeout") or 120)
 
             if not task:
-                return json.dumps({"ok": False, "error": "task is required"}, ensure_ascii=False)
+                return json.dumps({"ok": False, "error": "task or prompt is required"}, ensure_ascii=False)
 
             _logger.info(f"[delegate_to_worker] Delegating task to {worker_name}: {task[:60]}...")
             try:
@@ -1047,6 +1086,87 @@ def inject_worker_tools(agent: Any) -> None:
         _logger.warning("Worker tool injection failed: %s", e)
 
 
+def inject_colleague_tools(agent: Any, session_id: str = None) -> None:
+    """Inject delegate_to_agent tool for Raon and other agents to collaborate with internal colleague agents."""
+    try:
+        from tools.registry import registry
+        from api.collaborator import execute_agent_task
+
+        _agent_schema = {
+            "type": "function",
+            "function": {
+                "name": "delegate_to_agent",
+                "description": (
+                    "DAON 멀티 에이전트 팀의 전문 동료 에이전트(빌: 백엔드/API개발, 셜록: 코드리뷰/QA/검수, "
+                    "토니: 기획/설계, 프라다: UI/UX디자인)에게 구체적인 하위 작업을 위임하고, "
+                    "작업이 완료될 때까지 실행한 뒤 동료의 최종 작업 결과와 산출물을 받아옵니다. "
+                    "총괄 기획자(라온)가 동료 에이전트들과 협업하여 작업을 분담·완주할 때 사용합니다."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {
+                            "type": "string",
+                            "description": "작업을 위임할 동료 에이전트 (예: bill, sherlock, tony, prada, 빌, 셜록, 토니, 프라다)"
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "동료 에이전트에게 지시할 구체적인 작업 요구사항 및 지시사항 (프롬프트)"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "동료 작업 완료 대기 시간(초) (기본값: 180, 최대: 600)"
+                        }
+                    },
+                    "required": ["agent_name", "task"]
+                }
+            }
+        }
+
+        def _colleague_handler(args: dict, **kwargs) -> str:
+            agent_name = (args.get("agent_name") or args.get("name") or "").strip()
+            task = (args.get("task") or args.get("prompt") or args.get("instruction") or args.get("message") or "").strip()
+            timeout = int(args.get("timeout") or 180)
+
+            if not agent_name or not task:
+                return json.dumps({"ok": False, "error": "agent_name and task are required"}, ensure_ascii=False)
+
+            _logger.info(f"[delegate_to_agent] Delegating task to {agent_name}: {task[:60]}...")
+            try:
+                res = execute_agent_task(
+                    agent_name=agent_name,
+                    task=task,
+                    timeout=timeout,
+                    parent_session_id=session_id
+                )
+                return json.dumps(res, ensure_ascii=False)
+            except Exception as e:
+                _logger.error(f"[delegate_to_agent] Failed to execute colleague task: {e}")
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+        registry.register(
+            name="delegate_to_agent",
+            toolset="agent-colleague",
+            schema={
+                "name": "delegate_to_agent",
+                "description": _agent_schema["function"]["description"],
+                "parameters": _agent_schema["function"]["parameters"]
+            },
+            handler=_colleague_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Delegate subtasks to internal colleague agents (Bill, Sherlock, Tony, Prada)"
+        )
+        registry.register_toolset_alias("colleague", "agent-colleague")
+        registry.register_toolset_alias("agent", "agent-colleague")
+        _append_tool_if_missing(agent, _agent_schema, "delegate_to_agent")
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("delegate_to_agent")
+        _logger.debug("Injected delegate_to_agent tool into agent.")
+    except Exception as e:
+        _logger.warning("Colleague tool injection failed: %s", e)
+
+
 def register_all_streaming_tools(
     agent: Any,
     session: Any,
@@ -1059,6 +1179,7 @@ def register_all_streaming_tools(
     Returns the number of injected MCP tools.
     """
     mcp_count = inject_mcp_tools(agent, cancel_event, session_id)
+    inject_mcp_manage_tool(agent)
     inject_patch_registry_tools(agent)
     inject_memory_forget_tool(agent)
     inject_media_generation_tools(agent)
@@ -1067,5 +1188,6 @@ def register_all_streaming_tools(
     inject_daon_action_tool(agent)
     inject_fast_decision_tool(agent)
     inject_worker_tools(agent)
+    inject_colleague_tools(agent, session_id=session_id)
     _deduplicate_agent_tools(agent)
     return mcp_count

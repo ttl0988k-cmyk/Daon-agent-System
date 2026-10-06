@@ -626,7 +626,10 @@ def handle_post_approval_respond(handler, body) -> bool:
     sid = body.get('session_id', '')
     if not sid:
         return bad(handler, 'session_id is required')
-    choice = body.get('choice', 'deny')
+    choice = body.get('choice')
+    if not choice:
+        # Fallback for clients sending boolean approved
+        choice = 'once' if body.get('approved', False) else 'deny'
     if choice not in ('once', 'session', 'always', 'deny'):
         return bad(handler, f'Invalid choice: {choice}')
     
@@ -645,6 +648,18 @@ def handle_post_approval_respond(handler, body) -> bool:
                 approve_session(sid, k)
                 approve_permanent(k)
             save_permanent_allowlist(_permanent_approved)
+
+    # ALSO resolve architect/diff approval in api.approval if present
+    try:
+        from api.approval import has_pending as has_arch_pending, approve as arch_approve, reject as arch_reject
+        if has_arch_pending(sid):
+            if choice in ('once', 'session', 'always') or body.get('approved', False):
+                arch_approve(sid, reviewer='user')
+            else:
+                arch_reject(sid, reason='Rejected by user', reviewer='user')
+    except Exception as _e:
+        print(f"[Approval] Error resolving architect approval: {_e}", flush=True)
+
     return j(handler, {'ok': True, 'choice': choice})
 
 

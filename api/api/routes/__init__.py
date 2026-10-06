@@ -256,6 +256,7 @@ from api.routes.worker_routes import (
     handle_post_worker_start,
     handle_post_worker_prompt,
     handle_post_worker_approve,
+    handle_post_worker_auto_approve,
     handle_post_worker_model,
     handle_get_worker_stream,
 )
@@ -616,6 +617,7 @@ POST_EXACT_ROUTES = {
     '/api/workers/start': handle_post_worker_start,
     '/api/workers/prompt': handle_post_worker_prompt,
     '/api/workers/approve': handle_post_worker_approve,
+    '/api/workers/auto-approve': handle_post_worker_auto_approve,
     '/api/workers/model': handle_post_worker_model,
     '/api/workspaces/add': handle_post_workspace_add,
     '/api/workspaces/remove': handle_post_workspace_remove,

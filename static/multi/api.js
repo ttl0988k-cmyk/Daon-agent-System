@@ -173,7 +173,11 @@ export const api = {
       const res = await fetch('/api/approval/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, approved })
+        body: JSON.stringify({
+          session_id: sessionId,
+          approved: approved,
+          choice: approved ? 'once' : 'deny'
+        })
       });
       return await res.json();
     } catch (err) {
@@ -233,6 +237,15 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
+    return await res.json();
+  },
+
+  async setWorkerAutoApprove(enabled = true) {
+    const res = await fetch('/api/workers/auto-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
     return await res.json();
   }
 };

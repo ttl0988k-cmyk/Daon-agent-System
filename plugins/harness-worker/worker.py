@@ -141,10 +141,18 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "headers": {},
     },
     "opencode-go": {
-        "label": "opencode-go (zen/go)",
+        "label": "OpenCode Go (zen/go)",
         "base_url": "https://opencode.ai/zen/go/v1",
         "codex_model": "deepseek-v4.1-flash",
         "claude_alias": "claude-oc",
+        # 없으면 403(Cloudflare 1010) / 400(MissingSessionID)
+        "headers": {"x-opencode-session": "daon-harness-worker"},
+    },
+    "opencode-zen": {
+        "label": "OpenCode Zen (zen)",
+        "base_url": "https://opencode.ai/zen/v1",
+        "codex_model": "deepseek-v4.1-flash",
+        "claude_alias": "claude-zen",
         # 없으면 403(Cloudflare 1010) / 400(MissingSessionID)
         "headers": {"x-opencode-session": "daon-harness-worker"},
     },
@@ -212,7 +220,8 @@ def resolve_provider(name: Optional[str]) -> str:
         return DEFAULT_PROVIDER
     # 별칭 흡수
     alias = {
-        "oc": "opencode-go", "opencode": "opencode-go", "opencode_go": "opencode-go",
+        "oc": "opencode-go", "opencode": "opencode-go", "opencode_go": "opencode-go", "go": "opencode-go",
+        "zen": "opencode-zen", "opencode-zen": "opencode-zen", "opencode_zen": "opencode-zen",
         "qwen": "qwen-token-plan", "qwen-token": "qwen-token-plan",
         "mini": "minimax", "mm": "minimax",
         "omni": "omniroute", "or": "openrouter",
@@ -273,7 +282,7 @@ QUOTA_STORE_FILE = WORKER_ROOT / "_provider_quota.json"
 QUOTA_DEFAULT_COOLDOWN_SEC = 5 * 3600
 
 # 자동 폴백 기본 순서: 구독(한도 작음) 우선 → API 키 프로바이더
-FALLBACK_CHAIN = ("chatgpt", "openrouter", "opencode-go", "minimax")
+FALLBACK_CHAIN = ("chatgpt", "openrouter", "opencode-go", "opencode-zen", "minimax")
 AUTO_PROVIDER_ALIASES = ("auto", "chain", "fallback")
 
 _QUOTA_LOCK = threading.Lock()
@@ -692,7 +701,11 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
 
     env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
 
-    lines: List[str] = []
+    lines: List[str] = [
+        'approval_policy = "never"',
+        'sandbox_mode = "danger-full-access"',
+        "",
+    ]
     if subscription:
         # ── 구독(OAuth) 경로 ──────────────────────────────────────────
         # model_provider / base_url / env_key 를 일절 쓰지 않는다.
@@ -923,6 +936,7 @@ def build_command(harness: str, prompt: str, exe: str,
             # Since stdin is DEVNULL there is no approval path: bypass it.
             argv += [
                 "--dangerously-bypass-approvals-and-sandbox",
+                "--ask-for-approval", "never",
                 "--skip-git-repo-check",
             ]
         if model and model != "auto":
@@ -934,7 +948,11 @@ def build_command(harness: str, prompt: str, exe: str,
             "- The Windows command-line buffer has length limits. Do NOT execute massive inline command lines (>8KB) or bash-style multiline heredocs.\n"
             "- When creating or editing files, write files directly using Python (`python -c \"...\"`) or standard PowerShell cmdlets (`Set-Content`, `Out-File` with UTF-8).\n"
             "- Work autonomously and complete the entire task until fully verified.\n"
-            "- Once the required files, edits, and verification are finished, output your final response immediately. Do NOT run cleanup commands or attempt to delete build artifacts (like __pycache__ or temporary files).\n\n"
+            "- Once the required files, edits, and verification are finished, output your final response immediately. Do NOT run cleanup commands or attempt to delete build artifacts (like __pycache__ or temporary files).\n"
+            "- IMPORTANT: Once completed, end your response with a concise report block for Raon (Orchestrator) using:\n"
+            "[MSG to=raon task=\"task summary\"]\n"
+            "<Summary of changes, edited files, and test results>\n"
+            "[/MSG]\n\n"
         )
         argv.append(windows_directive + prompt)
         return argv
@@ -950,9 +968,14 @@ def build_command(harness: str, prompt: str, exe: str,
     if model:
         flags += ["--model", model]
 
+    claude_directive = (
+        "[SYSTEM DIRECTIVE]: Work autonomously to complete the task. "
+        "At the very end of your response, output a report block for Raon: "
+        "[MSG to=raon task=\"task summary\"]<summary of files edited and results>[/MSG]\n\n"
+    )
     # Claude CLI 규격: claude [options] [command] [prompt]
     # -p 는 print 플래그이며, prompt 는 맨 마지막 위치 인자로 와야 플래그가 정상 적용됨
-    return argv + flags + ["-p", prompt]
+    return argv + flags + ["-p", claude_directive + prompt]
 
 
 def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
@@ -1691,6 +1714,21 @@ def start_background_job(
                 except Exception:
                     pass
 
+            # 3. 라온에게 작업 완료 보고서 인박스 배송 및 자율 웨이크업
+            try:
+                _api_dir = r"c:\daon\Daon agent System\api"
+                if _api_dir not in sys.path:
+                    sys.path.insert(0, _api_dir)
+                from api.managers.herdr_manager import herdr_manager
+                herdr_manager.get_instance()._dispatch_worker_report_to_raon(
+                    worker_key=f"worker-{harness}",
+                    task_prompt=prompt,
+                    response_text=final_st.get("output") or final_st.get("raw_tail") or "",
+                    trigger_relay=True
+                )
+            except Exception:
+                pass
+
         threading.Thread(
             target=_auto_thread_func,
             name=f"daon-worker-auto-{auto_job_id}",
@@ -1975,6 +2013,21 @@ def start_background_job(
                         q.put_nowait(('notice', {'message': msg, 'job_id': job_id, 'status': final_st.get('status')}))
                 except Exception:
                     pass
+
+            # 3. 라온에게 작업 완료 보고서 인박스 배송 및 자율 웨이크업
+            try:
+                _api_dir = r"c:\daon\Daon agent System\api"
+                if _api_dir not in sys.path:
+                    sys.path.insert(0, _api_dir)
+                from api.managers.herdr_manager import herdr_manager
+                herdr_manager.get_instance()._dispatch_worker_report_to_raon(
+                    worker_key=f"worker-{harness}",
+                    task_prompt=prompt,
+                    response_text=final_st.get("output") or final_st.get("raw_tail") or "",
+                    trigger_relay=True
+                )
+            except Exception:
+                pass
 
     worker_thread = threading.Thread(
         target=_worker_thread_func,

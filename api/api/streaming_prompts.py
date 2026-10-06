@@ -291,6 +291,36 @@ def compose_system_message(
     except Exception as _inbox_e:
         _logger.warning("Agent inbox injection failed: %s", _inbox_e)
 
+    # 6-1. Multi-Agent Collaboration & Auto-Reporting Protocol
+    try:
+        _norm_name = (_chat_agent_name or '').lower()
+        _is_raon = _norm_name.startswith('raon') or '라온' in _norm_name
+        if _is_raon:
+            base_msg += (
+                "\n\n[오케스트레이터 라온의 협업 및 지휘 지침]\n"
+                "당신은 DAON 멀티 에이전트 시스템의 총괄 기획자이자 오케스트레이터(라온)입니다.\n"
+                "- 대표님(사용자)의 목표를 완주하기 위해 동료 에이전트 및 워커들과 적극적으로 협업하세요:\n"
+                "  * 전문 동료 에이전트에게 위임: `delegate_to_agent(agent_name='bill'|'sherlock'|'tony'|'prada', task='...')` 도구 호출\n"
+                "    (빌: 백엔드/API 구현, 셜록: 코드리뷰/QA/검수, 토니: 기획/설계, 프라다: UI/디자인)\n"
+                "  * 외부 CLI 코딩 워커에게 위임: `delegate_to_worker(worker_name='worker-codex'|'worker-claude', prompt='...')` 도구 호출\n"
+                "- 위임한 작업의 결과가 돌아오거나, 상단 [에이전트 수신함]에 동료들의 작업 완료 보고가 도착하면 꼼꼼히 검토하세요.\n"
+                "- 후속 작업이 필요하면 다음 에이전트에게 릴레이 지시를 내리고, 모든 작업이 결함 없이 완주되었을 때 대표님께 최종 종합 보고를 올리세요.\n"
+                "- 작업을 도중에 멈추지 말고 목표가 100% 달성될 때까지 끝까지 완주하세요."
+            )
+        else:
+            base_msg += (
+                "\n\n[DAON 에이전트 협업 및 작업 완료 보고 절대 규칙]\n"
+                f"당신은 DAON 멀티 에이전트 팀의 전문 동료 에이전트({_chat_agent_name})입니다.\n"
+                "- 라온(총괄기획자)이나 다른 동료로부터 전달받은 작업을 자율적이고 완벽하게 완주하세요.\n"
+                "- [필수: 작업 완료 보고 전송 규칙]:\n"
+                "  작업을 마친 후, 반드시 최종 응답 본문의 맨 마지막에 아래 형식의 [MSG] 보고 블록을 포함하세요:\n"
+                "  [MSG to=raon task=작업명 priority=normal]구체적인 완료 결과 요약, 생성/수정된 파일 목록, 검증 내용[/MSG]\n"
+                "- 이 [MSG] 블록은 시스템이 자동으로 파싱하여 라온의 수신함으로 전달하고 라온을 깨우므로, 사용자 화면에는 노출되지 않습니다.\n"
+                "- 라온이 이 보고서를 바탕으로 후속 작업을 조율하거나 대표님께 최종 보고를 전달하므로 절대 누락하지 마세요."
+            )
+    except Exception as _proto_e:
+        _logger.warning("Agent collaboration protocol prompt injection failed: %s", _proto_e)
+
     # 7. Planning Mode instructions
     if planning_mode:
         base_msg += (

@@ -1177,21 +1177,48 @@ def send_agent_message(sender: str, recipient: str, body: str,
         return None
 
 
+_RECIPIENT_ALIASES = {
+    "raon": ["raon", "라온"],
+    "라온": ["raon", "라온"],
+    "bill": ["bill", "빌", "빌(개발)", "dev"],
+    "빌": ["bill", "빌", "빌(개발)", "dev"],
+    "빌(개발)": ["bill", "빌", "빌(개발)", "dev"],
+    "sherlock": ["sherlock", "셜록", "셜록(검수)", "qa"],
+    "셜록": ["sherlock", "셜록", "셜록(검수)", "qa"],
+    "셜록(검수)": ["sherlock", "셜록", "셜록(검수)", "qa"],
+    "tony": ["tony", "토니", "토니(기획)", "planner"],
+    "토니": ["tony", "토니", "토니(기획)", "planner"],
+    "토니(기획)": ["tony", "토니", "토니(기획)", "planner"],
+    "prada": ["prada", "프라다", "프라다(디자인)", "designer"],
+    "프라다": ["prada", "프라다", "프라다(디자인)", "designer"],
+    "프라다(디자인)": ["prada", "프라다", "프라다(디자인)", "designer"],
+    "daon": ["daon", "다온", "다온(응대)"],
+    "다온": ["daon", "다온", "다온(응대)"],
+}
+
+def _resolve_aliases(name: str) -> list:
+    name = (name or '').strip().lower()
+    return _RECIPIENT_ALIASES.get(name, [name])
+
+
 def get_agent_inbox(recipient: str, unread_only: bool = False, limit: int = 50) -> list:
-    """특정 에이전트의 받은 메시지함을 최신순으로 반환. 실패 시 빈 리스트."""
+    """특정 에이전트의 받은 메시지함을 최신순으로 반환. 별칭(한/영) 자동 매핑."""
     try:
         recipient = (recipient or '').strip()
         if not recipient:
             return []
         _ensure_schema()
-        q = 'SELECT id, sender, recipient, cc, body, run_id, read_flag, created_at FROM agent_inbox WHERE recipient = ?'
+        targets = _resolve_aliases(recipient)
+        placeholders = ', '.join(['?'] * len(targets))
+        q = f'SELECT id, sender, recipient, cc, body, run_id, read_flag, created_at FROM agent_inbox WHERE recipient IN ({placeholders})'
         if unread_only:
             q += ' AND read_flag = 0'
         q += ' ORDER BY created_at DESC, id DESC LIMIT ?'
+        params = list(targets) + [int(limit)]
         with _db_lock:
             conn = _connect()
             try:
-                rows = conn.execute(q, (recipient, int(limit))).fetchall()
+                rows = conn.execute(q, params).fetchall()
                 return [dict(r) for r in rows]
             finally:
                 try:
@@ -1203,24 +1230,26 @@ def get_agent_inbox(recipient: str, unread_only: bool = False, limit: int = 50) 
 
 
 def mark_inbox_read(recipient: str, up_to_id: Optional[int] = None) -> int:
-    """받은 메시지를 읽음 처리. up_to_id가 있으면 그 id 이하만. 반환: 처리 건수."""
+    """받은 메시지를 읽음 처리. 별칭(한/영) 자동 매핑. 반환: 처리 건수."""
     try:
         recipient = (recipient or '').strip()
         if not recipient:
             return 0
         _ensure_schema()
+        targets = _resolve_aliases(recipient)
+        placeholders = ', '.join(['?'] * len(targets))
         with _db_lock:
             conn = _connect()
             try:
                 if up_to_id:
                     cur = conn.execute(
-                        'UPDATE agent_inbox SET read_flag = 1 WHERE recipient = ? AND id <= ? AND read_flag = 0',
-                        (recipient, int(up_to_id)),
+                        f'UPDATE agent_inbox SET read_flag = 1 WHERE recipient IN ({placeholders}) AND id <= ? AND read_flag = 0',
+                        list(targets) + [int(up_to_id)],
                     )
                 else:
                     cur = conn.execute(
-                        'UPDATE agent_inbox SET read_flag = 1 WHERE recipient = ? AND read_flag = 0',
-                        (recipient,),
+                        f'UPDATE agent_inbox SET read_flag = 1 WHERE recipient IN ({placeholders}) AND read_flag = 0',
+                        list(targets),
                     )
                 conn.commit()
                 return cur.rowcount or 0
@@ -1287,32 +1316,43 @@ def format_inbox_prompt(recipient: str, limit: int = 20, mark_read: bool = True)
         return ''
 
 
-def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = None) -> tuple:
+_MSG_FLEXIBLE_RE = _re.compile(r'\[MSG\s+([^\]]+)\](.*?)\[/MSG\]', _re.DOTALL | _re.IGNORECASE)
+_ATTR_RE = _re.compile(r'([a-zA-Z0-9_-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s\]]+))')
+
+
+def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = None, return_details: bool = False) -> tuple:
     """에이전트 출력 텍스트에서 [MSG to=X task=Y priority=Z context=a,b]본문[/MSG]
-    블록을 추출해 발송하고, 구조화된 수신함 포맷으로 변환 후 발송 건수를 반환.
+    블록을 추출해 발송하고, 구조화된 수신함 포맷으로 변환 후 발송 건수(및 상세 목록)를 반환.
 
     새 포맷 예:
-      [MSG to=Developer task=implement_auth priority=high context=spec.md,issue_102]
-      spec.md를 읽고 인증 기능을 구현해줘.
+      [MSG to=raon task=implement_auth priority=high context=spec.md]
+      인증 기능을 구현 완료했습니다.
       [/MSG]
-
-    수신 에이전트의 inbox는 구조화된 헤더(to, from, task, context, priority)와
-    본문을 분리해 표시하므로 토큰을 절감하고 LLM이 파일 참조를 직접 처리한다."""
+    """
     try:
-        if not text:
-            return (text or '', 0)
+        if not text or '[MSG' not in text:
+            return (text or '', 0, []) if return_details else (text or '', 0)
         sent = 0
+        details = []
 
         def _sub(match):
             nonlocal sent
-            to = match.group(1)
-            task = match.group(2) or ''
-            priority = match.group(3) or ''
-            context = match.group(4) or ''
-            body = (match.group(5) or '').strip()
+            header_str = match.group(1)
+            body = (match.group(2) or '').strip()
 
-            # 구조화된 헤더를 본문에 선행시켜 수신 에이전트가 파싱 가능하도록 함.
-            # 수신 함 inbox rendering은 이 헤더를 추출해 깔끔하게 표시한다.
+            attrs = {}
+            for m in _ATTR_RE.finditer(header_str):
+                k = m.group(1).lower()
+                v = m.group(2) or m.group(3) or m.group(4) or ''
+                attrs[k] = v.strip()
+
+            to = attrs.get('to', '')
+            task = attrs.get('task', '')
+            priority = attrs.get('priority', '')
+            context = attrs.get('context', '')
+            cc = attrs.get('cc', '')
+
+            # 구조화된 헤더를 본문에 선행시켜 수신 에이전트가 파싱 가능하도록 함
             header_parts = [f"from: {sender}", f"to: {to}"]
             if task:
                 header_parts.append(f"task: {task}")
@@ -1329,13 +1369,26 @@ def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = 
                 structured_body += '\n---\n' + body
 
             if to and structured_body:
-                if send_agent_message(sender, to, structured_body, cc=None, run_id=run_id):
+                if send_agent_message(sender, to, structured_body, cc=cc or None, run_id=run_id):
                     sent += 1
-            return ''  # 출력에서 메시지 블록은 제거
+                    details.append({
+                        "sender": sender,
+                        "recipient": to,
+                        "task": task,
+                        "priority": priority,
+                        "context": context,
+                        "cc": cc,
+                        "body": body,
+                    })
+            return ''  # 출력에서 메시지 블록 제거
 
-        cleaned = _MSG_BLOCK_RE.sub(_sub, text).strip()
+        cleaned = _MSG_FLEXIBLE_RE.sub(_sub, text).strip()
+        if return_details:
+            return (cleaned, sent, details)
         return (cleaned, sent)
     except Exception:
+        if return_details:
+            return (text or '', 0, [])
         return (text or '', 0)
 
 

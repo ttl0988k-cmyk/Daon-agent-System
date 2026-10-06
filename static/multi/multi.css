@@ -758,6 +758,15 @@ body.daon-multi-body {
   font-weight: 500;
 }
 
+.tool-group-item .tgi-desc {
+  font-size: 11px;
+  color: var(--text-main, #e2e8f0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+
 .tool-group-item .tgi-args {
   flex: 1;
   min-width: 0;
