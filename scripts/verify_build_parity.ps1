@@ -3,8 +3,9 @@
 $ErrorActionPreference = 'Continue'
 
 $root = Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'lib\daon_paths.ps1')
+$installDir = Resolve-DaonInstalledDir
 $unpacked = Join-Path $root 'dist\win-unpacked'
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\DAON Agent System'
 $portableZip = Join-Path $root 'release\DAON-Agent-System-1.0.0-portable.zip'
 $nsisSetup = Join-Path $root 'dist\DAON Agent System Setup 1.0.0.exe'
 
