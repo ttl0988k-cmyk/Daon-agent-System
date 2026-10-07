@@ -466,7 +466,7 @@ def _sse(handler, event, data):
         return False
 
 
-def cancel_session_streams(session_id: str) -> bool:
+def cancel_session_streams(session_id: str, exclude_stream_id: str = None) -> bool:
     """Cancel all active streams for the given session.
 
     Called automatically when a new message is sent for a session that
@@ -478,8 +478,8 @@ def cancel_session_streams(session_id: str) -> bool:
     cancelled_any = False
     with ACTIVE_SESSION_STREAMS_LOCK:
         old_stream_id = ACTIVE_SESSION_STREAMS.get(session_id)
-    if old_stream_id:
-        _logger.info("Auto-cancelling previous stream %s for session %s", old_stream_id, session_id)
+    if old_stream_id and old_stream_id != exclude_stream_id:
+        _logger.info("Auto-cancelling previous stream %s for session %s (excluding %s)", old_stream_id, session_id, exclude_stream_id)
         # session_id를 명시적으로 넘긴다. 그렇지 않으면 취소 직후 새 스트림이
         # ACTIVE_SESSION_STREAMS[session_id]를 덮어써 _force_release_session_lock의
         # 역방향 조회가 실패해 세션 락이 해제되지 않고, 새 메시지가
@@ -502,8 +502,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     with _STREAM_THREADS_LOCK:
         _STREAM_THREADS[stream_id] = threading.current_thread()
 
-    # Auto-cancel any previous stream for this session before starting
-    cancel_session_streams(session_id)
+    # Auto-cancel any previous stream for this session before starting (excluding self)
+    cancel_session_streams(session_id, exclude_stream_id=stream_id)
 
     # Register this stream as the active one for this session.
     # The map is shared with api.config so background workers (builder
