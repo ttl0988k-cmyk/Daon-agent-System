@@ -45,7 +45,23 @@ BOARDROOM_SLOTS = [
     ("08", "클로드 워커", "worker", "worker-claude"),
 ]
 
-SLOT_TIMEOUT = 180
+SLOT_TIMEOUT = 420
+
+
+def _meeting_brief(task: str) -> str:
+    """Wrap the meeting topic so boardroom slots answer as a DEBATE, not an
+    execution run. Each slot is a full agent with tools; left unconstrained it
+    spends minutes browsing/measuring and blows past SLOT_TIMEOUT, and the slow
+    replies then get dropped by the SSE connection (WinError 10053). The
+    boardroom is the discussion stage — actual build work happens afterwards in
+    the multi-view workshop the meeting session is handed off to."""
+    return (
+        "[회의실 브리핑] 지금은 8개 슬롯이 안건에 대해 '의견'을 내는 회의 단계입니다.\n"
+        "실제 파일 생성·코드 작성·빌드 같은 실행은 회의가 끝난 뒤 열리는 '작업장'에서 합니다.\n"
+        "따라서 브라우저/터미널/파일 도구 사용은 꼭 필요한 경우로 최소화하고, 아래 안건에 대해\n"
+        "네 전문 분야 관점의 핵심 의견·제안·리스크를 3~6문장으로 간결하게 발언하세요.\n\n"
+        f"안건: {task}"
+    )
 
 
 def _resolve_slot_model(models: dict, slot, key) -> str:
@@ -75,7 +91,7 @@ def _run_agent_slot(emit, slot, label, agent_key, task, model=None, sink=None):
         # regular conversation threads (esp. raon, whose most-recent session is
         # the live chat session the user is typing in).
         res = execute_agent_task(
-            agent_key, task, timeout=SLOT_TIMEOUT, force_new_session=True, model=(model or None)
+            agent_key, _meeting_brief(task), timeout=SLOT_TIMEOUT, force_new_session=True, model=(model or None)
         )
         ok = bool(res.get("ok"))
         text = (res.get("output") if ok else (res.get("error") or "작업 미완료")) or ""
@@ -111,7 +127,7 @@ def _run_worker_slot(emit, slot, label, worker_key, task, model=None, sink=None)
     try:
         from api.managers.herdr_manager import herdr_manager
         res = herdr_manager.execute_worker_task(
-            name=worker_key, prompt=task, timeout=SLOT_TIMEOUT, model=(model or None)
+            name=worker_key, prompt=_meeting_brief(task), timeout=SLOT_TIMEOUT, model=(model or None)
         )
         ok = bool(res.get("ok"))
         text = (res.get("result") if ok else (res.get("error") or res.get("status") or "워커 미완료")) or ""
