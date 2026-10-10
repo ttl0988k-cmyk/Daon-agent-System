@@ -57,12 +57,18 @@ def _resolve_slot_model(models: dict, slot, key) -> str:
     return str(val).strip()
 
 
-def _run_agent_slot(emit, slot, label, agent_key, task, model=None):
-    """Run one static-agent slot and emit its reply."""
+def _run_agent_slot(emit, slot, label, agent_key, task, model=None, sink=None):
+    """Run one static-agent slot and emit its reply.
+
+    sink: optional shared dict — when provided, records this slot's session id
+    so the orchestrator can hand the whole meeting over to the multi-view
+    "workshop" (토론 세션 → 작업장 승계). See skill daon-boardroom-vs-multi.
+    """
     t0 = time.time()
     emit("boardroom_slot", {"slot": slot, "speaker": label, "kind": "agent", "status": "running", "model": model or ""})
     ok = False
     text = ""
+    session_id = ""
     try:
         from api.collaborator import execute_agent_task
         # force_new_session=True keeps these meeting turns out of the agent's
@@ -73,6 +79,7 @@ def _run_agent_slot(emit, slot, label, agent_key, task, model=None):
         )
         ok = bool(res.get("ok"))
         text = (res.get("output") if ok else (res.get("error") or "작업 미완료")) or ""
+        session_id = res.get("session_id") or ""
     except Exception as e:  # noqa: BLE001
         logger.exception("boardroom agent slot failed: %s", agent_key)
         ok, text = False, f"{type(e).__name__}: {e}"
@@ -80,11 +87,23 @@ def _run_agent_slot(emit, slot, label, agent_key, task, model=None):
         "slot": slot, "speaker": label, "kind": "agent",
         "status": "done" if ok else "error",
         "text": text, "model": model or "", "elapsed": round(time.time() - t0, 1),
+        "session_id": session_id,
     })
+    if sink is not None:
+        sink[slot] = {
+            "slot": slot, "speaker": label, "kind": "agent", "key": agent_key,
+            "profile": agent_key, "session_id": session_id, "model": model or "",
+            "ok": ok,
+        }
 
 
-def _run_worker_slot(emit, slot, label, worker_key, task, model=None):
-    """Run one CLI-worker slot and emit its reply."""
+def _run_worker_slot(emit, slot, label, worker_key, task, model=None, sink=None):
+    """Run one CLI-worker slot and emit its reply.
+
+    sink: optional shared dict — records the worker so the workshop hand-off can
+    open a worker pane (workers have no chat session id; the multi-view opens
+    them by worker name). See skill daon-boardroom-vs-multi.
+    """
     t0 = time.time()
     emit("boardroom_slot", {"slot": slot, "speaker": label, "kind": "worker", "status": "running", "model": model or ""})
     ok = False
@@ -103,7 +122,14 @@ def _run_worker_slot(emit, slot, label, worker_key, task, model=None):
         "slot": slot, "speaker": label, "kind": "worker",
         "status": "done" if ok else "error",
         "text": text, "model": model or "", "elapsed": round(time.time() - t0, 1),
+        "session_id": "",
     })
+    if sink is not None:
+        sink[slot] = {
+            "slot": slot, "speaker": label, "kind": "worker", "key": worker_key,
+            "profile": worker_key, "session_id": "", "model": model or "",
+            "ok": ok,
+        }
 
 
 def handle_post_boardroom_broadcast(handler, body: dict) -> bool:
@@ -138,18 +164,19 @@ def handle_post_boardroom_broadcast(handler, body: dict) -> bool:
 
     def orchestrate() -> None:
         workers = []
+        sink: dict = {}  # slot -> {profile, session_id, kind, ...} for workshop hand-off
         for slot, label, kind, key in BOARDROOM_SLOTS:
             slot_model = _resolve_slot_model(models, slot, key)
             fn = _run_agent_slot if kind == "agent" else _run_worker_slot
             th = threading.Thread(
-                target=fn, args=(emit, slot, label, key, task, slot_model),
+                target=fn, args=(emit, slot, label, key, task, slot_model, sink),
                 daemon=True, name=f"Boardroom-{slot}",
             )
             th.start()
             workers.append(th)
         for th in workers:
             th.join()
-        emit("boardroom_done", {"ok": True, "task": task})
+        emit("boardroom_done", {"ok": True, "task": task, "sessions": sink})
 
     threading.Thread(target=orchestrate, daemon=True, name="BoardroomBroadcast").start()
 

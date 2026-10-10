@@ -2680,9 +2680,10 @@ function initBoardroomShortcuts() {
             const suffix = (typeof d.elapsed === 'number') ? `\n\n— ${d.elapsed}s` : '';
             appendBoardroomTranscript(tag, (d.text || '(응답 없음)') + suffix, cls);
           },
-          onBoardroomDone() {
+          onBoardroomDone(d) {
             appendBoardroomTranscript('01 의장', '8개 슬롯 전원 응답 완료. 회의 라운드를 정상 종료합니다.', 'bg-emerald-100 text-emerald-800');
             setBoardroomBusy(false);
+            try { showBoardroomToWorkshop(d); } catch (e) { console.error('boardroom→workshop hand-off err:', e); }
           },
           onError() {
             appendBoardroomTranscript('오류', '회의 스트림이 종료되었습니다.', 'bg-rose-100 text-rose-800');
@@ -2772,6 +2773,77 @@ function appendBoardroomTranscript(speaker, text, badgeClass = 'bg-surface-conta
   container.appendChild(row);
   container.scrollTop = container.scrollHeight;
   return row;
+}
+
+// ── 회의실 → 작업장 승계 (토론 세션을 그대로 멀티뷰 작업장으로) ──────────────
+// 회의실에서 각 슬롯이 실제로 돈 세션(session_id)을 모아, 예전 멀티뷰(/multi
+// = 라온 지휘형 오케스트레이터)의 pane 복원용 localStorage에 심고 새 탭으로 연다.
+// 이러면 각 에이전트가 '아까 회의에서 한 발언' 맥락을 그대로 안고 작업을 이어간다.
+// 상세 = 스킬 daon-boardroom-vs-multi
+const BOARDROOM_PROFILE_MAP = {
+  raon: 'raon',
+  bill: '빌(개발)',
+  sherlock: '셜록(검수)',
+  tony: '토니(기획)',
+  prada: '프라다(디자인)',
+  daon: '다온(응대)',
+  'worker-codex': '코덱스 (Codex)',
+  'worker-claude': '클로드 (Claude)',
+};
+const BOARDROOM_MAX_PANES = 6; // 멀티뷰 MAX_PANES와 동일
+
+function showBoardroomToWorkshop(data) {
+  const sessions = (data && data.sessions) || {};
+  const keys = Object.keys(sessions).sort();
+  if (keys.length === 0) return;
+
+  // 스크린샷 6개 상한(멀티뷰 MAX_PANES), 라온을 첫 pane으로
+  const panes = [];
+  for (const slot of keys) {
+    const s = sessions[slot] || {};
+    const profileName = BOARDROOM_PROFILE_MAP[s.key] || s.profile || null;
+    if (!profileName) continue;
+    const isWorker = s.kind === 'worker';
+    panes.push({
+      profile: profileName,
+      sessionId: isWorker ? null : (s.session_id || null),
+      model: s.model || null,
+    });
+  }
+  if (panes.length === 0) return;
+  panes.sort((a, b) => (a.profile === 'raon' ? -1 : b.profile === 'raon' ? 1 : 0));
+  const limited = panes.slice(0, BOARDROOM_MAX_PANES);
+
+  const container = document.getElementById('boardroom-transcript-container');
+  if (!container) return;
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'flex flex-wrap items-center gap-3 pt-3 mt-1 border-t border-black/10';
+  btnRow.innerHTML = `
+    <button type="button" class="boardroom-to-workshop-btn px-3 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md text-[12px] font-medium hover:bg-black/80 transition-colors flex items-center gap-1.5 cursor-pointer">
+      <span class="material-symbols-outlined text-[15px]">construction</span>
+      <span>이 회의 세션 그대로 작업장 열기 (${limited.length} panes)</span>
+    </button>
+    <span class="font-code text-[11px] text-on-surface-variant">토론 맥락을 안고 멀티뷰 작업장으로 승계 → 라온 지휘로 작업 시작</span>
+  `;
+  container.appendChild(btnRow);
+  container.scrollTop = container.scrollHeight;
+
+  const btn = btnRow.querySelector('.boardroom-to-workshop-btn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      try {
+        localStorage.setItem('daon_multi_panes', JSON.stringify(
+          limited.map(p => ({ profile: p.profile, sessionId: p.sessionId, model: p.model }))
+        ));
+        const first = limited.find(p => p.sessionId) || limited[0];
+        if (first && first.sessionId) localStorage.setItem('daon_active_session_id', first.sessionId);
+      } catch (e) {
+        console.warn('boardroom→workshop localStorage write failed:', e);
+      }
+      window.open('/multi', '_blank');
+    });
+  }
 }
 
 // ── MCP Store & Skills Integration ────────────────────────────────────────────
