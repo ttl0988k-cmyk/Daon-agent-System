@@ -96,6 +96,14 @@
       {
         "from": "daon_runtime/laya_service.py",
         "to": "daon_runtime/laya_service.py"
+      },
+      {
+        "from": "plugins",
+        "to": "plugins"
+      },
+      {
+        "from": "daon_runtime",
+        "to": "daon_runtime"
       }
     ]
   },

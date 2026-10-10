@@ -87,7 +87,7 @@ function createSelfUpdate(deps = {}) {
             let stderrTail = '';
             let child;
             try {
-                child = spawnFn('python', ['-m', 'PyInstaller', 'daon-server.spec', '--noconfirm'], {
+                child = spawnFn('python', ['-m', 'PyInstaller', 'daon-server.spec', '--noconfirm', '--clean'], {
                     cwd: buildRoot,
                     windowsHide: true,
                     env: { ...process.env },
@@ -257,12 +257,17 @@ function createSelfUpdate(deps = {}) {
     // 존재하므로, dev/packaged 양쪽에서 동일하게 동작한다.
     const RESOURCE_REFRESH_PAIRS = [
         ['dist_new/api/api', 'api'],
+        ['dist_new/api/api', 'api/api'],
         ['dist_new/static', 'static'],
         ['dist_new/hermes-agent', 'hermes-agent'],
         ['dist_new/index.html', 'index.html'],
         ['dist_new/config.yaml', 'config.yaml'],
         ['dist_new/skills', 'skills'],
+        ['dist_new/plugins', 'plugins'],
+        ['dist_new/daon_runtime', 'daon_runtime'],
+        ['dist_new/server.py', 'server.py'],
         ['api/agents', 'agents'],
+        ['api/agents', 'api/agents'],
     ];
 
     async function refreshLooseResources(targetExe, buildRoot) {

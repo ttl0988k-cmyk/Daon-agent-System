@@ -39,26 +39,38 @@ except Exception as e:
 DIR_PAIRS = [
     ('static', 'dist_new/static'),
     ('api/api', 'dist_new/api/api'),
+    ('api/agents', 'dist_new/agents'),
+    ('api/agents', 'dist_new/api/agents'),
     ('hermes-agent', 'dist_new/hermes-agent'),
     ('skills', 'dist_new/skills'),
+    ('plugins', 'dist_new/plugins'),
+    ('daon_runtime', 'dist_new/daon_runtime'),
 ]
 
 # 2) 개별 파일 쌍
 FILE_PAIRS = [
     ('config.yaml', 'dist_new/config.yaml'),
     ('index.html', 'dist_new/index.html'),
+    ('server.py', 'dist_new/server.py'),
+    ('tts_server.py', 'dist_new/tts_server.py'),
     ('daon_runtime/laya_service.py', 'dist_new/daon_runtime/laya_service.py'),
 ]
 
 ok, fail = [], []
 
+IGNORE_PATTERNS = shutil.ignore_patterns('__pycache__', '*.pyc', '_MEI*', '.pytest_cache', '.git')
+
 for src, dst in DIR_PAIRS:
     s, d = _p(src), _p(dst)
     try:
         if not os.path.isdir(s):
+            # plugins 등 선택적 디렉터리는 존재하지 않으면 스킵 가능하도록 처리
+            if src in ('plugins', 'daon_runtime', 'api/agents'):
+                print('[SKIP]', dst, '(source not found)')
+                continue
             raise FileNotFoundError('source missing: ' + s)
         os.makedirs(d, exist_ok=True)
-        shutil.copytree(s, d, dirs_exist_ok=True)
+        shutil.copytree(s, d, dirs_exist_ok=True, ignore=IGNORE_PATTERNS)
         ok.append(dst)
         print('[OK ]', dst)
     except Exception as e:

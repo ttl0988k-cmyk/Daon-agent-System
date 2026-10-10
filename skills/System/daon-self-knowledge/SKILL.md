@@ -16,23 +16,25 @@ DAON Agent System이 자기 자신을 작업 대상으로 다룰 때 필요한 �
 
 ## 2. 빌드 파이프라인 (에이전트 빌드 금지 — 감독관 담당)
 
-> **정책 (2026-09-12 시공): 에이전트는 DAON 자체를 빌드하지 않는다.**
+> **정책 (2026-09-12 시공, 2026-10 갱신): 에이전트는 DAON 자체를 빌드하지 않는다.**
 > `terminal` 도구에서 `PyInstaller` / `electron-builder` / `npm run build` 계열
 > 명령은 코드 가드(`hermes-agent/tools/terminal_tool.py`의 `_self_build_guard`)로
-> 차단된다. 백엔드 수정 반영은 `request_server_update(rebuild=true)` 도구 호출로만
-> 요청한다. 빌드를 직접 돌리면 설치본/포터블에 반영되지 않는 산출물이 생기고
-> (2026-09-12 사고 — 에이전트가 `npx electron-builder`를 실행), 미완성 리포가 남는다.
+> 차단된다. 백엔드 수정 반영은 `request_server_update` 도구 호출로만 요청한다.
+> (일반 Python 코드/설정 변경은 `rebuild=false`로 즉시 반영 — 느슨한 리소스 우선 로드.
+>  PyInstaller 번들/spec 자체 변경 시에만 `rebuild=true` 요청)
 
 ### 2-A. 감독관 자동 경로 (에이전트가 쓰는 유일한 경로)
 
 1. **git push 먼저** (정책: 빌드 전 push. push 없이 빌드하지 않음)
-2. **`request_server_update(reason=..., rebuild=true)` 도구 호출** — 요청만 기록
+2. **`request_server_update(reason=..., rebuild=false|true)` 도구 호출** — 요청만 기록
+   - 단순 Python 소스(api/, hermes-agent/, skills/ 등) 변경: `rebuild=false` (초고속 리소스 반영)
+   - spec/바이너리/C-익스텐션 변경: `rebuild=true` (PyInstaller 번들 재생성)
    - 기록: `restart-request.json` (감시자/피감시자 분리 — 서버는 스스로 재시작하지 않음)
 3. **Electron 감독관이 수행** (`electron/restart_orchestrator.js` → `electron/self_update.js`):
-   - `killServer` → `python _sync_build.py` → `python -m PyInstaller daon-server.spec --noconfirm`
-   - canary 검증 → swap → deep health check → 실패 시 백업/rollback
-   - `_sync_build.py` 동작: DIR_PAIRS(`static`, `api/api`, `data`, `hermes-agent`, `skills`),
-     FILE_PAIRS(`config.yaml`, `index.html`, `.env`)를 `dist_new/`로 미러.
+   - `killServer` → (`rebuild=true` 시 `_sync_build.py` → `PyInstaller daon-server.spec --clean` → canary 검증 → swap)
+   - 느슨한 리소스 동기화(api, static, hermes-agent, skills, plugins, daon_runtime) → 서버 재스폰 → deep health check → 실패 시 백업/rollback
+   - `_sync_build.py` 동작: DIR_PAIRS(`static`, `api/api`, `api/agents`, `hermes-agent`, `skills`, `plugins`, `daon_runtime`),
+     FILE_PAIRS(`config.yaml`, `index.html`, `server.py`, `tts_server.py`, `daon_runtime/laya_service.py`)를 `dist_new/`로 미러.
      '삭제된' 추적 파일만 복원하고 **수정된 파일은 절대 건드리지 않는다**
      (무조건 git restore로 미커밋 패치가 유실된 사고 이력 있음)
    - spec은 번들 안에서 `api/api/*.py`를 `api/*.py`로 평탄화한다
@@ -93,9 +95,9 @@ start "" "%~dp0DAON Agent System.exe"
 6. Python 로그/와이어 형식에 비ASCII 문장부호·이모지 금지 (cp949 콘솔).
    이모지는 프론트엔드 렌더링/registry 메타데이터에서만 사용
 7. `_tmp_*` 파일은 미추적 유지 (git add 금지)
-8. **에이전트는 DAON 자체 빌드 금지** — 빌드는 감독관 전용 경로
-   (`request_server_update(rebuild=true)`)로만 요청한다. `PyInstaller` /
-   `electron-builder` / `npm run build`는 `terminal` 코드 가드로 차단된다.
+8. **에이전트는 DAON 자체 빌드 금지** — 반영은 감독관 전용 경로
+   (`request_server_update` — 일반 소스는 rebuild=false, 번들 변경 시에만 rebuild=true)로만 요청한다.
+   `PyInstaller` / `electron-builder` / `npm run build`는 `terminal` 코드 가드로 차단된다.
    electron-builder와 포터블 zip은 릴리스 담당자 수동 전용이다 (2-B절)
 
 ## 6. 자기 수정 불변식 (갭 E)

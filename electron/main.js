@@ -244,9 +244,18 @@ app.whenReady().then(async () => {
             // 'grace health aborted — server process already exited' 로 중단됐다.
             // 스폰 직후 유예 구간에서는 낙관 판정해 onefile _MEI 추출(수십 초)을 기다린다.
             const p = supervisor.pythonProcess;
+            const sinceSpawn = Date.now() - (supervisor._lastSpawnAt || 0);
+            // [자가수정 부트로더 조기 종료 방어] 스폰 후 초기 45초 동안은
+            // PyInstaller onefile 부트로더의 조기 반환이나 _MEI 압축해제 중일 수 있으므로
+            // 성급하게 죽었다고 단정하지 않는다.
+            if (sinceSpawn < 45000) {
+              return true;
+            }
             if (!p) {
-              const sinceSpawn = Date.now() - (supervisor._lastSpawnAt || 0);
               return sinceSpawn < (supervisor.POST_SWAP_HEALTH_GRACE_MS || 120000);
+            }
+            if (supervisor._childPid && supervisor.isProcessAlive(supervisor._childPid)) {
+              return true;
             }
             if (p._adopted && p.pid) {
               return supervisor.isProcessAlive(p.pid);
