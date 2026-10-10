@@ -464,6 +464,13 @@ class ModelManager:
         2) (Provider metadata is already stored as 'type' at fetch time.)
         3) Fall back to name-based detection.
         """
+        # Guard: model_id must be str. A dict (e.g. {'default': ...}) reaching
+        # .strip() raises AttributeError and crashes the agent stream.
+        if not isinstance(model_id, str):
+            if isinstance(model_id, dict):
+                model_id = model_id.get('default') or model_id.get('id') or model_id.get('model') or ''
+            else:
+                model_id = str(model_id or '')
         model_id = (model_id or '').strip()
         if not model_id:
             return 'chat'
@@ -494,6 +501,13 @@ class ModelManager:
         2) Check preset provider models for 'reasoning_effort'.
         3) Fallback to None (let session/global default take over).
         """
+        # Guard: model_id must be str. A dict (e.g. {'default': ...}) reaching
+        # .strip() raises AttributeError and crashes the agent stream.
+        if not isinstance(model_id, str):
+            if isinstance(model_id, dict):
+                model_id = model_id.get('default') or model_id.get('id') or model_id.get('model') or ''
+            else:
+                model_id = str(model_id or '')
         model_id = (model_id or '').strip()
         if not model_id:
             return None
@@ -628,6 +642,13 @@ class ModelManager:
 
     def resolve_model_provider(self, model_id: str) -> Tuple[str, str, Optional[str]]:
         """Resolve bare model name → (model_id, provider, base_url)."""
+        # Guard: model_id must be str. A dict (e.g. {'default': ...}) reaching
+        # .strip() raises AttributeError and crashes the agent stream.
+        if not isinstance(model_id, str):
+            if isinstance(model_id, dict):
+                model_id = model_id.get('default') or model_id.get('id') or model_id.get('model') or ''
+            else:
+                model_id = str(model_id or '')
         model_id = (model_id or '').strip()
         if not model_id:
             return model_id, 'custom', None

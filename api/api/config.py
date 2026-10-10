@@ -376,7 +376,23 @@ def _resolve_default_model_fallback() -> str:
     return ""
 
 
-DEFAULT_MODEL = _load_config_value('model.default', None, None) or _resolve_default_model_fallback()
+def _dm_norm(v):
+    """Normalize a model value into a plain string. settings.json / config.yaml
+    can carry default_model as a dict like {'provider':..., 'default':...}; if such
+    a dict reaches Session.model -> resolve_model_provider().strip() it raises
+    AttributeError and crashes the whole agent stream."""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        v = v.get('default') or v.get('id') or v.get('model') or ''
+    elif v is None:
+        return ''
+    else:
+        v = str(v)
+    return v.strip()
+
+_DM_RAW = _load_config_value('model.default', None, None) or _resolve_default_model_fallback()
+DEFAULT_MODEL = _dm_norm(_DM_RAW) or 'deepseek-v4.1-flash'
 
 
 # =============================================================================
@@ -628,7 +644,7 @@ def save_settings(settings: dict) -> dict:
     
     global DEFAULT_MODEL, DEFAULT_WORKSPACE
     if 'default_model' in current:
-        DEFAULT_MODEL = current['default_model']
+        DEFAULT_MODEL = _dm_norm(current['default_model']) or DEFAULT_MODEL
     if 'default_workspace' in current:
         DEFAULT_WORKSPACE = Path(current['default_workspace']).expanduser().resolve()
     return current
@@ -637,7 +653,7 @@ def save_settings(settings: dict) -> dict:
 _startup_settings = load_settings()
 if SETTINGS_FILE.exists():
     if _startup_settings.get('default_model'):
-        DEFAULT_MODEL = _startup_settings['default_model']
+        DEFAULT_MODEL = _dm_norm(_startup_settings['default_model']) or DEFAULT_MODEL
     if _startup_settings.get('default_workspace'):
         DEFAULT_WORKSPACE = Path(_startup_settings['default_workspace']).expanduser().resolve()
 
