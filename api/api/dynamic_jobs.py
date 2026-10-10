@@ -397,6 +397,23 @@ def set_job_error(run_id: str, error: str):
         _job_store.save_job(run_id, job_copy)
 
 
+def _derive_phase(job: dict) -> int:
+    """잡 상태로부터 4단계 파이프라인 phase를 도출한다 (프론트 스텝 UI 매핑용).
+
+    1=요구사항 파싱/의도 확인, 2=계획 수립, 3=에이전트 실행, 4=검증/완료.
+    """
+    st = job.get('status')
+    if st == 'clarifying':
+        return 1
+    if st in ('done', 'error', 'cancelled', 'recovering'):
+        return 4
+    if st == 'awaiting_approval':
+        return 3
+    if st == 'running':
+        return 3 if job.get('plan') else 2
+    return 1
+
+
 def get_job_status_response(run_id: str) -> dict | None:
     """Build the standard poll response for /api/dynamic/status."""
     job = get_job(run_id)
@@ -415,6 +432,21 @@ def get_job_status_response(run_id: str) -> dict | None:
         resp['error'] = job['error']
     elif job['status'] == 'recovering':
         resp['recovery_reason'] = job.get('recovery_reason', '')
+
+    # ── 실연동 계약: clarification / approval / phase ──
+    # 프론트 하네스 탭이 clarifying 질문 카드와 승인 UI를 렌더할 수 있도록
+    # job 내부 필드를 status 응답에 노출한다. (기존엔 status/elapsed만 반환돼
+    # 프론트가 clarifying 상태에서 질문을 볼 방법이 없었다.)
+    _clar = job.get('clarification') or {}
+    if job['status'] == 'clarifying' and _clar:
+        resp['questions'] = list(_clar.get('questions') or [])
+        resp['turn'] = _clar.get('turn', 1)
+        resp['clarification'] = {'questions': resp['questions'], 'turn': resp['turn']}
+    if job['status'] == 'awaiting_approval':
+        resp['approval_message'] = job.get('approval_message', '')
+        resp['available_actions'] = job.get('available_actions', ['approve', 'reject'])
+    resp['has_plan'] = bool(job.get('plan'))
+    resp['phase'] = _derive_phase(job)
     return resp
 
 

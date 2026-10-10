@@ -349,6 +349,34 @@ export const DaonAPI = {
     return res.ok;
   },
 
+  /** 의도 확인(clarifying) 질문에 대한 답변을 제출한다. */
+  async submitDynamicAnswer(runId, answers) {
+    const res = await fetch(`${this.baseUrl}/api/dynamic/answer/${encodeURIComponent(runId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `Answer submit failed: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  /** 승인 대기(awaiting_approval) 상태의 작업을 승인/거부한다. */
+  async approveDynamicRun(runId, action = 'approve') {
+    const res = await fetch(`${this.baseUrl}/api/dynamic/approve/${encodeURIComponent(runId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `Approval failed: ${res.status}`);
+    }
+    return await res.json();
+  },
+
   /**
    * MCP Servers & Presets
    */

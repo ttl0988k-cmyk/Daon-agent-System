@@ -4,7 +4,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
  */
 
-import { DaonAPI } from './api.js?v=20261010_compress';
+import { DaonAPI } from './api.js?v=20261010_harnesslive';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -2357,8 +2357,13 @@ function initHarnessControls() {
   if (startBtn) {
     startBtn.addEventListener('click', async () => {
       const task = taskInput?.value.trim() || 'Dynamic Harness AST 전역 감사 및 컴파일 테스트';
-      appendTelemetryLog(`[Harness] Launching new execution pipeline for task: "${task}"`);
-      updateHarnessSteps(1); // Step 1: In Progress
+      // 목업 텔레메트리/스텝 초기화 + 이전 폴링 중단
+      if (state.harnessPollInterval) { clearInterval(state.harnessPollInterval); state.harnessPollInterval = null; }
+      if (terminal) terminal.innerHTML = '';
+      hideHarnessInteractionPanel();
+      appendTelemetryLog(`[Harness] 새 파이프라인 시작 — 작업: "${task}"`);
+      updateHarnessSteps(1); // Step 1: 요구사항 파싱/의도 확인
+      setHarnessLoopStatus('시작 중', 'amber');
 
       try {
         const res = await DaonAPI.runDynamicHarness({ task });
@@ -2369,6 +2374,7 @@ function initHarnessControls() {
         }
       } catch (err) {
         appendTelemetryLog(`[Error] Failed to start harness: ${err.message}`);
+        setHarnessLoopStatus('시작 실패', 'rose');
       }
     });
   }
@@ -2392,6 +2398,13 @@ function initHarnessControls() {
       });
     }
   });
+
+  // ── 목업 초기화: 실데이터만 표시 (하드코딩 로그·스텝 제거) ──
+  if (terminal && !state.currentHarnessRunId) {
+    terminal.innerHTML = '<div class="text-on-surface-variant">[Harness] 대기 중 — 작업을 입력하고 "새 하네스 작업 시작"을 누르세요.</div>';
+    updateHarnessSteps(0);
+    setHarnessLoopStatus('대기 중', 'gray');
+  }
 }
 
 function startHarnessPolling(runId) {
@@ -2410,23 +2423,157 @@ function startHarnessPolling(runId) {
         cursor = data.next_cursor || (cursor + data.logs.length);
       }
 
-      // Step progress mapping
-      if (data.step) {
-        updateHarnessSteps(data.step);
+      // ── 상태별 UI 처리 (실연동) ──
+      if (data.status === 'clarifying') {
+        updateHarnessSteps(1);
+        setHarnessLoopStatus('의도 확인 대기', 'amber');
+        if (Array.isArray(data.questions) && data.questions.length) {
+          renderHarnessClarification(runId, data.questions, data.turn || 1);
+        }
+      } else if (data.status === 'awaiting_approval') {
+        updateHarnessSteps(3);
+        setHarnessLoopStatus('승인 대기', 'amber');
+        renderHarnessApproval(runId, data.approval_message || '작업 승인이 필요합니다.',
+                              data.available_actions || ['approve', 'reject']);
+      } else if (data.status === 'recovering') {
+        updateHarnessSteps(4);
+        setHarnessLoopStatus('자가치유 복구 중', 'amber');
       } else if (data.status === 'running') {
-        updateHarnessSteps(2);
+        hideHarnessInteractionPanel();
+        updateHarnessSteps(data.phase || 2);
+        setHarnessLoopStatus(`실행 중 · Phase ${data.phase || 2}`, 'emerald');
       }
 
-      if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+      if (data.status === 'done' || data.status === 'completed' || data.status === 'error'
+          || data.status === 'failed' || data.status === 'cancelled') {
         clearInterval(state.harnessPollInterval);
         state.harnessPollInterval = null;
-        appendTelemetryLog(`[Harness] Execution loop ended with status: ${data.status.toUpperCase()}`);
+        hideHarnessInteractionPanel();
+        const ok = (data.status === 'done' || data.status === 'completed');
+        appendTelemetryLog(`[Harness] 실행 종료 — 상태: ${String(data.status).toUpperCase()}`
+                           + (data.error ? ` / ${data.error}` : ''));
+        if (data.result) appendTelemetryLog(`[Harness] 결과: ${String(data.result).slice(0, 500)}`);
         updateHarnessSteps(4, true);
+        setHarnessLoopStatus(ok ? '완료' : `종료(${data.status})`, ok ? 'emerald' : 'rose');
       }
     } catch (e) {
       // Continue polling
     }
   }, 1500);
+}
+
+// ── 하네스 상호작용 패널 (의도 확인 질문 / 승인) ───────────────────────────────
+function ensureHarnessInteractionPanel() {
+  let panel = document.getElementById('harness-interaction-panel');
+  if (panel) return panel;
+  const host = document.querySelector('#tab-dynamic-harness .max-w-\\[1440px\\]')
+            || document.querySelector('#tab-dynamic-harness > div');
+  if (!host) return null;
+  panel = document.createElement('div');
+  panel.id = 'harness-interaction-panel';
+  panel.className = 'hidden bg-surface border border-black/20 rounded-[12px] p-space-md flex-col gap-3';
+  host.insertBefore(panel, host.firstChild);
+  return panel;
+}
+
+function hideHarnessInteractionPanel() {
+  const panel = document.getElementById('harness-interaction-panel');
+  if (panel) { panel.classList.add('hidden'); panel.classList.remove('flex'); }
+}
+
+function renderHarnessClarification(runId, questions, turn) {
+  const panel = ensureHarnessInteractionPanel();
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  panel.classList.add('flex');
+  panel.innerHTML = `
+    <div class="flex items-center gap-2 text-on-surface font-label-md font-semibold">
+      <span class="material-symbols-outlined text-[18px] text-primary">help</span>
+      <span>CEO 의도 확인 (턴 ${turn}) · ${questions.length}개 질문</span>
+    </div>
+    <div class="flex flex-col gap-2" id="harness-q-list"></div>
+    <div class="flex items-center justify-end gap-2">
+      <button id="harness-skip-btn" type="button" class="px-3 py-1.5 border border-black/10 rounded-[8px] font-label-md text-on-surface hover:bg-black/[0.04] transition-colors">건너뛰고 진행</button>
+      <button id="harness-answer-btn" type="button" class="px-4 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md font-medium hover:bg-black/80 transition-colors">답변 제출</button>
+    </div>`;
+  const qList = panel.querySelector('#harness-q-list');
+  questions.forEach((q, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'flex flex-col gap-1';
+    const lab = document.createElement('label');
+    lab.className = 'font-body-sm text-[13px] text-on-surface';
+    lab.textContent = `Q${i + 1}. ${q}`;
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'harness-answer-input bg-surface-container-lowest border border-black/10 rounded-[8px] px-3 py-1.5 font-body-sm text-on-surface outline-none focus:border-black transition-colors';
+    inp.placeholder = '답변을 입력하세요...';
+    wrap.appendChild(lab);
+    wrap.appendChild(inp);
+    qList.appendChild(wrap);
+  });
+  const answerBtn = panel.querySelector('#harness-answer-btn');
+  if (answerBtn) answerBtn.onclick = async () => {
+    const answers = [...panel.querySelectorAll('.harness-answer-input')].map(i => i.value.trim() || '(무응답)');
+    try {
+      await DaonAPI.submitDynamicAnswer(runId, answers);
+      appendTelemetryLog(`[Harness] 답변 제출 완료 (${answers.length}개)`);
+      hideHarnessInteractionPanel();
+    } catch (e) { appendTelemetryLog(`[Error] 답변 제출 실패: ${e.message}`); }
+  };
+  const skipBtn = panel.querySelector('#harness-skip-btn');
+  if (skipBtn) skipBtn.onclick = async () => {
+    try {
+      await DaonAPI.submitDynamicAnswer(runId, questions.map(() => ''));
+      appendTelemetryLog('[Harness] 의도 확인을 건너뛰고 진행합니다');
+      hideHarnessInteractionPanel();
+    } catch (e) { appendTelemetryLog(`[Error] ${e.message}`); }
+  };
+  const first = panel.querySelector('.harness-answer-input');
+  if (first) first.focus();
+}
+
+function renderHarnessApproval(runId, message, actions) {
+  const panel = ensureHarnessInteractionPanel();
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  panel.classList.add('flex');
+  panel.innerHTML = `
+    <div class="flex items-center gap-2 text-on-surface font-label-md font-semibold">
+      <span class="material-symbols-outlined text-[18px] text-primary">verified_user</span>
+      <span>작업 승인 필요</span>
+    </div>
+    <p class="font-body-sm text-[13px] text-on-surface-variant leading-relaxed">${escapeHtml(message)}</p>
+    <div class="flex items-center justify-end gap-2">
+      <button id="harness-reject-btn" type="button" class="px-3 py-1.5 border border-black/10 rounded-[8px] font-label-md text-on-surface hover:bg-black/[0.04] transition-colors">거부</button>
+      <button id="harness-approve-btn" type="button" class="px-4 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md font-medium hover:bg-black/80 transition-colors">승인</button>
+    </div>`;
+  const approveBtn = panel.querySelector('#harness-approve-btn');
+  if (approveBtn) approveBtn.onclick = async () => {
+    try {
+      await DaonAPI.approveDynamicRun(runId, 'approve');
+      appendTelemetryLog('[Harness] 작업을 승인했습니다');
+      hideHarnessInteractionPanel();
+    } catch (e) { appendTelemetryLog(`[Error] 승인 실패: ${e.message}`); }
+  };
+  const rejectBtn = panel.querySelector('#harness-reject-btn');
+  if (rejectBtn) rejectBtn.onclick = async () => {
+    try {
+      await DaonAPI.approveDynamicRun(runId, 'reject');
+      appendTelemetryLog('[Harness] 작업을 거부했습니다');
+      hideHarnessInteractionPanel();
+    } catch (e) { appendTelemetryLog(`[Error] 거부 실패: ${e.message}`); }
+  };
+}
+
+function setHarnessLoopStatus(text, tone) {
+  const el = document.getElementById('harness-loop-status');
+  if (!el) return;
+  el.textContent = text;
+  const dot = el.parentElement ? el.parentElement.querySelector('span.rounded-full') : null;
+  const map = {
+    emerald: 'bg-emerald-600', amber: 'bg-amber-500', rose: 'bg-rose-500', gray: 'bg-on-surface-variant'
+  };
+  if (dot) dot.className = `w-2 h-2 rounded-full ${map[tone] || 'bg-emerald-600'} ${tone === 'emerald' ? 'animate-pulse' : ''}`;
 }
 
 function updateHarnessSteps(currentStep, allDone = false) {
