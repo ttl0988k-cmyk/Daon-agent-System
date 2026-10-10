@@ -141,6 +141,21 @@ def handle_get_multi(handler, parsed) -> bool:
     return bad(handler, "Multi-Agent Orchestrator HTML not found", 404)
 
 
+def handle_get_v2(handler, parsed) -> bool:
+    """GET /v2 or /v2/ — serve the V2 Stitch Workspace page."""
+    from api.config import BASE_DIR, RESOURCE_DIR
+    candidates = [
+        BASE_DIR / 'static' / 'v2' / 'index.html',
+        RESOURCE_DIR / 'static' / 'v2' / 'index.html',
+    ]
+    if hasattr(sys, '_MEIPASS'):
+        candidates.append(Path(sys._MEIPASS) / 'static' / 'v2' / 'index.html')
+    for p in candidates:
+        if p.exists():
+            return t(handler, p.read_text(encoding='utf-8'), content_type='text/html; charset=utf-8')
+    return bad(handler, "V2 Workspace HTML not found", 404)
+
+
 def handle_get_login(handler, parsed) -> bool:
     """GET /login — serve the login page."""
     return t(handler, _LOGIN_PAGE_HTML, content_type='text/html; charset=utf-8')

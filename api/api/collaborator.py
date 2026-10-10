@@ -98,6 +98,7 @@ def execute_agent_task(
     timeout: int = 180,
     parent_session_id: Optional[str] = None,
     workspace: Optional[str] = None,
+    force_new_session: bool = False,
 ) -> Dict[str, Any]:
     """Execute a task synchronously on a colleague agent and return final output.
 
@@ -107,11 +108,25 @@ def execute_agent_task(
     from api.streaming import BroadcastQueue, _run_agent_streaming, cancel_stream
 
     canonical_profile = normalize_agent_profile(agent_name)
-    target_session = find_or_create_agent_session(
-        profile_name=canonical_profile,
-        workspace=workspace,
-        parent_session_id=parent_session_id,
-    )
+    if force_new_session:
+        # Boardroom/meeting isolation: use a fresh session so these turns do
+        # not land in the agent's regular thread (esp. raon, whose most-recent
+        # session is the live chat the user is typing in).
+        from api.models import new_session as _new_session
+        from api.workspace import get_last_workspace as _get_last_ws
+        target_session = _new_session(workspace=(workspace or _get_last_ws()), profile=canonical_profile)
+        if parent_session_id:
+            try:
+                target_session.parent_session_id = parent_session_id
+                target_session.save()
+            except Exception:
+                pass
+    else:
+        target_session = find_or_create_agent_session(
+            profile_name=canonical_profile,
+            workspace=workspace,
+            parent_session_id=parent_session_id,
+        )
 
     sid = target_session.session_id
     stream_id = uuid.uuid4().hex

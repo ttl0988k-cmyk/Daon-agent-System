@@ -1845,4 +1845,54 @@ function escapeHtml(str) {
 }
 
 // 실행
+setInterval(pollServerCommands, 900);
+
+
+let _pollingBusy = false;
+async function executeSingleCommand(cmd) {
+  try {
+    const action = String(cmd.action || '').toLowerCase();
+    const target = cmd.target || '';
+    const nodeId = cmd.node_id != null ? Number(cmd.node_id) : null;
+    const nth = parseInt(cmd.nth || 1, 10) || 1;
+    const key = cmd.key || 'Enter';
+    const text = cmd.text || '';
+    if (action === 'navigate') return await handleNavigate(cmd.url || target);
+    if (action === 'new_tab') return await handleNewTab(cmd.url || target);
+    if (action === 'switch_tab') return await handleSwitchTab(cmd.tab_id || target);
+    if (action === 'close_tab') return await handleCloseTab(cmd.tab_id || target);
+    if (action === 'click') return await executeBrowserAction('ACT_CLICK', nodeId != null ? { nodeId } : { target, nth });
+    if (action === 'type') return await executeBrowserAction('ACT_TYPE', nodeId != null ? { nodeId, text } : { target, text, nth });
+    if (action === 'hover') return await executeBrowserAction('ACT_HOVER', nodeId != null ? { nodeId } : { target, nth });
+    if (action === 'press') return await executeBrowserAction('ACT_PRESS_KEY', nodeId != null ? { key, nodeId } : { key, target, nth });
+    if (action === 'scroll') return await executeBrowserAction('ACT_SCROLL', { direction: cmd.direction || 'down' });
+    if (action === 'snapshot') return await executeBrowserAction('GET_PAGE_SNAPSHOT');
+    if (action === 'screenshot') {
+      if (!chrome.tabs.captureVisibleTab) return { ok: false, error: 'no screenshot helper' };
+      const dataUrl = await new Promise((resolve, reject) => chrome.tabs.captureVisibleTab(null, { format: 'png' }, value => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError); else resolve(value);
+      }));
+      return dataUrl ? { ok: true, dataUrl } : { ok: false, error: 'screenshot failed' };
+    }
+    if (action === 'wait') { await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(cmd.ms) || 1000))); return { ok: true }; }
+    return { ok: false, error: 'unsupported action' };
+  } catch (e) { return { ok: false, error: e.message || String(e) }; }
+}
+
+async function pollServerCommands() {
+  if (_pollingBusy) return;
+  _pollingBusy = true;
+  try {
+    const response = await fetch(SERVER_BASE + '/api/browser-ext/poll');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.command) {
+      const res = await executeSingleCommand(data.command);
+      await fetch(SERVER_BASE + '/api/browser-ext/result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: data.command.id, result: res }) });
+    }
+  } catch (e) { console.warn('[DAON Agent] server command poll failed:', e); }
+  finally { _pollingBusy = false; }
+}
+
 document.addEventListener('DOMContentLoaded', init);

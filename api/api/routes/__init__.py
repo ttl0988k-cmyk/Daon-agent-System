@@ -6,6 +6,7 @@ Aggregates all GET/POST route handlers from sub-modules using O(1) dictionary di
 import logging
 from urllib.parse import parse_qs
 from api.helpers import j, bad, read_body
+from api.routes.browser_ext_routes import (handle_get_browser_ext, handle_post_browser_ext)
 from api.config import load_settings
 
 _logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ from api.routes.admin_routes import (
     _LOGIN_PAGE_HTML,
     handle_get_index,
     handle_get_multi,
+    handle_get_v2,
     handle_get_login,
     handle_get_auth_status,
     handle_get_favicon,
@@ -106,6 +108,7 @@ from api.routes.file_routes import (
     handle_post_workspace_add,
     handle_post_workspace_remove,
     handle_post_workspace_rename,
+    handle_post_workspace_set_active,
     handle_get_fs_list,
     handle_get_workspace_select,
     handle_get_file_select,
@@ -267,6 +270,9 @@ from api.routes.skills_hub_routes import (
     handle_post_skills_hub_install,
     handle_post_skills_from_github,
 )
+from api.routes.boardroom_routes import (
+    handle_post_boardroom_broadcast,
+)
 from api.routes.dynamic_routes import (
     handle_post_dynamic_run,
     handle_get_dynamic_status,
@@ -363,6 +369,9 @@ def _handle_post_plugin_subpath(handler, body, parsed) -> bool:
 # ── O(1) GET Route Registry ──
 GET_EXACT_ROUTES = {
     '/': handle_get_index,
+    '/v2': handle_get_v2,
+    '/v2/': handle_get_v2,
+    '/stitch': handle_get_v2,
     '/multi': handle_get_multi,
     '/multi.html': handle_get_multi,
     '/api/agent/inbox': handle_get_agent_inbox,
@@ -533,6 +542,7 @@ POST_EXACT_ROUTES = {
     '/api/demo/text-workflow': handle_post_demo_text_workflow,
     '/api/docs/generate': handle_post_docs_generate,
     '/api/dynamic/run': handle_post_dynamic_run,
+    '/api/boardroom/broadcast': handle_post_boardroom_broadcast,
     '/api/file/apply-diff': handle_post_file_apply_diff,
     '/api/file/apply-preview': handle_post_file_apply_preview,
     '/api/file/create': handle_post_file_create,
@@ -598,6 +608,7 @@ POST_EXACT_ROUTES = {
     '/api/sessions/cleanup_zero_message': handle_post_sessions_cleanup,
     '/api/dynamic/cancel': lambda h, b: handle_post_dynamic_cancel(h, b),
     '/api/dynamic/run': handle_post_dynamic_run,
+    '/api/boardroom/broadcast': handle_post_boardroom_broadcast,
     '/api/settings': handle_post_settings,
     '/api/setup/generate': handle_post_setup_generate,
     '/api/skills/delete': handle_post_skill_delete,
@@ -622,6 +633,7 @@ POST_EXACT_ROUTES = {
     '/api/workspaces/add': handle_post_workspace_add,
     '/api/workspaces/remove': handle_post_workspace_remove,
     '/api/workspaces/rename': handle_post_workspace_rename,
+    '/api/workspaces/set-active': handle_post_workspace_set_active,
 }
 
 POST_PREFIX_ROUTES = [
@@ -637,6 +649,9 @@ POST_PREFIX_ROUTES = [
 def handle_get(handler, parsed) -> bool:
     """Handle all GET routes via O(1) exact lookup or directory-prefix match."""
     path = parsed.path
+    if path.startswith('/api/browser-ext/'):
+        if handle_get_browser_ext(handler, parsed):
+            return True
     
     # 1. Exact match (O(1))
     func = GET_EXACT_ROUTES.get(path)
@@ -655,6 +670,12 @@ def handle_get(handler, parsed) -> bool:
 def handle_post(handler, parsed) -> bool:
     """Handle all POST routes via O(1) exact lookup or directory-prefix match."""
     path = parsed.path
+    if path.startswith('/api/browser-ext/'):
+        body = read_body(handler)
+        handler.body = body
+        if handle_post_browser_ext(handler, body):
+            return True
+        return False
     
     # 1. Raw endpoint (before reading JSON body)
     raw_func = POST_RAW_ROUTES.get(path)

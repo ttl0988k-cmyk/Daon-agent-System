@@ -1128,12 +1128,110 @@ def _extract_screenshot_path_from_text(text: str) -> Optional[str]:
     return None
 
 
+# ============================================================================
+# [DAON v2.5] Playwright + CDP Browser-Agent Adapter
+# ============================================================================
+
+def _dispatch_to_daon_browser_service(task_id: str, command: str, args: list) -> dict:
+    """
+    DAON Browser Agent Service (포트 8088, Playwright + CDP)로 브라우저 명령을 다이렉트 중계.
+    - agent-browser CLI 누락 및 Electron 브리지 미준비 에러 원천 차단
+    - 실시간 화면 송출(Screencast) 및 사용자 개입(Takeover) 지원
+    """
+    try:
+        from browser_service.manager import call_browser_api, close_browser_session
+    except ImportError:
+        import sys
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent.parent
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from browser_service.manager import call_browser_api, close_browser_session
+
+    args = args or []
+    cmd = (command or "").strip().lower()
+
+    if cmd == "open":
+        url = args[0] if args else "https://google.com"
+        res = call_browser_api("navigate", {"url": url})
+        if res.get("ok"):
+            return {
+                "success": True,
+                "data": {
+                    "title": res.get("title", ""),
+                    "url": res.get("url", url),
+                    "snapshot": ""
+                }
+            }
+        return {"success": False, "error": res.get("error", f"Failed to navigate to {url}")}
+
+    elif cmd in ("snapshot", "text"):
+        res = call_browser_api("text", {})
+        if res.get("ok"):
+            text = res.get("text", "")
+            return {
+                "success": True,
+                "data": {
+                    "snapshot": text,
+                    "title": res.get("title", ""),
+                    "url": res.get("url", ""),
+                    "refs": {}
+                }
+            }
+        return {"success": False, "error": res.get("error", "Failed to capture snapshot")}
+
+    elif cmd == "click":
+        selector = args[0] if args else "body"
+        res = call_browser_api("click", {"selector": selector})
+        if res.get("ok"):
+            return {"success": True, "data": {}}
+        return {"success": False, "error": res.get("error", f"Click failed on {selector}")}
+
+    elif cmd == "type":
+        selector = args[0] if len(args) > 1 else None
+        text = args[1] if len(args) > 1 else (args[0] if args else "")
+        res = call_browser_api("type", {"selector": selector, "text": text})
+        if res.get("ok"):
+            return {"success": True, "data": {}}
+        return {"success": False, "error": res.get("error", f"Type failed on {selector}")}
+
+    elif cmd == "press":
+        key = args[0] if args else "Enter"
+        res = call_browser_api("press", {"key": key})
+        if res.get("ok"):
+            return {"success": True, "data": {}}
+        return {"success": False, "error": res.get("error", f"Key press failed: {key}")}
+
+    elif cmd == "close":
+        res = close_browser_session()
+        return {"success": True, "data": res}
+
+    elif cmd == "screenshot":
+        res = call_browser_api("screenshot", {})
+        if res.get("ok"):
+            return {"success": True, "data": {"image": res.get("image", "")}}
+        return {"success": False, "error": res.get("error", "Screenshot capture failed")}
+
+    elif cmd in ("eval", "console"):
+        js_code = args[0] if args else ""
+        res = call_browser_api("eval", {"js": js_code})
+        if res.get("ok"):
+            return {"success": True, "data": {"result": res.get("result")}}
+        return {"success": False, "error": res.get("error", "JS eval failed")}
+
+    # 기타 미지원 명령은 정상 반환으로 패스
+    return {"success": True, "data": {}}
+
+
 def _run_browser_command(
     task_id: str,
     command: str,
     args: List[str] = None,
     timeout: Optional[int] = None,
 ) -> Dict[str, Any]:
+    # [DAON v2.5] 브라우저 요청을 DAON Browser Agent Service (포트 8088)로 즉시 위임
+    return _dispatch_to_daon_browser_service(task_id, command, args or [])
+
     """
     Run an agent-browser CLI command using our pre-created Browserbase session.
     

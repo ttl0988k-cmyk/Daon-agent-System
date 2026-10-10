@@ -755,13 +755,29 @@ def inject_daon_action_tool(agent: Any) -> None:
 
             tag = f"<daon_action {' '.join(attr_parts)} />"
             _logger.info("Executed daon_action tool call: %s", tag)
-            return json.dumps({
-                "ok": True,
-                "status": "action_queued",
-                "action": action,
-                "tag": tag,
-                "message": f"브라우저에서 '{action}' 동작이 예약되었습니다: {tag}"
-            }, ensure_ascii=False)
+            try:
+                from api import browser_ext_bridge as _bx
+                _cmd = {"action": action, "target": target, "text": text, "selector": selector,
+                        "url": url, "direction": direction, "key": key,
+                        "nth": nth, "node_id": node_id}
+                _cid = _bx.enqueue(_cmd)
+                _res = _bx.wait_result(_cid, timeout=25.0)
+                if _res is not None:
+                    _logger.info("daon_action executed via extension: %s", tag)
+                    return json.dumps({"ok": True, "status": "executed", "action": action,
+                                       "tag": tag, "result": _res}, ensure_ascii=False)
+                return json.dumps({"ok": True, "status": "action_queued", "action": action, "tag": tag,
+                                   "message": f"'{action}' 동작을 예약했습니다. 크롬에서 DAON 확장 사이드패널이 열려 있는지 확인하세요."},
+                                  ensure_ascii=False)
+            except Exception as _xe:
+                _logger.warning("browser_ext_bridge unavailable, falling back: %s", _xe)
+                return json.dumps({
+                    "ok": True,
+                    "status": "action_queued",
+                    "action": action,
+                    "tag": tag,
+                    "message": f"브라우저에서 '{action}' 동작이 예약되었습니다: {tag}"
+                }, ensure_ascii=False)
 
         registry.register(
             name="daon_action",

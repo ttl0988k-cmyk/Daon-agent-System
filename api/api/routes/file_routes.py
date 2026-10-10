@@ -317,6 +317,24 @@ def handle_post_workspace_rename(handler, body) -> bool:
     return j(handler, {'ok': True, 'workspaces': wss})
 
 
+def handle_post_workspace_set_active(handler, body) -> bool:
+    """POST /api/workspaces/set-active — set active working directory."""
+    path_str = body.get('path', '').strip()
+    if not path_str:
+        return bad(handler, 'path is required')
+    p = Path(path_str).expanduser().resolve()
+    if not p.exists():
+        return bad(handler, f'Path does not exist: {p}')
+    if not p.is_dir():
+        return bad(handler, f'Path is not a directory: {p}')
+    set_last_workspace(str(p))
+    wss = load_workspaces()
+    if not any(w['path'] == str(p) for w in wss):
+        wss.append({'path': str(p), 'name': p.name})
+        save_workspaces(wss)
+    return j(handler, {'ok': True, 'active': str(p), 'workspaces': wss})
+
+
 def handle_get_workspace_select(handler, parsed) -> bool:
     """GET /api/workspaces/select — open native folder browser dialog."""
     try:

@@ -269,7 +269,11 @@ class ModelManager:
                     break
             if merge_target is not None:
                 target = providers[merge_target]
-                final_key = api_key if api_key else target.get('api_key', '')
+                existing_target_key = target.get('api_key', '')
+                if not api_key or '•' in api_key or '*' in api_key:
+                    final_key = existing_target_key
+                else:
+                    final_key = api_key
                 existing_models = target.get('models', []) or []
                 existing_ids = {}
                 for m in existing_models:
@@ -293,12 +297,15 @@ class ModelManager:
                 return {'success': True, 'provider': merge_target, 'merged_into': merge_target,
                         'added_count': added_count, 'models': merged}
 
-        # Preserve existing api_key if empty string sent (update without changing key)
+        # Preserve existing api_key if empty string or masked key sent (update without changing key)
         existing_key = ''
         if name in providers:
             existing_key = providers[name].get('api_key', '')
 
-        final_key = api_key if api_key else existing_key
+        if not api_key or '•' in api_key or '*' in api_key:
+            final_key = existing_key
+        else:
+            final_key = api_key
 
         # Auto-fetch models if API key is provided and models not explicitly passed
         if final_key and models is None:
@@ -480,6 +487,40 @@ class ModelManager:
         # Tier 3: Name-based guess
         return self._infer_model_type(model_id)
 
+    def get_model_reasoning_effort(self, model_id: str, provider: str = '') -> Optional[str]:
+        """3-tier fallback for model reasoning effort: custom provider -> presets -> None.
+
+        1) Check custom_providers.json model dict for explicit 'reasoning_effort' field.
+        2) Check preset provider models for 'reasoning_effort'.
+        3) Fallback to None (let session/global default take over).
+        """
+        model_id = (model_id or '').strip()
+        if not model_id:
+            return None
+
+        data = _load_custom_providers()
+        # 1) Custom providers
+        for pname, cfg in data.get('providers', {}).items():
+            if provider and pname != provider:
+                continue
+            for m in cfg.get('models', []):
+                if isinstance(m, dict):
+                    mid = m.get('id', '')
+                    if mid == model_id and m.get('reasoning_effort'):
+                        return m['reasoning_effort']
+
+        # 2) Presets
+        for pname, pcfg in data.get('presets', {}).items():
+            if provider and pname != provider:
+                continue
+            for m in pcfg.get('models', []):
+                if isinstance(m, dict):
+                    mid = m.get('id', '')
+                    if mid == model_id and m.get('reasoning_effort'):
+                        return m['reasoning_effort']
+
+        return None
+
     @staticmethod
     def supports_reasoning(model_id: str, provider: str = '') -> bool:
         """Smart detection: returns True if model supports reasoning/thinking effort.
@@ -634,15 +675,33 @@ class ModelManager:
                 if mid and mid.casefold() == _target:
                     return mid, p, self._get_base_url(p)
 
-        # 3) Check if model_id has a provider/ prefix
+        # 5) Check if model_id has a provider/ prefix (e.g. 'deepseek/deepseek-v4.1-flash' or 'opencode-go/deepseek-v4.1-flash')
         if '/' in model_id:
-            provider, bare_model = model_id.split('/', 1)
-            return bare_model, provider, self._get_base_url(provider)
+            raw_prefix, bare_model = model_id.split('/', 1)
+            bare_target = bare_model.casefold()
 
-        # 4) Check if model_id matches a known provider as prefix
-        for pname in list(provider_models.keys()) + list(data.get('providers', {}).keys()):
-            if model_id.startswith(pname + '/'):
-                return model_id[len(pname)+1:], pname, self._get_base_url(pname)
+            # 5-a) 접두사가 등록된 custom provider인 경우 (e.g. 'opencode-go', 'opencode-zen')
+            for pname, cfg in _custom.items():
+                if pname.casefold() == raw_prefix.casefold():
+                    return bare_model, pname, cfg.get('base_url')
+
+            # 5-b) [OpenCode Go 최우선 방어 가드]
+            # 'deepseek/deepseek-v4.1-flash' 처럼 OpenRouter식 네임스페이스로 요청이 들어왔더라도,
+            # bare_model이 사용자가 등록한 custom provider(특히 OpenCode Go / Zen)의 모델 목록에 존재하면
+            # OpenRouter나 외부 유료 직통으로 새어나가지 않고 등록된 custom provider로 우선 매핑한다!
+            for pname, cfg in _custom.items():
+                for m in cfg.get('models', []):
+                    mid = m.get('id') if isinstance(m, dict) else str(m)
+                    if mid and (mid == bare_model or mid.casefold() == bare_target):
+                        return mid, pname, cfg.get('base_url')
+
+            # 5-c) Preset provider 모델 중 bare_model이 일치하는 경우
+            for p, models in provider_models.items():
+                if p.casefold() == raw_prefix.casefold():
+                    return bare_model, p, self._get_base_url(p)
+
+            # 5-d) 일반 prefix 분기 fallback
+            return bare_model, raw_prefix, self._get_base_url(raw_prefix)
 
         return model_id, 'custom', None
 

@@ -221,7 +221,12 @@ def handle_post_session_update(handler, body) -> bool:
         return bad(handler, 'Session not found', 404)
     new_ws = body.get('workspace', s.workspace)
     s.workspace = new_ws
-    s.model = body.get('model', s.model)
+    _m = body.get('model', s.model)
+    if isinstance(_m, dict):
+        _m = _m.get('id') or _m.get('default') or _m.get('model') or s.model
+    elif _m is not None and not isinstance(_m, str):
+        _m = str(_m)
+    s.model = _m
     if 'profile' in body:
         s.profile = body.get('profile')
     _save_session_async(s)

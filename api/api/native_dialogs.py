@@ -3,81 +3,86 @@ Native Windows GUI dialogs helper for folder and file selection.
 
 Provides PowerShell-based FolderBrowserDialog and OpenFileDialog
 for the DAON Agent System web UI.
-
-Exported:
-- select_workspace_dialog(): opens folder picker, returns path string
-- select_file_dialog(workspace: str): opens file picker, returns path string
 """
 
 import os
 import subprocess
-import traceback
+import logging
 
-
-# ── Common PowerShell dialog helper ──
-
-def _is_non_interactive():
-    """Return True if the current session is non-interactive (e.g., started by AI agent)."""
-    return any(k in os.environ for k in ('ANTIGRAVITY_EDITOR_APP_ROOT', 'VSCODE_PID'))
+_logger = logging.getLogger(__name__)
 
 
 def _run_ps_dialog(ps_code: str) -> str:
-    """Run a PowerShell script block that returns a string path.
-    
-    Raises RuntimeError if the session is non-interactive or the dialog is cancelled.
-    Returns the selected path (empty string if cancelled).
-    """
-    if _is_non_interactive():
-        raise RuntimeError(
-            "Native dialogs are disabled when the server is started by the AI agent. "
-            "Please enter the path manually or run the server directly."
+    """Run a PowerShell script block that returns a string path."""
+    cmd = ["powershell", "-NoProfile", "-STA", "-Command", ps_code]
+    try:
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=60
         )
-    
-    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_code]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         text=True, encoding='utf-8', timeout=600)
-    selected = res.stdout.strip()
-    if selected == 'NON_INTERACTIVE':
-        raise RuntimeError(
-            "GUI dialogs are not supported in this non-interactive/headless session."
-        )
-    return selected
+        selected = res.stdout.strip()
+        if selected == 'NON_INTERACTIVE':
+            return ""
+        return selected
+    except subprocess.TimeoutExpired:
+        _logger.warning("[dialog] PowerShell GUI dialog timed out after 60s")
+        return ""
+    except Exception as e:
+        _logger.error(f"[dialog] PowerShell GUI dialog error: {e}")
+        return ""
 
-
-# ── Public API ──
 
 def select_workspace_dialog() -> str:
-    """Open a native Windows folder browser dialog and return the selected path."""
+    """Open a native Windows folder browser dialog in foreground and return the selected path."""
     ps_code = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;"
         "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null;"
-        "if (-not [System.Windows.Forms.SystemInformation]::UserInteractive) {"
-        "  Write-Output 'NON_INTERACTIVE';"
-        "  exit;"
-        "}"
-        "$objForm = New-Object System.Windows.Forms.FolderBrowserDialog;"
-        "$objForm.Description = 'Select Workspace Folder';"
-        "$objForm.ShowNewFolderButton = $true;"
-        "$Show = $objForm.ShowDialog();"
-        "if ($Show -eq 'OK') { Write-Output $objForm.SelectedPath }"
+        "$form = New-Object System.Windows.Forms.Form;"
+        "$form.TopMost = $true;"
+        "$form.Opacity = 0;"
+        "$form.ShowInTaskbar = $false;"
+        "$form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized;"
+        "$form.Show();"
+        "$form.BringToFront();"
+        "$form.Activate();"
+        "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+        "$d.AutoUpgradeEnabled = $true;"
+        "$d.Description = '프로젝트 작업 폴더를 선택하세요';"
+        "$d.ShowNewFolderButton = $true;"
+        "$res = $d.ShowDialog($form);"
+        "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath };"
+        "$form.Close();"
+        "$form.Dispose();"
     )
     return _run_ps_dialog(ps_code).replace('\\', '/')
 
 
 def select_file_dialog(workspace: str = '') -> str:
-    """Open a native Windows file open dialog and return the selected file path."""
+    """Open a native Windows file open dialog in foreground and return the selected file path."""
     ws_dir = workspace.replace('/', '\\').replace("'", "''")
-    
     ps_code = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;"
         "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null;"
-        "if (-not [System.Windows.Forms.SystemInformation]::UserInteractive) {"
-        "  Write-Output 'NON_INTERACTIVE';"
-        "  exit;"
-        "}"
-        "$objForm = New-Object System.Windows.Forms.OpenFileDialog;"
-        f"$objForm.InitialDirectory = '{ws_dir}';"
-        "$objForm.Filter = 'All Files (*.*)|*.*';"
-        "$objForm.Title = 'Select File to Open';"
-        "$Show = $objForm.ShowDialog();"
-        "if ($Show -eq 'OK') { Write-Output $objForm.FileName }"
+        "$form = New-Object System.Windows.Forms.Form;"
+        "$form.TopMost = $true;"
+        "$form.Opacity = 0;"
+        "$form.ShowInTaskbar = $false;"
+        "$form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized;"
+        "$form.Show();"
+        "$form.BringToFront();"
+        "$form.Activate();"
+        "$d = New-Object System.Windows.Forms.OpenFileDialog;"
+        f"$d.InitialDirectory = '{ws_dir}';"
+        "$d.Filter = 'All Files (*.*)|*.*';"
+        "$d.Title = '파일 선택';"
+        "$res = $d.ShowDialog($form);"
+        "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName };"
+        "$form.Close();"
+        "$form.Dispose();"
     )
     return _run_ps_dialog(ps_code).replace('\\', '/')

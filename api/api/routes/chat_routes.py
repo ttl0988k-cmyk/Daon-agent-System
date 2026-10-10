@@ -286,7 +286,10 @@ def handle_post_chat_sync(handler, body) -> bool:
         return j(handler, {'error': 'empty message'}, status=400)
     workspace = Path(body.get('workspace') or s.workspace).expanduser().resolve()
     s.workspace = str(workspace)
-    s.model = body.get('model') or s.model
+    _m = body.get('model') or s.model
+    if isinstance(_m, dict):
+        _m = _m.get('id') or _m.get('default') or _m.get('model') or s.model
+    s.model = _m
     old_cwd = os.environ.get('TERMINAL_CWD')
     os.environ['TERMINAL_CWD'] = str(workspace)
     old_exec_ask = os.environ.get('HERMES_EXEC_ASK')

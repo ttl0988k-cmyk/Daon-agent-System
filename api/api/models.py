@@ -87,23 +87,26 @@ def _write_session_index(session=None, remove_id: str = None) -> None:
                     ORDER BY COALESCE(updated_at, started_at) DESC
                 """)
                 for row in cur.fetchall():
-                    entries.append({
-                        'session_id': row['id'],
-                        'title': row['title'] or 'Untitled',
-                        'workspace': str(DEFAULT_WORKSPACE),
-                        'model': row['model'] or DEFAULT_MODEL,
-                        'message_count': row['message_count'] or 0,
-                        'created_at': row['started_at'] or time.time(),
-                        'updated_at': row['updated_at'] or row['started_at'] or time.time(),
-                        'pinned': False,
-                        'archived': False,
-                        'project_id': None,
-                        'profile': 'raon',
-                        'input_tokens': row['input_tokens'] or 0,
-                        'output_tokens': row['output_tokens'] or 0,
-                        'estimated_cost': None,
-                        'surface': 'webui',
-                    })
+                    sid = row['id']
+                    # Only include sessions that actually exist on disk as valid JSON files
+                    if (SESSION_DIR / f"{sid}.json").exists():
+                        entries.append({
+                            'session_id': sid,
+                            'title': row['title'] or 'Untitled',
+                            'workspace': str(DEFAULT_WORKSPACE),
+                            'model': row['model'] or DEFAULT_MODEL,
+                            'message_count': row['message_count'] or 0,
+                            'created_at': row['started_at'] or time.time(),
+                            'updated_at': row['updated_at'] or row['started_at'] or time.time(),
+                            'pinned': False,
+                            'archived': False,
+                            'project_id': None,
+                            'profile': 'raon',
+                            'input_tokens': row['input_tokens'] or 0,
+                            'output_tokens': row['output_tokens'] or 0,
+                            'estimated_cost': None,
+                            'surface': 'webui',
+                        })
         except Exception:
             _logger.warning("Failed to query sessions from SQLite for index rebuild", exc_info=True)
 
@@ -148,6 +151,16 @@ class Session:
         self.session_id = session_id or uuid.uuid4().hex[:12]
         self.title = title
         self.workspace = str(Path(workspace).expanduser().resolve())
+        # model 은 반드시 문자열이어야 한다. dict 등이 들어오면 대표 필드를 추출해
+        # SQLite TEXT 바인딩 실패("type 'dict' is not supported")를 원천 차단한다.
+        if not isinstance(model, str):
+            if isinstance(model, dict):
+                model = (model.get('id') or model.get('default')
+                         or model.get('model') or DEFAULT_MODEL)
+            elif model is None:
+                model = DEFAULT_MODEL
+            else:
+                model = str(model)
         self.model = model
         self.messages = messages or []
         self.tool_calls = tool_calls or []
@@ -571,11 +584,27 @@ def _save_session_to_db(session: Session) -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
+        # ── SQLite 는 dict/list 등 컨테이너를 바인딩할 수 없다. 런타임에 컨테이너가
+        # 섞이면 "Error binding parameter N: type 'dict' is not supported" 로 동기화가
+        # 통째로 실패해 session_search(SQLite 기반)에서 세션이 사라진다(2026-10-10 실측
+        # 56회). 스칼라가 아닌 값은 JSON 문자열로 정규화하고, 원인 필드를 로그로 남긴다.
+        def _sql_scalar(value, field):
+            if value is None or isinstance(value, (str, int, float, bytes)):
+                return value
+            _logger.warning(
+                "session %s field '%s' is %s (not scalar); coercing to JSON for SQLite",
+                session.session_id, field, type(value).__name__,
+            )
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+
         # Check if session already exists
         cursor.execute("SELECT id FROM sessions WHERE id = ?", (session.session_id,))
         existing = cursor.fetchone()
-        
+
         if existing:
             # Update existing session
             cursor.execute("""
@@ -584,13 +613,13 @@ def _save_session_to_db(session: Session) -> None:
                     updated_at = ?, input_tokens = ?, output_tokens = ?
                 WHERE id = ?
             """, (
-                session.title,
-                session.model,
+                _sql_scalar(session.title, 'title'),
+                _sql_scalar(session.model, 'model'),
                 len(session.messages),
-                session.updated_at,
-                session.input_tokens,
-                session.output_tokens,
-                session.session_id,
+                _sql_scalar(session.updated_at, 'updated_at'),
+                _sql_scalar(session.input_tokens, 'input_tokens'),
+                _sql_scalar(session.output_tokens, 'output_tokens'),
+                _sql_scalar(session.session_id, 'session_id'),
             ))
             
             # Clear existing messages and re-insert (simple sync approach)
@@ -604,19 +633,25 @@ def _save_session_to_db(session: Session) -> None:
                 )
                 VALUES (?, 'webui', ?, ?, ?, ?, ?, ?, ?)
             """, (
-                session.session_id,
-                session.model,
-                session.created_at,
-                session.updated_at,
+                _sql_scalar(session.session_id, 'session_id'),
+                _sql_scalar(session.model, 'model'),
+                _sql_scalar(session.created_at, 'created_at'),
+                _sql_scalar(session.updated_at, 'updated_at'),
                 len(session.messages),
-                session.title,
-                session.input_tokens,
-                session.output_tokens,
+                _sql_scalar(session.title, 'title'),
+                _sql_scalar(session.input_tokens, 'input_tokens'),
+                _sql_scalar(session.output_tokens, 'output_tokens'),
             ))
-        
+
         # Insert all messages
         for msg in session.messages:
-            role = msg.get('role', '')
+            if not isinstance(msg, dict):
+                _logger.warning(
+                    "session %s has non-dict message (%s); skipping",
+                    session.session_id, type(msg).__name__,
+                )
+                continue
+            role = _sql_scalar(msg.get('role', ''), 'message.role')
             content = msg.get('content', '')
             if isinstance(content, list):
                 content = ' '.join(
@@ -624,7 +659,8 @@ def _save_session_to_db(session: Session) -> None:
                     for p in content
                     if isinstance(p, dict) and p.get('type') == 'text'
                 )
-            
+            content = _sql_scalar(content, 'message.content')
+
             cursor.execute("""
                 INSERT INTO messages (session_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
@@ -632,7 +668,7 @@ def _save_session_to_db(session: Session) -> None:
                 session.session_id,
                 role,
                 content,
-                msg.get('timestamp', time.time()),
+                _sql_scalar(msg.get('timestamp', time.time()), 'message.timestamp'),
             ))
         
         conn.commit()

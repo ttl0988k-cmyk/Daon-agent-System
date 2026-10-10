@@ -29,10 +29,12 @@ else:
     BASE_DIR = Path(__file__).parent.parent.parent.resolve()
     RESOURCE_DIR = BASE_DIR
 
-# State/data directory: use LOCALAPPDATA for installed (PyInstaller) builds to
-# avoid write-permission errors under C:\Program Files.
-if hasattr(sys, '_MEIPASS'):
-    _appdata = os.getenv('LOCALAPPDATA')
+# State/data directory: always prioritize LOCALAPPDATA / 'DAON Agent System' / 'data'
+# to guarantee a single source of truth between Electron desktop app and Python backend.
+_appdata = os.getenv('LOCALAPPDATA')
+if _appdata and (Path(_appdata) / 'DAON Agent System' / 'data').exists():
+    STATE_DIR = Path(_appdata) / 'DAON Agent System' / 'data'
+elif hasattr(sys, '_MEIPASS'):
     if _appdata:
         STATE_DIR = Path(_appdata) / 'DAON Agent System' / 'data'
     else:

@@ -217,6 +217,9 @@ def get_handover_prompt_block(max_age_hours: float = 48.0) -> str:
             except Exception:
                 pass
 
+        if last.get("acknowledged", False):
+            return ""
+
         reason = last.get("reason", "자가 수리 및 시스템 업데이트")
         sid = last.get("session_id") or "알 수 없음"
         rebuild_txt = "예 (server.exe 패키징 포함)" if last.get("rebuild") else "아니오 (동적 반영)"

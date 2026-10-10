@@ -175,6 +175,61 @@ except ImportError:
 from api.models import get_session, title_from
 from api.workspace import set_last_workspace
 
+
+# ── Skill Ranker 사전선별 (2026-10-09) ─────────────────────────────────
+# 스킬 라이브러리가 300+ 로 커지면 시스템 프롬프트 스킬 인덱스가 COMPACT 모드로
+# 강제되어 '이름만' 노출된다(설명 탈락). 임베딩 랭커(8766)가 작업 프롬프트와
+# 관련된 스킬 top-N 을 뽑아 '이름+설명'을 유저 메시지에 주입한다.
+# 근거 실측: Laya(분류)는 정답 스킬을 159~258위로 밀었으나 e5-small(검색)은 1~7위.
+# 랭커가 죽어 있으면 조용히 "" 반환 → 기존 동작 유지(무해).
+def _skill_context(s, max_turns: int = 2) -> str:
+    """랭커에 넘길 직전 대화 맥락. 짧은 후속 발화('진행해' 등)의 랭킹 정확도를 올린다."""
+    try:
+        users = [m.get("content", "") for m in s.messages
+                 if m.get("role") == "user" and isinstance(m.get("content"), str)]
+        prior = [c for c in users[:-1] if c]   # 현재 메시지 제외
+        return " ".join(prior[-max_turns:])[-400:]
+    except Exception:
+        return ""
+
+
+def _build_skill_hint(prompt: str, top_n: int = 5, context: str = "") -> str:
+    try:
+        import urllib.request as _ur
+        if not prompt or len(prompt.strip()) < 2:
+            return ""
+        # 단순 인사, 호출, 일상 대화에는 스킬 주입을 전면 생략하여 스킬 호출 루프 방지
+        _clean_p = prompt.strip().rstrip('?!.~ \t\r\n').lower()
+        if _clean_p in {'라온', '라온아', '라온이', '안녕', '안녕하세요', '하이', '반가워', '뭐해', '있어', '테스트', 'test', 'hello', 'hi'}:
+            return ""
+        _q = ((context.strip() + " " + prompt.strip()).strip())[-600:]
+        payload = json.dumps({"prompt": _q, "top_n": min(top_n, 5)}).encode("utf-8")
+        req = _ur.Request(
+            "http://127.0.0.1:8766/rank_skills",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _ur.urlopen(req, timeout=3) as _r:
+            _d = json.loads(_r.read().decode("utf-8"))
+        # 무관 질의(마진 미달)면 주입하지 않는다 — 엉뚱한 스킬 차단
+        if not _d.get("confident", True):
+            return ""
+        _sk = _d.get("skills", [])
+        if not _sk:
+            return ""
+        _lines = [
+            "[참고 가능한 추천 스킬 — 복잡한 전문 작업에 필요할 때만 선별하여 1개 스킬의 전문을 확인하십시오. "
+            "단순 인사나 일상 질문, 대화에는 스킬을 호출하지 말고 직접 자연스럽게 답변하십시오.]"
+        ]
+        for _s in _sk[:5]:
+            _desc = (_s.get("description") or "").strip()
+            _lines.append(f"- {_s['name']}: {_desc}" if _desc else f"- {_s['name']}")
+        _lines.append("")
+        return "\n".join(_lines)
+    except Exception:
+        return ""
+
 # P6: Shared schema validation — validates message/session shapes against the SSOT contract
 try:
     from shared.schema import validate_message as _validate_msg, validate_session_compact as _validate_sess
@@ -1338,15 +1393,23 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _oc_route_e:
               print(f"[webui] WARNING: opencode route resolution failed: {_oc_route_e}", flush=True)
 
-          # ── Reasoning config resolution (Smart reasoning model gating) ──
+          # ── Reasoning config resolution (Smart reasoning model gating & per-model fallback) ──
           _reasoning_config = None
-          if reasoning_effort and str(reasoning_effort).strip().lower() not in ('', 'default', 'auto'):
+          _eff = reasoning_effort
+          if not _eff or str(_eff).strip().lower() in ('', 'default', 'auto'):
+              try:
+                  from api.managers.model_manager import model_manager as _mm_r
+                  _eff = _mm_r.get_model_reasoning_effort(resolved_model, resolved_provider)
+              except Exception:
+                  _eff = None
+
+          if _eff and str(_eff).strip().lower() not in ('', 'default', 'auto', 'none'):
               try:
                   from api.managers.model_manager import model_manager as _mm_reasoning
                   if _mm_reasoning.supports_reasoning(resolved_model, resolved_provider):
                       from hermes_constants import parse_reasoning_effort
-                      _reasoning_config = parse_reasoning_effort(str(reasoning_effort).strip())
-                      print(f"[webui] Reasoning config applied: {_reasoning_config} (effort={reasoning_effort}) for model={resolved_model}", flush=True)
+                      _reasoning_config = parse_reasoning_effort(str(_eff).strip())
+                      print(f"[webui] Reasoning config applied: {_reasoning_config} (effort={_eff}) for model={resolved_model}", flush=True)
                   else:
                       print(f"[webui] Model {resolved_model} does not support reasoning effort; skipping reasoning_config to prevent API errors", flush=True)
               except Exception as _re_e:
@@ -1595,7 +1658,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           user_message_payload = build_user_payload(
               workspace=s.workspace,
               msg_text=msg_text,
-              workspace_ctx="",
+              workspace_ctx=_build_skill_hint(msg_text, context=_skill_context(s)),
               attachments=attachments,
           )
 
@@ -1854,7 +1917,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               usage['last_prompt_tokens'] = getattr(_cc, 'last_prompt_tokens', 0) or 0
 
           # ── done 이벤트를 먼저 전송하여 UI가 즉시 잠금 해제되도록 함 ──
-          put('done', {'session': s.to_response(), 'usage': usage, 'job_error': _job_has_error})
+          # actions 배열: 버튼/카드 등 액션 요소를 담는 배열 (프론트엔드 UI 렌더링용)
+          # 현재는 빈 배열. 프론트엔드/tools/-agent 시스템이 버튼/카드 렌더링 확장이
+          # 가능하면 세션의 actions 필드 또는 마지막 메시지 메타에서 꺼내 채운다.
+          put('done', {
+              'session': s.to_response(),
+              'usage': usage,
+              'job_error': _job_has_error,
+              'actions': getattr(s, 'actions', []) or [],
+          })
 
           # ── 이 턴의 에이전트 실행이 정상 완료되었으므로 활성 스트림 목록에서 즉시 해제 ──
           # 다음 턴(연속 자율 실행 등) 시작 시 불필요하게 '이전 작업 자동 취소'로 오판되는 문제를 원천 방지

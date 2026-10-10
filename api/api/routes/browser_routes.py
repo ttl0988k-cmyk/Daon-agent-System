@@ -23,6 +23,13 @@ import os
 import json as _json
 import time
 
+# Ensure Playwright finds browsers in %LOCALAPPDATA%\ms-playwright
+_local_app = os.environ.get("LOCALAPPDATA", "")
+if _local_app:
+    _pw_path = os.path.join(_local_app, "ms-playwright")
+    if os.path.isdir(_pw_path):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = _pw_path
+
 from api.helpers import j, j_ok, j_err
 
 _logger = logging.getLogger(__name__)
@@ -352,6 +359,16 @@ def _browser_worker_loop():
             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         ]
+        # ms-playwright 및 패키징 설치본 경로 추가
+        local_app = os.environ.get("LOCALAPPDATA", "")
+        if local_app:
+            pw_dir = os.path.join(local_app, "ms-playwright")
+            for sub in ("chromium-1223", "chromium-1234", "chromium_headless_shell-1223", "chromium_headless_shell-1234"):
+                chrome_candidates.append(os.path.join(pw_dir, sub, "chrome-win64", "chrome.exe"))
+                chrome_candidates.append(os.path.join(pw_dir, sub, "chrome-headless-shell-win64", "chrome-headless-shell.exe"))
+            chrome_candidates.append(os.path.join(local_app, "Programs", "daon-agent-system", "chrome.exe"))
+            chrome_candidates.append(os.path.join(local_app, "Programs", "Daon agent System", "chrome.exe"))
+
         for p in chrome_candidates:
             if os.path.isfile(p):
                 return p, None
@@ -1576,6 +1593,51 @@ def _start_browser_worker():
 
 def _submit_task(action: str, wait_timeout: float = 35.0, **kwargs) -> dict:
     """Submit a task to the browser worker and wait for the result."""
+    # ── [DAON 8088 실시간 브라우저 뷰어 서비스(Playwright Screencast) 우선 위임] ──
+    try:
+        from browser_service.manager import call_browser_api, is_service_running
+        if is_service_running() or action in ("open", "navigate"):
+            if action in ("open", "navigate"):
+                url = kwargs.get("url", "about:blank")
+                res = call_browser_api("navigate", {"url": url}, timeout=wait_timeout)
+                if res.get("ok"):
+                    return {"_result_id": 0, "status": "ok", "url": res.get("url", url), "title": res.get("title", "")}
+            elif action == "snapshot":
+                res = call_browser_api("text", method="POST", timeout=wait_timeout)
+                if res.get("ok"):
+                    return {
+                        "_result_id": 0,
+                        "status": "ok",
+                        "url": res.get("url", ""),
+                        "title": res.get("title", ""),
+                        "text": res.get("text", ""),
+                        "dom": "",
+                        "elements": []
+                    }
+            elif action in ("click",):
+                ref = kwargs.get("ref", "")
+                res = call_browser_api("click", {"selector": ref}, method="POST", timeout=wait_timeout)
+                if res.get("ok"):
+                    return {"_result_id": 0, "status": "ok", "clicked": True, "ref": ref}
+            elif action in ("fill", "type"):
+                ref = kwargs.get("ref", "")
+                text = kwargs.get("text", "")
+                res = call_browser_api("type", {"selector": ref, "text": text}, method="POST", timeout=wait_timeout)
+                if res.get("ok"):
+                    return {"_result_id": 0, "status": "ok", "filled": True, "ref": ref, "text": text}
+            elif action in ("screenshot",):
+                res = call_browser_api("screenshot", method="POST", timeout=wait_timeout)
+                if res.get("ok"):
+                    return {"_result_id": 0, "status": "ok", "image_base64": res.get("image", "")}
+            elif action in ("evaluate", "execute", "eval"):
+                expr = kwargs.get("expression") or kwargs.get("js") or ""
+                res = call_browser_api("eval", {"js": expr}, method="POST", timeout=wait_timeout)
+                if res.get("ok"):
+                    return {"_result_id": 0, "status": "ok", "result": res.get("result")}
+    except Exception as _e_8088:
+        _logger.warning("Browser service (8088) delegation error for action=%s: %s", action, _e_8088)
+
+    # ── 레거시 9222 워커 큐 fallback ──
     _start_browser_worker()
 
     result_id = int(time.time() * 1000000)  # unique ID
@@ -1719,6 +1781,22 @@ def handle_post_browser_navigate(handler, body: dict):
     tab_id = body.get("tab_id")
     if not url:
         return j_err(handler, "Missing 'url' field")
+
+    # 1. [8088 실시간 브라우저 뷰어 서비스 우선 위임]
+    try:
+        from browser_service.manager import call_browser_api
+        res_8088 = call_browser_api("navigate", {"url": url}, timeout=25.0)
+        if res_8088 and res_8088.get("ok"):
+            _logger.info("Browser navigated via 8088 service: %s (%s)", res_8088.get("url"), res_8088.get("title"))
+            return j_ok(handler, {
+                "url": res_8088.get("url", url),
+                "title": res_8088.get("title", ""),
+                "browser_service": "8088",
+            })
+    except Exception as _e8088:
+        _logger.warning("Browser service (8088) navigate failed, falling back to legacy CDP: %s", _e8088)
+
+    # 2. Legacy CDP 9222 fallback
     result = _submit_task("navigate", url=url, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
@@ -1741,6 +1819,24 @@ def handle_post_browser_snapshot(handler, body: dict):
     body = body or {}
     session_id = body.get("session_id")
     tab_id = body.get("tab_id")
+
+    # 8088 브라우저 서비스 우선 확인
+    try:
+        from browser_service.manager import call_browser_api, is_service_running
+        if is_service_running():
+            res_8088 = call_browser_api("text", method="POST", timeout=15.0)
+            if res_8088 and res_8088.get("ok"):
+                return j_ok(handler, {
+                    "url": res_8088.get("url", ""),
+                    "title": res_8088.get("title", ""),
+                    "dom": "",
+                    "elements": [],
+                    "text": res_8088.get("text", ""),
+                    "browser_service": "8088",
+                })
+    except Exception as _e8088:
+        pass
+
     result = _submit_task("snapshot", session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
@@ -1761,6 +1857,21 @@ def handle_post_browser_click(handler, body: dict):
     tab_id = body.get("tab_id")
     if not ref:
         return j_err(handler, "Missing 'ref' field")
+
+    # 8088 브라우저 서비스 우선 확인
+    try:
+        from browser_service.manager import call_browser_api, is_service_running
+        if is_service_running():
+            res_8088 = call_browser_api("click", {"selector": ref}, method="POST", timeout=10.0)
+            if res_8088 and res_8088.get("ok"):
+                return j_ok(handler, {
+                    "url": "",
+                    "click_result": {"clicked": True, "selector": ref},
+                    "browser_service": "8088",
+                })
+    except Exception as _e8088:
+        pass
+
     result = _submit_task("click", ref=ref, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
@@ -1779,6 +1890,20 @@ def handle_post_browser_type(handler, body: dict):
     tab_id = body.get("tab_id")
     if not ref:
         return j_err(handler, "Missing 'ref' field")
+
+    # 8088 브라우저 서비스 우선 확인
+    try:
+        from browser_service.manager import call_browser_api, is_service_running
+        if is_service_running():
+            res_8088 = call_browser_api("type", {"selector": ref, "text": text}, method="POST", timeout=10.0)
+            if res_8088 and res_8088.get("ok"):
+                return j_ok(handler, {
+                    "type_result": {"typed": True, "text": text},
+                    "browser_service": "8088",
+                })
+    except Exception as _e8088:
+        pass
+
     result = _submit_task("type", ref=ref, text=text, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)
@@ -1793,6 +1918,22 @@ def handle_post_browser_screenshot(handler, body: dict):
     labeled = bool(body.get("labeled", False))
     session_id = body.get("session_id")
     tab_id = body.get("tab_id")
+
+    # 8088 브라우저 서비스 우선 확인
+    try:
+        from browser_service.manager import call_browser_api, is_service_running
+        if is_service_running():
+            res_8088 = call_browser_api("screenshot", method="POST", timeout=12.0)
+            if res_8088 and res_8088.get("ok"):
+                return j_ok(handler, {
+                    "url": "",
+                    "image_base64": res_8088.get("image", ""),
+                    "labeled": False,
+                    "browser_service": "8088",
+                })
+    except Exception as _e8088:
+        pass
+
     result = _submit_task("screenshot", labeled=labeled, session_id=session_id, tab_id=tab_id)
     if "error" in result:
         return j_err(handler, result["error"], status=500)

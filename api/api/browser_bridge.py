@@ -40,6 +40,118 @@ def _run_browser_command_via_bridge(
     Maps agent-browser CLI commands to _submit_task actions in browser_routes.py.
     The timeout parameter is ignored (browser_routes has its own 35s timeout).
     """
+    args = args or []
+
+    # ── [DAON 8088 브라우저 서비스(Playwright Screencast) 직접 위임] ──
+    try:
+        from browser_service.manager import call_browser_api, ensure_service_running, is_service_running
+        # 8088 브라우저 서비스가 항상 우선 기동되도록 보장
+        if ensure_service_running():
+            if command in ("open", "navigate"):
+                url = args[0] if args else "about:blank"
+                res = call_browser_api("navigate", {"url": url}, timeout=timeout or 25)
+                if res.get("ok"):
+                    return {"success": True, "data": {"url": res.get("url", url), "title": res.get("title", "")}}
+                else:
+                    return {"success": False, "error": res.get("error", "Navigation failed")}
+
+            elif command == "snapshot":
+                res = call_browser_api("snapshot", method="POST", timeout=timeout or 15)
+                if res.get("ok"):
+                    return {"success": True, "data": {
+                        "url": res.get("url", ""),
+                        "title": res.get("title", ""),
+                        "snapshot": res.get("snapshot", ""),
+                        "text": res.get("text", ""),
+                        "elements": res.get("elements", []),
+                        "refs": res.get("refs", {}),
+                    }}
+                else:
+                    return {"success": False, "error": res.get("error", "Snapshot failed")}
+
+            elif command == "click":
+                ref = args[0].lstrip("@") if args else ""
+                res = call_browser_api("click", {"selector": ref, "ref": ref}, method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"clicked": True, "ref": ref}}
+                else:
+                    return {"success": False, "error": res.get("error", "Click failed")}
+
+            elif command == "fill":
+                ref = args[0].lstrip("@") if args else ""
+                text = args[1] if len(args) > 1 else ""
+                res = call_browser_api("type", {"selector": ref, "ref": ref, "text": text}, method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"filled": True, "ref": ref}}
+                else:
+                    return {"success": False, "error": res.get("error", "Fill failed")}
+
+            elif command == "scroll":
+                direction = args[0] if args else "down"
+                pixels = int(args[1]) if len(args) > 1 and str(args[1]).isdigit() else 500
+                res = call_browser_api("scroll", {"direction": direction, "pixels": pixels}, method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"scrolled": True, "direction": direction, "pixels": pixels}}
+                else:
+                    return {"success": False, "error": res.get("error", "Scroll failed")}
+
+            elif command == "back":
+                res = call_browser_api("back", method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"url": res.get("url", ""), "title": res.get("title", "")}}
+                else:
+                    return {"success": False, "error": res.get("error", "Back failed")}
+
+            elif command == "forward":
+                res = call_browser_api("forward", method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"url": res.get("url", ""), "title": res.get("title", "")}}
+                else:
+                    return {"success": False, "error": res.get("error", "Forward failed")}
+
+            elif command == "press":
+                key = args[0] if args else "Enter"
+                res = call_browser_api("press", {"key": key}, method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"pressed": key}}
+                else:
+                    return {"success": False, "error": res.get("error", "Press failed")}
+
+            elif command == "screenshot":
+                res = call_browser_api("screenshot", method="POST", timeout=timeout or 12)
+                if res.get("ok"):
+                    out_path = None
+                    for _a in args:
+                        if isinstance(_a, str) and _a.lower().endswith(".png"):
+                            out_path = _a
+                    image_b64 = res.get("image", "")
+                    ret_data = {"image": image_b64, "image_base64": image_b64}
+                    if out_path and image_b64:
+                        import base64 as _b64
+                        _dir = os.path.dirname(out_path)
+                        if _dir:
+                            os.makedirs(_dir, exist_ok=True)
+                        with open(out_path, "wb") as _f:
+                            _f.write(_b64.b64decode(image_b64))
+                        ret_data["path"] = out_path
+                    return {"success": True, "data": ret_data}
+                else:
+                    return {"success": False, "error": res.get("error", "Screenshot failed")}
+
+            elif command == "eval":
+                expression = args[0] if args else ""
+                res = call_browser_api("eval", {"js": expression}, method="POST", timeout=timeout or 10)
+                if res.get("ok"):
+                    return {"success": True, "data": {"result": res.get("result")}}
+                else:
+                    return {"success": False, "error": res.get("error", "Eval failed")}
+
+            elif command == "close":
+                res = call_browser_api("session/close", method="POST", timeout=timeout or 10)
+                return {"success": True, "data": {"closed": True}}
+    except Exception as _e_bridge:
+        _logger.warning("Browser bridge 8088 direct delegation error: %s", _e_bridge)
+
     from api.routes.browser_routes import _submit_task
 
     args = args or []

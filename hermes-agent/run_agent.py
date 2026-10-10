@@ -5352,6 +5352,20 @@ class AIAgent:
                 return bool(github_model_reasoning_efforts(self.model))
             except Exception:
                 return False
+        # OpenCode (Go & Zen), DeepSeek, Minimax, and OpenAI-compatible routes that accept reasoning
+        if "opencode.ai" in self._base_url_lower:
+            return True
+        if any(domain in self._base_url_lower for domain in ("deepseek.com", "minimax.io", "together.xyz")) or self.provider in ("opencode-go", "opencode-zen", "deepseek", "minimax"):
+            try:
+                import sys
+                from pathlib import Path
+                api_dir = str(Path(__file__).parent.parent / "api")
+                if api_dir not in sys.path:
+                    sys.path.insert(0, api_dir)
+                from api.managers.model_manager import ModelManager
+                return ModelManager.supports_reasoning(self.model, self.provider)
+            except Exception:
+                return True
         if "openrouter" not in self._base_url_lower:
             return False
         if "api.mistral.ai" in self._base_url_lower:
@@ -8832,9 +8846,8 @@ class AIAgent:
                         continue_msg = {
                             "role": "user",
                             "content": (
-                                "[System: Continue now. Execute the required tool calls (e.g. terminal, read_file) "
-                                "or complete your analysis, and send your final answer with detailed results after completing the task.]\n"
-                                "[시스템 안내: 단문 확인 메시지만 출력하지 말고, 필요한 도구(터미널, 파일 읽기 등)를 즉시 실행하거나 작업 결과를 구체적으로 요약하여 최종 답변을 완성하세요.]"
+                                "[System: Continue now. Before executing any tool calls, first explain your intended plan and actions clearly to the user. Then execute the required tool calls (e.g. terminal, read_file) or complete your analysis, and send your final answer with detailed results after completing the task.]\n"
+                                "[시스템 안내: 본격적인 도구 실행이나 작업에 착수하기 전에, 먼저 사용자에게 어떤 작업을 어떻게 진행할 것인지 수행 계획과 주요 작업 내용을 친절히 안내하세요. 그 후 필요한 도구(터미널, 파일 읽기 등)를 실행하여 작업을 완수하고 상세한 최종 결과를 보고하세요.]"
                             ),
                         }
                         messages.append(continue_msg)
