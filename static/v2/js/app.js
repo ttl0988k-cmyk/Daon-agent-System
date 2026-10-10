@@ -4,7 +4,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
  */
 
-import { DaonAPI } from './api.js?v=20261010_modelpick';
+import { DaonAPI } from './api.js?v=20261011_slotsel';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -308,20 +308,45 @@ async function loadSessions() {
   const container = document.getElementById('recent-threads-list');
   if (!container) return;
 
-  // Bind Delete All button once
-  const delAllBtn = document.getElementById('delete-all-sessions-btn');
-  if (delAllBtn && !delAllBtn._bound) {
-    delAllBtn._bound = true;
-    delAllBtn.addEventListener('click', async () => {
-      if (confirm('모든 대화 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
-        await DaonAPI.deleteAllSessions();
-        state.currentSessionId = null;
-        renderSessionMessages([]);
-        const res = await DaonAPI.createSession('새 세션', state.currentAgentPersona || 'raon');
-        const sid = res?.session_id || res?.session?.session_id;
-        state.currentSessionId = sid;
-        await loadSessions();
+  // 선택 상태(세션 ID Set) — 재렌더에도 유지
+  if (!state.selectedSessions) state.selectedSessions = new Set();
+
+  // "선택 삭제" 버튼 바인딩(1회) — 체크된 세션만 한 번에 삭제
+  const delSelBtn = document.getElementById('delete-selected-sessions-btn');
+  if (delSelBtn && !delSelBtn._bound) {
+    delSelBtn._bound = true;
+    delSelBtn.addEventListener('click', async () => {
+      const ids = [...state.selectedSessions];
+      if (ids.length === 0) return;
+      if (!confirm(`선택한 ${ids.length}개 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+      for (const id of ids) {
+        try { await DaonAPI.deleteSession(id); } catch (e) { console.warn('session delete failed:', id, e); }
+        state.selectedSessions.delete(id);
+        if (state.currentSessionId === id) state.currentSessionId = null;
       }
+      await loadSessions();
+      if (!state.currentSessionId) {
+        const rest = await DaonAPI.getSessions().catch(() => []);
+        if (rest && rest.length) await switchSession(rest[0].session_id);
+        else renderSessionMessages([]);
+      }
+    });
+  }
+
+  // "전체 선택/해제" 체크박스 바인딩(1회)
+  const selAll = document.getElementById('sessions-select-all');
+  if (selAll && !selAll._bound) {
+    selAll._bound = true;
+    selAll.addEventListener('change', () => {
+      const checks = [...container.querySelectorAll('.session-check')];
+      checks.forEach(c => {
+        c.checked = selAll.checked;
+        const id = c.getAttribute('data-session-id');
+        if (!id) return;
+        if (selAll.checked) state.selectedSessions.add(id);
+        else state.selectedSessions.delete(id);
+      });
+      updateSelectedSessionsUI();
     });
   }
 
@@ -329,17 +354,40 @@ async function loadSessions() {
     const sessions = await DaonAPI.getSessions();
     if (!sessions || sessions.length === 0) {
       container.innerHTML = '<div class="px-space-sm text-[12px] text-on-surface-variant/60">진행된 세션이 없습니다.</div>';
+      state.selectedSessions.clear();
+      updateSelectedSessionsUI();
       return;
+    }
+
+    // 화면에 표시되지 않는(20개 초과) 세션의 잔여 선택 정리
+    const visibleIds = new Set(sessions.slice(0, 20).map(s => s.session_id));
+    for (const id of [...state.selectedSessions]) {
+      if (!visibleIds.has(id)) state.selectedSessions.delete(id);
     }
 
     container.innerHTML = '';
     sessions.slice(0, 20).forEach((sess) => {
       const a = document.createElement('a');
-      a.className = `group h-[32px] flex items-center justify-between px-space-sm rounded-[8px] font-body-sm text-body-sm transition-colors cursor-pointer ${
+      a.className = `group h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-colors cursor-pointer ${
         sess.session_id === state.currentSessionId ? 'bg-black/[0.06] text-on-surface font-medium' : 'text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface'
       }`;
       a.title = sess.title || '세션';
-      
+
+      // 선택 체크박스 (여러 세션 일괄 삭제용)
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'session-check w-3.5 h-3.5 mr-1.5 shrink-0 cursor-pointer accent-red-600';
+      chk.setAttribute('data-session-id', sess.session_id);
+      chk.checked = state.selectedSessions.has(sess.session_id);
+      chk.title = '이 세션 선택';
+      chk.addEventListener('click', (e) => e.stopPropagation());
+      chk.addEventListener('change', (e) => {
+        if (e.target.checked) state.selectedSessions.add(sess.session_id);
+        else state.selectedSessions.delete(sess.session_id);
+        updateSelectedSessionsUI();
+      });
+      a.appendChild(chk);
+
       const span = document.createElement('span');
       span.className = 'truncate flex-1 pr-1 flex items-center gap-1.5';
       const pIcon = getPersonaIcon(sess.profile);
@@ -356,6 +404,7 @@ async function loadSessions() {
         e.stopPropagation();
         if (confirm(`'${sess.title || '선택한 세션'}'을(를) 삭제하시겠습니까?`)) {
           await DaonAPI.deleteSession(sess.session_id);
+          state.selectedSessions.delete(sess.session_id);
           if (state.currentSessionId === sess.session_id) {
             state.currentSessionId = null;
           }
@@ -371,12 +420,35 @@ async function loadSessions() {
       container.appendChild(a);
     });
 
+    updateSelectedSessionsUI();
+
     // Select the first session if none selected
     if (!state.currentSessionId && sessions.length > 0) {
       await switchSession(sessions[0].session_id);
     }
   } catch (err) {
     console.error('Failed to load sessions:', err);
+  }
+}
+
+// 선택 삭제 UI 갱신 — 개수 라벨 / 버튼 활성 / 전체선택 체크박스 상태
+function updateSelectedSessionsUI() {
+  const container = document.getElementById('recent-threads-list');
+  const n = (state.selectedSessions && state.selectedSessions.size) || 0;
+  const btn = document.getElementById('delete-selected-sessions-btn');
+  const lbl = document.getElementById('delete-selected-label');
+  if (lbl) lbl.textContent = n > 0 ? `선택 삭제 (${n})` : '선택 삭제';
+  if (btn) {
+    btn.disabled = n === 0;
+    btn.classList.toggle('opacity-40', n === 0);
+    btn.classList.toggle('pointer-events-none', n === 0);
+  }
+  const selAll = document.getElementById('sessions-select-all');
+  if (selAll && container) {
+    const checks = [...container.querySelectorAll('.session-check')];
+    const on = checks.filter(c => c.checked).length;
+    selAll.checked = checks.length > 0 && on === checks.length;
+    selAll.indeterminate = on > 0 && on < checks.length;
   }
 }
 
@@ -974,6 +1046,16 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       setStatus(`🔧 도구 실행 중: ${friendly}`, 'construction');
 
       const name = rawName.toLowerCase();
+      // 채팅 → 다이나믹 하네스: 백그라운드 실행 안내 + 하네스 탭 자동 전환 (구 UI 패턴 이식)
+      // 하네스는 이제 백그라운드로 돌므로 챗 턴은 즉시 끝난다. 진행/결과는
+      // 하네스 탭에서 폴링으로 확인하고, 사용자는 언제든 챗으로 돌아와 계속 대화할 수 있다.
+      if (name === 'execute_dynamic_harness') {
+        setStatus('🎯 다이나믹 하네스 백그라운드 실행 중...', 'sync');
+        try {
+          if (typeof window.activateTab === 'function') window.activateTab('dynamic-harness');
+        } catch (_) {}
+        return;
+      }
       if (name.includes('browser') || name.includes('navigate') || name.includes('web_') || name.includes('playwright')) {
         let url = '';
         try {
@@ -993,6 +1075,26 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
     },
     onToolResult(data) {
       setStatus('⚙️ 도구 실행 완료 · 결과 분석 중...', 'sync');
+    },
+    onHarnessDone(data) {
+      // 백그라운드 하네스 잡 완료 알림 (턴이 살아있을 때만 도착)
+      try {
+        const ok = data?.ok !== false;
+        const res = String(data?.result || '').trim();
+        const runId = data?.run_id || '';
+        setStatus(ok ? '✅ 다이나믹 하네스 완료' : '⚠️ 다이나믹 하네스 오류', ok ? 'check_circle' : 'error');
+        const note = document.createElement('div');
+        note.className = 'harness-done-note mt-2 px-2.5 py-2 rounded-[8px] text-[12px] leading-relaxed ' +
+          (ok ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+              : 'bg-rose-50 border border-rose-300 text-rose-800');
+        const head = ok ? '🎯 <b>다이나믹 하네스 완료</b>' : '⚠️ <b>다이나믹 하네스 오류</b>';
+        const tail = res ? escapeHtml(res).slice(0, 400) : "결과는 'Dynamic Harness 세션' 탭에서 확인하세요.";
+        note.innerHTML = head + (runId ? ` <span class="opacity-70">(run_id: ${escapeHtml(runId)})</span>` : '') + '<br>' + tail;
+        contentEl.appendChild(note);
+        if (typeof scrollChatToBottom === 'function') scrollChatToBottom();
+      } catch (e) {
+        console.warn('[SSE] onHarnessDone handler error:', e);
+      }
     },
     onModelInfo(info) {
       const actual = info?.actual || info?.model || '';
@@ -2648,11 +2750,21 @@ function initBoardroomShortcuts() {
         return;
       }
 
+      // 참여 슬롯(체크박스) 수집 — 선택된 에이전트/워커만 이번 회의에 참여
+      const selectedSlots = [...document.querySelectorAll('.boardroom-slot-check')]
+        .filter(c => c.checked)
+        .map(c => c.getAttribute('data-slot'))
+        .filter(Boolean);
+      if (selectedSlots.length === 0) {
+        alert('회의에 참여할 에이전트/워커를 최소 1명 선택하세요. (슬롯 카드의 체크박스)');
+        return;
+      }
+
       broadcastInput.value = '';
       resetBoardroomSlots();
 
-      appendBoardroomTranscript('00 사용자', `[전체 브로드캐스트 지시] "${topic}"`, 'bg-primary text-on-primary');
-      appendBoardroomTranscript('01 의장', '안건을 접수했습니다. 8개 슬롯 동기화 라운드를 시작합니다 (실 에이전트 런타임)...', 'bg-surface-container-highest text-on-surface');
+      appendBoardroomTranscript('00 사용자', `[브로드캐스트 지시] "${topic}"`, 'bg-primary text-on-primary');
+      appendBoardroomTranscript('01 의장', `안건을 접수했습니다. 선택된 ${selectedSlots.length}개 슬롯 동기화 라운드를 시작합니다 (실 에이전트 런타임)...`, 'bg-surface-container-highest text-on-surface');
 
       // 슬롯별 선택 모델 수집 (기본 모델이면 생략 → 프로필 기본값 사용)
       const slotModels = {};
@@ -2662,7 +2774,7 @@ function initBoardroomShortcuts() {
       });
 
       try {
-        const res = await DaonAPI.broadcastBoardroom({ task: topic, sessionId: state.currentSessionId, models: slotModels });
+        const res = await DaonAPI.broadcastBoardroom({ task: topic, sessionId: state.currentSessionId, models: slotModels, slots: selectedSlots });
         if (!res || !res.stream_id) throw new Error('stream_id를 받지 못했습니다');
         setBoardroomBusy(true);
 
@@ -2681,7 +2793,8 @@ function initBoardroomShortcuts() {
             appendBoardroomTranscript(tag, (d.text || '(응답 없음)') + suffix, cls);
           },
           onBoardroomDone(d) {
-            appendBoardroomTranscript('01 의장', '8개 슬롯 전원 응답 완료. 회의 라운드를 정상 종료합니다.', 'bg-emerald-100 text-emerald-800');
+            const n = (d && Array.isArray(d.slots)) ? d.slots.length : selectedSlots.length;
+            appendBoardroomTranscript('01 의장', `${n}개 슬롯 전원 응답 완료. 회의 라운드를 정상 종료합니다.`, 'bg-emerald-100 text-emerald-800');
             setBoardroomBusy(false);
             try { showBoardroomToWorkshop(d); } catch (e) { console.error('boardroom→workshop hand-off err:', e); }
           },
@@ -2698,7 +2811,82 @@ function initBoardroomShortcuts() {
   }
 
   // 슬롯별 모델 선택 드롭다운을 실 모델 목록(/api/models)으로 채운다
+  initBoardroomSlotSelector();
   loadBoardroomModels();
+}
+
+// ── 회의실 참여 슬롯 선택기 (체크박스) ──────────────────────────────────────────
+// 각 슬롯 카드의 체크박스로 '이번 회의에 참여할 에이전트/워커'를 고른다.
+// (2명이든 3명이든, 에이전트만/워커만/전체 자유 선택). 선택은 localStorage에
+// 저장되어 새로고침 후에도 유지된다. 브로드캐스트 시 선택 슬롯만 실제로 실행된다.
+const BOARDROOM_ALL_SLOTS = ['01', '02', '03', '04', '05', '06', '07', '08'];
+const BOARDROOM_AGENT_SLOTS = ['01', '02', '03', '04', '05', '06']; // 6 정적 에이전트
+const BOARDROOM_WORKER_SLOTS = ['07', '08'];                        // 2 CLI 워커
+
+function initBoardroomSlotSelector() {
+  const checks = [...document.querySelectorAll('.boardroom-slot-check')];
+  if (checks.length === 0) return;
+
+  // 저장된 선택 복원 (없으면 전체 선택)
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('daon_boardroom_slots') || 'null'); } catch (e) { saved = null; }
+  const want = Array.isArray(saved) ? saved : BOARDROOM_ALL_SLOTS;
+  checks.forEach(c => { c.checked = want.includes(c.getAttribute('data-slot')); });
+
+  checks.forEach(c => {
+    if (c.dataset.bound) return;
+    c.dataset.bound = '1';
+    c.addEventListener('change', () => {
+      updateBoardroomSlotCard(c);
+      updateBoardroomSelectionCount();
+      persistBoardroomSlots();
+    });
+    updateBoardroomSlotCard(c);
+  });
+
+  // 빠른 선택 버튼: 전체 / 해제 / 에이전트만 / 워커만
+  const bind = (id, slots) => {
+    const b = document.getElementById(id);
+    if (b && !b.dataset.bound) {
+      b.dataset.bound = '1';
+      b.addEventListener('click', () => setBoardroomSlots(checks, slots));
+    }
+  };
+  bind('boardroom-sel-all', BOARDROOM_ALL_SLOTS);
+  bind('boardroom-sel-none', []);
+  bind('boardroom-sel-agents', BOARDROOM_AGENT_SLOTS);
+  bind('boardroom-sel-workers', BOARDROOM_WORKER_SLOTS);
+
+  updateBoardroomSelectionCount();
+}
+
+function setBoardroomSlots(checks, slots) {
+  checks.forEach(c => {
+    c.checked = slots.includes(c.getAttribute('data-slot'));
+    updateBoardroomSlotCard(c);
+  });
+  updateBoardroomSelectionCount();
+  persistBoardroomSlots();
+}
+
+function updateBoardroomSlotCard(check) {
+  const slot = check.getAttribute('data-slot');
+  const card = document.querySelector(`div[data-slot="${slot}"]`);
+  if (card) card.classList.toggle('slot-excluded', !check.checked);
+}
+
+function updateBoardroomSelectionCount() {
+  const all = [...document.querySelectorAll('.boardroom-slot-check')];
+  const on = all.filter(c => c.checked).length;
+  const el = document.getElementById('boardroom-selected-count');
+  if (el) el.textContent = `${on}/${all.length} Agents Selected`;
+}
+
+function persistBoardroomSlots() {
+  try {
+    const on = [...document.querySelectorAll('.boardroom-slot-check')].filter(c => c.checked).map(c => c.getAttribute('data-slot'));
+    localStorage.setItem('daon_boardroom_slots', JSON.stringify(on));
+  } catch (e) { /* 저장 실패는 무시 */ }
 }
 
 // 회의실 8슬롯의 모델 선택 <select>를 /api/models 실데이터로 채운다.
@@ -2733,10 +2921,11 @@ function setBoardroomBusy(busy) {
   const input = document.getElementById('boardroom-input');
   if (btn) { btn.disabled = !!busy; btn.classList.toggle('opacity-50', !!busy); }
   if (input) input.disabled = !!busy;
+  document.querySelectorAll('.boardroom-slot-check, .boardroom-sel-btn').forEach(el => { el.disabled = !!busy; });
 }
 
 function setBoardroomSlotState(slot, status) {
-  const card = document.querySelector(`[data-slot="${slot}"]`);
+  const card = document.querySelector(`div[data-slot="${slot}"]`);
   if (!card) return;
   card.classList.remove('slot-running', 'slot-done', 'slot-error');
   if (status === 'running') card.classList.add('slot-running');
@@ -2753,7 +2942,7 @@ function setBoardroomSlotState(slot, status) {
 }
 
 function resetBoardroomSlots() {
-  document.querySelectorAll('[data-slot]').forEach(card => {
+  document.querySelectorAll('div[data-slot]').forEach(card => {
     card.classList.remove('slot-running', 'slot-done', 'slot-error');
     const badge = card.querySelector('.slot-status-badge');
     if (badge) { badge.textContent = 'READY'; badge.className = 'slot-status-badge font-code text-[10px] text-on-surface-variant'; }

@@ -74,16 +74,74 @@ def _ensure_acceptance_criteria(task: str, preferred_model: Optional[str], accep
         return task
 
 
+def _start_harness_background(task, preferred_model, forced_skills, acceptance_criteria):
+    """백그라운드 job 으로 하네스를 시작하고 즉시 run_id 를 반환한다.
+
+    챗 턴을 블로킹하지 않으므로 하네스가 도는 동안에도 대화를 계속할 수 있다.
+    결과/진행은 하네스 탭 폴링(/api/dynamic/status)과 완료 시 챗 스트림 push 로 전달된다.
+    """
+    from api.dynamic_jobs import start_harness_job
+
+    run_task = _ensure_acceptance_criteria(task, preferred_model, acceptance_criteria)
+
+    session_id = None
+    try:
+        from api.streaming import get_current_thread_session_id
+        session_id = get_current_thread_session_id()
+    except Exception:
+        pass
+
+    body = {
+        'task': run_task,
+        'model': preferred_model,
+        'skills': list(forced_skills or []),
+        'clarification': False,  # 챗 경로는 인터뷰 없이 즉시 실행
+    }
+    if session_id:
+        body['session_id'] = session_id
+
+    run_id = start_harness_job(body)
+
+    formatted_md = (
+        f"### 🎯 다이나믹 하네스 백그라운드 실행 시작\n\n"
+        f"**작업:** {task}\n"
+        f"**run_id:** `{run_id}`\n\n"
+        f"하네스가 백그라운드에서 실행 중입니다. **이 대화는 계속 사용할 수 있습니다.**\n"
+        f"진행 상황과 최종 결과는 **'Dynamic Harness 세션' 탭**에서 확인할 수 있고, "
+        f"완료되면 이 대화로 결과 알림이 도착합니다.\n"
+    )
+    return tool_result(
+        success=True,
+        background=True,
+        run_id=run_id,
+        task=task,
+        session_id=session_id,
+        formatted_output=formatted_md,
+    )
+
+
 def execute_dynamic_harness(task: str, preferred_model: Optional[str] = None, forced_skills: Optional[list] = None,
-                            acceptance_criteria: Optional[list] = None) -> str:
+                            acceptance_criteria: Optional[list] = None, background: bool = True) -> str:
     """
     Run the Hermes Dynamic Harness on the requested task.
+
+    background=True (기본): 백그라운드 job 으로 시작하고 즉시 run_id 를 반환한다.
+    챗 턴을 블로킹하지 않아 하네스가 도는 동안에도 대화를 계속할 수 있다.
+    background=False: 동기 실행(runner.run) — 결과를 그 자리에서 반환한다.
     """
     if not task or not task.strip():
         return tool_error("Task description is required.")
 
     task = task.strip()
-    
+
+    # ── 비동기(백그라운드) 경로: 챗 턴을 블로킹하지 않는다 ──
+    if background:
+        try:
+            return _start_harness_background(task, preferred_model, forced_skills, acceptance_criteria)
+        except Exception as _bg_err:
+            import traceback
+            print(f"[DynamicHarnessTool] background start failed → sync fallback: {_bg_err}\n{traceback.format_exc()}")
+
     # Import HermesDynamicRunner dynamically to ensure PYTHONPATH is resolved properly
     try:
         from api.dynamic_hermes import HermesDynamicRunner

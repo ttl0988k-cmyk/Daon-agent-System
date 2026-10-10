@@ -165,6 +165,30 @@ def get_current_thread_put():
     """Return the put() callable bound to the current stream thread, or None."""
     return getattr(_thread_put, 'put', None)
 
+
+def get_current_thread_session_id():
+    """Return the session_id bound to the current stream thread, or None.
+
+    도구 핸들러가 (에이전트 스트림 스레드 안에서) 현재 세션을 알아야 할 때 쓴다.
+    예: execute_dynamic_harness가 백그라운드 잡에 session_id를 전달해
+    완료 알림/승인을 올바른 스트림으로 라우팅하기 위함.
+    """
+    sid = getattr(_thread_put, 'session_id', None)
+    if sid:
+        return sid
+    # 폴백: 현재 스트림 emitter의 stream_id로 역매핑 조회
+    try:
+        put = getattr(_thread_put, 'put', None)
+        stream_id = getattr(put, 'stream_id', None)
+        if stream_id:
+            with ACTIVE_SESSION_STREAMS_LOCK:
+                for _sid, _stream in ACTIVE_SESSION_STREAMS.items():
+                    if _stream == stream_id:
+                        return _sid
+    except Exception:
+        pass
+    return None
+
 # Lazy import to avoid circular deps -- hermes-agent is on sys.path via api/config.py
 try:
     from run_agent import AIAgent
@@ -577,6 +601,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
     emitter = StreamEmitter(stream_id, q, cancel_event)
     put = emitter
     _thread_put.put = emitter
+    _thread_put.session_id = session_id
 
     # Whether we registered the dangerous-command approval gateway callback for
     # this session (must be unregistered in the outer finally block).

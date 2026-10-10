@@ -397,6 +397,29 @@ def set_job_error(run_id: str, error: str):
         _job_store.save_job(run_id, job_copy)
 
 
+def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True) -> None:
+    """하네스 백그라운드 잡 완료/실패를 해당 세션의 활성 챗 스트림에 push한다.
+
+    챗 경로에서 시작된 하네스(execute_dynamic_harness background=True)가 끝나면
+    사용자가 다른 탭을 보고 있어도 챗으로 결과 알림이 도착하도록 한다.
+    활성 스트림이 없으면(턴 종료 후 SSE 닫힘) 조용히 무시한다 — 하네스 탭
+    폴링(/api/dynamic/status)이 결과를 보여주므로 유실되지 않는다.
+    """
+    if not session_id:
+        return
+    try:
+        from api.config import get_stream_queue
+        q = get_stream_queue(session_id)
+        if q:
+            q.put(('harness_done', {
+                'run_id': run_id,
+                'ok': bool(ok),
+                'result': result or '',
+            }))
+    except Exception:
+        pass
+
+
 def _derive_phase(job: dict) -> int:
     """잡 상태로부터 4단계 파이프라인 phase를 도출한다 (프론트 스텝 UI 매핑용).
 
@@ -650,9 +673,11 @@ def start_harness_job(body: dict) -> str:
                 except Exception:
                     traceback.print_exc()
             set_job_done(run_id, final_output)
+            push_harness_done(session_id, run_id, final_output, ok=True)
         except Exception as e:
             traceback.print_exc()
             set_job_error(run_id, str(e))
+            push_harness_done(session_id, run_id, str(e), ok=False)
         finally:
             # Restore TERMINAL_CWD to its previous value
             if _old_terminal_cwd is None:

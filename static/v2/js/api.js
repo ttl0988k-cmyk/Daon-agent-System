@@ -284,6 +284,14 @@ export const DaonAPI = {
       try { callbacks.onBoardroomDone?.(JSON.parse(e.data)); } catch { callbacks.onBoardroomDone?.({}); }
     });
 
+    // ── Dynamic Harness: 백그라운드 잡 완료 알림 ─────────────────────────
+    // 챗에서 execute_dynamic_harness(background=True)로 시작한 하네스가 끝나면
+    // 해당 턴이 아직 살아있을 때 결과가 push된다. 턴이 이미 끝나 SSE가 닫혔으면
+    // 이 이벤트는 오지 않는다 — 그 경우 하네스 탭 폴링이 결과를 보여준다.
+    es.addEventListener('harness_done', (e) => {
+      try { callbacks.onHarnessDone?.(JSON.parse(e.data)); } catch { callbacks.onHarnessDone?.({}); }
+    });
+
     es.addEventListener('done', (e) => {
       es.close();
       try {
@@ -424,17 +432,22 @@ export const DaonAPI = {
   /**
    * Boardroom & Multi-Agent Meeting API
    */
-  async broadcastBoardroom({ task, sessionId = null, models = null }) {
+  async broadcastBoardroom({ task, sessionId = null, models = null, slots = null }) {
     const res = await fetch(`${this.baseUrl}/api/boardroom/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task, session_id: sessionId || '', models: models || {} })
+      body: JSON.stringify({
+        task,
+        session_id: sessionId || '',
+        models: models || {},
+        slots: Array.isArray(slots) ? slots : null
+      })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       throw new Error(err.error || `Boardroom broadcast failed: ${res.status}`);
     }
-    return await res.json(); // { ok, stream_id, slots }
+    return await res.json(); // { ok, stream_id, slots, slot_ids }
   },
 
   async startBoardroomMeeting({ sessionId, topic, models = ['deepseek-v4.1-flash', 'glm-5.3-flash'], maxTurns = 8 }) {
