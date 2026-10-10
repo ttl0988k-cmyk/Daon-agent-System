@@ -79,17 +79,19 @@ else:
     # 하이픈만 사용한다 — 위 reconfigure 로 방어했더라도 비-ASCII 는 쓰지 않는다.
     print("[spec] CUDA skipped - slim build (set DAON_CUDA=1 to bundle CUDA)")
 
+# Bundle plugins and daon_runtime if present in dist_new
+_extra_datas = [
+    (s, d) for s, d in [('dist_new/plugins', 'plugins'), ('dist_new/daon_runtime', 'daon_runtime')]
+    if os.path.isdir(s)
+]
+
 a = Analysis(
     ['server.py'],
     pathex=[],
     binaries=nvidia_binaries + _pw_binaries,
     # The packaged app keeps the original DAON HTML workspace. The Roo React
     # composition is not a replacement frontend and must not be embedded as
-    # Bundle plugins and daon_runtime if present in dist_new
-    _extra_datas = [
-        (s, d) for s, d in [('dist_new/plugins', 'plugins'), ('dist_new/daon_runtime', 'daon_runtime')]
-        if os.path.isdir(s)
-    ]
+    # the server's primary UI.
     datas=[('dist_new/static', 'static'), ('dist_new/api/api', 'api'), ('api/agents', 'agents'), ('dist_new/hermes-agent', 'hermes-agent'), ('dist_new/skills', 'skills'), ('dist_new/config.yaml', '.'), ('dist_new/index.html', '.')] + _extra_datas + _pw_datas,
     hiddenimports=['jinja2', 'markdown', 'watchfiles', 'requests', 'websockets', 'psutil', 'playwright', 'pypdf', 'PIL', 'python_multipart', 'tts_server', 'ctranslate2', 'faster_whisper', 'tokenizers', 'numpy', 'aiohttp', 'pydantic', 'yaml', 'dotenv', 'api.memory_store'] + _pw_hidden + ['playwright.sync_api', 'playwright.async_api'],
     hookspath=[],
