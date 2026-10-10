@@ -666,13 +666,31 @@ class HerdrManager:
 
         return self.get_worker(worker_key)
 
-    def execute_worker_task(self, name: str = "worker-codex", prompt: str = "", timeout: int = 120) -> Dict[str, Any]:
+    def execute_worker_task(self, name: str = "worker-codex", prompt: str = "", timeout: int = 120, model: Optional[str] = None) -> Dict[str, Any]:
         """
         Synchronously dispatch a task to an external coding worker (Codex / Claude)
         and wait for completion. Used by Raon and other orchestration agents.
+
+        model: optional per-call model override (e.g. boardroom slot model picker).
+               When provided and different from the worker's current model, the
+               worker's model is switched via set_worker_model before dispatching.
         """
         self.ensure_server()
         worker_key = self._normalize_worker_name(name)
+
+        # Per-call model override — apply BEFORE resolving the pane so a worker
+        # restart picks up the new model. Best-effort: failure never blocks the run.
+        if model and str(model).strip():
+            try:
+                with self._state_lock:
+                    _cur_model = (self._workers.get(worker_key) or {}).get("model", "")
+                if str(model).strip().lower() != str(_cur_model).strip().lower():
+                    self.set_worker_model(worker_key, str(model).strip())
+            except Exception:
+                _logger.exception(
+                    "[HerdrManager] set_worker_model failed for %s (model=%s)", worker_key, model
+                )
+
         target = self._resolve_target(worker_key)
 
         if "claude" in worker_key:

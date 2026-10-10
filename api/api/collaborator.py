@@ -99,10 +99,15 @@ def execute_agent_task(
     parent_session_id: Optional[str] = None,
     workspace: Optional[str] = None,
     force_new_session: bool = False,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a task synchronously on a colleague agent and return final output.
 
     Used by Raon's `delegate_to_agent` tool to wait for colleague results.
+
+    model: optional per-call model override (e.g. boardroom slot model picker).
+           When provided, the streaming run uses this model instead of the
+           session's stored model.
     """
     from api.config import STREAMS, STREAMS_LOCK, ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK
     from api.streaming import BroadcastQueue, _run_agent_streaming, cancel_stream
@@ -153,7 +158,7 @@ def execute_agent_task(
 
     thr = threading.Thread(
         target=_run_agent_streaming,
-        args=(sid, instruction, target_session.model, target_session.workspace, stream_id),
+        args=(sid, instruction, (model or target_session.model), target_session.workspace, stream_id),
         daemon=True,
         name=f"ColleagueRun-{canonical_profile}",
     )

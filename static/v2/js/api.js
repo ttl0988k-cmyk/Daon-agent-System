@@ -424,11 +424,11 @@ export const DaonAPI = {
   /**
    * Boardroom & Multi-Agent Meeting API
    */
-  async broadcastBoardroom({ task, sessionId = null }) {
+  async broadcastBoardroom({ task, sessionId = null, models = null }) {
     const res = await fetch(`${this.baseUrl}/api/boardroom/broadcast`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task, session_id: sessionId || '' })
+      body: JSON.stringify({ task, session_id: sessionId || '', models: models || {} })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));

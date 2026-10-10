@@ -4,7 +4,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
  */
 
-import { DaonAPI } from './api.js?v=20261010_harnesslive';
+import { DaonAPI } from './api.js?v=20261010_modelpick';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -2654,8 +2654,15 @@ function initBoardroomShortcuts() {
       appendBoardroomTranscript('00 사용자', `[전체 브로드캐스트 지시] "${topic}"`, 'bg-primary text-on-primary');
       appendBoardroomTranscript('01 의장', '안건을 접수했습니다. 8개 슬롯 동기화 라운드를 시작합니다 (실 에이전트 런타임)...', 'bg-surface-container-highest text-on-surface');
 
+      // 슬롯별 선택 모델 수집 (기본 모델이면 생략 → 프로필 기본값 사용)
+      const slotModels = {};
+      document.querySelectorAll('.boardroom-model-select').forEach(sel => {
+        const s = sel.getAttribute('data-slot');
+        if (s && sel.value) slotModels[s] = sel.value;
+      });
+
       try {
-        const res = await DaonAPI.broadcastBoardroom({ task: topic, sessionId: state.currentSessionId });
+        const res = await DaonAPI.broadcastBoardroom({ task: topic, sessionId: state.currentSessionId, models: slotModels });
         if (!res || !res.stream_id) throw new Error('stream_id를 받지 못했습니다');
         setBoardroomBusy(true);
 
@@ -2665,7 +2672,8 @@ function initBoardroomShortcuts() {
           },
           onBoardroomReply(d) {
             setBoardroomSlotState(d.slot, d.status === 'error' ? 'error' : 'done');
-            const tag = `${d.slot} ${d.speaker || ''}`.trim();
+            const modelTag = d.model ? ` · ${d.model}` : '';
+            const tag = `${d.slot} ${d.speaker || ''}${modelTag}`.trim();
             const cls = d.status === 'error'
               ? 'bg-rose-100 text-rose-800'
               : 'bg-surface-container-highest text-on-surface';
@@ -2686,6 +2694,36 @@ function initBoardroomShortcuts() {
         setBoardroomBusy(false);
       }
     });
+  }
+
+  // 슬롯별 모델 선택 드롭다운을 실 모델 목록(/api/models)으로 채운다
+  loadBoardroomModels();
+}
+
+// 회의실 8슬롯의 모델 선택 <select>를 /api/models 실데이터로 채운다.
+async function loadBoardroomModels() {
+  try {
+    const res = await fetch(`${DaonAPI.baseUrl}/api/models`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const groups = data.groups || [];
+    const optsHtml = groups.map(g => {
+      const glabel = escapeHtml(String(g.provider || g.provider_key || ''));
+      const inner = (g.models || []).map(m => {
+        const id = (typeof m === 'string') ? m : (m && m.id ? m.id : '');
+        const lbl = (typeof m === 'object' && m && m.label) ? m.label : id;
+        if (!id) return '';
+        return `<option value="${escapeHtml(String(id))}">${escapeHtml(String(lbl))}</option>`;
+      }).join('');
+      return glabel ? `<optgroup label="${glabel}">${inner}</optgroup>` : inner;
+    }).join('');
+    document.querySelectorAll('.boardroom-model-select').forEach(sel => {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">기본 모델</option>' + optsHtml;
+      if (cur) sel.value = cur;
+    });
+  } catch (e) {
+    /* 모델 목록 조회 실패는 조용히 무시 — 기본 모델로 정상 동작 */
   }
 }
 
