@@ -213,7 +213,7 @@ app.whenReady().then(async () => {
       repoRoot,
       log: mlog,
       pollMs: 5000,
-      settleMs: 800,
+      settleMs: 1500,
       killServer: async () => {
         supervisor.selfModifyRestartActive = true;
         supervisor.watchdogSuppressUntil = Date.now() + 4 * supervisor.WATCHDOG_INTERVAL;
@@ -221,13 +221,45 @@ app.whenReady().then(async () => {
           supervisor.killProcessTree(supervisor.pythonProcess.pid);
           supervisor.pythonProcess = null;
         }
+        if (supervisor._childPid) {
+          supervisor.killProcessTree(supervisor._childPid);
+          supervisor._childPid = null;
+        }
         if (supervisor.ttsProcess && supervisor.ttsProcess.pid) {
           supervisor.killProcessTree(supervisor.ttsProcess.pid);
           supervisor.ttsProcess = null;
         }
+        supervisor._clearChildPidFile();
+
+        // 9090 포트를 쥐고 있는 어떤 잔존 프로세스도 강제 종료
+        supervisor.killPortOwner(DEFAULT_PORT);
+
+        // 포트 9090이 완전히 CLOSED 될 때까지 폴링 대기 (최대 10초)
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const listening = await supervisor.isPortListening(DEFAULT_PORT, 500);
+          if (!listening) {
+            mlog(`[RestartOrch] Port ${DEFAULT_PORT} successfully released.`);
+            break;
+          }
+          mlog(`[RestartOrch] Waiting for port ${DEFAULT_PORT} release...`);
+          supervisor.killPortOwner(DEFAULT_PORT);
+          await new Promise((r) => setTimeout(r, 500));
+        }
       },
       spawnServer: async () => {
+        // 프리플라이트: 혹시라도 9090 포트가 차있으면 강제 종료 후 대기
+        if (await supervisor.isPortListening(DEFAULT_PORT, 500)) {
+          merr(`[RestartOrch] Preflight: Port ${DEFAULT_PORT} still busy before spawn! Force terminating...`);
+          supervisor.killPortOwner(DEFAULT_PORT);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
         supervisor.startPythonProcess(DEFAULT_PORT);
+      },
+      refreshLooseResources: async () => {
+        const targetExe = supervisor.findServerExe();
+        if (!targetExe || !buildRoot) return { refreshed: false, reason: 'no targetExe or buildRoot' };
+        return selfUpdate.refreshLooseResources(targetExe, buildRoot);
       },
       healthCheck: async () => {
         const h = await supervisor.probeHealthStable(DEFAULT_PORT);

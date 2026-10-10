@@ -95,15 +95,19 @@ class ServerSupervisor {
       // ① [onefile 수정 2026-09-17] 포트 점유자가 '살아있는 진짜 서버'인지 확인한다.
       //    onefile 부모(부트로더)만 종료됐고 자식 서버가 9090 을 정상 서비스 중이면,
       //    죽이지 않고 adopt 하여 재사용한다(재시작 폭풍/고아 포트 근본 차단).
-      try {
-        const h = await this.probeHealthStable(port);
-        if (h && h.healthy && h.pid) {
-          this.mlog(`[ServerSupervisor] live healthy server found on ${port} (pid=${h.pid}) — adopting instead of respawning.`);
-          this.adoptRunningServer(h.pid, port);
-          this.crashStreak = 0;
-          return;
-        }
-      } catch (_) { }
+      //    [주의 2026-10-11]: 포트 경합(knownConflict)으로 인한 크래시인 경우,
+      //    포트 점유자는 신규 서버 기동을 가로막는 옛 좀비 프로세스이므로 절대 adopt하면 안 된다!
+      if (!knownConflict) {
+        try {
+          const h = await this.probeHealthStable(port);
+          if (h && h.healthy && h.pid) {
+            this.mlog(`[ServerSupervisor] live healthy server found on ${port} (pid=${h.pid}) — adopting instead of respawning.`);
+            this.adoptRunningServer(h.pid, port);
+            this.crashStreak = 0;
+            return;
+          }
+        } catch (_) { }
+      }
       // ② 잔존 포트 점유자 제거 — 없으면 새 스폰이 EADDRINUSE 로 즉사한다.
       try { this.killPortOwner(port); } catch (_) { }
       this.startPythonProcess(port);

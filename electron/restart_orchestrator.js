@@ -119,6 +119,13 @@ function createRestartOrchestrator(deps = {}) {
             } catch (e) {
                 log(`[RestartOrch] rebuildAndSwap threw: ${e && e.message} — continuing with old exe.`);
             }
+        } else if (!wantsRebuild && typeof deps.refreshLooseResources === 'function') {
+            try {
+                const rr = await deps.refreshLooseResources();
+                log(`[RestartOrch] loose resources refreshed without rebuild -> ${rr && rr.refreshed ? 'OK' : 'failed'}`);
+            } catch (e) {
+                log(`[RestartOrch] refreshLooseResources threw: ${e && e.message}`);
+            }
         }
 
         // 2. respawn + health check (단발 판정: 즉사 불량 바이너리를 빠르게 걸러냄)

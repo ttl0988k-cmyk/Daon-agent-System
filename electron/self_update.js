@@ -407,7 +407,7 @@ function createSelfUpdate(deps = {}) {
         }
     }
 
-    return { rebuildAndSwap, restoreBackup, canaryVerify, stableDeepHealth, runPyInstallerAsync };
+    return { rebuildAndSwap, restoreBackup, canaryVerify, stableDeepHealth, runPyInstallerAsync, refreshLooseResources };
 }
 
 module.exports = { createSelfUpdate, REBUILD_TIMEOUT_MS, CANARY_START_TIMEOUT_MS };

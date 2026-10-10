@@ -160,6 +160,20 @@ def handle_post_boardroom_broadcast(handler, body: dict) -> bool:
     if not isinstance(models, dict):
         models = {}
 
+    # Optional participant selection (참여 에이전트 체크박스): body.slots = ["01","03","07"].
+    # None/생략 => 전체 8슬롯(하위호환). 명시적으로 준 경우 그 슬롯만 실행. 빈 선택 => 400.
+    raw_slots = body.get("slots")
+    if raw_slots is None:
+        _allowed = None
+    else:
+        if not isinstance(raw_slots, (list, tuple, set)):
+            raw_slots = [raw_slots]
+        _allowed = {str(s).strip().zfill(2) for s in raw_slots if str(s).strip()}
+    selected_slots = [s for s in BOARDROOM_SLOTS if (_allowed is None or s[0] in _allowed)]
+    if not selected_slots:
+        handler.send_json({"ok": False, "error": "참여할 에이전트를 1명 이상 선택하세요. (no slots selected)"}, 400)
+        return True
+
     try:
         from api.config import STREAMS, STREAMS_LOCK
         from api.streaming import BroadcastQueue
@@ -181,7 +195,7 @@ def handle_post_boardroom_broadcast(handler, body: dict) -> bool:
     def orchestrate() -> None:
         workers = []
         sink: dict = {}  # slot -> {profile, session_id, kind, ...} for workshop hand-off
-        for slot, label, kind, key in BOARDROOM_SLOTS:
+        for slot, label, kind, key in selected_slots:
             slot_model = _resolve_slot_model(models, slot, key)
             fn = _run_agent_slot if kind == "agent" else _run_worker_slot
             th = threading.Thread(
@@ -192,9 +206,9 @@ def handle_post_boardroom_broadcast(handler, body: dict) -> bool:
             workers.append(th)
         for th in workers:
             th.join()
-        emit("boardroom_done", {"ok": True, "task": task, "sessions": sink})
+        emit("boardroom_done", {"ok": True, "task": task, "sessions": sink, "slots": [s[0] for s in selected_slots]})
 
     threading.Thread(target=orchestrate, daemon=True, name="BoardroomBroadcast").start()
 
-    handler.send_json({"ok": True, "stream_id": stream_id, "slots": len(BOARDROOM_SLOTS)})
+    handler.send_json({"ok": True, "stream_id": stream_id, "slots": len(selected_slots), "slot_ids": [s[0] for s in selected_slots]})
     return True
