@@ -5,6 +5,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
  */
 
 import { DaonAPI } from './api.js?v=20261011_harnesspoll';
+import { initSecretsUI } from './secrets.js';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -194,6 +195,7 @@ async function initApp() {
   try { initSettingsModal(); } catch (e) { console.error('initSettingsModal err:', e); }
   try { initAgentPersonas(); } catch (e) { console.error('initAgentPersonas err:', e); }
   try { initVoiceFeatures(); } catch (e) { console.error('initVoiceFeatures err:', e); }
+  try { initSecretsUI(DaonAPI, { getSessionId: () => state.currentSessionId }); } catch (e) { console.error('initSecretsUI err:', e); }
 
   // Load backend data & start health polling
   try { await loadSessions(); } catch (e) { console.error('loadSessions err:', e); }

@@ -1841,10 +1841,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # on the next message (the old session_id file was renamed).
           if _compressed:
               _new_sid = s.session_id
+              # P1 Steward: 압축 방식('switch' | 'compact')을 프론트에 전달.
+              # compressor._last_action을 읽을 수 없으면 'compact' 기본.
+              # TODO: 세션 경계에서 compression_count만으로 감지된 경우 _last_action이
+              # 이전 턴 값일 수 있음 — run_agent가 payload에 직접 싣게 되면 교체.
+              # NOTE: _compressor 지역변수는 회전 경로에서 미바인딩일 수 있어
+              # agent에서 직접 읽는다 (NameError 방지).
+              _compress_action = getattr(getattr(agent, 'context_compressor', None), '_last_action', None) or 'compact'
               put('compressed', {
                   'message': 'Context auto-compressed to continue the conversation',
                   'old_session_id': _old_sid,
                   'new_session_id': _new_sid,
+                  'action': _compress_action,
               })
 
           # Stamp 'timestamp' on any messages that don't have one yet

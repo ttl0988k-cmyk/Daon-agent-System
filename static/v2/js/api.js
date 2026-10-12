@@ -174,7 +174,7 @@ export const DaonAPI = {
   },
 
   connectSSE(streamId, callbacks = {}) {
-    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone, onHarnessDone, onHarnessStarted } = callbacks;
+    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone, onHarnessDone, onHarnessStarted, onSecretRequest } = callbacks;
     const url = `${this.baseUrl}/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`;
     const es = new EventSource(url);
 
@@ -298,6 +298,16 @@ export const DaonAPI = {
 
     es.addEventListener('harness_done', (e) => {
       try { callbacks.onHarnessDone?.(JSON.parse(e.data)); } catch { callbacks.onHarnessDone?.({}); }
+    });
+
+    // ── Secrets: 시크릿 요청 push (값 없음 — id/name/purpose/kind만) ─────────
+    // 백엔드가 secret_request 이벤트를 보내면 폴링보다 먼저 카드가 뜬다.
+    // 미지원 서버에서도 5초 폴링이 동일 카드를 렌더하므로 이중 안전.
+    es.addEventListener('secret_request', (e) => {
+      let detail = {};
+      try { detail = JSON.parse(e.data); } catch { detail = {}; }
+      try { onSecretRequest?.(detail); } catch (_) {}
+      try { window.dispatchEvent(new CustomEvent('daon:secret-request', { detail })); } catch (_) {}
     });
 
     es.addEventListener('done', (e) => {
@@ -625,6 +635,88 @@ export const DaonAPI = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `프로필 생성 실패: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  /**
+   * Secrets (시크릿카드) — 값은 절대 응답에 포함되지 않는다.
+   * value는 setSecret 전송 시에만 사용하고, 어떤 경로로도 렌더/로그하지 않는다.
+   */
+  async getSecrets() {
+    const res = await fetch(`${this.baseUrl}/api/secrets`);
+    if (!res.ok) throw new Error(`Secrets failed: ${res.status}`);
+    const data = await res.json();
+    return data.secrets || [];
+  },
+
+  async getSecretsPending(sessionId = '') {
+    const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+    const res = await fetch(`${this.baseUrl}/api/secrets/pending${qs}`);
+    if (!res.ok) throw new Error(`Secrets pending failed: ${res.status}`);
+    const data = await res.json();
+    return data.pending || [];
+  },
+
+  async setSecret({ name, value, purpose = '', scope = 'all' }) {
+    const res = await fetch(`${this.baseUrl}/api/secrets/set`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, value, purpose, scope })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Secret 저장 실패: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  async allowSecret(name, sessionId) {
+    const res = await fetch(`${this.baseUrl}/api/secrets/allow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, session_id: sessionId })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Secret 허용 실패: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  async cancelSecretRequest(id) {
+    const res = await fetch(`${this.baseUrl}/api/secrets/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Secret 요청 취소 실패: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  async updateSecretScope(name, scope) {
+    const res = await fetch(`${this.baseUrl}/api/secrets/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, scope })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Secret scope 변경 실패: ${res.status}`);
+    }
+    return await res.json();
+  },
+
+  async deleteSecret(name) {
+    const res = await fetch(`${this.baseUrl}/api/secrets/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Secret 삭제 실패: ${res.status}`);
     }
     return await res.json();
   }

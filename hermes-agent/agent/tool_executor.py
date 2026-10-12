@@ -86,6 +86,12 @@ def invoke_tool(
             limit=function_args.get("limit", 3),
             db=agent._session_db,
             current_session_id=agent.session_id,
+            mode=function_args.get("mode", "summary"),
+            anchor=function_args.get("anchor"),
+            message_id=function_args.get("message_id"),
+            session_id=function_args.get("session_id"),
+            before=function_args.get("before", 6),
+            after=function_args.get("after", 7),
         )
     elif function_name == "memory":
         target = function_args.get("target", "memory")
@@ -593,6 +599,12 @@ def execute_tool_calls_sequential(
                     limit=function_args.get("limit", 3),
                     db=agent._session_db,
                     current_session_id=agent.session_id,
+                    mode=function_args.get("mode", "summary"),
+                    anchor=function_args.get("anchor"),
+                    message_id=function_args.get("message_id"),
+                    session_id=function_args.get("session_id"),
+                    before=function_args.get("before", 6),
+                    after=function_args.get("after", 7),
                 )
             tool_duration = time.time() - tool_start_time
             if agent._should_emit_quiet_tool_messages():

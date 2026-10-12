@@ -1650,6 +1650,9 @@ class AIAgent:
         compression_enabled = str(_compression_cfg.get("enabled", True)).lower() in ("true", "1", "yes")
         compression_target_ratio = float(_compression_cfg.get("target_ratio", 0.20))
         compression_protect_last = int(_compression_cfg.get("protect_last_n", 20))
+        # P1 Steward: compression.steward_enabled → ContextCompressor 전달.
+        # config.yaml에 키가 없으면 기본 True(판단 경로 활성화).
+        steward_enabled = str(_compression_cfg.get("steward_enabled", True)).lower() in ("true", "1", "yes")
 
         # Read optional explicit context_length override for the auxiliary
         # compression model. Custom endpoints often cannot report this via
@@ -1808,6 +1811,7 @@ class AIAgent:
                 config_context_length=_config_context_length,
                 provider=self.provider,
                 api_mode=self.api_mode,
+                steward_enabled=steward_enabled,
             )
         self.compression_enabled = compression_enabled
 
@@ -5766,13 +5770,16 @@ class AIAgent:
             if messages and messages[-1].get("_flush_sentinel") == _sentinel:
                 messages.pop()
 
-    def _compress_context(self, messages: list, system_message: str, *, approx_tokens: int = None, task_id: str = "default", focus_topic: str = None) -> tuple:
+    def _compress_context(self, messages: list, system_message: str, *, approx_tokens: int = None, task_id: str = "default", focus_topic: str = None, mid_turn: bool = False) -> tuple:
         """Compress conversation context and split the session in SQLite.
 
         Args:
             focus_topic: Optional focus string for guided compression — the
                 summariser will prioritise preserving information related to
                 this topic.  Inspired by Claude Code's ``/compact <focus>``.
+            mid_turn: True when called mid-turn (tool loop / error-retry path).
+                Passed to ``decide_action`` — switch is forbidden mid-turn and
+                forced down to compact.
 
         Returns:
             (compressed_messages, new_system_prompt) tuple
@@ -5794,7 +5801,41 @@ class AIAgent:
             except Exception:
                 pass
 
-        compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic)
+        # P1 Steward 실배선: 압축 직전 decide_action 1회 호출 후 그 action을
+        # compress(action=...)으로 전달. decide_action 내부에서 처리됨:
+        # hard 초과 → 즉시 compact, steward_enabled=False → compact,
+        # 판단 예외/무효 → compact 폴백. mid_turn=True면 switch 금지.
+        _compressor = self.context_compressor
+        _action = "compact"
+        _decide = getattr(_compressor, "decide_action", None)
+        if callable(_decide):
+            try:
+                _action = _decide(messages, mid_turn=mid_turn, prompt_tokens=approx_tokens) or "compact"
+            except TypeError:
+                # 구형 decide_action 시그니처 호환 (mid_turn/prompt_tokens 미지원).
+                try:
+                    _action = _decide(messages) or "compact"
+                except Exception:
+                    _action = "compact"
+            except Exception:
+                _action = "compact"
+        if _action not in ("switch", "compact"):
+            _action = "compact"
+        if _action == "switch" and mid_turn:
+            # 시그니처에 mid_turn이 없을 때를 대비한 호출부 다운그레이드.
+            _action = "compact"
+
+        compressed = _compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic, action=_action)
+
+        # P1 Steward: 압축 후 실제 적용된 action 1줄 로그.
+        # SSE 'compressed' 이벤트 페이로드의 action 포함은 run_agent 측이 아닌
+        # api/api/streaming.py put('compressed', {...})에서 처리한다.
+        _applied_action = getattr(_compressor, "_last_action", None) or _action
+        logger.info(
+            "context compression action=%s session=%s messages=%d->%d",
+            _applied_action, self.session_id or "none",
+            _pre_msg_count, len(compressed),
+        )
 
         todo_snapshot = self._todo_store.format_for_injection()
         if todo_snapshot:
@@ -7605,6 +7646,7 @@ class AIAgent:
                                 messages, system_message,
                                 approx_tokens=approx_tokens,
                                 task_id=effective_task_id,
+                                mid_turn=True,
                             )
                             # Compression created a new session — clear history
                             # so _flush_messages_to_session_db writes compressed
@@ -7702,6 +7744,7 @@ class AIAgent:
                         messages, active_system_prompt = self._compress_context(
                             messages, system_message, approx_tokens=approx_tokens,
                             task_id=effective_task_id,
+                            mid_turn=True,
                         )
                         # Compression created a new session — clear history
                         # so _flush_messages_to_session_db writes compressed
@@ -7838,6 +7881,7 @@ class AIAgent:
                         messages, active_system_prompt = self._compress_context(
                             messages, system_message, approx_tokens=approx_tokens,
                             task_id=effective_task_id,
+                            mid_turn=True,
                         )
                         # Compression created a new session — clear history
                         # so _flush_messages_to_session_db writes compressed
@@ -8565,6 +8609,7 @@ class AIAgent:
                             messages, system_message,
                             approx_tokens=self.context_compressor.last_prompt_tokens,
                             task_id=effective_task_id,
+                            mid_turn=True,
                         )
                         # Compression created a new session — clear history so
                         # _flush_messages_to_session_db writes compressed messages
