@@ -105,6 +105,15 @@ toolsets:
     - "web"
     - "webhook"
 
+# --- Context Compression (컨텍스트 자동 압축) ---
+compression:
+  threshold: 0.75                 # 컨텍스트 75% 도달 시 압축 발동 (기존 0.50에서 상향)
+  enabled: true
+  target_ratio: 0.20
+  protect_last_n: 20              # 최근 메시지 20개 보호
+
+file_read_max_chars: 25000        # 파일 단일 읽기 최대 글자 수 (도구 출력 폭탄 방어)
+
 # --- Self-evolution (Gap E-4b) ---
 # auto_mode: Builder 승인 게이트의 자동 타임아웃 승인을 허용할지 여부.
 # 기본 false = 사용자가 매 승인 카드를 직접 승인해야 Builder 서브팀이 스폰됨

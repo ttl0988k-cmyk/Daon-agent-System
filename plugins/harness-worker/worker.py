@@ -680,6 +680,33 @@ def prepare_workdir(workdir: Optional[str] = None, isolate: bool = False,
 # Codex: 프로바이더별 임시 CODEX_HOME
 # ---------------------------------------------------------------------------
 
+def get_available_mcp_servers() -> List[str]:
+    """Dynamically get all configured and enabled MCP server IDs."""
+    cand_paths = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json",
+        Path(r"c:\daon\Daon agent System\data\mcp_servers.json"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/daon-agent-system/resources/data/mcp_servers.json",
+    ]
+    sids = []
+    for cp in cand_paths:
+        if cp.exists():
+            try:
+                with open(cp, "r", encoding="utf-8") as f:
+                    for srv in json.load(f):
+                        sid = srv.get("server_id")
+                        if sid and srv.get("enabled", True):
+                            sids.append(sid)
+                if sids:
+                    break
+            except Exception:
+                pass
+    default_base = ["context7", "serena", "daon-design", "figma", "stitch"]
+    for b in default_base:
+        if b not in sids:
+            sids.append(b)
+    return sids
+
+
 def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Optional[List[str]] = None) -> Dict[str, Any]:
     """프로바이더 설정이 담긴 config.toml 을 임시 CODEX_HOME 에 쓴다.
 
@@ -741,8 +768,9 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
         lines.append(f"http_headers = {{ {hdr} }}")
 
     if with_mcp:
-        # Laya 스마트 선별 목록이 제공되면 해당 목록만, 아니면 전체 허용
-        targets = set(allowed_mcps) if allowed_mcps is not None else {"context7", "serena", "daon-design", "figma", "stitch"}
+        # Laya 스마트 선별 목록이 제공되면 해당 목록만, 아니면 사용 가능한 전체 목록 대상
+        targets = set(allowed_mcps) if allowed_mcps is not None else set(get_available_mcp_servers())
+        injected_sids = set()
 
         if "context7" in targets:
             lines += [
@@ -751,6 +779,7 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 'command = "npx"',
                 'args = ["-y", "@upstash/context7-mcp"]',
             ]
+            injected_sids.add("context7")
         if "serena" in targets:
             lines += [
                 "",
@@ -760,6 +789,7 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 # serena 는 uvx+git clone 으로 뜨므로 불필요한 웹/GUI 창을 꺼 시작 비용을 줄인다.
                 'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "C:/daon/Daon agent System", "--enable-web-dashboard", "false", "--open-web-dashboard", "false", "--enable-gui-log-window", "false"]',
             ]
+            injected_sids.add("serena")
         if "daon-design" in targets:
             lines += [
                 "",
@@ -767,35 +797,61 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 'command = "python"',
                 'args = ["-u", "c:/daon/Daon agent System/api/api/mcp/daon_design_mcp.py"]',
             ]
+            injected_sids.add("daon-design")
 
-        # Figma & Stitch: mcp_servers.json 에서 키를 동적으로 읽어 주입 (하드코딩 방지)
+        # Dynamic MCP server injection from mcp_servers.json (figma, stitch, filesystem, etc.)
         try:
-            _mcp_json = Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json"
-            if _mcp_json.exists():
-                with open(_mcp_json, "r", encoding="utf-8") as _f:
-                    for _srv in json.load(_f):
-                        _sid = _srv.get("server_id")
-                        if _sid == "figma" and "figma" in targets:
-                            _fkey = _srv.get("env", {}).get("FIGMA_API_KEY", "")
-                            if _fkey:
+            cand_paths = [
+                Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System/data/mcp_servers.json",
+                Path(r"c:\daon\Daon agent System\data\mcp_servers.json"),
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/daon-agent-system/resources/data/mcp_servers.json",
+            ]
+            for _mcp_json in cand_paths:
+                if _mcp_json.exists():
+                    with open(_mcp_json, "r", encoding="utf-8") as _f:
+                        for _srv in json.load(_f):
+                            _sid = _srv.get("server_id")
+                            if not _sid or _sid not in targets or _sid in injected_sids:
+                                continue
+                            if _sid == "figma":
+                                _fkey = _srv.get("env", {}).get("FIGMA_API_KEY", "")
+                                if _fkey:
+                                    lines += [
+                                        "",
+                                        "[mcp_servers.figma]",
+                                        'command = "figma-mcp"',
+                                        'args = []',
+                                        f'env = {{ FIGMA_API_KEY = "{_fkey}" }}',
+                                    ]
+                                    injected_sids.add("figma")
+                            elif _sid == "stitch":
+                                _skey = _srv.get("env", {}).get("STITCH_API_KEY", "")
+                                _gcred = _srv.get("env", {}).get("GOOGLE_APPLICATION_CREDENTIALS", "").replace("\\", "\\\\")
+                                if _skey:
+                                    lines += [
+                                        "",
+                                        "[mcp_servers.stitch]",
+                                        'command = "npx"',
+                                        'args = ["-y", "@_davideast/stitch-mcp", "proxy", "--transport", "stdio"]',
+                                        f'env = {{ STITCH_API_KEY = "{_skey}", GOOGLE_APPLICATION_CREDENTIALS = "{_gcred}" }}',
+                                    ]
+                                    injected_sids.add("stitch")
+                            elif _srv.get("command") and _srv.get("transport") != "http":
+                                _cmd = _srv.get("command")
+                                _args = json.dumps(_srv.get("args") or [])
+                                _sec_key = f'"{_sid}"' if ("-" in _sid or "." in _sid) else _sid
                                 lines += [
                                     "",
-                                    "[mcp_servers.figma]",
-                                    'command = "figma-mcp"',
-                                    'args = []',
-                                    f'env = {{ FIGMA_API_KEY = "{_fkey}" }}',
+                                    f"[mcp_servers.{_sec_key}]",
+                                    f'command = "{_cmd}"',
+                                    f'args = {_args}',
                                 ]
-                        elif _sid == "stitch" and "stitch" in targets:
-                            _skey = _srv.get("env", {}).get("STITCH_API_KEY", "")
-                            _gcred = _srv.get("env", {}).get("GOOGLE_APPLICATION_CREDENTIALS", "").replace("\\", "\\\\")
-                            if _skey:
-                                lines += [
-                                    "",
-                                    "[mcp_servers.stitch]",
-                                    'command = "npx"',
-                                    'args = ["-y", "@_davideast/stitch-mcp", "proxy", "--transport", "stdio"]',
-                                    f'env = {{ STITCH_API_KEY = "{_skey}", GOOGLE_APPLICATION_CREDENTIALS = "{_gcred}" }}',
-                                ]
+                                _env_dict = _srv.get("env") or {}
+                                if _env_dict:
+                                    _env_parts = [f'"{k}" = "{v}"' for k, v in _env_dict.items()]
+                                    lines.append(f'env = {{ {", ".join(_env_parts)} }}')
+                                injected_sids.add(_sid)
+                    break
         except Exception:
             pass
 
@@ -1151,7 +1207,8 @@ def _run_single(
                     if _api_dir not in sys.path:
                         sys.path.insert(0, _api_dir)
                     from api.laya_client import laya_client
-                    allowed_mcps = laya_client.prune_mcp(prompt, ["context7", "serena", "daon-design", "figma", "stitch"])
+                    _avail_mcps = get_available_mcp_servers()
+                    allowed_mcps = laya_client.prune_mcp(prompt, _avail_mcps)
                 except Exception:
                     allowed_mcps = None
             home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)
@@ -1793,7 +1850,8 @@ def start_background_job(
                     if _api_dir not in sys.path:
                         sys.path.insert(0, _api_dir)
                     from api.laya_client import laya_client
-                    allowed_mcps = laya_client.prune_mcp(prompt, ["context7", "serena", "daon-design", "figma", "stitch"])
+                    _avail_mcps = get_available_mcp_servers()
+                    allowed_mcps = laya_client.prune_mcp(prompt, _avail_mcps)
                 except Exception:
                     allowed_mcps = None
             home = write_codex_home(prov, with_mcp=with_mcp, allowed_mcps=allowed_mcps)

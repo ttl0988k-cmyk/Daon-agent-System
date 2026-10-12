@@ -397,6 +397,29 @@ def set_job_error(run_id: str, error: str):
         _job_store.save_job(run_id, job_copy)
 
 
+def push_harness_started(session_id: str, run_id: str, task: str = '') -> None:
+    """하네스 백그라운드 잡 시작을 해당 세션의 활성 챗 스트림에 push한다.
+
+    챗에서 execute_dynamic_harness(background=True)가 시작되는 즉시 run_id를
+    챗 스트림으로 되돌려보내, 프론트가 그 run_id로 'Dynamic Harness 세션' 탭
+    폴링(startHarnessPolling)을 시작할 수 있게 한다. 이로써 챗에서 비동기로
+    돌린 하네스도 탭에서 진행상황을 실시간으로 볼 수 있다.
+    활성 스트림이 없으면(도구 실행 중이 아니면) 조용히 무시한다.
+    """
+    if not session_id:
+        return
+    try:
+        from api.config import get_stream_queue
+        q = get_stream_queue(session_id)
+        if q:
+            q.put(('harness_started', {
+                'run_id': run_id,
+                'task': task or '',
+            }))
+    except Exception:
+        pass
+
+
 def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True) -> None:
     """하네스 백그라운드 잡 완료/실패를 해당 세션의 활성 챗 스트림에 push한다.
 
@@ -519,6 +542,10 @@ def start_harness_job(body: dict) -> str:
             print(f"[dynamic] WARNING: plugin skill merge failed: {_p_err}", flush=True)
 
     init_job(run_id, session_id=session_id)
+
+    # 챗에서 시작된 하네스: run_id를 챗 스트림에 즉시 push해
+    # 프론트가 하네스 탭 폴링을 시작하도록 한다 (진행상황 실시간 조회).
+    push_harness_started(session_id, run_id, task)
 
     # Check if clarification (interview) is enabled
     enable_clarification = body.get('clarification', True)

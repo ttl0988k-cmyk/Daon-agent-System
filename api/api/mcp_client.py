@@ -568,13 +568,26 @@ class MCPServerConnection:
 
     def to_dict(self) -> dict:
         """Serialize connection status."""
+        is_enabled = getattr(self, 'enabled', True)
+        if self.connected:
+            status = 'connected'
+        elif getattr(self, 'expired', False):
+            status = 'expired'
+        elif self.error:
+            status = 'error'
+        elif is_enabled:
+            status = 'connecting'
+        else:
+            status = 'standby'
+
         return {
             'server_id': self.server_id,
             'label': self.label,
             'command': self.command,
             'transport': self.transport,
             'connected': self.connected,
-            'enabled': getattr(self, 'enabled', True),
+            'enabled': is_enabled,
+            'status': status,
             'error': '' if self.connected else self.error,
             'expired': getattr(self, 'expired', False),
             'tools_count': len(self.tools),

@@ -174,7 +174,7 @@ export const DaonAPI = {
   },
 
   connectSSE(streamId, callbacks = {}) {
-    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone } = callbacks;
+    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone, onHarnessDone, onHarnessStarted } = callbacks;
     const url = `${this.baseUrl}/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`;
     const es = new EventSource(url);
 
@@ -288,6 +288,14 @@ export const DaonAPI = {
     // 챗에서 execute_dynamic_harness(background=True)로 시작한 하네스가 끝나면
     // 해당 턴이 아직 살아있을 때 결과가 push된다. 턴이 이미 끝나 SSE가 닫혔으면
     // 이 이벤트는 오지 않는다 — 그 경우 하네스 탭 폴링이 결과를 보여준다.
+    // ── Dynamic Harness: 백그라운드 잡 시작 알림 (run_id 전달) ───────────
+    // 챗에서 execute_dynamic_harness(background=True)가 시작되면 run_id가
+    // 즉시 push된다. 프론트는 이 run_id로 하네스 탭 폴링(startHarnessPolling)을
+    // 시작해 챗에서 비동기로 돌린 하네스의 진행상황을 탭에서 실시간으로 본다.
+    es.addEventListener('harness_started', (e) => {
+      try { callbacks.onHarnessStarted?.(JSON.parse(e.data)); } catch { callbacks.onHarnessStarted?.({}); }
+    });
+
     es.addEventListener('harness_done', (e) => {
       try { callbacks.onHarnessDone?.(JSON.parse(e.data)); } catch { callbacks.onHarnessDone?.({}); }
     });

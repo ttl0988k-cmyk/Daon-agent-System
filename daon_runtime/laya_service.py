@@ -73,6 +73,67 @@ def init_laya_model():
         _ready = True  # [FIX 2026-10-01] booting -> ok/degraded
 
 
+KNOWN_MCP_CRITERIA = {
+    "figma": "Figma design frames, component styles, UI layouts, or UI design tokens (피그마 디자인 프레임·컴포넌트 스타일·UI 레이아웃).",
+    "daon-design": "DAON UI design system style cards, color tokens, or UI component styles (디자인 시스템 토큰·스타일 가이드·컴포넌트 디자인).",
+    "serena": "Deep AST repository-wide semantic exploration, code symbols, and architecture analysis (코드베이스 AST 심층 탐색·심볼 분석·아키텍처 구조).",
+    "context7": "External 3rd-party library API documentation lookup and references (외부 라이브러리 및 API 공식 문서 검색·도큐먼트 참조).",
+    "stitch": "Workflow stitching, multi-agent pipeline synthesis, and tool composition (워크플로우 합성·에이전트 파이프라인 조립).",
+    "rea": "Reverse engineering, React component inspection, decompilation, and code reconstruction (리액트 역공학·컴포넌트 디컴파일 분석·코드 구조 복원).",
+    "reticle": "Precise targeting, crosshair locator, screen element coordinate mapping, and visual inspection (레티클 좌표 조준·정밀 타겟팅·화면 클릭 위치 검사).",
+    "playmcp-gateway": "KakaoTalk messaging, Naver search, external web portal integration and Korean services (카카오톡 메시지 전송·네이버 검색·외부 포털 서비스 연동).",
+    "filesystem": "Local filesystem file exploration, directory tree navigation, reading and writing files (로컬 파일 시스템 탐색·폴더 트리·디렉토리 목록·파일 읽기 쓰기).",
+    "playwright": "Browser automation, web scraping, navigating web pages, and taking screenshots (브라우저 자동화·웹 스크래핑·웹 페이지 탐색·스크린샷 촬영).",
+    "memory": "Persistent knowledge graph, remembering user preferences and long-term facts (장기 기억·지식 그래프·사용자 정보 기억).",
+    "github": "GitHub repository management, issues, PRs, and commit history (깃허브 레포지토리·풀리퀘스트 PR·이슈 관리).",
+    "slack": "Slack messaging, channel notifications, and team chat integration (슬랙 메시지·채널 알림·팀 채팅 연동).",
+    "postgres": "PostgreSQL database queries, schema inspection, and SQL execution (PostgreSQL 데이터베이스 쿼리·테이블 스키마).",
+    "sqlite": "SQLite database inspection, table queries, and local data storage (SQLite 로컬 DB 쿼리·테이블 검사).",
+}
+
+
+def _get_dynamic_mcp_criteria(available_mcps: List[str], custom_descs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Dynamically build criteria for ModernBERT choice evaluation."""
+    criteria = {
+        "none": "Standard coding, bug fixing, local file editing, script running. No external tool needed."
+    }
+
+    # Try reading data/mcp_servers.json labels if available
+    mcp_labels: Dict[str, str] = {}
+    try:
+        cand_paths = [
+            Path("data/mcp_servers.json"),
+            Path(__file__).resolve().parent.parent / "data" / "mcp_servers.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "daon-agent-system" / "resources" / "data" / "mcp_servers.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System" / "data" / "mcp_servers.json",
+        ]
+        for cp in cand_paths:
+            if cp.exists():
+                with open(cp, "r", encoding="utf-8") as f:
+                    for srv in json.load(f):
+                        sid = srv.get("server_id")
+                        lbl = srv.get("label")
+                        if sid and lbl:
+                            mcp_labels[sid] = lbl
+                break
+    except Exception:
+        pass
+
+    custom = custom_descs or {}
+    for mcp in available_mcps:
+        if mcp in custom:
+            criteria[mcp] = custom[mcp]
+        elif mcp in KNOWN_MCP_CRITERIA:
+            criteria[mcp] = KNOWN_MCP_CRITERIA[mcp]
+        elif mcp in mcp_labels:
+            criteria[mcp] = f"{mcp_labels[mcp]} ({mcp} tools and actions)."
+        else:
+            clean_name = mcp.replace("-", " ").replace("_", " ").title()
+            criteria[mcp] = f"Specialized {clean_name} operations, external integration, and {mcp} tools."
+
+    return criteria
+
+
 class LayaRequestHandler(BaseHTTPRequestHandler):
     """HTTP handler for Laya decision requests."""
 
@@ -143,6 +204,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
     def _handle_prune_mcp(self, req_data: Dict[str, Any]):
         prompt = req_data.get("prompt", "")
         available_mcps = req_data.get("available_mcps", [])
+        mcp_descriptions = req_data.get("mcp_descriptions", {})
         if not prompt or not available_mcps:
             self._send_json(200, {"needed_mcps": []})
             return
@@ -154,19 +216,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
         t0 = time.time()
         # Single-forward-pass choice question for ultra-fast evaluation
-        criteria = {
-            "none": "Standard coding, bug fixing, local file editing, script running. No external tool needed."
-        }
-        if "figma" in available_mcps:
-            criteria["figma"] = "Figma design frames, component styles, or UI design tokens."
-        if "daon-design" in available_mcps:
-            criteria["daon-design"] = "DAON UI design system style cards, color tokens, or UI component styles."
-        if "serena" in available_mcps:
-            criteria["serena"] = "Deep AST repository-wide semantic exploration."
-        if "context7" in available_mcps:
-            criteria["context7"] = "External 3rd-party library API documentation lookup."
-        if "stitch" in available_mcps:
-            criteria["stitch"] = "Workflow stitching and synthesis."
+        criteria = _get_dynamic_mcp_criteria(available_mcps, mcp_descriptions)
 
         question = {
             "needed_tool": {
@@ -186,19 +236,26 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
             if choice and choice != "none" and choice in available_mcps:
                 needed.append(choice)
-
-            # Check if secondary MCP has high probability (> 0.25)
-            for mcp_name, prob in probs.items():
-                if mcp_name != "none" and mcp_name in available_mcps and prob >= 0.25 and mcp_name not in needed:
-                    needed.append(mcp_name)
+                # Check if secondary MCP also has high probability (>= 0.30)
+                for mcp_name, prob in probs.items():
+                    if mcp_name != "none" and mcp_name in available_mcps and prob >= 0.30 and mcp_name not in needed:
+                        needed.append(mcp_name)
+            elif choice == "none":
+                # If "none" is top choice, external tools are NOT needed unless another tool is closely tied (>= 0.35 and diff < 0.05)
+                none_prob = probs.get("none", 0.5)
+                for mcp_name, prob in probs.items():
+                    if mcp_name != "none" and mcp_name in available_mcps and prob >= 0.35 and (none_prob - prob) < 0.05:
+                        needed.append(mcp_name)
         except Exception as e:
             _logger.warning("Prune prediction failed: %s", e)
             needed = []
 
         latency_ms = round((time.time() - t0) * 1000, 1)
-        _logger.info("Pruned MCPs in %.1fms: %s -> %s", latency_ms, available_mcps, needed)
+        _logger.info("Pruned MCPs in %.1fms: %s -> %s (choice: %s)", latency_ms, available_mcps, needed, choice)
         self._send_json(200, {
             "needed_mcps": needed,
+            "choice": choice,
+            "probabilities": probs,
             "latency_ms": latency_ms
         })
 

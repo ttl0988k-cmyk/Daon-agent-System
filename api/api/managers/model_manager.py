@@ -172,13 +172,13 @@ def resolve_opencode_route(provider: str, model: str,
     if p == 'opencode-go':
         if m.startswith('minimax-'):
             api_mode = 'anthropic_messages'
-        elif m.startswith('gpt-') or m.startswith('grok-'):
+        elif m.startswith('gpt-') or m.startswith('grok-') or m.startswith('muse-spark-'):
             # oa-compat/anthropic 포맷 미지원 — Responses API 전용
             api_mode = 'codex_responses'
     elif p == 'opencode-zen':
         if m.startswith('claude-'):
             api_mode = 'anthropic_messages'
-        elif m.startswith('gpt-'):
+        elif m.startswith('gpt-') or m.startswith('muse-spark-'):
             api_mode = 'codex_responses'
     url = (base_url or '').strip().rstrip('/')
     if not url:

@@ -334,7 +334,7 @@ LINTERS = {
 }
 
 # Max limits for read operations
-MAX_LINES = 2000
+MAX_LINES = 500
 MAX_LINE_LENGTH = 2000
 MAX_FILE_SIZE = 50 * 1024  # 50KB
 

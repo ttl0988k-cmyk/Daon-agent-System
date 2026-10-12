@@ -50,6 +50,7 @@ DIR_PAIRS = [
 # 2) 개별 파일 쌍
 FILE_PAIRS = [
     ('config.yaml', 'dist_new/config.yaml'),
+    ('.env', 'dist_new/.env'),
     ('index.html', 'dist_new/index.html'),
     ('server.py', 'dist_new/server.py'),
     ('tts_server.py', 'dist_new/tts_server.py'),

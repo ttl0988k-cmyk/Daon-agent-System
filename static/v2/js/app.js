@@ -4,7 +4,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
  */
 
-import { DaonAPI } from './api.js?v=20261011_slotsel';
+import { DaonAPI } from './api.js?v=20261011_harnesspoll';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -1075,6 +1075,28 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
     },
     onToolResult(data) {
       setStatus('⚙️ 도구 실행 완료 · 결과 분석 중...', 'sync');
+    },
+    onHarnessStarted(data) {
+      // 챗에서 백그라운드 하네스가 시작되면 run_id가 push된다.
+      // 이 run_id로 하네스 탭 폴링을 시작해, 챗에서 비동기로 돌린 작업의
+      // 진행상황을 'Dynamic Harness 세션' 탭에서 실시간으로 볼 수 있게 한다.
+      try {
+        const runId = data?.run_id || '';
+        if (!runId) return;
+        state.currentHarnessRunId = runId;
+        setStatus('🎯 다이나믹 하네스 실행 중...', 'sync');
+        // 하네스 탭으로 전환 (사용자가 다른 탭에 있으면 보여준다)
+        try {
+          if (typeof window.activateTab === 'function') window.activateTab('dynamic-harness');
+        } catch (_) {}
+        // 폴링 시작 — 탭에서 직접 시작한 것과 동일 경로
+        if (typeof startHarnessPolling === 'function') startHarnessPolling(runId);
+        if (typeof appendTelemetryLog === 'function') {
+          appendTelemetryLog(`[Dispatcher] 챗에서 하네스 잡 시작됨. Run ID: ${runId}`);
+        }
+      } catch (e) {
+        console.warn('[SSE] onHarnessStarted handler error:', e);
+      }
     },
     onHarnessDone(data) {
       // 백그라운드 하네스 잡 완료 알림 (턴이 살아있을 때만 도착)
@@ -3038,20 +3060,22 @@ function showBoardroomToWorkshop(data) {
 // ── MCP Store & Skills Integration ────────────────────────────────────────────
 
 let cachedSkills = [];
+let equippedSkillIds = new Set(['daon-self-knowledge', 'daon-dynamic-harness-protocol', 'laya-daemon-single-instance-lock', 'daon-external-skill-patching']);
 
 async function initMcpAndSkills() {
   // 1. MCP Live Servers Loading
   await loadLiveMcpServers();
 
-  // 2. Real Backend Skills Loading (345 skills)
+  // 2. Real Backend Skills Loading
   await loadLiveSkills();
 
   // 3. Search filtering in MCP tab
   const mcpSearch = document.getElementById('mcp-search-input');
-  if (mcpSearch) {
+  if (mcpSearch && !mcpSearch._bound) {
+    mcpSearch._bound = true;
     mcpSearch.addEventListener('input', () => {
       const query = mcpSearch.value.toLowerCase().trim();
-      document.querySelectorAll('.mcp-plugin-card').forEach(card => {
+      document.querySelectorAll('#mcp-servers-grid .mcp-plugin-card').forEach(card => {
         const text = card.innerText.toLowerCase();
         card.style.display = text.includes(query) ? 'flex' : 'none';
       });
@@ -3060,31 +3084,33 @@ async function initMcpAndSkills() {
 
   // 4. Instant search filtering in Skills tab across all backend skills
   const skillSearch = document.getElementById('skills-search-input');
-  if (skillSearch) {
+  if (skillSearch && !skillSearch._bound) {
+    skillSearch._bound = true;
     skillSearch.addEventListener('input', () => {
       const query = skillSearch.value.toLowerCase().trim();
       if (!query) {
-        renderSkillCatalog(cachedSkills.slice(0, 20));
+        renderSkillCatalog(cachedSkills.slice(0, 30));
       } else {
         const filtered = cachedSkills.filter(s =>
           (s.name || s.id || '').toLowerCase().includes(query) ||
           (s.description || '').toLowerCase().includes(query) ||
           (s.category || '').toLowerCase().includes(query)
         );
-        renderSkillCatalog(filtered.slice(0, 30));
+        renderSkillCatalog(filtered.slice(0, 50));
       }
     });
   }
 
   // 5. Ping All MCP Servers button
-  const pingBtn = Array.from(document.querySelectorAll('#tab-plugin-mcp button')).find(b => b.textContent && b.textContent.includes('전체 서버 상태 핑'));
-  if (pingBtn) {
+  const pingBtn = document.getElementById('mcp-ping-all-btn') || Array.from(document.querySelectorAll('#tab-plugin-mcp button')).find(b => b.textContent && b.textContent.includes('전체 서버 상태 핑'));
+  if (pingBtn && !pingBtn._bound) {
+    pingBtn._bound = true;
     pingBtn.addEventListener('click', async () => {
       const originalText = pingBtn.textContent;
       pingBtn.textContent = '핑 확인 중...';
       try {
         await loadLiveMcpServers();
-        pingBtn.textContent = '핑 정상 (응답 4ms)';
+        pingBtn.textContent = '핑 정상 (응답 완료)';
         setTimeout(() => { pingBtn.textContent = originalText; }, 2000);
       } catch {
         pingBtn.textContent = '핑 오류';
@@ -3092,6 +3118,163 @@ async function initMcpAndSkills() {
       }
     });
   }
+
+  // 6. Custom MCP Register Modal
+  const addMcpBtn = document.getElementById('add-custom-mcp-btn');
+  const mcpAddModal = document.getElementById('mcp-add-modal');
+  const mcpAddClose = document.getElementById('mcp-add-modal-close');
+  const mcpAddCancel = document.getElementById('mcp-add-modal-cancel');
+  const mcpAddSubmit = document.getElementById('mcp-add-modal-submit');
+  const mcpAddTransport = document.getElementById('mcp-add-transport');
+  const mcpAddStdioGroup = document.getElementById('mcp-add-stdio-group');
+  const mcpAddHttpGroup = document.getElementById('mcp-add-http-group');
+
+  if (addMcpBtn && mcpAddModal && !addMcpBtn._bound) {
+    addMcpBtn._bound = true;
+    addMcpBtn.addEventListener('click', () => {
+      mcpAddModal.classList.remove('hidden');
+      mcpAddModal.classList.add('flex');
+    });
+
+    const closeMcpAddModal = () => {
+      mcpAddModal.classList.add('hidden');
+      mcpAddModal.classList.remove('flex');
+    };
+
+    mcpAddClose?.addEventListener('click', closeMcpAddModal);
+    mcpAddCancel?.addEventListener('click', closeMcpAddModal);
+
+    mcpAddTransport?.addEventListener('change', () => {
+      if (mcpAddTransport.value === 'http') {
+        mcpAddStdioGroup?.classList.add('hidden');
+        mcpAddHttpGroup?.classList.remove('hidden');
+      } else {
+        mcpAddStdioGroup?.classList.remove('hidden');
+        mcpAddHttpGroup?.classList.add('hidden');
+      }
+    });
+
+    mcpAddSubmit?.addEventListener('click', async () => {
+      const serverId = document.getElementById('mcp-add-id')?.value.trim();
+      const label = document.getElementById('mcp-add-label')?.value.trim() || serverId;
+      const transport = mcpAddTransport?.value || 'stdio';
+
+      if (!serverId) {
+        alert('서버 ID를 입력해주세요.');
+        return;
+      }
+
+      const payload = { server_id: serverId, label, transport };
+      if (transport === 'http') {
+        const url = document.getElementById('mcp-add-url')?.value.trim();
+        const authToken = document.getElementById('mcp-add-auth')?.value.trim();
+        if (!url) {
+          alert('HTTP 엔드포인트 URL을 입력해주세요.');
+          return;
+        }
+        payload.url = url;
+        payload.auth_token = authToken;
+      } else {
+        const command = document.getElementById('mcp-add-command')?.value.trim() || 'npx';
+        const rawArgs = document.getElementById('mcp-add-args')?.value.trim() || '';
+        payload.command = command;
+        payload.args = rawArgs ? rawArgs.split(/\s+/) : [];
+      }
+
+      mcpAddSubmit.disabled = true;
+      mcpAddSubmit.textContent = '등록 중...';
+
+      try {
+        const res = await fetch(`${DaonAPI.baseUrl}/api/mcp/servers/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closeMcpAddModal();
+          await loadLiveMcpServers();
+        } else {
+          alert('등록 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+      } catch (err) {
+        alert('등록 요청 실패: ' + err.message);
+      } finally {
+        mcpAddSubmit.disabled = false;
+        mcpAddSubmit.textContent = '등록 및 연결';
+      }
+    });
+  }
+
+  // 7. MCP Server Detail Inspector Modal
+  const mcpDetailModal = document.getElementById('mcp-detail-modal');
+  const mcpDetailClose = document.getElementById('mcp-detail-modal-close');
+  const mcpDetailOk = document.getElementById('mcp-detail-modal-ok');
+  if (mcpDetailModal && !mcpDetailModal._bound) {
+    mcpDetailModal._bound = true;
+    const closeDetail = () => {
+      mcpDetailModal.classList.add('hidden');
+      mcpDetailModal.classList.remove('flex');
+    };
+    mcpDetailClose?.addEventListener('click', closeDetail);
+    mcpDetailOk?.addEventListener('click', closeDetail);
+  }
+
+  // 8. Add Custom Skill button
+  const addSkillBtn = document.getElementById('add-custom-skill-btn');
+  if (addSkillBtn && !addSkillBtn._bound) {
+    addSkillBtn._bound = true;
+    addSkillBtn.addEventListener('click', () => {
+      alert('스킬 생성 가이드: \n\n새 에이전트 스킬은 `skills/<카테고리>/<스킬이름>/SKILL.md` 경로에 마크다운 및 실행 스크립트로 정의됩니다.\n저장 시 Laya 및 e5 랭커가 실시간 감지하여 자동 인덱싱합니다.');
+    });
+  }
+}
+
+function showMcpServerDetails(srv) {
+  const modal = document.getElementById('mcp-detail-modal');
+  const title = document.getElementById('mcp-detail-title');
+  const body = document.getElementById('mcp-detail-body');
+  if (!modal || !body) return;
+
+  const sid = srv.server_id || 'unknown';
+  if (title) title.textContent = `${srv.label || sid} (@mcp/${sid})`;
+
+  const tools = srv.tools || [];
+  const toolsHtml = tools.length > 0
+    ? tools.map(t => `
+        <div class="p-2 bg-surface border border-black/10 rounded-[6px] flex flex-col gap-1">
+          <div class="flex items-center justify-between">
+            <span class="font-code font-bold text-on-surface text-[12px]">${escapeHtml(t.name || '')}</span>
+            <span class="px-1.5 py-0.5 bg-primary/10 text-primary font-code text-[10px] rounded">함수 도구</span>
+          </div>
+          <p class="text-[11px] text-on-surface-variant leading-relaxed">${escapeHtml(t.description || '도구 설명 없음')}</p>
+        </div>
+      `).join('')
+    : '<div class="text-on-surface-variant/60 py-3 text-center">연결된 도구가 없거나 서버 대기 중입니다.</div>';
+
+  body.innerHTML = `
+    <div class="grid grid-cols-2 gap-2 p-3 bg-surface border border-black/10 rounded-[8px] font-code text-[11px]">
+      <div><span class="text-on-surface-variant">서버 ID:</span> <strong class="text-on-surface">${escapeHtml(sid)}</strong></div>
+      <div><span class="text-on-surface-variant">연결 방식:</span> <strong class="text-on-surface">${srv.transport || 'stdio'}</strong></div>
+      <div><span class="text-on-surface-variant">활성화 상태:</span> <strong class="${srv.enabled ? 'text-emerald-700' : 'text-on-surface-variant'}">${srv.enabled ? '활성화 (ON)' : '비활성화 (OFF)'}</strong></div>
+      <div><span class="text-on-surface-variant">실제 통신:</span> <strong class="${srv.connected ? 'text-emerald-700' : 'text-rose-700'}">${srv.connected ? '연결됨 (Connected)' : '대기/중단'}</strong></div>
+      ${srv.command ? `<div class="col-span-2 truncate"><span class="text-on-surface-variant">명령어:</span> <span class="text-on-surface">${escapeHtml(srv.command)} ${(srv.args || []).join(' ')}</span></div>` : ''}
+      ${srv.url ? `<div class="col-span-2 truncate"><span class="text-on-surface-variant">URL:</span> <span class="text-on-surface">${escapeHtml(srv.url)}</span></div>` : ''}
+      ${srv.error ? `<div class="col-span-2 text-rose-700"><span class="font-bold">오류 내용:</span> ${escapeHtml(srv.error)}</div>` : ''}
+    </div>
+    <div class="flex flex-col gap-2 mt-1">
+      <div class="flex items-center justify-between">
+        <h4 class="font-label-md font-semibold text-on-surface">제공 도구 목록 (총 ${tools.length}개)</h4>
+        <span class="font-code text-[11px] text-on-surface-variant">MCP Schema Tools</span>
+      </div>
+      <div class="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto pr-1">
+        ${toolsHtml}
+      </div>
+    </div>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
 }
 
 async function loadLiveMcpServers() {
@@ -3101,82 +3284,137 @@ async function loadLiveMcpServers() {
   try {
     const servers = await DaonAPI.getMCPServers();
     if (servers && servers.length > 0) {
-      // Update top summary bar
-      const activeCount = servers.filter(s => s.status === 'connected' || s.status === 'running' || (s.tools && s.tools.length > 0)).length;
-      const toolsCount = servers.reduce((acc, s) => acc + (s.tools ? s.tools.length : (s.tools_count || 0)), 0);
+      // 1. 활성 카운트 및 도구 계산
+      // enabled: 사용자가 토글 스위치로 켜둔 서버
+      // connected: 실제로 백엔드 프로세스/HTTP가 정상 연결된 서버
+      const enabledServers = servers.filter(s => s.enabled === true);
+      const connectedServers = servers.filter(s => s.connected === true);
+
+      const activeCount = enabledServers.length;
+      const connectedCount = connectedServers.length;
+      const toolsCount = servers.reduce((acc, s) => {
+        return acc + (s.connected && s.tools ? s.tools.length : (s.tools_count || 0));
+      }, 0);
+
+      // 상단 요약 바 갱신
+      const activeCountLabel = document.getElementById('mcp-active-count-label');
+      const toolsCountLabel = document.getElementById('mcp-tools-count-label');
+      const totalCountLabel = document.getElementById('mcp-total-count-label');
+      const activeIndicator = document.getElementById('mcp-active-indicator');
       const summaryBarText = document.querySelector('#tab-plugin-mcp .mcp-plugin-card .text-on-surface');
-      if (summaryBarText) {
-        summaryBarText.innerHTML = `<span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-600"></span>활성 서버: <strong>${activeCount}개 연결됨</strong></span><span class="text-black/20">|</span><span>등록된 툴: <strong>${toolsCount}개 함수</strong></span><span class="text-black/20">|</span><span>프로토콜 버전: <strong class="font-code">v2024-11-05</strong></span>`;
+
+      if (activeCountLabel) {
+        activeCountLabel.innerHTML = `${connectedCount}개 실행 중 <span class="text-xs font-normal text-on-surface-variant">(${activeCount}개 활성화)</span>`;
+      }
+      if (toolsCountLabel) toolsCountLabel.textContent = `${toolsCount}개 함수`;
+      if (totalCountLabel) totalCountLabel.textContent = `${servers.length}개 등록`;
+      if (activeIndicator) {
+        activeIndicator.className = connectedCount > 0 ? 'w-2 h-2 rounded-full bg-emerald-600' : 'w-2 h-2 rounded-full bg-amber-500';
+      }
+      if (summaryBarText && !activeCountLabel) {
+        summaryBarText.innerHTML = `<span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${connectedCount > 0 ? 'bg-emerald-600' : 'bg-amber-500'}"></span>활성 서버: <strong>${connectedCount}개 실행 중 (${activeCount}개 활성화)</strong></span><span class="text-black/20">|</span><span>등록된 툴: <strong>${toolsCount}개 함수</strong></span><span class="text-black/20">|</span><span>전체: <strong>${servers.length}개</strong></span><span class="text-black/20">|</span><span>프로토콜: <strong class="font-code">v2024-11-05</strong></span>`;
       }
 
-      // Clear existing dummy cards if real ones exist
+      // 2. 서버 카드 렌더링
       container.innerHTML = '';
       servers.forEach(srv => {
-        const isRunning = srv.status === 'running' || srv.status === 'connected' || (srv.tools && srv.tools.length > 0);
+        const isEnabled = srv.enabled === true;
+        const isConnected = srv.connected === true;
+        const sid = srv.server_id || '';
+        const label = srv.label || sid;
+        const toolsList = srv.tools || [];
+        const srvToolsCount = toolsList.length || srv.tools_count || 0;
+        const isExpired = srv.expired === true;
+        const errorMsg = srv.error || '';
+
+        // 상태 뱃지
+        let badgeText = 'STANDBY';
+        let badgeClass = 'bg-black/[0.05] text-on-surface-variant border-black/10';
+        if (isConnected) {
+          badgeText = 'ACTIVE';
+          badgeClass = 'bg-emerald-50 text-emerald-800 border-emerald-300';
+        } else if (isExpired) {
+          badgeText = 'EXPIRED';
+          badgeClass = 'bg-amber-50 text-amber-800 border-amber-300';
+        } else if (errorMsg) {
+          badgeText = 'ERROR';
+          badgeClass = 'bg-rose-50 text-rose-800 border-rose-300';
+        } else if (isEnabled) {
+          badgeText = 'CONNECTING';
+          badgeClass = 'bg-blue-50 text-blue-800 border-blue-300';
+        }
+
         const card = document.createElement('div');
         card.className = 'p-space-md bg-surface-container-lowest border border-black/10 rounded-[10px] flex flex-col justify-between gap-space-md hover:border-black/30 transition-colors mcp-plugin-card';
+        card.setAttribute('data-server-id', sid);
+
         card.innerHTML = `
           <div class="flex flex-col gap-2">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2">
-                <div class="w-9 h-9 rounded-[8px] bg-surface-container-highest flex items-center justify-center font-mono font-bold text-on-surface">
-                  ${(srv.server_id || 'MC').slice(0, 2).toUpperCase()}
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-[8px] bg-surface-container-highest flex items-center justify-center font-mono font-bold text-on-surface text-sm shrink-0">
+                  ${sid.slice(0, 2).toUpperCase()}
                 </div>
                 <div>
-                  <h4 class="font-label-md font-semibold text-on-surface">${escapeHtml(srv.label || srv.server_id)}</h4>
-                  <span class="font-code text-[11px] text-on-surface-variant">@mcp/${escapeHtml(srv.server_id)}</span>
+                  <h4 class="font-label-md font-semibold text-on-surface flex items-center gap-1.5">
+                    ${escapeHtml(label)}
+                  </h4>
+                  <span class="font-code text-[11px] text-on-surface-variant">@mcp/${escapeHtml(sid)}</span>
                 </div>
               </div>
-              <span class="px-2 py-0.5 ${isRunning ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-black/[0.05] border-black/10'} border font-code text-[10px] font-semibold rounded mcp-status-badge">
-                ${isRunning ? 'ACTIVE' : 'STANDBY'}
+              <span class="px-2 py-0.5 border font-code text-[10px] font-semibold rounded shrink-0 ${badgeClass} mcp-status-badge">
+                ${badgeText}
               </span>
             </div>
-            <p class="font-body-sm text-[13px] text-on-surface-variant leading-relaxed">
-              ${escapeHtml(srv.description || '표준 Model Context Protocol 도구 및 외부 커넥터 브리지')}
+            <p class="font-body-sm text-[12px] text-on-surface-variant leading-relaxed">
+              ${escapeHtml(srv.description || (sid === 'daon-design' ? 'Daon UI/UX 디자인 에이전트 전용 디자인 토큰, 믹싱, 트렌드 도구' : sid === 'windows-computer-use' ? 'Windows 화면 캡처, 마우스/키보드 자동 제어 및 OS 자동화 도구' : sid === 'rea' ? 'Ghidra 기반 역공학, 바이너리 분석 및 소프트웨어 리버스 엔지니어링 브리지' : sid === 'reticle' ? 'AI 코드 검증, 정적 분석 및 보안 가드레일 레이어' : sid === 'filesystem' ? '프로젝트 디렉토리 안전 파일 읽기/쓰기 샌드박스' : sid === 'playmcp-gateway' ? '카카오톡, 네이버 검색 등 23개 국내 서비스 게이트웨이' : '표준 Model Context Protocol 도구 및 외부 커넥터'))}
             </p>
+            ${errorMsg ? `<div class="px-2 py-1 bg-rose-50 border border-rose-200 rounded text-[11px] text-rose-700 font-mono truncate" title="${escapeHtml(errorMsg)}">오류: ${escapeHtml(errorMsg)}</div>` : ''}
           </div>
           <div class="flex items-center justify-between pt-2 border-t border-black/[0.06]">
             <div class="flex items-center gap-2 font-code text-[11px] text-on-surface-variant">
-              <span>도구 ${srv.tools ? srv.tools.length : 0}개</span>
+              <span>도구 <strong class="text-on-surface">${srvToolsCount}개</strong></span>
               <span>·</span>
               <span>${srv.transport || 'stdio'}</span>
             </div>
             <div class="flex items-center gap-1.5">
-              <button class="px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-on-surface hover:bg-black/[0.04] mcp-cfg-btn" type="button">설정</button>
-              <button class="px-2.5 py-1 ${isRunning ? 'bg-surface-container-highest text-on-surface' : 'bg-primary text-on-primary'} rounded-[6px] font-label-sm hover:opacity-90 transition-opacity mcp-toggle-btn" data-id="${escapeHtml(srv.server_id)}" data-active="${isRunning}">
-                ${isRunning ? '비활성화' : '활성화'}
+              <button class="px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-on-surface hover:bg-black/[0.04] mcp-cfg-btn cursor-pointer" type="button" data-id="${escapeHtml(sid)}">
+                설정
+              </button>
+              <button class="px-2.5 py-1 ${isEnabled ? 'bg-surface-container-highest text-on-surface border border-black/10 hover:bg-black/[0.05]' : 'bg-primary text-on-primary hover:bg-black/80'} rounded-[6px] font-label-sm transition-all mcp-toggle-btn cursor-pointer" type="button" data-id="${escapeHtml(sid)}" data-enabled="${isEnabled}">
+                ${isEnabled ? '비활성화' : '활성화'}
               </button>
             </div>
           </div>
         `;
 
-        // Toggle connect/disconnect listener
+        // 토글 버튼 리스너
         card.querySelector('.mcp-toggle-btn')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
-          const sid = btn.getAttribute('data-id');
-          const isActive = btn.getAttribute('data-active') === 'true';
+          const targetSid = btn.getAttribute('data-id');
+          const currentEnabled = btn.getAttribute('data-enabled') === 'true';
 
+          btn.disabled = true;
           btn.textContent = '처리 중...';
+
           try {
-            if (isActive) {
-              await DaonAPI.disconnectMCPServer(sid);
-              btn.textContent = '활성화';
-              btn.className = 'px-2.5 py-1 bg-primary text-on-primary rounded-[6px] font-label-sm hover:opacity-90 transition-opacity mcp-toggle-btn';
-              btn.setAttribute('data-active', 'false');
-              card.querySelector('.mcp-status-badge').textContent = 'STANDBY';
-              card.querySelector('.mcp-status-badge').className = 'px-2 py-0.5 bg-black/[0.05] border-black/10 border font-code text-[10px] font-semibold rounded mcp-status-badge';
+            if (currentEnabled) {
+              await DaonAPI.disconnectMCPServer(targetSid);
             } else {
-              await DaonAPI.connectMCPServer(sid);
-              btn.textContent = '비활성화';
-              btn.className = 'px-2.5 py-1 bg-surface-container-highest text-on-surface rounded-[6px] font-label-sm hover:opacity-90 transition-opacity mcp-toggle-btn';
-              btn.setAttribute('data-active', 'true');
-              card.querySelector('.mcp-status-badge').textContent = 'ACTIVE';
-              card.querySelector('.mcp-status-badge').className = 'px-2 py-0.5 bg-emerald-50 text-emerald-800 border-emerald-200 border font-code text-[10px] font-semibold rounded mcp-status-badge';
+              await DaonAPI.connectMCPServer(targetSid);
             }
+            // 즉시 백엔드 상태를 재조회하여 전체 UI(상단 요약 바 + 카드 전체)를 완벽히 갱신
+            await loadLiveMcpServers();
           } catch (err) {
             alert('MCP 서버 상태 변경 실패: ' + err.message);
-            btn.textContent = isActive ? '비활성화' : '활성화';
+            btn.disabled = false;
+            btn.textContent = currentEnabled ? '비활성화' : '활성화';
           }
+        });
+
+        // 설정 버튼 리스너
+        card.querySelector('.mcp-cfg-btn')?.addEventListener('click', () => {
+          showMcpServerDetails(srv);
         });
 
         container.appendChild(card);
@@ -3196,11 +3434,35 @@ async function loadLiveSkills() {
     if (skills && skills.length > 0) {
       cachedSkills = skills;
       if (countLabel) countLabel.textContent = `${skills.length}개`;
-      renderSkillCatalog(skills.slice(0, 20));
+      renderActiveSkillSlots();
+      renderSkillCatalog(skills.slice(0, 30));
     }
   } catch (err) {
     console.warn('Failed to load real skills:', err);
   }
+}
+
+function renderActiveSkillSlots() {
+  const grid = document.getElementById('skills-active-slots-grid');
+  const countLabel = document.getElementById('skills-active-count-label');
+  if (!grid) return;
+
+  const equipped = cachedSkills.filter(s => equippedSkillIds.has(s.id || s.name));
+  const displayList = equipped.length > 0 ? equipped.slice(0, 6) : cachedSkills.slice(0, 4);
+
+  if (countLabel) countLabel.textContent = `${displayList.length} / 6`;
+
+  grid.innerHTML = '';
+  displayList.forEach((s, idx) => {
+    const slotDiv = document.createElement('div');
+    slotDiv.className = 'p-2.5 bg-surface-container-lowest border border-black/15 rounded-[8px] flex flex-col gap-1';
+    slotDiv.innerHTML = `
+      <span class="font-code text-[10px] text-on-surface-variant">SLOT 0${idx + 1}</span>
+      <span class="font-label-md font-semibold text-on-surface truncate" title="${escapeHtml(s.name || s.id)}">${escapeHtml(s.name || s.id)}</span>
+      <span class="font-body-sm text-[11px] text-on-surface-variant truncate">${escapeHtml(s.category || '코어 실행 스킬')}</span>
+    `;
+    grid.appendChild(slotDiv);
+  });
 }
 
 function renderSkillCatalog(skillList) {
@@ -3209,14 +3471,15 @@ function renderSkillCatalog(skillList) {
 
   container.innerHTML = '';
   skillList.forEach(s => {
-    const isEquipped = s.enabled || s.source === 'local';
+    const sid = s.id || s.name;
+    const isEquipped = equippedSkillIds.has(sid) || s.enabled || s.source === 'local';
     const card = document.createElement('div');
     card.className = 'p-space-md bg-surface border border-black/10 rounded-[10px] flex flex-col justify-between gap-3 skill-catalog-card hover:border-black/30 transition-colors';
     card.innerHTML = `
       <div class="flex items-start justify-between">
         <div class="flex-1 pr-2">
           <div class="flex items-center gap-2">
-            <h4 class="font-label-md font-semibold text-on-surface truncate">${escapeHtml(s.name || s.id)}</h4>
+            <h4 class="font-label-md font-semibold text-on-surface truncate">${escapeHtml(s.name || sid)}</h4>
             <span class="px-1.5 py-[1px] bg-primary text-on-primary text-[10px] font-code rounded shrink-0">v${escapeHtml(s.version || '1.0')}</span>
           </div>
           <p class="font-body-sm text-[12px] text-on-surface-variant mt-1 line-clamp-2 leading-relaxed">
@@ -3229,7 +3492,7 @@ function renderSkillCatalog(skillList) {
       </div>
       <div class="flex items-center justify-between pt-2 border-t border-black/[0.06] text-[11px] font-code text-on-surface-variant">
         <span>분류: ${escapeHtml(s.category || 'general')}</span>
-        <button class="toggle-slot-btn text-primary font-semibold hover:underline cursor-pointer" type="button">
+        <button class="toggle-slot-btn ${isEquipped ? 'text-on-surface-variant' : 'text-primary'} font-semibold hover:underline cursor-pointer" type="button" data-id="${escapeHtml(sid)}">
           ${isEquipped ? '장착 해제' : '슬롯에 장착'}
         </button>
       </div>
@@ -3238,21 +3501,31 @@ function renderSkillCatalog(skillList) {
     // Toggle slot button
     card.querySelector('.toggle-slot-btn')?.addEventListener('click', (e) => {
       const btn = e.currentTarget;
-      const willEquip = btn.textContent.includes('장착') && !btn.textContent.includes('해제');
-      if (willEquip) {
-        btn.textContent = '장착 해제';
-        card.querySelector('.material-symbols-outlined').className = 'material-symbols-outlined text-[18px] text-primary shrink-0';
-        card.querySelector('.material-symbols-outlined').textContent = 'check_circle';
-      } else {
+      const targetId = btn.getAttribute('data-id');
+      if (equippedSkillIds.has(targetId)) {
+        equippedSkillIds.delete(targetId);
         btn.textContent = '슬롯에 장착';
+        btn.className = 'toggle-slot-btn text-primary font-semibold hover:underline cursor-pointer';
         card.querySelector('.material-symbols-outlined').className = 'material-symbols-outlined text-[18px] text-on-surface-variant/40 shrink-0';
         card.querySelector('.material-symbols-outlined').textContent = 'radio_button_unchecked';
+      } else {
+        if (equippedSkillIds.size >= 6) {
+          alert('슬롯은 최대 6개까지 장착할 수 있습니다.');
+          return;
+        }
+        equippedSkillIds.add(targetId);
+        btn.textContent = '장착 해제';
+        btn.className = 'toggle-slot-btn text-on-surface-variant font-semibold hover:underline cursor-pointer';
+        card.querySelector('.material-symbols-outlined').className = 'material-symbols-outlined text-[18px] text-primary shrink-0';
+        card.querySelector('.material-symbols-outlined').textContent = 'check_circle';
       }
+      renderActiveSkillSlots();
     });
 
     container.appendChild(card);
   });
 }
+
 
 // ── Export & Diagnostics ──────────────────────────────────────────────────────
 

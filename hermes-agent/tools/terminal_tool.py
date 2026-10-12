@@ -1880,8 +1880,8 @@ def terminal_tool(
             except Exception:
                 pass
             
-            # Truncate output if too long, keeping both head and tail
-            MAX_OUTPUT_CHARS = 50000
+            # Truncate output if too long, keeping both head and tail (capped to prevent context explosion)
+            MAX_OUTPUT_CHARS = int(os.getenv("DAON_MAX_TERMINAL_OUTPUT_CHARS", "12000"))
             if len(output) > MAX_OUTPUT_CHARS:
                 head_chars = int(MAX_OUTPUT_CHARS * 0.4)  # 40% head (error messages often appear early)
                 tail_chars = MAX_OUTPUT_CHARS - head_chars  # 60% tail (most recent/relevant output)

@@ -1512,6 +1512,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       if not any(name.startswith(p) for p in _disallowed_prefixes)
                   }
 
+          has_laya_skill = False
           # ── [Raon Inline Consumer] System 1 Laya Pre-routing ──
           try:
               from api.laya_client import laya_client
@@ -1532,11 +1533,21 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   
                   # If pure conversation with high confidence, prune heavy tools so LLM attention is sharp
                   if laya_intent == 'conversation' and laya_conf >= 0.85 and not is_browser_session:
-                      _heavy_prefixes = ('mcp_serena_', 'mcp_stitch_', 'mcp_figma_', 'mcp_daon-design_')
+                      _mcp_exact_tools = {'call_mcp_tool', 'list_mcp_tools'}
+                      _heavy_prefixes = ('mcp_serena_', 'mcp_stitch_', 'mcp_figma_', 'mcp_daon-design_', 'mcp_')
                       if hasattr(agent, 'tools') and isinstance(agent.tools, list):
-                          agent.tools = [t for t in agent.tools if not any(t.get('function', {}).get('name', '').startswith(p) for p in _heavy_prefixes)]
+                          agent.tools = [
+                              t for t in agent.tools
+                              if t.get('function', {}).get('name', '') not in _mcp_exact_tools
+                              and not any(t.get('function', {}).get('name', '').startswith(p) for p in _heavy_prefixes)
+                          ]
                       if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
-                          agent.valid_tool_names = {n for n in agent.valid_tool_names if not any(n.startswith(p) for p in _heavy_prefixes)}
+                          agent.valid_tool_names = {
+                              n for n in agent.valid_tool_names
+                              if n not in _mcp_exact_tools
+                              and not any(n.startswith(p) for p in _heavy_prefixes)
+                          }
+                      _logger.info("[Laya-Inline-Consumer] Isolated all MCP tools for pure conversation turn (conf=%.2f)", laya_conf)
                   
                   # Inject lightweight guidance into system prompt
                   if laya_intent == 'coding':
@@ -1547,6 +1558,27 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: 다단계 또는 대규모 자율 작업입니다. 필요 시 하네스/워커 도구를 활용하세요."
                   elif laya_intent == 'design_ui':
                       _ephemeral_prompt = (_ephemeral_prompt or "") + "\n[System 1 빠른 판단]: UI 디자인 및 프론트엔드 스타일 작업입니다. 디자인 토큰 및 스타일에 집중하세요."
+
+                  # ── [Laya Skill Pre-fetch] 질문에 최적화된 전용 스킬 1개 핀포인트 직배송 ──
+                  if laya_intent != 'conversation' or laya_conf < 0.85:
+                      matched_skill = laya_client.match_skill(msg_text or '')
+                      if matched_skill and matched_skill.get("skill"):
+                          has_laya_skill = True
+                          s_name = matched_skill["skill"]
+                          s_snippet = matched_skill.get("snippet", "")
+                          s_lat = matched_skill.get("latency_ms", 30)
+                          _logger.info("[Laya-Inline-Consumer] Auto-matched skill: %s (in %.1fms)", s_name, s_lat)
+                          put('laya_decision', {
+                              'intent': laya_intent,
+                              'matched_skill': s_name,
+                              'confidence': laya_conf,
+                              'latency_ms': s_lat
+                          })
+                          if s_snippet:
+                              _ephemeral_prompt = (
+                                  (_ephemeral_prompt or "")
+                                  + f"\n\n[Laya 자동 추천 스킬: {s_name}]\n{s_snippet}\n(필요 시 skills 도구로 세부 지침을 추가 조회하세요.)"
+                              )
           except Exception as _e_laya:
               _logger.debug("Laya inline consumer bypassed: %s", _e_laya)
 
@@ -1680,10 +1712,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               s.save()
 
           # Process attachments to base64 images if present for multimodal models
+          # [Laya 이중 주입 방어]: Laya가 전용 스킬을 이미 핀포인트로 직배송 주입한 경우,
+          # 기존 8766 랭커(_build_skill_hint)의 중복 힌트는 스킵하여 토큰 낭비를 원천 차단한다.
+          _skill_hint = "" if has_laya_skill else _build_skill_hint(msg_text, context=_skill_context(s))
           user_message_payload = build_user_payload(
               workspace=s.workspace,
               msg_text=msg_text,
-              workspace_ctx=_build_skill_hint(msg_text, context=_skill_context(s)),
+              workspace_ctx=_skill_hint,
               attachments=attachments,
           )
 
