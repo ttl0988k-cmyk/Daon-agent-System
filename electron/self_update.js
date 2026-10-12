@@ -20,7 +20,11 @@
 const path = require('path');
 
 const REBUILD_TIMEOUT_MS = 20 * 60 * 1000;   // PyInstaller 재빌드 상한 (20분)
-const CANARY_START_TIMEOUT_MS = 90 * 1000;   // 카나리 기동 상한 (onefile 압축해제 감안)
+const CANARY_START_TIMEOUT_MS = 480 * 1000;  // 카나리 기동 상한 (onefile 압축해제 감안)
+    // [근본 수정 2026-10-12] 90s → 480s. 실측: 신빌드 exe가 포트 LISTENING 후에도
+    // 메인스레드 기동 블로킹으로 278초+ /health 무응답. 90s 예산으로는 카나리가
+    // 영원히 실패 → 스왑 영원히 거부 → server.exe가 10-10 빌드에 동결됐다(2회 실측).
+    // 재빌드 11분 + 카나리 8분 = 재기동 총 ~20분. 길지만 정확한 쪽을 택한다.
 const CANARY_POLL_MS = 500;                  // 카나리 헬스 폴링 간격
 const CANARY_STABLE_HITS = 2;                // 연속 성공 횟수 = 안정 판정
 const CANARY_EXIT_WAIT_MS = 5000;            // 스왑 전 카나리 종료 대기 상한
@@ -202,6 +206,13 @@ function createSelfUpdate(deps = {}) {
         const deadline = Date.now() + canaryStartMs;
         const verdict = await stableDeepHealth(port, deadline);
 
+        // [오진단 수정 2026-10-12] kill 전에 생존 여부를 먼저 캡처한다.
+        // 종전에는 kill(taskkill → exit code 1) 후에 exitCode를 검사해,
+        // 헬스 미달로 직접 죽인 카나리까지 'exited early (code 1)'로 오진단했고
+        // 진짜 이유(health never became ready)가 유실됐다(10-12 2회 실측).
+        // → kill 시점에 이미 죽어있었을 때만 exit code를 보고하고,
+        // 살아있었다면 verdict의 이유를 그대로 보고한다.
+        const aliveBeforeKill = (child.exitCode === null && child.signalCode === undefined);
         // cleanup: 트리킬(onefile 자식까지) → exit 대기 → 재시도 (순서 보장).
         // child.kill() 단독은 bootloader 부모만 죽인다 — 실측에서 실제 앱 자식이
         // dist\server.exe 락을 홀드한 채 좀비로 남아 스왑 EBUSY 를 낳았다.
@@ -220,10 +231,10 @@ function createSelfUpdate(deps = {}) {
 
         if (verdict.ok) return { ok: true, pid: verdict.payload.pid, port };
         if (spawnError) return { ok: false, reason: `canary spawn error: ${spawnError.message}` };
-        if (child.exitCode != null && child.exitCode !== 0) {
+        if (!aliveBeforeKill && child.exitCode != null && child.exitCode !== 0) {
             return { ok: false, reason: `canary exited early (code ${child.exitCode})` };
         }
-        return { ok: false, reason: verdict.reason || 'canary not healthy in time' };
+        return { ok: false, reason: (verdict.reason || 'canary not healthy in time') + (aliveBeforeKill ? ' (canary was still running at deadline; killed for cleanup)' : '') };
     }
 
     // [Self-Update 근본 수정 ④] 목표 exe 쓰기 가능 검사. 실행 중인 exe 이미지는

@@ -36,7 +36,10 @@ class ServerSupervisor {
 
     this.WATCHDOG_INTERVAL = 30_000;
     this.MAX_RESTARTS = 3;
-    this.POST_SWAP_HEALTH_GRACE_MS = 120_000;
+    this.POST_SWAP_HEALTH_GRACE_MS = 360_000;
+    // [근본 수정 2026-10-12] 120s → 360s. onefile 콜드스타트 실측 278초+ 무응답 —
+    // 120s 유예로는 정상 기동도 'server unhealthy after restart' ledger 오판 후
+    // 롤백 경로로 빠진다. 스왑 직후 판정에만 쓰이므로 와치독 주기와 무관.
 
     // [재시작 루프 방어 2026-09-12] 즉사-재스폰 무한 루프 방지.
     // 포트 9090 을 붙잡은 잔존 server.exe 가 있으면 새 스폰이 바인딩 실패로
