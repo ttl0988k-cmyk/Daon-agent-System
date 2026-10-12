@@ -28,6 +28,28 @@ from playwright.async_api import async_playwright, Playwright, Browser as PwBrow
 
 VIEWPORT = {"width": 1280, "height": 800}
 
+# 특수키 → Windows 가상키코드 및 CDP keydown 파라미터 매핑 (Enter 폼제출, Backspace 삭제, 방향키 등)
+_SPECIAL_KEYCODES = {
+    "Enter": {"vk": 13, "text": "\r"},
+    "Backspace": {"vk": 8},
+    "Tab": {"vk": 9},
+    "Escape": {"vk": 27},
+    " ": {"vk": 32, "text": " "},
+    "ArrowLeft": {"vk": 37},
+    "ArrowUp": {"vk": 38},
+    "ArrowRight": {"vk": 39},
+    "ArrowDown": {"vk": 40},
+    "Delete": {"vk": 46},
+    "Home": {"vk": 36},
+    "End": {"vk": 35},
+    "PageUp": {"vk": 33},
+    "PageDown": {"vk": 34},
+    "F1": {"vk": 112}, "F2": {"vk": 113}, "F3": {"vk": 114}, "F4": {"vk": 115},
+    "F5": {"vk": 116}, "F6": {"vk": 117}, "F7": {"vk": 118}, "F8": {"vk": 119},
+    "F9": {"vk": 120}, "F10": {"vk": 121}, "F11": {"vk": 122}, "F12": {"vk": 123},
+    "HangulMode": {"vk": 21}, "Hanji": {"vk": 25},
+}
+
 _EXTRACT_INTERACTIVE_JS = """
 (() => {
     const interactive = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="menuitem"],[role="tab"],[contenteditable="true"],details,summary';
@@ -99,6 +121,13 @@ class BrowserSessionManager:
         self.is_running: bool = False
         self._ref_store: Dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        # 마지막 정상 URL (페이지 크래시 시 자동 복구용)
+        self._last_url: Optional[str] = None
+        # 직접제어 입력 진단 카운터 (클릭 패킷 서버 도달 여부 판정용)
+        self._input_stats: Dict[str, int] = {
+            "mouse_down": 0, "mouse_up": 0, "mouse_move": 0,
+            "key_down": 0, "key_up": 0, "wheel": 0, "text": 0, "errors": 0,
+        }
 
     async def ensure_started(self):
         async with self._lock:
@@ -114,26 +143,164 @@ class BrowserSessionManager:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--window-size=1280,800",
+                    "--lang=ko-KR,ko,en-US,en",
                 ]
             )
             self.context = await self.browser.new_context(
                 viewport=VIEWPORT,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                locale="ko-KR",
+                timezone_id="Asia/Seoul",
             )
-            self.page = await self.context.new_page()
-            self.cdp = await self.context.new_cdp_session(self.page)
+            # 봇 탐지 우회 스크립트 (navigator.webdriver 등 마스킹)
+            await self.context.add_init_script("""
+                // Mask navigator.webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
 
-            # CDP 화면 송출 리스너 등록
-            self.cdp.on("Page.screencastFrame", self._on_frame)
-            await self.cdp.send("Page.startScreencast", {
-                "format": "jpeg",
-                "quality": 75,
-                "maxWidth": VIEWPORT["width"],
-                "maxHeight": VIEWPORT["height"],
-                "everyNthFrame": 2,
-            })
+                // Mask window.chrome
+                if (!window.chrome) {
+                    window.chrome = {
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {}
+                    };
+                }
+
+                // Mask plugins / languages
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['ko-KR', 'ko', 'en-US', 'en']
+                });
+
+                // target="_blank"를 현재 탭(_self)으로 강제 전환하여 분기 없이 단일 화면에서 바로 열리도록 보장
+                document.addEventListener('click', (e) => {
+                    try {
+                        const a = e.target.closest('a');
+                        if (a && a.target && a.target.toLowerCase() === '_blank') {
+                            a.target = '_self';
+                        }
+                    } catch (_) {}
+                }, true);
+
+                // window.open 호출도 현재 탭 이동으로 처리
+                try {
+                    const origOpen = window.open;
+                    window.open = function(url, target, features) {
+                        if (url) {
+                            window.location.href = url;
+                            return window;
+                        }
+                        return origOpen ? origOpen.apply(this, arguments) : window;
+                    };
+                } catch (_) {}
+            """)
+
+            # 새 탭/창 생성 시 활성 탭으로 자동 전환하는 리스너 등록
+            self.context.on("page", lambda p: asyncio.create_task(self._on_new_page(p)))
+
+            self.page = await self.context.new_page()
+            # 크래시로 새 페이지가 생겼으면 마지막 URL로 자동 복구
+            if self._last_url:
+                try:
+                    await self.page.goto(self._last_url, wait_until="domcontentloaded", timeout=20000)
+                    print(f"[BrowserService] 🔄 크래시 복구 — 마지막 페이지로 복귀: {self._last_url}", flush=True)
+                except Exception as e:
+                    print(f"[BrowserService] 복구 이동 실패: {e}", flush=True)
+
+            await self._attach_page(self.page)
             self.is_running = True
-            print("[BrowserService] ✅ 브라우저 및 CDP 스트리밍 준비 완료", flush=True)
+            print("[BrowserService] ✅ 브라우저 및 CDP 스트리밍 준비 완료 (스텔스 모드 적용)", flush=True)
+
+    async def _attach_page(self, page):
+        """페이지에 CDP 및 프레임/네비게이션 리스너를 붙이고 활성 페이지로 설정"""
+        if self.cdp:
+            try:
+                await self.cdp.send("Page.stopScreencast")
+            except Exception:
+                pass
+            self.cdp = None
+
+        self.page = page
+        self.cdp = await self.context.new_cdp_session(page)
+        self.cdp.on("Page.screencastFrame", self._on_frame)
+        await self.cdp.send("Page.startScreencast", {
+            "format": "jpeg",
+            "quality": 80,
+            "maxWidth": VIEWPORT["width"],
+            "maxHeight": VIEWPORT["height"],
+            "everyNthFrame": 1,
+        })
+
+        def _on_nav(frame):
+            if frame == page.main_frame:
+                self._last_url = frame.url
+                asyncio.create_task(self._broadcast_nav(frame.url))
+                asyncio.create_task(self._push_instant_frame())
+
+        async def _inject_blank_killer():
+            try:
+                await page.evaluate("""
+                    document.addEventListener('click', (e) => {
+                        try {
+                            const a = e.target.closest('a');
+                            if (a && a.target && a.target.toLowerCase() === '_blank') {
+                                a.target = '_self';
+                            }
+                        } catch (_) {}
+                    }, true);
+                """)
+            except Exception:
+                pass
+
+        async def _on_page_load():
+            await self._push_instant_frame()
+            await _inject_blank_killer()
+
+        page.on("framenavigated", _on_nav)
+        page.on("load", lambda: asyncio.create_task(_on_page_load()))
+        page.on("close", lambda: asyncio.create_task(self._on_page_closed(page)))
+        asyncio.create_task(_inject_blank_killer())
+
+        self._last_url = page.url
+        asyncio.create_task(self._broadcast_nav(page.url))
+        asyncio.create_task(self._push_instant_frame())
+
+    async def _on_new_page(self, new_page):
+        print(f"[BrowserService] 📄 새 탭/창 생성 감지: {new_page.url} -> 활성 탭으로 자동 전환", flush=True)
+        try:
+            await new_page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        await self._attach_page(new_page)
+
+    async def _on_page_closed(self, closed_page):
+        if self.page == closed_page and self.context:
+            pages = self.context.pages
+            remaining = [p for p in pages if p != closed_page and not p.is_closed()]
+            if remaining:
+                print(f"[BrowserService] 📄 현재 탭 닫힘 -> 이전 탭으로 자동 복귀", flush=True)
+                await self._attach_page(remaining[-1])
+
+    async def _broadcast_nav(self, url: str):
+        if not self.viewers:
+            return
+        msg = json.dumps({"t": "nav", "url": url})
+        dead = set()
+        for ws in list(self.viewers):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                dead.add(ws)
+        if dead:
+            self.viewers -= dead
 
     async def stop(self):
         async with self._lock:
@@ -181,41 +348,176 @@ class BrowserSessionManager:
         if dead:
             self.viewers -= dead
 
+    async def _push_instant_frame(self):
+        """사용자 조작 후 즉시 화면 프레임을 캡처하여 지연 없이 전송"""
+        if not self.is_running or not self.page or not self.viewers:
+            return
+        try:
+            shot = await self.page.screenshot(type="jpeg", quality=80)
+            msg = json.dumps({"t": "frame", "data": base64.b64encode(shot).decode()})
+            dead = set()
+            for ws in list(self.viewers):
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    dead.add(ws)
+            if dead:
+                self.viewers -= dead
+        except Exception:
+            pass
+
     async def handle_input(self, ev):
+        kind = ev.get("t")
+        # WS 경유 페이지 열기/이동 (폰 원격 등 8088 직접 fetch가 안 되는 환경용)
+        if kind == "open":
+            url = ev.get("url") or "https://www.google.com"
+            try:
+                if not self.is_running:
+                    await self.ensure_started()
+                if self.page:
+                    await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    self._last_url = url
+            except Exception as e:
+                print(f"[BrowserService] open 이동 오류: {e}", flush=True)
+            return
+        # WS 경유 페이지 탐색 (뒤로/앞으로/새로고침 — 카드 헤더 버튼용)
+        if kind == "nav":
+            action = ev.get("action", "")
+            try:
+                if not self.is_running:
+                    await self.ensure_started()
+                if self.page and not self.page.is_closed():
+                    if action == "back":
+                        await self.page.go_back(wait_until="domcontentloaded", timeout=15000)
+                    elif action == "forward":
+                        await self.page.go_forward(wait_until="domcontentloaded", timeout=15000)
+                    elif action == "reload":
+                        await self.page.reload(wait_until="domcontentloaded", timeout=30000)
+                    asyncio.create_task(self._push_instant_frame())
+            except Exception as e:
+                print(f"[BrowserService] nav({action}) 오류: {e}", flush=True)
+            return
         if not self.is_running or not self.cdp:
             return
 
-        x = ev.get("x", 0) * VIEWPORT["width"]
-        y = ev.get("y", 0) * VIEWPORT["height"]
+        x = float(ev.get("x", 0)) * VIEWPORT["width"]
+        y = float(ev.get("y", 0)) * VIEWPORT["height"]
         kind = ev.get("t")
+        btn = ev.get("button", "left")
+        buttons_map = {"left": 1, "right": 2, "middle": 4}
 
         try:
+            # 한글 완성 텍스트 통째 삽입 (헤드리스엔 OS IME가 없어 완성 음절/단어 단위로 삽입)
+            if kind == "text":
+                self._input_stats["text"] += 1
+                txt = ev.get("text", "")
+                if txt and self.page:
+                    await self.page.keyboard.insert_text(txt)
+                    asyncio.create_task(self._push_instant_frame())
+                return
             if kind == "mouse":
-                mtype = {"move": "mouseMoved", "down": "mousePressed", "up": "mouseReleased"}.get(ev.get("kind"), "mouseMoved")
-                params = {"type": mtype, "x": x, "y": y}
-                if ev.get("kind") != "move":
-                    params["button"] = "left"
-                    params["clickCount"] = 1
-                await self.cdp.send("Input.dispatchMouseEvent", params)
+                action = ev.get("kind")
+                if action == "down":
+                    self._mouse_pressed = True
+                    buttons = buttons_map.get(btn, 1)
+                    self._input_stats["mouse_down"] += 1
+                    await self.cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": btn,
+                        "buttons": buttons,
+                        "clickCount": int(ev.get("clickCount", 1)),
+                    })
+                elif action == "up":
+                    self._mouse_pressed = False
+                    self._input_stats["mouse_up"] += 1
+                    await self.cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": btn,
+                        "buttons": 0,
+                        "clickCount": int(ev.get("clickCount", 1)),
+                    })
+                    # 마우스 클릭 완료 시 즉시 화면 갱신 푸시 (캡챠 타일 반응/체크 표시 즉시 렌더링)
+                    asyncio.create_task(self._push_instant_frame())
+                elif action == "click":
+                    # 단일 클릭 (단발성 정확한 클릭 보장)
+                    buttons = buttons_map.get(btn, 1)
+                    self._input_stats["mouse_down"] += 1
+                    await self.cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": btn,
+                        "buttons": buttons,
+                        "clickCount": 1,
+                    })
+                    await asyncio.sleep(0.05)
+                    self._input_stats["mouse_up"] += 1
+                    await self.cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": btn,
+                        "buttons": 0,
+                        "clickCount": 1,
+                    })
+                    asyncio.create_task(self._push_instant_frame())
+                elif action == "move":
+                    self._input_stats["mouse_move"] += 1
+                    is_down = ev.get("down", False) or getattr(self, "_mouse_pressed", False)
+                    buttons = buttons_map.get(btn, 1) if is_down else 0
+                    params = {
+                        "type": "mouseMoved",
+                        "x": x,
+                        "y": y,
+                        "buttons": buttons,
+                    }
+                    if is_down:
+                        params["button"] = btn
+                    await self.cdp.send("Input.dispatchMouseEvent", params)
             elif kind == "key":
-                params = {
-                    "type": "keyDown" if ev.get("kind") == "down" else "keyUp",
-                    "key": ev.get("key", "")
-                }
-                if ev.get("code"):
-                    params["code"] = ev["code"]
-                if ev.get("text"):
-                    params["text"] = ev["text"]
-                await self.cdp.send("Input.dispatchKeyEvent", params)
+                action = ev.get("kind")
+                key = ev.get("key", "")
+                code = ev.get("code", "")
+                text = ev.get("text", "")
+
+                if self.page:
+                    if action == "down":
+                        self._input_stats["key_down"] += 1
+                        if text and len(text) > 0 and key not in _SPECIAL_KEYCODES:
+                            await self.page.keyboard.insert_text(text)
+                        elif key == "Enter":
+                            await self.page.keyboard.press("Enter")
+                        elif key == "Backspace":
+                            await self.page.keyboard.press("Backspace")
+                        else:
+                            try:
+                                await self.page.keyboard.down(key)
+                            except Exception:
+                                pass
+                    elif action == "up":
+                        self._input_stats["key_up"] += 1
+                        if key not in ("Enter", "Backspace"):
+                            try:
+                                await self.page.keyboard.up(key)
+                            except Exception:
+                                pass
+                        asyncio.create_task(self._push_instant_frame())
             elif kind == "wheel":
+                self._input_stats["wheel"] += 1
                 await self.cdp.send("Input.dispatchMouseEvent", {
                     "type": "mouseWheel",
                     "x": x,
                     "y": y,
-                    "deltaX": 0,
-                    "deltaY": ev.get("deltaY", 100),
+                    "deltaX": float(ev.get("deltaX", 0)),
+                    "deltaY": float(ev.get("deltaY", 100)),
                 })
+                asyncio.create_task(self._push_instant_frame())
         except Exception as e:
+            self._input_stats["errors"] += 1
             print(f"[BrowserService] 입력 주입 오류: {e}", flush=True)
 
     async def extract_snapshot(self) -> Dict[str, Any]:
@@ -435,7 +737,8 @@ async def health():
         "status": "ok",
         "browser_running": manager.is_running,
         "current_url": manager.page.url if (manager.is_running and manager.page) else None,
-        "viewers_count": len(manager.viewers)
+        "viewers_count": len(manager.viewers),
+        "input_stats": dict(manager._input_stats)
     }
 
 @app.post("/api/session/start")
@@ -445,6 +748,7 @@ async def session_start(body: dict = None):
     if url and manager.page:
         try:
             await manager.page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            manager._last_url = url
         except Exception as e:
             print(f"[BrowserService] 시작 url 이동 경고: {e}", flush=True)
     return {
@@ -462,6 +766,22 @@ async def session_close():
 @app.websocket("/stream")
 async def websocket_stream(ws: WebSocket):
     await ws.accept()
+    # 프로브 접속 (?probe=1): 상태만 반환하고 종료 — 브라우저 기동 없음
+    # (새로고침 자동복구용. 원격 https에서도 WS 프록시를 타므로 혼합콘텐츠 문제 없음)
+    if ws.query_params.get("probe") == "1":
+        try:
+            await ws.send_text(json.dumps({
+                "t": "hello",
+                "browser_running": manager.is_running,
+                "current_url": manager.page.url if (manager.is_running and manager.page) else None,
+            }))
+        except Exception:
+            pass
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        return
     if not manager.is_running:
         await manager.ensure_started()
 
@@ -496,6 +816,7 @@ async def navigate(body: dict):
 
     try:
         await manager.page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        manager._last_url = url
     except Exception as e:
         return {"ok": False, "error": str(e), "url": manager.page.url if manager.page else url}
 

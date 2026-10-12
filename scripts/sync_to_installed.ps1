@@ -118,8 +118,9 @@ Sync-FolderWithRobocopy (Join-Path $src 'api') (Join-Path $dst 'api') @('__pycac
 Sync-FolderWithRobocopy (Join-Path $src 'api\api') (Join-Path $dst 'api') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 Sync-FolderWithRobocopy (Join-Path $src 'skills') (Join-Path $dst 'skills') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 Sync-FolderWithRobocopy (Join-Path $src 'plugins') (Join-Path $dst 'plugins') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
+Sync-FolderWithRobocopy (Join-Path $src 'browser_service') (Join-Path $dst 'browser_service') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 
-Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills + plugins) → $dst" -ForegroundColor Green
+Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills + plugins + browser_service) → $dst" -ForegroundColor Green
 Write-Host "     백업: $backup"
 
 # ── 4. 검증: 핵심 파일 크기 비교 ──

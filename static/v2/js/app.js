@@ -1,4 +1,4 @@
-import { liveBrowser } from './browser_viewer.js?v=20261009_1000';
+import { liveBrowser } from './browser_viewer.js?v=20261012_dock10';
 /**
  * DAON Workspace v2.5 - Single Page Orchestration Controller
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
@@ -44,7 +44,8 @@ const state = {
   currentWorkspace: localStorage.getItem('daon_active_workspace') || '',
   currentAgentPersona: localStorage.getItem('daon_active_persona') || 'raon',
   userScrolledUp: false, // 사용자가 위로 스크롤하여 이전 대화를 읽고 있는지 여부
-  lastRenderedSignature: '' // 불필요한 전체 재렌더링 방지용 서명
+  lastRenderedSignature: '', // 불필요한 전체 재렌더링 방지용 서명
+  runningSessionIds: new Set() // 백그라운드 포함 현재 작업/추론 중인 세션 ID 집합
 };
 
 // ── Voice Input (STT) & Voice Output (TTS) State Variables ─────────────────
@@ -353,7 +354,10 @@ async function loadSessions() {
   }
 
   try {
-    const sessions = await DaonAPI.getSessions();
+    const [sessions, activeRes] = await Promise.all([
+      DaonAPI.getSessions().catch(() => []),
+      DaonAPI.getActiveStreams().catch(() => ({}))
+    ]);
     if (!sessions || sessions.length === 0) {
       container.innerHTML = '<div class="px-space-sm text-[12px] text-on-surface-variant/60">진행된 세션이 없습니다.</div>';
       state.selectedSessions.clear();
@@ -361,24 +365,67 @@ async function loadSessions() {
       return;
     }
 
-    // 화면에 표시되지 않는(20개 초과) 세션의 잔여 선택 정리
-    const visibleIds = new Set(sessions.slice(0, 20).map(s => s.session_id));
+    const runningSessionIds = new Set((activeRes?.active_streams || []).map(s => s.session_id));
+    if (state.isStreaming && state.currentSessionId) {
+      runningSessionIds.add(state.currentSessionId);
+    }
+    state.runningSessionIds = runningSessionIds;
+
+    // 1. 현재 작업 중인 세션을 목록 맨 위(최상단)로 이동
+    let sortedSessions = [...sessions];
+    if (state.currentSessionId) {
+      const activeIdx = sortedSessions.findIndex(s => s.session_id === state.currentSessionId);
+      if (activeIdx > 0) {
+        const [activeSess] = sortedSessions.splice(activeIdx, 1);
+        sortedSessions.unshift(activeSess);
+      }
+    }
+
+    // 2. 백그라운드 작업 중인 세션들을 상위권(현재 세션 바로 다음)으로 배치하여 한눈에 확인 가능하도록 정렬
+    if (runningSessionIds && runningSessionIds.size > 0) {
+      const backgroundRunning = [];
+      sortedSessions = sortedSessions.filter((s, idx) => {
+        if (idx === 0 && s.session_id === state.currentSessionId) return true;
+        if (runningSessionIds.has(s.session_id)) {
+          backgroundRunning.push(s);
+          return false;
+        }
+        return true;
+      });
+      if (state.currentSessionId && sortedSessions.length > 0 && sortedSessions[0].session_id === state.currentSessionId) {
+        sortedSessions.splice(1, 0, ...backgroundRunning);
+      } else {
+        sortedSessions.unshift(...backgroundRunning);
+      }
+    }
+
+    // 화면에 표시되지 않는(25개 초과) 세션의 잔여 선택 정리
+    const visibleIds = new Set(sortedSessions.slice(0, 25).map(s => s.session_id));
     for (const id of [...state.selectedSessions]) {
       if (!visibleIds.has(id)) state.selectedSessions.delete(id);
     }
 
     container.innerHTML = '';
-    sessions.slice(0, 20).forEach((sess) => {
+    sortedSessions.slice(0, 25).forEach((sess) => {
+      const isCurrent = sess.session_id === state.currentSessionId;
+      const isRunning = runningSessionIds.has(sess.session_id);
       const a = document.createElement('a');
-      a.className = `group h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-colors cursor-pointer ${
-        sess.session_id === state.currentSessionId ? 'bg-black/[0.06] text-on-surface font-medium' : 'text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface'
-      }`;
+      a.setAttribute('data-session-id', sess.session_id);
+
+      // 눈에 확 띄는 색상 & 디자인 적용 (현재 열린 세션 vs 백그라운드 작업 중 세션 vs 비활성 세션)
+      if (isCurrent) {
+        a.className = 'session-item group min-h-[36px] py-1 flex items-center px-space-sm rounded-[9px] font-body-sm text-body-sm transition-all cursor-pointer relative bg-purple-500/15 dark:bg-purple-900/30 border-l-[3.5px] border-l-purple-600 dark:border-l-purple-400 border border-purple-500/35 text-purple-950 dark:text-purple-100 font-semibold shadow-xs';
+      } else if (isRunning) {
+        a.className = 'session-item group min-h-[34px] py-1 flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-all cursor-pointer relative bg-amber-500/10 dark:bg-amber-400/10 border-l-[3.5px] border-l-amber-500 border border-amber-500/30 text-amber-950 dark:text-amber-100 font-medium shadow-2xs hover:bg-amber-500/15';
+      } else {
+        a.className = 'session-item group min-h-[32px] py-1 flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-all cursor-pointer text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface border border-transparent';
+      }
       a.title = sess.title || '세션';
 
       // 선택 체크박스 (여러 세션 일괄 삭제용)
       const chk = document.createElement('input');
       chk.type = 'checkbox';
-      chk.className = 'session-check w-3.5 h-3.5 mr-1.5 shrink-0 cursor-pointer accent-red-600';
+      chk.className = 'session-check w-3.5 h-3.5 mr-1.5 shrink-0 cursor-pointer accent-purple-600';
       chk.setAttribute('data-session-id', sess.session_id);
       chk.checked = state.selectedSessions.has(sess.session_id);
       chk.title = '이 세션 선택';
@@ -391,22 +438,36 @@ async function loadSessions() {
       a.appendChild(chk);
 
       const span = document.createElement('span');
-      span.className = 'truncate flex-1 pr-1 flex items-center gap-1.5';
+      span.className = 'session-title-wrap truncate flex-1 pr-1 flex items-center gap-1.5';
       const pIcon = getPersonaIcon(sess.profile);
-      span.innerHTML = `<span class="shrink-0 text-[12px] opacity-75" title="${escapeHtml(sess.profile || '라온')}">${pIcon}</span><span class="truncate">${escapeHtml(sess.title || `세션 #${sess.session_id.slice(0, 6)}`)}</span>`;
+
+      // 열지 않은 세션도 백그라운드 작업 중이면 확연한 "작업중" 배지 표시
+      let badgeHtml = '';
+      if (isRunning) {
+        if (isCurrent) {
+          badgeHtml = '<span class="session-running-badge shrink-0 px-1.5 py-[1px] text-[9px] font-mono font-bold rounded-full bg-purple-600 text-white flex items-center gap-1 shadow-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>작업중</span>';
+        } else {
+          badgeHtml = '<span class="session-running-badge shrink-0 px-1.5 py-[1px] text-[9px] font-mono font-bold rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 flex items-center gap-1 shadow-xs animate-pulse"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>작업중</span>';
+        }
+      }
+
+      span.innerHTML = `<span class="shrink-0 text-[12px] opacity-80" title="${escapeHtml(sess.profile || '라온')}">${pIcon}</span><span class="truncate flex-1">${escapeHtml(sess.title || `세션 #${sess.session_id.slice(0, 6)}`)}</span>${badgeHtml}`;
       a.appendChild(span);
 
-      // Trash button for individual session delete
+      // 개별 세션 삭제 버튼
       const delBtn = document.createElement('button');
-      delBtn.className = 'w-6 h-6 flex items-center justify-center rounded-[6px] text-on-surface-variant/50 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all shrink-0 ml-1 cursor-pointer';
+      delBtn.className = `w-5 h-5 flex items-center justify-center rounded text-on-surface-variant/40 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all shrink-0 ml-1 cursor-pointer ${
+        isCurrent ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+      }`;
       delBtn.title = '이 세션 삭제';
       delBtn.type = 'button';
-      delBtn.innerHTML = '<span class="material-symbols-outlined text-[16px]">delete</span>';
+      delBtn.innerHTML = '<span class="material-symbols-outlined text-[15px]">delete</span>';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (confirm(`'${sess.title || '선택한 세션'}'을(를) 삭제하시겠습니까?`)) {
           await DaonAPI.deleteSession(sess.session_id);
           state.selectedSessions.delete(sess.session_id);
+          if (state.runningSessionIds) state.runningSessionIds.delete(sess.session_id);
           if (state.currentSessionId === sess.session_id) {
             state.currentSessionId = null;
           }
@@ -416,7 +477,9 @@ async function loadSessions() {
       a.appendChild(delBtn);
 
       a.addEventListener('click', async () => {
-        await switchSession(sess.session_id);
+        if (state.currentSessionId !== sess.session_id) {
+          await switchSession(sess.session_id);
+        }
       });
 
       container.appendChild(a);
@@ -425,12 +488,62 @@ async function loadSessions() {
     updateSelectedSessionsUI();
 
     // Select the first session if none selected
-    if (!state.currentSessionId && sessions.length > 0) {
-      await switchSession(sessions[0].session_id);
+    if (!state.currentSessionId && sortedSessions.length > 0) {
+      await switchSession(sortedSessions[0].session_id);
     }
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
+}
+
+// ── 사이드바 세션들의 실시간 "작업중" 배지 & 테두리 실시간 동기화 함수 ────────
+function updateRunningSessionBadges(activeStreams = []) {
+  const runningSet = new Set((activeStreams || []).map(s => s.session_id));
+  if (state.isStreaming && state.currentSessionId) {
+    runningSet.add(state.currentSessionId);
+  }
+  state.runningSessionIds = runningSet;
+
+  const container = document.getElementById('recent-threads-list');
+  if (!container) return;
+
+  const items = container.querySelectorAll('a[data-session-id]');
+  items.forEach(a => {
+    const sid = a.getAttribute('data-session-id');
+    const isCurrent = sid === state.currentSessionId;
+    const isRunning = runningSet.has(sid);
+
+    // 1. 세션 테두리 및 배경 디자인 실시간 업데이트
+    if (isCurrent) {
+      a.className = 'session-item group min-h-[36px] py-1 flex items-center px-space-sm rounded-[9px] font-body-sm text-body-sm transition-all cursor-pointer relative bg-purple-500/15 dark:bg-purple-900/30 border-l-[3.5px] border-l-purple-600 dark:border-l-purple-400 border border-purple-500/35 text-purple-950 dark:text-purple-100 font-semibold shadow-xs';
+    } else if (isRunning) {
+      a.className = 'session-item group min-h-[34px] py-1 flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-all cursor-pointer relative bg-amber-500/10 dark:bg-amber-400/10 border-l-[3.5px] border-l-amber-500 border border-amber-500/30 text-amber-950 dark:text-amber-100 font-medium shadow-2xs hover:bg-amber-500/15';
+    } else {
+      a.className = 'session-item group min-h-[32px] py-1 flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm transition-all cursor-pointer text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface border border-transparent';
+    }
+
+    // 2. "작업중" 배지 동적 업데이트
+    const wrap = a.querySelector('.session-title-wrap');
+    let badge = a.querySelector('.session-running-badge');
+
+    if (isRunning) {
+      const badgeHtml = isCurrent
+        ? '<span class="session-running-badge shrink-0 px-1.5 py-[1px] text-[9px] font-mono font-bold rounded-full bg-purple-600 text-white flex items-center gap-1 shadow-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>작업중</span>'
+        : '<span class="session-running-badge shrink-0 px-1.5 py-[1px] text-[9px] font-mono font-bold rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 flex items-center gap-1 shadow-xs animate-pulse"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>작업중</span>';
+
+      if (badge) {
+        const temp = document.createElement('div');
+        temp.innerHTML = badgeHtml;
+        badge.replaceWith(temp.firstElementChild);
+      } else if (wrap) {
+        const temp = document.createElement('div');
+        temp.innerHTML = badgeHtml;
+        wrap.appendChild(temp.firstElementChild);
+      }
+    } else {
+      if (badge) badge.remove();
+    }
+  });
 }
 
 // 선택 삭제 UI 갱신 — 개수 라벨 / 버튼 활성 / 전체선택 체크박스 상태
@@ -455,6 +568,15 @@ function updateSelectedSessionsUI() {
 }
 
 async function switchSession(sessionId) {
+  // 열려있던 세션의 UI SSE 리스너가 살아있다면 안전하게 연결 해제 (백엔드 세션 작업은 지속됨)
+  if (state.activeStream) {
+    try { state.activeStream.close(); } catch (_) {}
+    state.activeStream = null;
+  }
+  state.currentStreamId = null;
+  state.isStreaming = false;
+  updateSendButtonUI(false);
+
   state.currentSessionId = sessionId;
   state.lastRenderedSignature = '';
   state.userScrolledUp = false;
@@ -467,13 +589,8 @@ async function switchSession(sessionId) {
     sessionLabel.textContent = `SESSION #${sessionId.toUpperCase().slice(0, 8)}`;
   }
 
-  // Refresh active sidebar highlighting
-  const container = document.getElementById('recent-threads-list');
-  if (container) {
-    Array.from(container.children).forEach(child => {
-      child.className = 'h-[32px] flex items-center justify-between px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer';
-    });
-  }
+  // 사이드바 목록 즉각 갱신: 현재 세션이 맨 위로 올라오고 활성 스타일로 강조됨
+  await loadSessions();
 
   // Load messages & sync profile
   try {
@@ -511,6 +628,7 @@ async function switchSession(sessionId) {
     }
 
     renderSessionMessages(sess.messages || [], false);
+    await syncMultiDeviceChat();
   } catch (err) {
     console.error('Failed to load session messages:', err);
   }
@@ -835,11 +953,19 @@ async function handleSendMessage() {
     let reasoningStartTime = null;
 
     state.currentStreamId = startRes.stream_id;
+    if (!state.runningSessionIds) state.runningSessionIds = new Set();
+    state.runningSessionIds.add(state.currentSessionId);
+    updateRunningSessionBadges(Array.from(state.runningSessionIds).map(id => ({ session_id: id })));
+
     state.activeStream = attachStreamEvents(startRes.stream_id, bubble, contentEl, timeEl);
   } catch (err) {
     state.isStreaming = false;
     state.activeStream = null;
     state.currentStreamId = null;
+    if (state.runningSessionIds && state.currentSessionId) {
+      state.runningSessionIds.delete(state.currentSessionId);
+      updateRunningSessionBadges(Array.from(state.runningSessionIds).map(id => ({ session_id: id })));
+    }
     updateSendButtonUI(false);
     bubble.querySelector('.streaming-cursor')?.remove();
 
@@ -1184,6 +1310,11 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       state.isStreaming = false;
       state.activeStream = null;
       state.currentStreamId = null;
+      if (state.runningSessionIds) {
+        if (data?.session?.session_id) state.runningSessionIds.delete(data.session.session_id);
+        if (state.currentSessionId) state.runningSessionIds.delete(state.currentSessionId);
+      }
+      updateRunningSessionBadges(Array.from(state.runningSessionIds || []).map(id => ({ session_id: id })));
       updateSendButtonUI(false);
       bubble.querySelector('.streaming-cursor')?.remove();
 
@@ -1225,6 +1356,10 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       state.isStreaming = false;
       state.activeStream = null;
       state.currentStreamId = null;
+      if (state.runningSessionIds && state.currentSessionId) {
+        state.runningSessionIds.delete(state.currentSessionId);
+      }
+      updateRunningSessionBadges(Array.from(state.runningSessionIds || []).map(id => ({ session_id: id })));
       updateSendButtonUI(false);
       bubble.querySelector('.streaming-cursor')?.remove();
       if (!fullResponse) {
@@ -1806,12 +1941,17 @@ let isSyncingMultiDevice = false;
 
 async function syncMultiDeviceChat() {
   if (isSyncingMultiDevice) return;
-  if (!state.currentSessionId) return;
 
   isSyncingMultiDevice = true;
   try {
-    const res = await DaonAPI.getActiveStreams();
+    const res = await DaonAPI.getActiveStreams().catch(() => ({}));
     const activeStreams = res?.active_streams || [];
+
+    // 1. 열지 않은 세션을 포함하여 모든 세션의 실시간 '작업중' 배지 및 테두리 동기화
+    updateRunningSessionBadges(activeStreams);
+
+    if (!state.currentSessionId) return;
+
     const activeForCurrent = activeStreams.find(s => s.session_id === state.currentSessionId);
 
     if (activeForCurrent && activeForCurrent.stream_id) {
@@ -2407,68 +2547,13 @@ function initSidebarEffortSelector() {
 }
 
 function initModelSelector() {
-  const modelCards = document.querySelectorAll('.model-selection-card');
-  modelCards.forEach(card => {
-    card.addEventListener('click', async () => {
-      modelCards.forEach(c => {
-        c.classList.remove('border-2', 'border-primary', 'bg-surface-container-lowest');
-        c.classList.add('border', 'border-black/10', 'bg-surface');
-        const icon = c.querySelector('.model-radio-icon');
-        if (icon) {
-          icon.textContent = 'radio_button_unchecked';
-          icon.classList.remove('text-primary');
-          icon.classList.add('text-on-surface-variant');
-        }
-      });
-
-      card.classList.add('border-2', 'border-primary', 'bg-surface-container-lowest');
-      card.classList.remove('border', 'border-black/10', 'bg-surface');
-      const activeIcon = card.querySelector('.model-radio-icon');
-      if (activeIcon) {
-        activeIcon.textContent = 'radio_button_checked';
-        activeIcon.classList.add('text-primary');
-        activeIcon.classList.remove('text-on-surface-variant');
-      }
-
-      const rawModel = card.getAttribute('data-model') || 'orchestrator';
-      state.selectedModelCard = rawModel;
-
-      // 원클릭 프리셋: 모델과 추론 강도를 동시에 세팅
-      const targetModel = card.getAttribute('data-target-model') || (
-        rawModel === 'flash' ? 'glm-5.3-flash' :
-        rawModel === 'reasoning' ? 'deepseek-v4-pro' :
-        'deepseek-v4.1-flash'
-      );
-      const targetEffort = card.getAttribute('data-effort') || (
-        (rawModel === 'deepseek-max' || rawModel === 'reasoning') ? 'high' :
-        rawModel === 'flash' ? 'low' :
-        'medium'
-      );
-
-      state.currentSessionModel = targetModel;
-      setReasoningEffort(targetEffort);
-
-      const currentModelLabel = document.getElementById('current-model-label');
-      if (currentModelLabel) {
-        currentModelLabel.textContent = targetModel;
-      }
-
-      if (state.currentSessionId) {
-        try {
-          await DaonAPI.updateSession(state.currentSessionId, { model: targetModel });
-        } catch (err) {
-          console.warn('Failed to update session model on preset click:', err);
-        }
-      }
-    });
-  });
-
-  // Reasoning Effort pills
+  // Reasoning Effort pills (하단 추론 강도 버튼 - 좌측 사이드바 및 백엔드 custom_providers.json 영구 연동)
   const effortButtons = document.querySelectorAll('.reasoning-effort-btn');
   effortButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const effort = btn.getAttribute('data-effort') || 'medium';
       setReasoningEffort(effort);
+      await saveCurrentModelEffort(effort);
     });
   });
 }
