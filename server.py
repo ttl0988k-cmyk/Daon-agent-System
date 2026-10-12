@@ -58,6 +58,8 @@ if hasattr(sys, '_MEIPASS'):
         RESOURCE_DIR = Path(sys._MEIPASS)
     elif (RUN_DIR / 'static').exists():
         RESOURCE_DIR = RUN_DIR
+    elif (RUN_DIR.parent / 'static').exists():
+        RESOURCE_DIR = RUN_DIR.parent
     elif (Path.cwd() / 'static').exists():
         RESOURCE_DIR = Path.cwd()
     else:
