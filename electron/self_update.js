@@ -20,11 +20,13 @@
 const path = require('path');
 
 const REBUILD_TIMEOUT_MS = 20 * 60 * 1000;   // PyInstaller 재빌드 상한 (20분)
-const CANARY_START_TIMEOUT_MS = 480 * 1000;  // 카나리 기동 상한 (onefile 압축해제 감안)
-    // [근본 수정 2026-10-12] 90s → 480s. 실측: 신빌드 exe가 포트 LISTENING 후에도
-    // 메인스레드 기동 블로킹으로 278초+ /health 무응답. 90s 예산으로는 카나리가
-    // 영원히 실패 → 스왑 영원히 거부 → server.exe가 10-10 빌드에 동결됐다(2회 실측).
-    // 재빌드 11분 + 카나리 8분 = 재기동 총 ~20분. 길지만 정확한 쪽을 택한다.
+const CANARY_START_TIMEOUT_MS = 900 * 1000;  // 카나리 기동 상한 (onefile 압축해제+백신스캔 감안)
+    // [근본 수정 2026-10-12] 90s → 480s → 900s. /health 핸들러는 경량이라
+    // 프로세스가 serve_forever에 닿으면 수 초 내 응답한다. 즉 카나리 지연의
+    // 본체는 앱이 아니라 프로세스 기동(_MEI 압축해제+Defender 첫스캔+500MB DLL).
+    // 신 바이너리 첫 기동은 278초+ 무응답 실측 — 구형 SSD/백신 환경에선 8분도
+    // 빠듯할 수 있어 15분으로. 재빌드 11분 + 카나리 15분 = 재기동 총 ~26분.
+    // 이 비용은 rebuild=true 때만 지불한다. 실패 시 카나리 로그 꼬리가 reason에 첨부된다.
 const CANARY_POLL_MS = 500;                  // 카나리 헬스 폴링 간격
 const CANARY_STABLE_HITS = 2;                // 연속 성공 횟수 = 안정 판정
 const CANARY_EXIT_WAIT_MS = 5000;            // 스왑 전 카나리 종료 대기 상한
@@ -190,14 +192,25 @@ function createSelfUpdate(deps = {}) {
             return { ok: false, reason: `canary port alloc failed: ${e && e.message}` };
         }
 
+        // [카나리 로그 2026-10-12] 종전 stdio:'ignore'는 실패 원인을 완전히 버려
+        // 'exited early (code 1)'만 남았다. 카나리 출력을 temp 로그에 남기고
+        // 실패 reason에 꼬리를 첨부한다. 주입 fs에 openSync가 없으면(프로브) 생략.
+        const _os = require('os');
+        const canaryLog = path.join(_os.tmpdir(), `daon-canary-${port}.log`);
+        let logFd = null;
+        try {
+            if (typeof fs.openSync === 'function') logFd = fs.openSync(canaryLog, 'w');
+        } catch (_) { logFd = null; }
+
         let child;
         try {
             child = spawnFn(builtExe, ['--no-browser', '--port', String(port)], {
                 windowsHide: true,
-                stdio: 'ignore',
+                stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
                 env: { ...process.env, DAON_CANARY: '1' },
             });
         } catch (e) {
+            try { if (logFd !== null && typeof fs.closeSync === 'function') fs.closeSync(logFd); } catch (_) {}
             return { ok: false, reason: `canary spawn failed: ${e.message}` };
         }
         let spawnError = null;
@@ -229,12 +242,21 @@ function createSelfUpdate(deps = {}) {
             }
         } catch (_) { }
 
-        if (verdict.ok) return { ok: true, pid: verdict.payload.pid, port };
-        if (spawnError) return { ok: false, reason: `canary spawn error: ${spawnError.message}` };
-        if (!aliveBeforeKill && child.exitCode != null && child.exitCode !== 0) {
-            return { ok: false, reason: `canary exited early (code ${child.exitCode})` };
+        try { if (logFd !== null && typeof fs.closeSync === 'function') fs.closeSync(logFd); } catch (_) {}
+        let logTail = '';
+        try {
+            if (typeof fs.readFileSync === 'function') logTail = String(fs.readFileSync(canaryLog, 'utf8')).slice(-800);
+        } catch (_) {}
+        const tailSuffix = logTail ? ` :: canary log tail (${canaryLog}): ${logTail}` : '';
+        if (verdict.ok) {
+            try { if (typeof fs.unlinkSync === 'function') fs.unlinkSync(canaryLog); } catch (_) {}
+            return { ok: true, pid: verdict.payload.pid, port };
         }
-        return { ok: false, reason: (verdict.reason || 'canary not healthy in time') + (aliveBeforeKill ? ' (canary was still running at deadline; killed for cleanup)' : '') };
+        if (spawnError) return { ok: false, reason: `canary spawn error: ${spawnError.message}${tailSuffix}` };
+        if (!aliveBeforeKill && child.exitCode != null && child.exitCode !== 0) {
+            return { ok: false, reason: `canary exited early (code ${child.exitCode})${tailSuffix}` };
+        }
+        return { ok: false, reason: (verdict.reason || 'canary not healthy in time') + (aliveBeforeKill ? ' (canary was still running at deadline; killed for cleanup)' : '') + tailSuffix };
     }
 
     // [Self-Update 근본 수정 ④] 목표 exe 쓰기 가능 검사. 실행 중인 exe 이미지는
