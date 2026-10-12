@@ -320,6 +320,15 @@ from api.routes.plugin_routes import (
     handle_post_plugin_session,
     handle_post_plugins_import,
 )
+from api.routes.secret_routes import (
+    handle_delete_secret,
+    handle_get_secrets,
+    handle_get_secrets_pending,
+    handle_post_secrets_allow,
+    handle_post_secrets_cancel,
+    handle_post_secrets_set,
+    handle_post_secrets_update,
+)
 
 
 # ── Special Route Helpers ──
@@ -363,6 +372,14 @@ def _handle_post_plugin_subpath(handler, body, parsed) -> bool:
             return handle_post_plugin_credentials_set(handler, body, plugin_name)
     if len(parts) == 3 and parts[1] == 'credentials' and parts[2] == 'remove':
         return handle_post_plugin_credentials_remove(handler, body, parts[0])
+    return False
+
+
+def _handle_delete_secrets_subpath(handler, parsed) -> bool:
+    rest = parsed.path[len('/api/secrets/'):]
+    if rest and '/' not in rest:
+        from urllib.parse import unquote
+        return handle_delete_secret(handler, parsed, unquote(rest))
     return False
 
 
@@ -439,6 +456,8 @@ GET_EXACT_ROUTES = {
     '/api/projects': handle_get_projects,
     '/api/providers': handle_get_providers,
     '/api/score/evaluate': handle_get_score_evaluate,
+    '/api/secrets': handle_get_secrets,
+    '/api/secrets/pending': handle_get_secrets_pending,
     '/api/session': handle_get_session,
     '/api/session/export': handle_get_session_export,
     '/api/sessions': handle_get_sessions,
@@ -606,6 +625,10 @@ POST_EXACT_ROUTES = {
     '/api/session/update': handle_post_session_update,
     '/api/sessions/cleanup': handle_post_sessions_cleanup,
     '/api/sessions/cleanup_zero_message': handle_post_sessions_cleanup,
+    '/api/secrets/allow': handle_post_secrets_allow,
+    '/api/secrets/cancel': handle_post_secrets_cancel,
+    '/api/secrets/set': handle_post_secrets_set,
+    '/api/secrets/update': handle_post_secrets_update,
     '/api/dynamic/cancel': lambda h, b: handle_post_dynamic_cancel(h, b),
     '/api/dynamic/run': handle_post_dynamic_run,
     '/api/boardroom/broadcast': handle_post_boardroom_broadcast,
@@ -702,5 +725,22 @@ def handle_post(handler, parsed) -> bool:
             return pfunc(handler, body, parsed)
             
     _logger.debug("No POST route matched for: %s", path)
+    return False
+
+
+# ── O(1) DELETE Route Registry ──
+DELETE_PREFIX_ROUTES = [
+    ('/api/secrets/', _handle_delete_secrets_subpath),
+]
+
+
+def handle_delete(handler, parsed) -> bool:
+    """Handle all DELETE routes via directory-prefix match."""
+    path = parsed.path
+    for prefix, pfunc in DELETE_PREFIX_ROUTES:
+        if path == prefix.rstrip('/') or path.startswith(prefix):
+            return pfunc(handler, parsed)
+
+    _logger.debug("No DELETE route matched for: %s", path)
     return False
 

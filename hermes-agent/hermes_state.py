@@ -25,6 +25,72 @@ from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
+try:
+    from agent.fts_trigram import (
+        FTS_META_KEY_VERSION,
+        desired_fts_meta_entries,
+        get_around_sql,
+        get_rebuild_sql,
+        get_trigram_schema_sql,
+        like_of,
+        needs_rebuild,
+        probe_trigram_support,
+        split_terms,
+    )
+    _TRIGRAM_MODULE_AVAILABLE = True
+except ImportError:  # agent 패키지 없이 hermes_state 단독 사용 시에도 동작 유지
+    _TRIGRAM_MODULE_AVAILABLE = False
+    FTS_META_KEY_VERSION = "fts_trigram_version"
+
+    def desired_fts_meta_entries():  # type: ignore[misc]
+        return {}
+
+    def get_around_sql(session_id, message_id, before=6, after=7):  # type: ignore[misc]
+        columns = "m.id, m.session_id, m.role, m.content, m.timestamp"
+        return {
+            "before_sql": (
+                f"SELECT {columns} FROM messages m "
+                "WHERE m.session_id = ? AND (m.timestamp, m.id) < "
+                "(SELECT timestamp, id FROM messages WHERE session_id = ? AND id = ?) "
+                "ORDER BY m.timestamp DESC, m.id DESC "
+                f"LIMIT {int(before)}"
+            ),
+            "before_args": [session_id, session_id, int(message_id)],
+            "from_sql": (
+                f"SELECT {columns} FROM messages m "
+                "WHERE m.session_id = ? AND (m.timestamp, m.id) >= "
+                "(SELECT timestamp, id FROM messages WHERE session_id = ? AND id = ?) "
+                "ORDER BY m.timestamp ASC, m.id ASC "
+                f"LIMIT {int(after)}"
+            ),
+            "from_args": [session_id, session_id, int(message_id)],
+        }
+
+    def get_rebuild_sql(table="messages_fts_trigram"):  # type: ignore[misc]
+        ident = table.replace('"', '""')
+        return f'INSERT INTO "{ident}"("{ident}") VALUES (\'rebuild\');\n'
+
+    def get_trigram_schema_sql():  # type: ignore[misc]
+        return ""
+
+    def like_of(term):  # type: ignore[misc]
+        return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    def needs_rebuild(stored_version):  # type: ignore[misc]
+        return stored_version != "1"
+
+    def probe_trigram_support(conn):  # type: ignore[misc]
+        return False
+
+    def split_terms(query, maximum=6):  # type: ignore[misc]
+        seen = []
+        for tok in str(query or "").lower().split():
+            if tok and tok not in seen:
+                seen.append(tok)
+            if len(seen) >= maximum:
+                break
+        return seen
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -142,6 +208,9 @@ class SessionDB:
 
         self._lock = threading.Lock()
         self._write_count = 0
+        # FTS5 trigram 병행 인덱스 가용 여부. _init_schema()에서 probe 후 갱신.
+        # 미지원 환경에서는 False 그대로 → 기존 동작 100% 유지.
+        self._trigram_available = False
         self._conn = sqlite3.connect(
             str(self.db_path),
             check_same_thread=False,
@@ -353,6 +422,38 @@ class SessionDB:
             cursor.execute("SELECT * FROM messages_fts LIMIT 0")
         except sqlite3.OperationalError:
             cursor.executescript(FTS_SQL)
+
+        # FTS5 trigram 병행 인덱스 (B안): 기존 messages_fts/unicode61 경로는
+        # 절대 건드리지 않고 messages_fts_trigram만 추가한다. 미지원 환경은
+        # graceful degrade → self._trigram_available=False, 기존 검색 그대로.
+        if _TRIGRAM_MODULE_AVAILABLE:
+            try:
+                if probe_trigram_support(self._conn):
+                    cursor.executescript(get_trigram_schema_sql())
+                    try:
+                        ver_row = cursor.execute(
+                            "SELECT value FROM fts_meta WHERE key = ?",
+                            (FTS_META_KEY_VERSION,),
+                        ).fetchone()
+                        stored_version = (
+                            ver_row["value"]
+                            if ver_row is not None
+                            else None
+                        )
+                    except sqlite3.Error:
+                        stored_version = None
+                    if needs_rebuild(stored_version):
+                        # 신규 생성 또는 버전 불일치 시 기존 행 백필
+                        cursor.execute(get_rebuild_sql("messages_fts_trigram"))
+                    for _meta_key, _meta_val in desired_fts_meta_entries().items():
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO fts_meta(key, value) VALUES (?, ?)",
+                            (_meta_key, _meta_val),
+                        )
+                    self._trigram_available = True
+            except Exception:
+                logger.debug("trigram companion index unavailable; using legacy FTS path")
+                self._trigram_available = False
 
         self._conn.commit()
 
@@ -1173,6 +1274,25 @@ class SessionDB:
         if not query:
             return []
 
+        # CJK 하이브리드 (B안): CJK 포함 시 trigram MATCH를 우선 시도한다.
+        # 히트가 있으면 기존과 동일한 결과 형태로 반환하고, 없거나 에러면
+        # 아래 기존 경로(unicode61 FTS → LIKE 폴백)로 그대로 폴백한다.
+        # 영문 쿼리는 이 분기를 타지 않아 기존 동작·순서가 100% 유지된다.
+        if self._contains_cjk(query) and getattr(self, "_trigram_available", False):
+            tri_matches = self._search_messages_trigram(
+                query,
+                source_filter=source_filter,
+                exclude_sources=exclude_sources,
+                role_filter=role_filter,
+                limit=limit,
+                offset=offset,
+            )
+            if tri_matches:
+                self._attach_surrounding_context(tri_matches)
+                for match in tri_matches:
+                    match.pop("content", None)
+                return tri_matches
+
         # Build WHERE clauses dynamically
         where_clauses = ["messages_fts MATCH ?"]
         params: list = [query]
@@ -1262,7 +1382,18 @@ class SessionDB:
                 like_cursor = self._conn.execute(like_sql, like_params)
                 matches = [dict(row) for row in like_cursor.fetchall()]
 
-        # Add surrounding context (1 message before + after each match).
+        self._attach_surrounding_context(matches)
+
+        # Remove full content from result (snippet is enough, saves tokens)
+        for match in matches:
+            match.pop("content", None)
+
+        return matches
+
+    def _attach_surrounding_context(self, matches: List[Dict[str, Any]]) -> None:
+        """Attach 1-before + self + 1-after context to each match in place."""
+        # NOTE: extracted verbatim from search_messages so the trigram-first
+        # CJK branch shares identical post-processing with the legacy path.
         # Done outside the lock so we don't hold it across N sequential queries.
         for match in matches:
             try:
@@ -1308,11 +1439,109 @@ class SessionDB:
             except Exception:
                 match["context"] = []
 
-        # Remove full content from result (snippet is enough, saves tokens)
-        for match in matches:
-            match.pop("content", None)
+    def _search_messages_trigram(
+        self,
+        query: str,
+        source_filter: List[str] = None,
+        exclude_sources: List[str] = None,
+        role_filter: List[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """CJK 하이브리드용 trigram 우선 검색. 실패/미지원 시 [] 반환.
 
-        return matches
+        3자 이상 term은 ``messages_fts_trigram MATCH`` phrase AND로,
+        3자 미만 term은 trigram 매칭 불가이므로 ``LIKE`` 필터로 병용한다
+        (fts_trigram.term_query_hybrid와 동일 규칙). 호출자는 []를 받으면
+        기존 unicode61 FTS → LIKE 경로로 폴백한다.
+        """
+        raw = query.strip('"').strip()
+        terms = split_terms(raw)
+        long_terms = [t for t in terms if len(t) >= 3]
+        if not long_terms:
+            return []  # trigram으로 매칭 불가 → 기존 경로로 폴백
+        short_terms = [t for t in terms if len(t) < 3]
+
+        match_expr = " ".join('"' + t.replace('"', '""') + '"' for t in long_terms)
+        where_clauses = ["messages_fts_trigram MATCH ?"]
+        params: list = [match_expr]
+        for term in short_terms:
+            where_clauses.append("m.content LIKE ? ESCAPE '\\'")
+            params.append(like_of(term))
+        if source_filter is not None:
+            where_clauses.append(
+                f"s.source IN ({','.join('?' for _ in source_filter)})"
+            )
+            params.extend(source_filter)
+        if exclude_sources is not None:
+            where_clauses.append(
+                f"s.source NOT IN ({','.join('?' for _ in exclude_sources)})"
+            )
+            params.extend(exclude_sources)
+        if role_filter:
+            where_clauses.append(
+                f"m.role IN ({','.join('?' for _ in role_filter)})"
+            )
+            params.extend(role_filter)
+        params.extend([limit, offset])
+        where_sql = " AND ".join(where_clauses)
+        sql = f"""
+            SELECT
+                m.id,
+                m.session_id,
+                m.role,
+                snippet(messages_fts_trigram, 0, '>>>', '<<<', '...', 40) AS snippet,
+                m.content,
+                m.timestamp,
+                m.tool_name,
+                s.source,
+                s.model,
+                s.started_at AS session_started
+            FROM messages_fts_trigram
+            JOIN messages m ON m.id = messages_fts_trigram.rowid
+            JOIN sessions s ON s.id = m.session_id
+            WHERE {where_sql}
+            ORDER BY rank
+            LIMIT ? OFFSET ?
+        """
+        try:
+            with self._lock:
+                cursor = self._conn.execute(sql, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            return []  # 테이블 없음/구문 오류 → 기존 경로로 폴백
+        except Exception:
+            return []
+
+    def get_around(
+        self,
+        session_id: str,
+        message_id: int,
+        before: int = 6,
+        after: int = 7,
+    ) -> List[Dict[str, Any]]:
+        """anchor(``session_id#message_id``) 주변 메시지 조회.
+
+        anchor 이전 ``before``개 + anchor 포함 이후 ``after``개를
+        시간순(과거→최신)으로 반환한다. anchor가 없으면 [].
+        trigram 가용 여부와 무관하게 동작한다 (순수 messages 조회).
+        """
+        q = get_around_sql(session_id, message_id, before, after)
+        with self._lock:
+            before_rows = [
+                dict(r)
+                for r in self._conn.execute(
+                    q["before_sql"], q["before_args"]
+                ).fetchall()
+            ]
+            from_rows = [
+                dict(r)
+                for r in self._conn.execute(
+                    q["from_sql"], q["from_args"]
+                ).fetchall()
+            ]
+        before_rows.reverse()
+        return before_rows + from_rows
 
     def search_sessions(
         self,

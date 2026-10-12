@@ -1346,7 +1346,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           try:
               from api.plugin_gateway import session_plugin_credentials
               from tools.env_passthrough import set_plugin_credential_env
-              set_plugin_credential_env(session_plugin_credentials(session_id))
+              _merged_env = dict(session_plugin_credentials(session_id) or {})
+              try:  # 시크릿카드 저장소(DAON_SECRET_*) 병합 — 없으면 조용히 패스
+                  try:
+                      from api.daon_secrets import daon_secret_env
+                  except ImportError:
+                      from api.api.daon_secrets import daon_secret_env  # type: ignore
+                  for _k, _v in (daon_secret_env(session_id) or {}).items():
+                      _merged_env.setdefault(_k, _v)
+              except Exception:
+                  pass
+              set_plugin_credential_env(_merged_env)
           except Exception as _p_cred_err:
               print(f"[webui] WARNING: plugin credential env binding failed: {_p_cred_err}", flush=True)
 

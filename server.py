@@ -177,6 +177,21 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self.send_error_json("Internal server error", 500)
 
+    def do_DELETE(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            # P1-2 (audit R14): auth middleware — same gate as do_GET/do_POST.
+            from api.auth import check_auth
+            if not check_auth(self, parsed):
+                return
+            from api.routes import handle_delete
+            if handle_delete(self, parsed):
+                return
+            self.send_error_json("Not found", 404)
+        except Exception as e:
+            traceback.print_exc()
+            self.send_error_json("Internal server error", 500)
+
     def serve_file(self, file_path: Path):
         try:
             if not file_path.exists() or not file_path.is_file():

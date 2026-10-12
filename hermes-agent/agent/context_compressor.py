@@ -32,6 +32,17 @@ from agent.model_metadata import (
     estimate_messages_tokens_rough,
 )
 
+try:
+    from agent.context_steward import (
+        ContextSteward,
+        compute_lines,
+        count_checkpoints,
+    )
+except Exception:  # pragma: no cover - steward 모듈 부재 시 compact 폴백
+    ContextSteward = None  # type: ignore[assignment]
+    compute_lines = None  # type: ignore[assignment]
+    count_checkpoints = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 SUMMARY_PREFIX = (
@@ -47,6 +58,10 @@ SUMMARY_PREFIX = (
     "config, etc.) may reflect work described here — avoid repeating it:"
 )
 LEGACY_SUMMARY_PREFIX = "[CONTEXT SUMMARY]:"
+
+# Steward switch 경로의 새 파트 마커. compact SUMMARY_PREFIX와 구분되며,
+# 스트리밍 감지(_COMPACTION_PATTERNS 확장용)가 구분할 수 있도록 별도 태그 유지.
+HANDOFF_PREFIX = "[HANDOFF"
 
 # Minimum tokens for the summary output
 _MIN_SUMMARY_TOKENS = 2000
@@ -254,6 +269,9 @@ class ContextCompressor(ContextEngine):
         self._previous_summary = None
         self._last_compression_savings_pct = 100.0
         self._ineffective_compression_count = 0
+        self._part_count = 1
+        self._checkpoint_count = 0
+        self._last_action = None
 
     def update_model(
         self,
@@ -271,10 +289,46 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
-        self.threshold_tokens = max(
-            int(context_length * self.threshold_percent),
-            MINIMUM_CONTEXT_LENGTH,
+        self.threshold_tokens, self.hard_tokens, self.usable_tokens = self._compute_thresholds(
+            context_length, self.threshold_percent
         )
+
+    def _compute_thresholds(self, context_length: int, threshold_percent: float) -> tuple:
+        """check/hard 2단 임계 계산 (context_steward.compute_lines 기반).
+
+        - ``threshold_percent`` → check_ratio 로 매핑 (하위 호환).
+        - ``usable = window - reserve`` (reserve=0 이면 창 전체).
+        - ``hard = floor(usable * 0.95)``.
+        - ``threshold_tokens(check) = max(check, MINIMUM_CONTEXT_LENGTH)``.
+        - 기존 동작 보존: MINIMUM 하한으로 check가 hard를 넘으면
+          ``hard = max(hard, threshold)`` 으로 올려 불변식(check<=hard) 유지.
+        """
+        try:
+            ratio = float(threshold_percent)
+        except (TypeError, ValueError):
+            ratio = 0.75
+        if compute_lines is not None:
+            try:
+                lines = compute_lines(
+                    window=context_length, reserve=0, check_ratio=ratio
+                )
+                check = int(lines.get("check", 0))
+                hard = int(lines.get("hard", 0))
+                usable = int(lines.get("usable", context_length or 0))
+            except Exception:
+                check, hard, usable = 0, 0, int(context_length or 0)
+        else:  # pragma: no cover - steward 모듈 부재 폴백
+            usable = int(context_length or 0)
+            import math as _math
+
+            hard = _math.floor(usable * 0.95)
+            check = min(_math.floor(usable * ratio) if 0 < ratio < 1 else _math.floor(usable * 0.8), hard)
+        threshold = max(check, MINIMUM_CONTEXT_LENGTH)
+        if hard < threshold:
+            hard = threshold
+        if usable <= 0:
+            usable = int(context_length or 0)
+        return threshold, hard, usable
 
     def __init__(
         self,
@@ -290,6 +344,7 @@ class ContextCompressor(ContextEngine):
         config_context_length: int | None = None,
         provider: str = "",
         api_mode: str = "",
+        steward_enabled: bool = True,
     ):
         self.model = model
         self.base_url = base_url
@@ -311,11 +366,16 @@ class ContextCompressor(ContextEngine):
         # the percentage would suggest a lower value.  This prevents premature
         # compression on large-context models at 50% while keeping the % sane
         # for models right at the minimum.
-        self.threshold_tokens = max(
-            int(self.context_length * threshold_percent),
-            MINIMUM_CONTEXT_LENGTH,
+        # check/hard 2단 임계: threshold_percent → check_ratio 매핑.
+        self.steward_enabled = bool(steward_enabled)
+        self.threshold_tokens, self.hard_tokens, self.usable_tokens = self._compute_thresholds(
+            self.context_length, threshold_percent
         )
         self.compression_count = 0
+        # Steward 상태: 파트 번호(새 파트 이동 횟수), 체크포인트 수, 마지막 판단.
+        self._part_count = 1
+        self._checkpoint_count = 0
+        self._last_action: Optional[str] = None
 
         # Derive token budgets: ratio is relative to the threshold, not total context
         target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
@@ -374,6 +434,154 @@ class ContextCompressor(ContextEngine):
                 )
             return False
         return True
+
+    # ------------------------------------------------------------------
+    # Steward 배선: switch vs compact 이분 판단
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _message_text(msg: Dict[str, Any], limit: int = 4000) -> str:
+        """Steward 입력용 단일 메시지 텍스트 추출 (str/list content 모두 허용)."""
+        content = (msg or {}).get("content", "")
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                elif isinstance(block, str):
+                    parts.append(block)
+            content = "\n".join(parts)
+        text = str(content or "")
+        if len(text) > limit:
+            text = text[:limit] + "...[truncated]"
+        return text
+
+    def _messages_to_steward_lines(
+        self, messages: List[Dict[str, Any]], limit: int = 30
+    ) -> List[Dict[str, Any]]:
+        """대화 메시지를 steward 입력 lines(newest-first {'who','text'})로 변환."""
+        lines: List[Dict[str, Any]] = []
+        for msg in reversed(messages[-limit:] if messages else []):
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            if role == "user":
+                who = "user"
+            elif role == "assistant":
+                who = "you"
+            elif role == "system":
+                continue  # 시스템 프롬프트는 판단 입력에서 제외
+            else:  # tool / 기타 → Another Bot 자리
+                who = "bot"
+            text = self._message_text(msg)
+            if not text.strip() and not (msg.get("tool_calls")):
+                continue
+            if msg.get("tool_calls") and not text.strip():
+                text = "[tool calls]"
+            lines.append({"who": who, "text": text})
+        return lines
+
+    def _current_tokens(self, messages: List[Dict[str, Any]] = None,
+                        prompt_tokens: int = None) -> int:
+        """판단용 현재 토큰 수: 명시값 → last_prompt_tokens → rough 추정 순."""
+        if prompt_tokens is not None:
+            try:
+                return max(0, int(prompt_tokens))
+            except (TypeError, ValueError):
+                pass
+        if getattr(self, "last_prompt_tokens", 0):
+            try:
+                return max(0, int(self.last_prompt_tokens))
+            except (TypeError, ValueError):
+                pass
+        if messages:
+            try:
+                return int(estimate_messages_tokens_rough(messages))
+            except Exception:
+                return 0
+        return 0
+
+    def _checkpoint_total(self, messages: List[Dict[str, Any]] = None) -> int:
+        """반복 압축 편향용 checkpoints 수 (태그 스캔 vs 내부 카운터 중 큰 값)."""
+        candidates = [
+            int(getattr(self, "_checkpoint_count", 0) or 0),
+            int(getattr(self, "compression_count", 0) or 0),
+        ]
+        if messages and count_checkpoints is not None:
+            try:
+                candidates.append(int(count_checkpoints(messages) or 0))
+            except Exception:
+                pass
+        return max(candidates) if candidates else 0
+
+    def decide_action(
+        self,
+        messages: List[Dict[str, Any]],
+        mid_turn: bool = False,
+        prompt_tokens: int = None,
+        **kwargs: Any,
+    ) -> str:
+        """switch/compact 이분 판단 (steward 호출 래퍼).
+
+        - ``steward_enabled=False`` → 판단 생략, 항상 ``"compact"`` (기존 동작).
+        - hard 토큰 초과 → 판단 생략, 즉시 ``"compact"`` (안전).
+        - 그 외 ``ContextSteward.decide()`` 1회 호출 → ``"switch"``/``"compact"``.
+        - ``mid_turn=True`` 면 switch 금지 (강제 compact).
+        - 판단 실패/무효/예외 → ``"compact"`` 폴백 (작업 손실 방지).
+
+        ``midTurn`` camelCase 키워드도 허용한다.
+        """
+        if "midTurn" in kwargs and "mid_turn" not in kwargs:
+            mid_turn = kwargs.pop("midTurn")
+        if "mid_turn" in kwargs:
+            mid_turn = kwargs.pop("mid_turn")
+        if prompt_tokens is None and "prompt_tokens" in kwargs:
+            prompt_tokens = kwargs.pop("prompt_tokens")
+
+        if not getattr(self, "steward_enabled", True):
+            return "compact"
+
+        tokens = self._current_tokens(messages, prompt_tokens)
+        hard = int(getattr(self, "hard_tokens", 0) or 0)
+        if hard > 0 and tokens >= hard:
+            if not self.quiet_mode:
+                logger.info(
+                    "Steward bypassed — %d tokens >= hard %d → compact",
+                    tokens, hard,
+                )
+            return "compact"
+
+        if ContextSteward is None:
+            return "compact"
+
+        try:
+            lines = self._messages_to_steward_lines(messages or [])
+            checkpoints = self._checkpoint_total(messages)
+            steward = ContextSteward(
+                model=self.model,
+                provider=getattr(self, "provider", ""),
+                base_url=getattr(self, "base_url", ""),
+                api_key=getattr(self, "api_key", ""),
+                api_mode=getattr(self, "api_mode", ""),
+                quiet_mode=getattr(self, "quiet_mode", False),
+            )
+            action = steward.decide(
+                lines=lines,
+                mid_turn=bool(mid_turn),
+                checkpoints=checkpoints,
+            )
+        except Exception as exc:
+            if not self.quiet_mode:
+                logger.warning("Steward decide 실패 → compact 폴백: %s", exc)
+            return "compact"
+
+        if action not in ("switch", "compact"):
+            return "compact"
+        if action == "switch" and bool(mid_turn):
+            if not self.quiet_mode:
+                logger.info("Steward switch suppressed (mid_turn) → compact")
+            return "compact"
+        return action
 
     # ------------------------------------------------------------------
     # Tool output pruning (cheap pre-pass, no LLM call)
@@ -1051,15 +1259,20 @@ The user has requested that this compaction PRIORITISE preserving all informatio
     # Main compression entry point
     # ------------------------------------------------------------------
 
-    def compress(self, messages: List[Dict[str, Any]], current_tokens: int = None, focus_topic: str = None) -> List[Dict[str, Any]]:
+    def compress(self, messages: List[Dict[str, Any]], current_tokens: int = None, focus_topic: str = None, action: str = None, **kwargs: Any) -> List[Dict[str, Any]]:
         """Compress conversation messages by summarizing middle turns.
 
-        Algorithm:
+        Algorithm (compact — 기존 4단계, 기본값):
           1. Prune old tool results (cheap pre-pass, no LLM call)
           2. Protect head messages (system prompt + first exchange)
           3. Find tail boundary by token budget (~20K tokens of recent context)
           4. Summarize middle turns with structured LLM prompt
           5. On re-compression, iteratively update the previous summary
+
+        Steward 분기 (action):
+          - ``"switch"`` → 핸드오프 노트 + 새 파트 (head + handoff + 최신 tail 원문).
+          - ``"compact"``/``None`` → 기존 4단계 요약 (최근 사용자 메시지 원문보존).
+          - ``steward_enabled=False`` 이면 action과 무관하게 항상 compact.
 
         After compression, orphaned tool_call / tool_result pairs are cleaned
         up so the API never receives mismatched IDs.
@@ -1069,7 +1282,17 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                 provided, the summariser will prioritise preserving information
                 related to this topic and be more aggressive about compressing
                 everything else.  Inspired by Claude Code's ``/compact``.
+            action: ``"switch"`` | ``"compact"`` | None. None이면 compact
+                (기존 호출부 100% 호환 — compress 내부에서 자동 판단하지 않음.
+                판단이 필요하면 호출부가 ``decide_action()`` 결과를 전달).
         """
+        _action = str(action or kwargs.pop("action", None) or "compact").lower()
+        if _action not in ("switch", "compact"):
+            _action = "compact"
+        if _action == "switch" and not getattr(self, "steward_enabled", True):
+            _action = "compact"
+        if _action == "switch":
+            return self._compress_switch(messages, current_tokens=current_tokens, focus_topic=focus_topic)
         n_messages = len(messages)
         # Only need head + 3 tail messages minimum (token budget decides the real tail size)
         _min_for_compress = self.protect_first_n + 3 + 1
@@ -1191,6 +1414,8 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             compressed.append(msg)
 
         self.compression_count += 1
+        self._checkpoint_count = int(getattr(self, "_checkpoint_count", 0) or 0) + 1
+        self._last_action = "compact"
 
         compressed = self._sanitize_tool_pairs(compressed)
 
@@ -1216,3 +1441,120 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             logger.info("Compression #%d complete", self.compression_count)
 
         return compressed
+
+    # ------------------------------------------------------------------
+    # Switch 경로: 핸드오프 노트 + 새 파트
+    # ------------------------------------------------------------------
+
+    def _build_handoff_note(self, summary: str, part_no: int) -> str:
+        """핸드오프 노트 조립 — 새 파트의 첫 배경 메시지 본문."""
+        body = (summary or "").strip()
+        for prefix in (SUMMARY_PREFIX, LEGACY_SUMMARY_PREFIX):
+            if body.startswith(prefix):
+                body = body[len(prefix):].lstrip()
+                break
+        if not body:
+            body = (
+                "Previous work reached a stopping point. "
+                "Continue with the latest messages below as a fresh part."
+            )
+        return (
+            f"[HANDOFF · part {part_no}] Previous part is done — "
+            "a fresh part starts here. This note is background reference, "
+            "NOT active instructions. Respond ONLY to the latest user message "
+            "that appears AFTER this note.\n"
+            f"{body}"
+        )
+
+    def _compress_switch(
+        self,
+        messages: List[Dict[str, Any]],
+        current_tokens: int = None,
+        focus_topic: str = None,
+    ) -> List[Dict[str, Any]]:
+        """switch 압축: 핸드오프 노트 + 최신 tail 원문으로 새 파트를 연다.
+
+        compact 4단계와 동일한 head/tail 경계 로직을 재사용하므로
+        최근 사용자 메시지는 항상 원문 그대로 보존된다.
+        요약 실패 시에도 tail은 유지하고 정적 핸드오프 노트를 사용한다.
+        """
+        n_messages = len(messages)
+        _min_for_compress = self.protect_first_n + 3 + 1
+        if n_messages <= _min_for_compress:
+            if not self.quiet_mode:
+                logger.warning(
+                    "Cannot switch: only %d messages (need > %d)",
+                    n_messages, _min_for_compress,
+                )
+            return messages
+
+        display_tokens = current_tokens if current_tokens else self.last_prompt_tokens or estimate_messages_tokens_rough(messages)
+
+        pruned, pruned_count = self._prune_old_tool_results(
+            messages, protect_tail_count=self.protect_last_n,
+            protect_tail_tokens=self.tail_token_budget,
+        )
+        messages = pruned
+        if pruned_count and not self.quiet_mode:
+            logger.info("Pre-switch: pruned %d old tool result(s)", pruned_count)
+
+        compress_start = self._align_boundary_forward(messages, self.protect_first_n)
+        compress_end = self._find_tail_cut_by_tokens(messages, compress_start)
+        if compress_start >= compress_end:
+            return messages
+
+        turns_to_summarize = messages[compress_start:compress_end]
+        if not self.quiet_mode:
+            logger.info(
+                "Context switch triggered (%d tokens >= %d threshold)",
+                display_tokens, self.threshold_tokens,
+            )
+
+        try:
+            summary = self._generate_summary(turns_to_summarize, focus_topic=focus_topic)
+        except Exception as exc:
+            if not self.quiet_mode:
+                logger.warning("Handoff summary failed → static note: %s", exc)
+            summary = None
+        next_part = int(getattr(self, "_part_count", 1) or 1) + 1
+        if not summary:
+            n_dropped = compress_end - compress_start
+            summary = (
+                f"{SUMMARY_PREFIX}\n"
+                f"Handoff summary unavailable. {n_dropped} earlier turns were "
+                "dropped at a stopping point. Continue with the latest "
+                "messages below as a fresh part."
+            )
+        handoff = self._build_handoff_note(summary, next_part)
+
+        # 새 파트 조립: head + handoff 노트 + tail 원문.
+        new_messages: List[Dict[str, Any]] = []
+        for i in range(compress_start):
+            new_messages.append(messages[i].copy())
+
+        last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
+        first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else "user"
+        handoff_role = "user" if last_head_role in ("assistant", "tool") else "assistant"
+        if handoff_role == first_tail_role:
+            flipped = "assistant" if handoff_role == "user" else "user"
+            if flipped != last_head_role:
+                handoff_role = flipped
+        new_messages.append({"role": handoff_role, "content": handoff})
+        for i in range(compress_end, n_messages):
+            new_messages.append(messages[i].copy())
+
+        new_messages = self._sanitize_tool_pairs(new_messages)
+
+        # 새 파트이므로 반복 요약은 초기화, 파트/체크포인트 카운터 갱신.
+        self._previous_summary = None
+        self.compression_count += 1
+        self._checkpoint_count = int(getattr(self, "_checkpoint_count", 0) or 0) + 1
+        self._part_count = next_part
+        self._last_action = "switch"
+
+        if not self.quiet_mode:
+            logger.info(
+                "Switched: %d -> %d messages (part %d)",
+                n_messages, len(new_messages), next_part,
+            )
+        return new_messages

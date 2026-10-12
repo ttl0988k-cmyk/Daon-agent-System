@@ -1901,6 +1901,22 @@ def terminal_tool(
             from agent.redact import redact_sensitive_text
             output = redact_sensitive_text(output.strip()) if output else ""
 
+            # Value-based redaction of registered Daon secrets, applied AFTER
+            # pattern masking (patterns cannot catch arbitrary registered
+            # values). Failures pass through silently — never block output.
+            try:
+                try:
+                    from api.daon_secrets import entries_for_redactor as _secret_entries_fn
+                    from api.value_redactor import redact_text as _value_redact_fn
+                except ImportError:
+                    from daon_secrets import entries_for_redactor as _secret_entries_fn  # type: ignore
+                    from value_redactor import redact_text as _value_redact_fn  # type: ignore
+                _secret_entries = _secret_entries_fn()
+                if _secret_entries:
+                    output = _value_redact_fn(output, _secret_entries)
+            except Exception:
+                pass
+
             # Interpret non-zero exit codes that aren't real errors
             # (e.g. grep=1 means "no matches", diff=1 means "files differ")
             exit_note = _interpret_exit_code(command, returncode)
