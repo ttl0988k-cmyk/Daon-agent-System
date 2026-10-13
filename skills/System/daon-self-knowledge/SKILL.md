@@ -46,8 +46,13 @@ DAON Agent System이 자기 자신을 작업 대상으로 다룰 때 필요한 �
 아래는 **사람(릴리스 담당자)이 커밋 전에 수동으로만** 실행한다. 에이전트의
 `terminal` 도구에서는 코드 가드가 차단한다.
 
-4. `npx electron-builder` — `dist_new/server.exe`를 `dist/win-unpacked`로 패키징
-   - afterPack 훅(`scripts/after-pack.js`)이 `.cmd` 런처를 자동 재생성한다 (아래 3절)
+4. `npm run build:all` 또는 `build_all.cmd` (단일 원클릭 빌드):
+   - `python _sync_build.py` (소스 → `dist_new/` 미러)
+   - `python -m PyInstaller daon-server.spec --noconfirm` (`dist/server.exe` 백엔드 빌드)
+   - `npx electron-builder` (설치본 패키징)
+   - **afterPack 훅(`scripts/after-pack.js`) 동작**:
+     - `.cmd` 런처 자동 재생성 (3절)
+     - `server.exe`, `app.asar`뿐만 아니라 **느슨한 리소스(`api/`, `skills/`, `hermes-agent/`, `static/` 등)를 설치본(`daon-agent-system\resources`)과 포터블(`DAON-Portable\resources`)로 완전 자동 동기화!**
 5. **`dist\win-unpacked\DAON Agent System.cmd` 존재 확인** — 훅이 보장하지만
    빌드 후 존재를 눈으로 확인한다 (없으면 3절 수동 절차로 재생성)
 6. `release/_build_zip.ps1` — 포터블 zip 생성

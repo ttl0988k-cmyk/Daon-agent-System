@@ -27,7 +27,7 @@ exports.default = async function afterPack(context) {
     fs.writeFileSync(cmdPath, content);
     console.log('[afterPack] launcher cmd ensured: ' + cmdPath);
 
-    // ── 자동 동기화: 빌드 직후 (설치본 + 포터블) 로 app.asar / server.exe 복사 ──
+    // ── 자동 동기화: 빌드 직후 (설치본 + 포터블) 로 app.asar / server.exe / 느슨한 리소스 복사 ──
     // ⚠ 설치 폴더명 혼선 주의: productName 은 공백 "DAON Agent System" 이지만
     //   실제 설치 폴더는 하이픈/소문자 "daon-agent-system" 이다. 과거에는 공백
     //   경로만 조회해 자동동기화가 "조용히" 실패 → 배포본만 옛 버전으로 남았다.
@@ -40,16 +40,37 @@ exports.default = async function afterPack(context) {
         path.join(localPrograms, productName),         // 레거시(공백)
     ];
     const srcRes = path.join(context.appOutDir, 'resources');
-    // server.exe = PyInstaller 백엔드 번들(핵심 버그픽스가 들어있는 파일).
-    // 느슨한 리소스(spec/store)는 지인용 빌드에서 sanitize 될 수 있어 제외한다.
+
+    // 1) 개별 핵심 파일
     const filesToSync = [
         'app.asar',
         'server.exe',
+        'index.html',
+        'server.py',
+        'tts_server.py',
+        '_sync_build.py',
+        'daon-server.spec',
         path.join('daon_runtime', 'laya_service.py'),
     ];
+
+    // 2) 느슨한 리소스 디렉터리 (server.py 가 _MEIPASS 보다 우선 로드하므로 필수 동기화!)
+    const dirsToSync = [
+        'api',
+        path.join('api', 'api'),
+        'agents',
+        path.join('api', 'agents'),
+        'skills',
+        'hermes-agent',
+        'plugins',
+        'daon_runtime',
+        'static',
+    ];
+
     for (const appDir of appDirs) {
         const targetRes = path.join(appDir, 'resources');
         if (!fs.existsSync(targetRes)) { continue; }
+
+        // 개별 파일 동기화
         for (const fname of filesToSync) {
             const src = path.join(srcRes, fname);
             if (!fs.existsSync(src)) { continue; }
@@ -57,9 +78,31 @@ exports.default = async function afterPack(context) {
                 const dst = path.join(targetRes, fname);
                 fs.mkdirSync(path.dirname(dst), { recursive: true });
                 fs.copyFileSync(src, dst);
-                console.log('[afterPack] Auto-synced ' + fname + ' -> ' + targetRes);
+                console.log('[afterPack] Auto-synced file ' + fname + ' -> ' + targetRes);
             } catch (e) {
-                console.warn('[afterPack] Auto-sync failed for ' + fname +
+                console.warn('[afterPack] Auto-sync failed for file ' + fname +
+                    ' @ ' + appDir + ':', e && e.message);
+            }
+        }
+
+        // 디렉터리 동기화 (재귀)
+        for (const dname of dirsToSync) {
+            const srcDir = path.join(srcRes, dname);
+            if (!fs.existsSync(srcDir)) { continue; }
+            try {
+                const dstDir = path.join(targetRes, dname);
+                fs.mkdirSync(dstDir, { recursive: true });
+                fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
+                console.log('[afterPack] Auto-synced dir ' + dname + ' -> ' + dstDir);
+
+                // 만약 targetRes 안에 dist_new/ 미러가 존재한다면 그곳도 동일하게 최신화
+                const mirrorDir = path.join(targetRes, 'dist_new', dname);
+                if (fs.existsSync(path.dirname(mirrorDir))) {
+                    fs.mkdirSync(mirrorDir, { recursive: true });
+                    fs.cpSync(srcDir, mirrorDir, { recursive: true, force: true });
+                }
+            } catch (e) {
+                console.warn('[afterPack] Auto-sync failed for dir ' + dname +
                     ' @ ' + appDir + ':', e && e.message);
             }
         }

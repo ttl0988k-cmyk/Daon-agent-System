@@ -10,6 +10,9 @@
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE= && electron .",
     "build": "electron-builder",
+    "build:py": "python _sync_build.py && python -m PyInstaller daon-server.spec --noconfirm",
+    "build:all": "python _sync_build.py && python -m PyInstaller daon-server.spec --noconfirm && electron-builder",
+    "sync:installed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync_to_installed.ps1",
     "test": "node --test electron/tests/ || echo no-tests"
   },
   "build": {
