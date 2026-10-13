@@ -92,7 +92,13 @@ a = Analysis(
     # The packaged app keeps the original DAON HTML workspace. The Roo React
     # composition is not a replacement frontend and must not be embedded as
     # the server's primary UI.
-    datas=[('dist_new/static', 'static'), ('dist_new/api/api', 'api'), ('api/agents', 'agents'), ('dist_new/hermes-agent', 'hermes-agent'), ('dist_new/skills', 'skills'), ('dist_new/config.yaml', '.'), ('dist_new/index.html', '.')] + _extra_datas + _pw_datas,
+    # [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
+    #   data/mcp_catalog.json 을 exe 에 번들한다. _sync_build.py 는 파일복사 기반이고
+    #   DIR_PAIRS/FILE_PAIRS 에 data/ 가 없어 dist_new 로 전달되지 않으므로,
+    #   spec 이 소스 루트의 카탈로그를 직접 참조한다(다른 'api/agents' 항목과 동일 방식).
+    #   번들되면 런타임에 _MEIPASS/data/mcp_catalog.json 으로 풀려 laya_service 의
+    #   Path(__file__).parent.parent/'data' 후보경로가 이를 찾는다.
+    datas=[('data/mcp_catalog.json', 'data'), ('dist_new/static', 'static'), ('dist_new/api/api', 'api'), ('api/agents', 'agents'), ('dist_new/hermes-agent', 'hermes-agent'), ('dist_new/skills', 'skills'), ('dist_new/config.yaml', '.'), ('dist_new/index.html', '.')] + _extra_datas + _pw_datas,
     hiddenimports=['jinja2', 'markdown', 'watchfiles', 'requests', 'websockets', 'psutil', 'playwright', 'pypdf', 'PIL', 'python_multipart', 'tts_server', 'ctranslate2', 'faster_whisper', 'tokenizers', 'numpy', 'aiohttp', 'pydantic', 'yaml', 'dotenv', 'api.config', 'api.memory_store'] + _pw_hidden + ['playwright.sync_api', 'playwright.async_api'],
     hookspath=[],
     hooksconfig={},

@@ -24,6 +24,65 @@ DEFAULT_LAYA_URL = "http://127.0.0.1:8765"
 DEFAULT_TIMEOUT = 3.0  # 3.0s to allow CPU inference as well as GPU
 
 
+# [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
+# data/mcp_catalog.json을 프로세스당 1회 로드해 캐시한다. 파일이 없거나 깨져도 fail-open({}).
+_MCP_CATALOG_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _load_mcp_catalog() -> Dict[str, Dict[str, Any]]:
+    """Load data/mcp_catalog.json once per process (module cache). Fail-open -> {}."""
+    from pathlib import Path
+    import os
+
+    global _MCP_CATALOG_CACHE
+    if _MCP_CATALOG_CACHE is not None:
+        return _MCP_CATALOG_CACHE
+
+    catalog: Dict[str, Dict[str, Any]] = {}
+    try:
+        cand_paths = [
+            Path("data/mcp_catalog.json"),
+            Path(__file__).resolve().parent.parent.parent / "data" / "mcp_catalog.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "daon-agent-system" / "resources" / "data" / "mcp_catalog.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System" / "data" / "mcp_catalog.json",
+        ]
+        for cp in cand_paths:
+            if cp.exists():
+                with open(cp, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                for sid, meta in raw.items():
+                    if sid.startswith("_"):
+                        continue
+                    if isinstance(meta, dict):
+                        catalog[sid] = meta
+                break
+    except Exception as e:
+        _logger.warning("mcp_catalog.json load skipped (fail-open): %s", e)
+
+    _MCP_CATALOG_CACHE = catalog
+    return catalog
+
+
+def get_mcp_desc_map(sids: List[str]) -> Dict[str, str]:
+    """[FIX 2026-10-13] Build {server_id: criteria_text} from the MCP catalog.
+
+    streaming_tools의 Laya-MCP-Preselect가 prune_mcp에 넘길 설명 dict를 만든다.
+    카탈로그에 없는 서버는 건너뛴다(기존 label/KNOWN 경로가 서버측에서 처리). Fail-open -> {}.
+    """
+    catalog = _load_mcp_catalog()
+    desc_map: Dict[str, str] = {}
+    for sid in sids:
+        meta = catalog.get(sid)
+        if not isinstance(meta, dict):
+            continue
+        desc_en = str(meta.get("desc_en") or "").strip()
+        desc_ko = str(meta.get("desc_ko") or "").strip()
+        text = f"{desc_en} ({desc_ko})" if desc_en and desc_ko else (desc_en or desc_ko)
+        if text:
+            desc_map[sid] = text
+    return desc_map
+
+
 class LayaClient:
     """Thread-safe client for Laya decision daemon with caching and graceful fallback."""
 
@@ -121,6 +180,11 @@ class LayaClient:
 
     def _fallback_prune_mcp(self, prompt: str, available_mcps: List[str]) -> List[str]:
         """Fallback heuristics if Laya daemon is not running."""
+        # [FIX 2026-10-13] 라벨/카탈로그 경로 탐색용 import — 기존엔 이 함수 안에서 Path/os가
+        # 미import라 NameError가 except로 삼켜져 라벨 매칭이 조용히 죽어 있었다.
+        from pathlib import Path
+        import os
+
         prompt_lower = prompt.lower()
         needed = []
 
@@ -144,6 +208,9 @@ class LayaClient:
         except Exception:
             pass
 
+        # [FIX 2026-10-13] MCP 카탈로그 keywords — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요
+        catalog = _load_mcp_catalog()
+
         for mcp in available_mcps:
             mcp_id_lower = mcp.lower()
             # 1. Check known keywords
@@ -158,7 +225,15 @@ class LayaClient:
                 needed.append(mcp)
                 continue
 
-            # 3. Check mcp_servers.json label keywords (if label tokens appear in prompt)
+            # 3. Check MCP catalog keywords (신규 MCP 온보딩용) [FIX 2026-10-13]
+            cat_meta = catalog.get(mcp)
+            if isinstance(cat_meta, dict):
+                cat_kws = cat_meta.get("keywords") or []
+                if any(str(k).lower() in prompt_lower for k in cat_kws if k):
+                    needed.append(mcp)
+                    continue
+
+            # 4. Check mcp_servers.json label keywords (if label tokens appear in prompt)
             lbl = mcp_labels.get(mcp, "")
             if lbl:
                 tokens = [t.lower() for t in lbl.split() if len(t) >= 2]

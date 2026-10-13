@@ -19,7 +19,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,6 +92,55 @@ KNOWN_MCP_CRITERIA = {
 }
 
 
+# [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
+# data/mcp_catalog.json을 프로세스당 1회 로드해 캐시한다. 파일이 없거나 깨져도 fail-open({}).
+_MCP_CATALOG_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _load_mcp_catalog() -> Dict[str, Dict[str, Any]]:
+    """Load data/mcp_catalog.json once per process (module cache). Fail-open -> {}.
+
+    후보 경로는 기존 mcp_servers.json 탐색 패턴과 동일하게 유지한다.
+    키가 '_'로 시작하는 항목(_template 등)은 건너뛴다.
+    """
+    global _MCP_CATALOG_CACHE
+    if _MCP_CATALOG_CACHE is not None:
+        return _MCP_CATALOG_CACHE
+
+    catalog: Dict[str, Dict[str, Any]] = {}
+    try:
+        cand_paths = [
+            Path("data/mcp_catalog.json"),
+            Path(__file__).resolve().parent.parent / "data" / "mcp_catalog.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "daon-agent-system" / "resources" / "data" / "mcp_catalog.json",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "DAON Agent System" / "data" / "mcp_catalog.json",
+        ]
+        for cp in cand_paths:
+            if cp.exists():
+                with open(cp, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                for sid, meta in raw.items():
+                    if sid.startswith("_"):
+                        continue
+                    if isinstance(meta, dict):
+                        catalog[sid] = meta
+                break
+    except Exception as e:
+        _logger.warning("mcp_catalog.json load skipped (fail-open): %s", e)
+
+    _MCP_CATALOG_CACHE = catalog
+    return catalog
+
+
+def _catalog_criteria_text(meta: Dict[str, Any]) -> Optional[str]:
+    """Compose a ModernBERT criteria sentence from a catalog entry (en + ko)."""
+    desc_en = str(meta.get("desc_en") or "").strip()
+    desc_ko = str(meta.get("desc_ko") or "").strip()
+    if desc_en and desc_ko:
+        return f"{desc_en} ({desc_ko})"
+    return desc_en or desc_ko or None
+
+
 def _get_dynamic_mcp_criteria(available_mcps: List[str], custom_descs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Dynamically build criteria for ModernBERT choice evaluation."""
     criteria = {
@@ -120,8 +169,15 @@ def _get_dynamic_mcp_criteria(available_mcps: List[str], custom_descs: Optional[
         pass
 
     custom = custom_descs or {}
+    # [FIX 2026-10-13] 우선순위: catalog > custom_descs > KNOWN > label > generic.
+    # 신규 MCP는 mcp_catalog.json에 1줄만 추가하면 여기서 자동 반영된다.
+    catalog = _load_mcp_catalog()
     for mcp in available_mcps:
-        if mcp in custom:
+        cat_meta = catalog.get(mcp)
+        cat_text = _catalog_criteria_text(cat_meta) if isinstance(cat_meta, dict) else None
+        if cat_text:
+            criteria[mcp] = cat_text
+        elif mcp in custom:
             criteria[mcp] = custom[mcp]
         elif mcp in KNOWN_MCP_CRITERIA:
             criteria[mcp] = KNOWN_MCP_CRITERIA[mcp]

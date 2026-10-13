@@ -186,9 +186,12 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
             _summary_servers = sorted(tools_by_server.items())
             if user_prompt:
                 try:
-                    from api.laya_client import laya_client as _laya_prune_client
+                    from api.laya_client import laya_client as _laya_prune_client, get_mcp_desc_map
                     _all_sids = [sid for sid, _ in _summary_servers]
-                    _needed = _laya_prune_client.prune_mcp(user_prompt, _all_sids)
+                    # [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
+                    # 카탈로그에서 {sid: 설명}을 만들어 prune_mcp에 넘긴다. 읽기 실패 시 None → ID만 전달(fail-open).
+                    _mcp_descs = get_mcp_desc_map(_all_sids) or None
+                    _needed = _laya_prune_client.prune_mcp(user_prompt, _all_sids, mcp_descriptions=_mcp_descs)
                     if _needed:
                         _needed_set = set(_needed)
                         _summary_servers = [(sid, tl) for sid, tl in _summary_servers if sid in _needed_set]

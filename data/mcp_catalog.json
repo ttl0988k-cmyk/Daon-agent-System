@@ -1,0 +1,140 @@
+{
+  "filesystem": {
+    "desc_en": "Local filesystem file exploration, directory tree navigation, reading and writing files.",
+    "desc_ko": "로컬 파일 시스템 탐색·폴더 트리·디렉토리 목록·파일 읽기 쓰기.",
+    "keywords": [
+      "filesystem",
+      "file",
+      "directory",
+      "folder",
+      "read file",
+      "write file",
+      "파일",
+      "폴더",
+      "디렉토리",
+      "로컬 파일"
+    ]
+  },
+  "playwright": {
+    "desc_en": "Browser automation, web scraping, navigating web pages, and taking screenshots.",
+    "desc_ko": "브라우저 자동화·웹 스크래핑·웹 페이지 탐색·스크린샷 촬영.",
+    "keywords": [
+      "playwright",
+      "browser",
+      "web scraping",
+      "screenshot",
+      "navigate",
+      "브라우저",
+      "자동화",
+      "스크래핑",
+      "스크린샷",
+      "웹 페이지"
+    ]
+  },
+  "memory": {
+    "desc_en": "Persistent knowledge graph, remembering user preferences and long-term facts.",
+    "desc_ko": "장기 기억·지식 그래프·사용자 정보 기억.",
+    "keywords": [
+      "memory",
+      "remember",
+      "knowledge graph",
+      "preference",
+      "기억",
+      "장기 기억",
+      "지식 그래프",
+      "사용자 선호",
+      "기억해줘"
+    ]
+  },
+  "daon-design": {
+    "desc_en": "DAON UI design system style cards, color tokens, or UI component styles.",
+    "desc_ko": "디자인 시스템 토큰·스타일 가이드·컴포넌트 디자인.",
+    "keywords": [
+      "daon-design",
+      "design system",
+      "style card",
+      "color token",
+      "ui component",
+      "디자인 토큰",
+      "스타일 가이드",
+      "컴포넌트",
+      "디자인 시스템",
+      "css 스타일"
+    ]
+  },
+  "playmcp-gateway": {
+    "desc_en": "KakaoTalk messaging, Naver search, external web portal integration and Korean services.",
+    "desc_ko": "카카오톡 메시지 전송·네이버 검색·외부 포털 서비스 연동.",
+    "keywords": [
+      "playmcp",
+      "kakaotalk",
+      "naver",
+      "message",
+      "portal",
+      "카카오톡",
+      "네이버",
+      "메시지 전송",
+      "검색",
+      "외부 포털"
+    ]
+  },
+  "windows-computer-use": {
+    "desc_en": "Windows desktop GUI automation, mouse and keyboard control, screen capture, and automation macros.",
+    "desc_ko": "윈도우 데스크톱 화면 자동화·마우스 키보드 제어·화면 캡처·매크로 실행.",
+    "keywords": [
+      "computer use",
+      "desktop automation",
+      "mouse",
+      "keyboard",
+      "macro",
+      "화면 자동화",
+      "마우스",
+      "키보드",
+      "매크로",
+      "데스크톱"
+    ]
+  },
+  "rea": {
+    "desc_en": "Reverse engineering, React component inspection, decompilation, and code reconstruction.",
+    "desc_ko": "리액트 역공학·컴포넌트 디컴파일 분석·코드 구조 복원.",
+    "keywords": [
+      "rea",
+      "reverse engineering",
+      "react",
+      "decompile",
+      "decompilation",
+      "리버스 엔지니어링",
+      "역공학",
+      "디컴파일",
+      "리액트",
+      "컴포넌트 분석"
+    ]
+  },
+  "reticle": {
+    "desc_en": "Precise targeting, crosshair locator, screen element coordinate mapping, and visual inspection.",
+    "desc_ko": "레티클 좌표 조준·정밀 타겟팅·화면 클릭 위치 검사.",
+    "keywords": [
+      "reticle",
+      "targeting",
+      "crosshair",
+      "coordinate",
+      "visual inspection",
+      "레티클",
+      "좌표",
+      "타겟팅",
+      "크로스헤어",
+      "정밀 조준"
+    ]
+  },
+  "_template": {
+    "desc_en": "One or two English sentences describing WHEN Laya should pick this MCP (ModernBERT choice criteria).",
+    "desc_ko": "같은 뜻의 한국어 1~2문장 — Laya가 한국어 질문도 매칭하도록 병기.",
+    "keywords": [
+      "english-keyword-1",
+      "english-keyword-2",
+      "한국어키워드1",
+      "한국어키워드2"
+    ],
+    "_note": "MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요. 사용법: (1) 이 파일에 서버ID를 키로 위 형식 블록 1개 추가, (2) 저장만 하면 끝. Laya 선별 우선순위(laya_service._get_dynamic_mcp_criteria), 오프라인 폴백(laya_client._fallback_prune_mcp), 스트리밍 프리셀렉트(streaming_tools Laya-MCP-Preselect)가 모두 이 파일을 자동 반영한다. 파이썬 코드 수정 불필요. 키가 '_'로 시작하면(예: 이 _template 블록) 로더가 무시한다. keywords는 한/영 각 4~8개 권장."
+  }
+}

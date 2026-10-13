@@ -16,7 +16,12 @@ daon_runtime/*
 server.pid
 
 # Data (user-specific)
-data/
+# data/  ->  data/*  (2026-10-13 MCP 카탈로그 배포 수정)
+#   git 은 부모 디렉토리가 통째로 제외되면 그 안의 파일을 '!' 로 재포함할 수 없다.
+#   'data/*' 는 data/ 디렉토리 자체는 제외하지 않고 내용만 무시하므로
+#   아래 예외가 유효해진다. 나머지 data/ 내용은 계속 무시된다.
+data/*
+!data/mcp_catalog.json
 
 # Environment
 .env
