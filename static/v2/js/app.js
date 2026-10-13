@@ -6,6 +6,7 @@ import { liveBrowser } from './browser_viewer.js?v=20261012_dock10';
 
 import { DaonAPI } from './api.js?v=20261011_harnesspoll';
 import { initSecretsUI } from './secrets.js';
+import { bgmPlayer } from './music_player.js?v=20261012_bgm1';
 
 
 // ── Static Agent Personas (토니, 빌, 셜록, 프라다, 라온 / 다온응대 제외) ───────────
@@ -189,6 +190,8 @@ async function initApp() {
   try { initHarnessControls(); } catch (e) { console.error('initHarnessControls err:', e); }
   try { initMcpAndSkills(); } catch (e) { console.error('initMcpAndSkills err:', e); }
   try { initExport(); } catch (e) { console.error('initExport err:', e); }
+  try { bgmPlayer.initUI(); } catch (e) { console.error('bgmPlayer err:', e); }
+  try { initTheme(); } catch (e) { console.error('initTheme err:', e); }
 
   // New modules: Autonomous mode, Workspace, Settings Modal, Agent Personas, Voice
   try { initAutonomousMode(); } catch (e) { console.error('initAutonomousMode err:', e); }
@@ -3648,6 +3651,37 @@ function initExport() {
   }
 }
 
+// ── Theme Switcher (Dark / Light Mode) ────────────────────────────────────────
+
+function initTheme() {
+  const toggleBtn = document.getElementById('theme-toggle-btn');
+  if (!toggleBtn) return;
+
+  function updateThemeUI(isDark) {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      toggleBtn.title = '라이트 모드로 전환 (현재: 다크 모드)';
+    } else {
+      document.documentElement.classList.remove('dark');
+      toggleBtn.title = '다크 모드로 전환 (현재: 라이트 모드)';
+    }
+  }
+
+  // 초기 상태 반영
+  const currentIsDark = document.documentElement.classList.contains('dark');
+  updateThemeUI(currentIsDark);
+
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('daon_theme', isDark ? 'dark' : 'light');
+    updateThemeUI(isDark);
+    if (typeof showToast === 'function') {
+      showToast(isDark ? '🌙 다크 모드로 전환되었습니다.' : '☀️ 라이트 모드로 전환되었습니다.');
+    }
+  });
+}
+
 // ── Health Indicator ──────────────────────────────────────────────────────────
 
 async function checkHealth() {
@@ -3770,6 +3804,8 @@ function initAttachments() {
   const attachBtn = document.getElementById('chat-attach-btn');
   const fileInput = document.getElementById('chat-file-input');
   const tray = document.getElementById('chat-attach-tray');
+  const chatInput = document.getElementById('chat-input');
+  const inputContainer = chatInput ? chatInput.closest('.bg-surface-container-lowest') : null;
 
   if (!attachBtn || !fileInput || !tray) return;
 
@@ -3784,6 +3820,85 @@ function initAttachments() {
       renderAttachTray();
     }
   });
+
+  // 🖼️ 클립보드 이미지 복사 붙여넣기 (Ctrl+V) 핸들러
+  function handleClipboardImagePaste(e) {
+    try {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items || items.length === 0) return;
+
+      const imgFiles = [];
+      for (const item of items) {
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f && f.type && f.type.startsWith('image/')) {
+            const ext = f.type.split('/')[1]?.replace('+xml', '') || 'png';
+            const now = new Date();
+            const timeStr = `${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
+            const cleanName = (f.name && f.name !== 'image.png') ? f.name : `screenshot_${timeStr}.${ext}`;
+            const namedFile = new File([f], cleanName, { type: f.type });
+            imgFiles.push(namedFile);
+          }
+        }
+      }
+
+      if (imgFiles.length > 0) {
+        e.preventDefault(); // 텍스트 영역에 깨진 바이너리 텍스트 입력 방지
+        imgFiles.forEach(f => state.pendingFiles.push(f));
+        renderAttachTray();
+        console.log(`[Paste] ${imgFiles.length} image(s) attached.`);
+        if (typeof showToast === 'function') {
+          showToast(`🖼️ 이미지 ${imgFiles.length}장이 첨부되었습니다.`);
+        }
+      }
+    } catch (err) {
+      console.warn('[Paste] Image paste failed:', err);
+    }
+  }
+
+  // 1) 채팅 입력창에서 Ctrl+V
+  if (chatInput) {
+    chatInput.addEventListener('paste', handleClipboardImagePaste);
+  }
+
+  // 2) 채팅창 영역 전체에서도 이미지 Ctrl+V 지원 (입력창 외부에 포커스 있을 때)
+  document.addEventListener('paste', (e) => {
+    if (e.target === chatInput) return; // 이미 위에서 처리
+    // 다른 입력 폼(설정 모달 등)에서는 무시
+    if (e.target && (e.target.tagName === 'INPUT' || (e.target.tagName === 'TEXTAREA' && e.target !== chatInput))) return;
+    handleClipboardImagePaste(e);
+  });
+
+  // 📦 채팅 입력창에 파일/이미지 드래그 & 드롭 지원
+  if (inputContainer) {
+    ['dragenter', 'dragover'].forEach(eventName => {
+      inputContainer.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        inputContainer.classList.add('border-primary', 'bg-primary/[0.02]');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      inputContainer.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        inputContainer.classList.remove('border-primary', 'bg-primary/[0.02]');
+      }, false);
+    });
+
+    inputContainer.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const files = dt && dt.files;
+      if (files && files.length > 0) {
+        Array.from(files).forEach(f => state.pendingFiles.push(f));
+        renderAttachTray();
+        if (typeof showToast === 'function') {
+          showToast(`📎 파일 ${files.length}개가 첨부되었습니다.`);
+        }
+      }
+    }, false);
+  }
 
   function renderAttachTray() {
     tray.innerHTML = '';

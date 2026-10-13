@@ -65,8 +65,13 @@ def _deduplicate_agent_tools(agent: Any) -> None:
     agent.tools = deduped
 
 
-def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str) -> int:
-    """Inject active MCP tools from MCPManager into Hermes Registry and agent.tools."""
+def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str, user_prompt: str = "") -> int:
+    """Inject active MCP tools from MCPManager into Hermes Registry and agent.tools.
+
+    user_prompt가 주어지면 Laya prune_mcp로 요약문에 노출할 서버를 1~2개로
+    선별한다 (스킬 match_skill과 같은 자리). 전체 도구는 레지스트리/핸들러에
+    그대로 등록되므로 list_mcp_tools로 언제든 꺼내 쓸 수 있다.
+    """
     injected_count = 0
     try:
         from api.mcp_client import get_mcp_manager
@@ -176,13 +181,30 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str)
         # Expose only call_mcp_tool and list_mcp_tools to agent.tools
         # saving 10,000+ tokens per turn while keeping full capability.
         if use_lazy_mcp and injected_count > 0:
+            # ── [Laya MCP Pre-select] 스킬 match_skill과 같은 자리: 질문 기준 1~2개만 요약 노출 ──
+            # (전체 도구는 위에서 레지스트리에 그대로 등록됨. 요약문만 가지치기)
+            _summary_servers = sorted(tools_by_server.items())
+            if user_prompt:
+                try:
+                    from api.laya_client import laya_client as _laya_prune_client
+                    _all_sids = [sid for sid, _ in _summary_servers]
+                    _needed = _laya_prune_client.prune_mcp(user_prompt, _all_sids)
+                    if _needed:
+                        _needed_set = set(_needed)
+                        _summary_servers = [(sid, tl) for sid, tl in _summary_servers if sid in _needed_set]
+                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=%s", user_prompt, _needed)
+                    else:
+                        _summary_servers = []
+                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=[] (pure coding/conversation)", user_prompt)
+                except Exception as _e_prune:
+                    _logger.debug("Laya MCP preselect bypassed: %s", _e_prune)
             summary_lines = []
-            for sid, tool_list in sorted(tools_by_server.items()):
+            for sid, tool_list in _summary_servers:
                 tnames = [tool.get('name', '') for tool in tool_list]
                 shown = tnames[:8]
                 extra = f" (+{len(tnames)-8} more)" if len(tnames) > 8 else ""
                 summary_lines.append(f"  * {sid}: {', '.join(shown)}{extra}")
-            servers_text = "\n".join(summary_lines)
+            servers_text = "\n".join(summary_lines) if summary_lines else "  (none preselected — use list_mcp_tools to discover)"
 
             call_mcp_schema = {
                 "type": "function",
@@ -1189,12 +1211,13 @@ def register_all_streaming_tools(
     session_id: str,
     cancel_event: threading.Event,
     stream_id: str = None,
+    user_prompt: str = "",
 ) -> int:
     """Convenience orchestrator that injects all dynamic streaming tools.
 
     Returns the number of injected MCP tools.
     """
-    mcp_count = inject_mcp_tools(agent, cancel_event, session_id)
+    mcp_count = inject_mcp_tools(agent, cancel_event, session_id, user_prompt=user_prompt)
     inject_mcp_manage_tool(agent)
     inject_patch_registry_tools(agent)
     inject_memory_forget_tool(agent)

@@ -7,6 +7,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<script>
+  // DAON Theme Instant Initializer (화면 깜빡임 방지 테마 초기 적용)
+  (function() {
+    try {
+      const saved = localStorage.getItem('daon_theme');
+      if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    } catch (_) {}
+  })();
+</script>
 
 <style>
 
@@ -91,6 +104,178 @@ html.tab-fit #main-layout-container { height: 100vh !important; min-height: 0 !i
 html.tab-fit #main-layout-container > main { min-height: 0 !important; overflow: hidden !important; }
 html.tab-fit .workspace-panel:not(.hidden) { height: 100% !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; }
 html.tab-fit .workspace-panel:not(.hidden) > * { flex-shrink: 0 !important; }
+
+/* ── 🎧 BGM Player Colorful Neon & Aurora Styles ─────────────────────────── */
+#bgm-player-bar {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(236, 72, 153, 0.08));
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.1);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#bgm-player-bar:hover {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(236, 72, 153, 0.15));
+  border-color: rgba(236, 72, 153, 0.55);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.2);
+}
+#bgm-player-bar.is-playing {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(236, 72, 153, 0.18));
+  border-color: rgba(236, 72, 153, 0.7);
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.35), inset 0 0 10px rgba(236, 72, 153, 0.15);
+}
+
+/* EQ Bars Neon Wave Animations */
+@keyframes eqBounce1 { 0%, 100% { height: 4px; } 50% { height: 16px; } }
+@keyframes eqBounce2 { 0%, 100% { height: 13px; } 50% { height: 5px; } }
+@keyframes eqBounce3 { 0%, 100% { height: 7px; } 50% { height: 18px; } }
+@keyframes eqBounce4 { 0%, 100% { height: 15px; } 50% { height: 6px; } }
+
+.bgm-eq-bar-1 { background: linear-gradient(180deg, #ec4899, #8b5cf6) !important; }
+.bgm-eq-bar-2 { background: linear-gradient(180deg, #38bdf8, #06b6d4) !important; }
+.bgm-eq-bar-3 { background: linear-gradient(180deg, #10b981, #6366f1) !important; }
+.bgm-eq-bar-4 { background: linear-gradient(180deg, #f59e0b, #ec4899) !important; }
+
+.is-playing .bgm-eq-bar-1 { animation: eqBounce1 0.75s ease-in-out infinite; }
+.is-playing .bgm-eq-bar-2 { animation: eqBounce2 0.65s ease-in-out infinite 0.15s; }
+.is-playing .bgm-eq-bar-3 { animation: eqBounce3 0.85s ease-in-out infinite 0.3s; }
+.is-playing .bgm-eq-bar-4 { animation: eqBounce4 0.7s ease-in-out infinite 0.05s; }
+
+#bgm-progress-bar {
+  background: linear-gradient(90deg, #8b5cf6, #ec4899, #38bdf8) !important;
+  box-shadow: 0 0 8px rgba(236, 72, 153, 0.6);
+}
+#bgm-play-btn {
+  background: linear-gradient(135deg, #8b5cf6, #ec4899) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.45) !important;
+  transition: transform 0.15s, filter 0.15s;
+}
+#bgm-play-btn:hover {
+  filter: brightness(1.15);
+  transform: scale(1.06);
+}
+
+/* ── 🌙 Comprehensive Dark Mode System ─────────────────────────────────── */
+html.dark {
+  color-scheme: dark;
+}
+html.dark body {
+  background-color: #0c0d12 !important;
+  color: #f1f5f9 !important;
+}
+
+/* Backgrounds & Containers */
+html.dark .bg-surface-container-lowest,
+html.dark [class*="bg-surface-container-lowest"] {
+  background-color: #12151f !important;
+}
+html.dark .bg-surface,
+html.dark aside#app-sidebar,
+html.dark header {
+  background-color: #10121a !important;
+}
+html.dark .bg-surface-container-low {
+  background-color: #141723 !important;
+}
+html.dark .bg-surface-container {
+  background-color: #171b28 !important;
+}
+html.dark .bg-surface-container-high {
+  background-color: #1c2132 !important;
+}
+html.dark .bg-surface-container-highest {
+  background-color: #22283d !important;
+}
+html.dark .bg-surface-variant {
+  background-color: #1a1e2d !important;
+}
+
+/* Text Colors */
+html.dark .text-on-surface {
+  color: #f3f4f6 !important;
+}
+html.dark .text-on-surface-variant {
+  color: #94a3b8 !important;
+}
+
+/* Borders */
+html.dark .border-black\/10,
+html.dark .border-black\/15,
+html.dark .border-black\/\[0\.08\],
+html.dark .border-black\/\[0\.1\] {
+  border-color: rgba(255, 255, 255, 0.11) !important;
+}
+html.dark .border-black\/20 {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Hovers & Translucents */
+html.dark .hover\:bg-black\/\[0\.03\]:hover,
+html.dark .hover\:bg-black\/\[0\.04\]:hover,
+html.dark .hover\:bg-black\/5:hover,
+html.dark .hover\:bg-black\/10:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+html.dark .bg-black\/\[0\.02\],
+html.dark .bg-black\/\[0\.04\],
+html.dark .bg-black\/\[0\.06\] {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+html.dark .bg-black\/10 {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Primary / Accents */
+html.dark .bg-primary {
+  background-color: #ffffff !important;
+  color: #0c0d12 !important;
+}
+html.dark .text-primary {
+  color: #a78bfa !important;
+}
+html.dark .border-primary {
+  border-color: #a78bfa !important;
+}
+html.dark .bg-primary\/10 {
+  background-color: rgba(167, 139, 250, 0.15) !important;
+}
+
+/* Form inputs & Chat Input */
+html.dark textarea,
+html.dark input[type="text"],
+html.dark input[type="search"],
+html.dark input[type="password"] {
+  background-color: #141722 !important;
+  color: #f1f5f9 !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+html.dark textarea::placeholder,
+html.dark input::placeholder {
+  color: #64748b !important;
+}
+
+/* Modals & Popovers in Dark Mode */
+html.dark #bgm-playlist-popover,
+html.dark #workspace-modal > div,
+html.dark #settings-modal > div,
+html.dark #new-agent-modal > div {
+  background-color: #131622 !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.8) !important;
+}
+
+/* ── 📱 Mobile Responsiveness Tweaks ─────────────────────────────────────── */
+@media (max-width: 640px) {
+  #bgm-player-bar {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  #bgm-title {
+    max-width: 80px !important;
+  }
+  #header-context-label {
+    max-width: 140px;
+  }
+}
 </style>
 
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">tailwind.config={"darkMode":"class","theme":{"extend":{"colors":{"on-primary-container":"#858383","tertiary-fixed":"#e3e2e2","on-tertiary-container":"#848484","on-secondary-fixed":"#1b1c1c","on-error-container":"#93000a","on-primary-fixed-variant":"#474646","surface-container":"#eeeeee","on-surface-variant":"#444748","secondary-container":"#e1dfdf","inverse-surface":"#2f3131","on-tertiary":"#ffffff","surface-container-low":"#f3f3f4","surface-tint":"#5f5e5e","tertiary-container":"#1b1c1c","surface-variant":"#e2e2e2","on-secondary-fixed-variant":"#464747","tertiary-fixed-dim":"#c7c6c6","on-secondary":"#ffffff","secondary-fixed-dim":"#c7c6c6","tertiary":"#000000","inverse-primary":"#c9c6c5","surface-bright":"#f9f9f9","surface-dim":"#dadada","outline":"#747878","primary":"#000000","outline-variant":"#c4c7c7","surface-container-highest":"#e2e2e2","background":"#f9f9f9","on-surface":"#1a1c1c","inverse-on-surface":"#f0f1f1","on-background":"#1a1c1c","secondary":"#5e5e5e","on-error":"#ffffff","on-tertiary-fixed-variant":"#464747","on-primary-fixed":"#1c1b1b","primary-fixed":"#e5e2e1","primary-fixed-dim":"#c9c6c5","on-primary":"#ffffff","on-secondary-container":"#636262","error":"#ba1a1a","on-tertiary-fixed":"#1b1c1c","error-container":"#ffdad6","surface-container-high":"#e8e8e8","primary-container":"#1c1b1b","secondary-fixed":"#e4e2e2","surface":"#f9f9f9","surface-container-lowest":"#ffffff"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-2xl":"2.5rem","gutter-lg":"1.5rem","margin":"1rem","margin-md":"1.5rem","gutter":"1rem","space-xl":"1.5rem","space-md":"0.75rem","margin-lg":"3rem","space-xs":"0.25rem","space-sm":"0.5rem","space-lg":"1rem"},"fontFamily":{"label-sm":["Inter"],"headline-sm":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"body-sm":["Inter"],"display":["Inter"],"code":["JetBrains Mono"],"label-md":["Inter"],"body-lg":["Inter"],"headline-md":["Inter"]},"fontSize":{"label-sm":["11px",{"lineHeight":"14px","letterSpacing":"0.02em","fontWeight":"500"}],"headline-sm":["16px",{"lineHeight":"24px","letterSpacing":"-0.005em","fontWeight":"500"}],"headline-lg":["24px",{"lineHeight":"32px","letterSpacing":"-0.015em","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"22px","letterSpacing":"0em","fontWeight":"400"}],"body-sm":["13px",{"lineHeight":"18px","letterSpacing":"0.005em","fontWeight":"400"}],"display":["32px",{"lineHeight":"40px","letterSpacing":"-0.02em","fontWeight":"600"}],"code":["13px",{"lineHeight":"20px","letterSpacing":"0em","fontWeight":"400"}],"label-md":["13px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"26px","letterSpacing":"0em","fontWeight":"400"}],"headline-md":["20px",{"lineHeight":"28px","letterSpacing":"-0.01em","fontWeight":"500"}]}}}};</script><style id="boardroom-slot-style">
@@ -204,18 +389,114 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
           <span class="material-symbols-outlined text-[13px] text-on-surface-variant">arrow_drop_down</span>
         </button>
       </div>
-      <div class="flex items-center gap-space-md">
-        <div class="flex items-center gap-space-xs">
-          <button class="h-8 px-space-sm flex items-center gap-space-xs rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] transition-colors font-label-md text-label-md" id="export-session-btn" type="button">
-            <span class="material-symbols-outlined text-[18px]">share</span>
-            <span class="hidden sm:inline">Export</span>
+      <div class="flex items-center gap-1.5 sm:gap-2 md:gap-space-md">
+        <!-- Theme Toggle Button (다크 / 라이트 모드 전환) -->
+        <button id="theme-toggle-btn" type="button" class="w-8 h-8 flex items-center justify-center rounded-[8px] bg-surface hover:bg-black/5 dark:hover:bg-white/10 border border-black/10 dark:border-white/15 text-on-surface transition-all cursor-pointer shadow-xs shrink-0" title="테마 변경 (다크 / 라이트 모드)">
+          <span class="material-symbols-outlined text-[17px] text-amber-500 block dark:hidden">dark_mode</span>
+          <span class="material-symbols-outlined text-[17px] text-amber-300 hidden dark:block">light_mode</span>
+        </button>
+
+        <!-- BGM Music Player (폴더/파일 드래그&드롭 지원 음악 플레이어) -->
+        <div id="bgm-player-container" class="relative flex items-center">
+          <div id="bgm-player-bar" class="flex items-center gap-1.5 h-8 px-2 rounded-[8px] text-on-surface transition-all select-none group cursor-pointer shadow-xs" title="음악 파일이나 폴더를 여기에 끌어다 놓으세요 🎧">
+            <!-- 이퀄라이저 애니메이션 바 (4개 네온 컬러) -->
+            <div id="bgm-eq-icon" class="flex items-end gap-[2px] h-3.5 w-3.5 shrink-0">
+              <span class="bgm-bar bgm-eq-bar-1 w-[2.5px] rounded-full h-1.5 transition-all"></span>
+              <span class="bgm-bar bgm-eq-bar-2 w-[2.5px] rounded-full h-3 transition-all"></span>
+              <span class="bgm-bar bgm-eq-bar-3 w-[2.5px] rounded-full h-2 transition-all"></span>
+              <span class="bgm-bar bgm-eq-bar-4 w-[2.5px] rounded-full h-1 transition-all"></span>
+            </div>
+
+            <!-- 곡명 & 진행바 -->
+            <div class="flex flex-col justify-center min-w-[65px] max-w-[110px] md:max-w-[150px] overflow-hidden">
+              <div id="bgm-title" class="text-[11px] font-semibold truncate leading-tight bg-gradient-to-r from-violet-600 via-pink-600 to-cyan-600 dark:from-violet-400 dark:via-pink-400 dark:to-cyan-400 bg-clip-text text-transparent">음악 끌어놓기 🎧</div>
+              <div id="bgm-progress-container" class="w-full h-[3px] bg-black/10 dark:bg-white/15 rounded-full mt-1 cursor-pointer overflow-hidden relative">
+                <div id="bgm-progress-bar" class="h-full rounded-full w-0 transition-all"></div>
+              </div>
+            </div>
+
+            <!-- 시간 표시 -->
+            <span id="bgm-time" class="text-[9.5px] font-mono text-on-surface-variant hidden xl:inline shrink-0">00:00</span>
+
+            <!-- 컨트롤 버튼 (이전 / 재생 / 다음) -->
+            <div class="flex items-center gap-0.5 shrink-0 ml-0.5">
+              <button id="bgm-prev-btn" type="button" class="w-5 h-5 flex items-center justify-center rounded-[4px] hover:bg-black/10 dark:hover:bg-white/10 text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer" title="이전 곡">
+                <span class="material-symbols-outlined text-[14px]">skip_previous</span>
+              </button>
+              <button id="bgm-play-btn" type="button" class="w-5 h-5 flex items-center justify-center rounded-[4px] transition-colors cursor-pointer shadow-xs" title="재생 / 일시정지">
+                <span class="material-symbols-outlined text-[14px]" id="bgm-play-icon">play_arrow</span>
+              </button>
+              <button id="bgm-next-btn" type="button" class="w-5 h-5 flex items-center justify-center rounded-[4px] hover:bg-black/10 dark:hover:bg-white/10 text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer" title="다음 곡">
+                <span class="material-symbols-outlined text-[14px]">skip_next</span>
+              </button>
+            </div>
+
+            <!-- 플레이리스트 버튼 -->
+            <button id="bgm-playlist-toggle-btn" type="button" class="w-6 h-6 flex items-center justify-center rounded-[4px] hover:bg-black/10 dark:hover:bg-white/10 text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer shrink-0 ml-0.5" title="재생목록 / 음악 추가">
+              <span class="material-symbols-outlined text-[15px]">queue_music</span>
+              <span id="bgm-track-count" class="hidden text-[8.5px] font-bold bg-gradient-to-r from-violet-600 to-pink-600 text-white rounded-full px-1 ml-0.5 leading-tight">0</span>
+            </button>
+          </div>
+
+          <!-- 숨김 파일 선택 인풋 -->
+          <input type="file" id="bgm-file-input" multiple accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus" class="hidden" />
+
+          <!-- 플레이리스트 팝오버 -->
+          <div id="bgm-playlist-popover" class="hidden absolute top-10 right-0 w-80 bg-surface-container-lowest border border-black/10 rounded-[12px] shadow-xl z-50 p-3 flex-col gap-2">
+            <!-- 팝오버 헤더 -->
+            <div class="flex items-center justify-between pb-1.5 border-b border-black/10">
+              <div class="flex items-center gap-1.5 font-label-sm text-label-sm font-semibold text-on-surface">
+                <span class="material-symbols-outlined text-[16px] text-primary">library_music</span>
+                <span>BGM 재생목록</span>
+                <span id="bgm-popover-count" class="text-[11px] font-mono text-on-surface-variant font-normal">(0곡)</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button id="bgm-add-files-btn" type="button" class="px-2 py-0.5 hover:bg-black/5 text-primary rounded text-[11px] flex items-center gap-1 font-medium cursor-pointer border border-primary/20">
+                  <span class="material-symbols-outlined text-[13px]">add</span>
+                  <span>추가</span>
+                </button>
+                <button id="bgm-clear-playlist-btn" type="button" class="p-1 hover:bg-black/5 text-on-surface-variant hover:text-red-600 rounded text-[11px] cursor-pointer" title="목록 비우기">
+                  <span class="material-symbols-outlined text-[15px]">delete_sweep</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 볼륨 & 모드 -->
+            <div class="flex items-center justify-between px-1 py-1 text-on-surface-variant text-[11px] bg-black/[0.02] rounded-[6px]">
+              <div class="flex items-center gap-1.5 flex-1 mr-2">
+                <span class="material-symbols-outlined text-[16px] cursor-pointer hover:text-primary" id="bgm-vol-icon" title="음소거 토글">volume_up</span>
+                <input type="range" id="bgm-volume-slider" min="0" max="1" step="0.05" value="0.7" class="w-full h-1 bg-black/20 rounded-lg cursor-pointer accent-primary" />
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button id="bgm-shuffle-btn" type="button" class="p-1 rounded hover:bg-black/5 text-on-surface-variant transition-colors cursor-pointer" title="랜덤 재생">
+                  <span class="material-symbols-outlined text-[15px]">shuffle</span>
+                </button>
+                <button id="bgm-repeat-btn" type="button" class="p-1 rounded bg-primary/10 text-primary transition-colors cursor-pointer" title="반복 재생 (전체)">
+                  <span class="material-symbols-outlined text-[15px]">repeat</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 트랙 목록 스크롤 -->
+            <div id="bgm-track-list" class="flex flex-col gap-0.5 max-h-52 overflow-y-auto pr-0.5 text-[12px]">
+              <div class="text-center py-6 text-on-surface-variant/70 text-[11px]">
+                음악 파일이나 폴더를 끌어다 놓으세요 🎧
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button class="h-8 px-2 flex items-center gap-1 rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] dark:hover:bg-white/[0.08] transition-colors font-label-md text-label-md" id="export-session-btn" type="button" title="세션 내보내기">
+            <span class="material-symbols-outlined text-[17px]">share</span>
+            <span class="hidden md:inline">Export</span>
           </button>
-          <button class="h-8 w-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] transition-colors" type="button">
+          <button class="h-8 w-8 hidden md:flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] dark:hover:bg-white/[0.08] transition-colors" type="button">
             <span class="material-symbols-outlined text-[18px]">more_horiz</span>
           </button>
         </div>
-        <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-          <span class="material-symbols-outlined text-on-primary text-[18px]">person</span>
+        <div class="w-7 h-7 rounded-full bg-primary flex items-center justify-center shrink-0 hidden sm:flex">
+          <span class="material-symbols-outlined text-on-primary text-[16px]">person</span>
         </div>
       </div>
     </header>
@@ -311,29 +592,30 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
               <div class="w-full">
                 <textarea class="w-full bg-transparent resize-none border-0 outline-none text-on-surface placeholder:text-on-surface-variant/60 font-body-md text-body-md leading-relaxed px-1" id="chat-input" placeholder="메시지를 입력하세요 (Daon Agent와 대화하기)..." rows="2"></textarea>
               </div>
-              <div class="flex items-center justify-between pt-1 border-t border-black/[0.06]">
-                <div class="flex items-center gap-space-xs">
-                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" id="chat-attach-btn" title="파일, 이미지, 영상 첨부" type="button">
+              <div class="flex flex-wrap items-center justify-between gap-y-1.5 pt-1 border-t border-black/[0.06] dark:border-white/[0.08]">
+                <div class="flex flex-wrap items-center gap-1 sm:gap-space-xs">
+                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer" id="chat-attach-btn" title="파일, 이미지, 영상 첨부" type="button">
                     <span class="material-symbols-outlined text-[18px]">attach_file</span>
                   </button>
-                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer relative" id="chat-voice-btn" title="음성 입력 (마이크)" type="button">
+                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer relative" id="chat-voice-btn" title="음성 입력 (마이크)" type="button">
                     <span class="material-symbols-outlined text-[18px]" id="chat-voice-icon">mic</span>
                     <span class="w-2 h-2 rounded-full bg-rose-500 absolute top-1.5 right-1.5 animate-ping hidden" id="chat-voice-pulse"></span>
                   </button>
-                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" id="auto-tts-toggle-btn" title="답변 자동 음성 읽기 (TTS 켜기/끄기)" type="button">
+                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer" id="auto-tts-toggle-btn" title="답변 자동 음성 읽기 (TTS 켜기/끄기)" type="button">
                     <span class="material-symbols-outlined text-[18px] text-on-surface-variant/70" id="auto-tts-icon">volume_up</span>
                   </button>
-                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" id="agent-mode-select-btn" title="에이전트 모드 선택" type="button">
+                  <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer" id="agent-mode-select-btn" title="에이전트 모드 선택" type="button">
                     <span class="material-symbols-outlined text-[18px]">hub</span>
                   </button>
-                  <div class="h-3 w-[1px] bg-black/10 mx-1"></div>
-                  <button id="autonomous-mode-btn" type="button" class="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-primary text-on-primary font-code text-code text-[11px] font-medium hover:bg-black/80 transition-all cursor-pointer select-none shadow-sm" title="클릭하여 모드 전환: 읽기/검색/초안/코딩은 막힘없이 완주하고, 발송/삭제/결제 같은 비가역 작업만 마지막에 일괄 승인합니다.">
+                  <div class="h-3 w-[1px] bg-black/10 dark:bg-white/15 mx-0.5 sm:mx-1"></div>
+                  <button id="autonomous-mode-btn" type="button" class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-[6px] bg-primary text-on-primary font-code text-code text-[11px] font-medium hover:bg-black/80 transition-all cursor-pointer select-none shadow-sm" title="클릭하여 모드 전환: 읽기/검색/초안/코딩은 막힘없이 완주하고, 발송/삭제/결제 같은 비가역 작업만 마지막에 일괄 승인합니다.">
                     <span class="material-symbols-outlined text-[13px]" id="autonomous-mode-icon">bolt</span>
-                    <span id="autonomous-mode-text">완주 모드: 켜짐 (범위 승인)</span>
+                    <span id="autonomous-mode-text" class="hidden sm:inline">완주 모드: 켜짐 (범위 승인)</span>
+                    <span class="sm:hidden font-semibold">완주 ON</span>
                   </button>
                 </div>
-                <div class="flex items-center gap-space-xs">
-                  <span class="font-code text-code text-[11px] text-on-surface-variant/70 hidden sm:inline mr-1">⌘ + ↵</span>
+                <div class="flex items-center gap-space-xs ml-auto">
+                  <span class="font-code text-code text-[11px] text-on-surface-variant/70 hidden md:inline mr-1">⌘ + ↵</span>
                   <button class="h-8 px-space-md flex items-center justify-center gap-1.5 bg-primary hover:bg-tertiary-container active:bg-black text-on-primary rounded-[8px] font-label-md text-label-md font-medium transition-colors cursor-pointer" id="send-button" type="button">
                     <span>전송</span>
                     <span class="material-symbols-outlined text-[15px]">arrow_upward</span>
@@ -597,7 +879,7 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
     </div>
   </div>
 </div>
-</main></div><script src="/static/v2/js/app.js?v=20261011_harnesspoll" type="module"></script>
+</main></div><script src="/static/v2/js/app.js?v=20261013_darkbgm" type="module"></script>
   <!-- ================= 1. WORKSPACE (PROJECT FOLDER) MODAL ================= -->
   <div id="workspace-modal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4 transition-opacity">
     <div class="bg-surface-container-lowest border border-black/10 rounded-[12px] w-full max-w-[500px] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">

@@ -1090,10 +1090,54 @@ export class BrowserViewer {
     const fab = document.createElement('button');
     fab.id = 'browser-reopen-fab';
     fab.type = 'button';
-    fab.title = '브라우저 카드를 다시 엽니다';
-    fab.innerHTML = '<span style="font-size:15px">🌐</span><span>브라우저 열기</span>';
-    fab.style.cssText = 'position:fixed;right:14px;bottom:88px;z-index:9990;display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9999px;background:#059669;color:#fff;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,.25);box-shadow:0 4px 16px rgba(0,0,0,.45);cursor:pointer;';
-    fab.addEventListener('click', () => { try { this.manualOpen(); } catch (_) {} });
+    fab.title = '브라우저 카드를 다시 엽니다 (드래그하여 원하는 위치로 이동 가능)';
+    fab.innerHTML = '<span style="font-size:16px;">🌐</span><span class="fab-text" style="font-size:12px;font-weight:600;">브라우저 열기</span>';
+    // 입력창(약 130~150px) 위쪽인 bottom: 165px로 안전하게 배치하여 중단/전송 버튼 가림 완벽 방지
+    fab.style.cssText = 'position:fixed;right:18px;bottom:165px;z-index:9990;display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9999px;background:linear-gradient(135deg,#059669,#10b981);color:#fff;border:1px solid rgba(255,255,255,.3);box-shadow:0 6px 20px rgba(5,150,105,.4), 0 2px 6px rgba(0,0,0,.3);cursor:grab;user-select:none;transition:transform 0.15s, box-shadow 0.15s;';
+    
+    // 호버 애니메이션
+    fab.addEventListener('mouseenter', () => { fab.style.transform = 'translateY(-2px) scale(1.02)'; });
+    fab.addEventListener('mouseleave', () => { fab.style.transform = 'translateY(0) scale(1)'; });
+
+    // 간단한 드래그 이동 지원 (대표님이 원하는 편한 위치에 둘 수 있음)
+    let isDragging = false, dragMoved = false;
+    let startX = 0, startY = 0, initialRight = 18, initialBottom = 165;
+
+    fab.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      dragMoved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = fab.getBoundingClientRect();
+      initialRight = window.innerWidth - rect.right;
+      initialBottom = window.innerHeight - rect.bottom;
+      fab.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = startX - e.clientX;
+      const dy = startY - e.clientY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+      const newRight = Math.max(10, Math.min(window.innerWidth - 80, initialRight + dx));
+      const newBottom = Math.max(20, Math.min(window.innerHeight - 60, initialBottom + dy));
+      fab.style.right = `${newRight}px`;
+      fab.style.bottom = `${newBottom}px`;
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        fab.style.cursor = 'grab';
+      }
+    });
+
+    fab.addEventListener('click', (e) => {
+      if (dragMoved) { e.preventDefault(); return; } // 드래그했을 땐 열기 취소
+      try { this.manualOpen(); } catch (_) {}
+    });
+
     document.body.appendChild(fab);
     this._syncFab();
   }

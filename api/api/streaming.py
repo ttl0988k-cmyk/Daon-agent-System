@@ -1482,7 +1482,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # Self-Update, and Self-Evolution tools into Hermes registry and agent.tools.
           from api.streaming_tools import register_all_streaming_tools
           injected_count = register_all_streaming_tools(
-              agent, s, session_id, cancel_event, stream_id=stream_id)
+              agent, s, session_id, cancel_event, stream_id=stream_id,
+              user_prompt=(msg_text or ""))
 
           is_browser_session = bool(
               getattr(s, 'surface', None) == 'chrome_extension' or
