@@ -177,7 +177,7 @@ def _resolve_planner_model_chain(preferred_model: Optional[str] = None, task: st
                 if not mid or "minimax" in mid.lower():
                     continue
                 mid_low = mid.lower()
-                if any(k in mid_low for k in ("deepseek", "gemini", "glm", "gpt", "claude", "qwen", "r1", "o1", "o3", "flash", "chat")):
+                if any(k in mid_low for k in ("deepseek", "gemini", "glm", "gpt", "claude", "qwen", "r1", "o1", "o3", "flash", "chat", "muse", "kimi")):
                     if mid not in candidates:
                         candidates.append(mid)
     except Exception as _e:

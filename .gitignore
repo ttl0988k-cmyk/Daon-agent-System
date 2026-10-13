@@ -106,3 +106,7 @@ scratch/
 .asar-stage/
 app.asar.new
 app.asar.new.bak*
+
+# Runtime generated data
+skills/**/data/
+api/data/

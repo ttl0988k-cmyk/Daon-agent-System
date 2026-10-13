@@ -136,5 +136,162 @@
       "한국어키워드2"
     ],
     "_note": "MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요. 사용법: (1) 이 파일에 서버ID를 키로 위 형식 블록 1개 추가, (2) 저장만 하면 끝. Laya 선별 우선순위(laya_service._get_dynamic_mcp_criteria), 오프라인 폴백(laya_client._fallback_prune_mcp), 스트리밍 프리셀렉트(streaming_tools Laya-MCP-Preselect)가 모두 이 파일을 자동 반영한다. 파이썬 코드 수정 불필요. 키가 '_'로 시작하면(예: 이 _template 블록) 로더가 무시한다. keywords는 한/영 각 4~8개 권장."
+  },
+  "sqlite": {
+    "desc_en": "Query and manage local SQLite databases via SQL.",
+    "desc_ko": "로컬 SQLite DB를 SQL로 조회·관리하는 MCP 서버.",
+    "keywords": [
+      "sqlite",
+      "SQLite",
+      "DB",
+      "데이터베이스",
+      "SQL",
+      "쿼리",
+      "로컬db"
+    ]
+  },
+  "fetch": {
+    "desc_en": "Fetch web page content and convert it to readable markdown.",
+    "desc_ko": "웹페이지 내용을 가져와 읽기 쉬운 마크다운으로 변환하는 MCP 서버.",
+    "keywords": [
+      "fetch",
+      "웹가져오기",
+      "URL",
+      "url",
+      "페이지수집",
+      "markdown",
+      "마크다운"
+    ]
+  },
+  "sequential-thinking": {
+    "desc_en": "Structured step-by-step reasoning for complex problems.",
+    "desc_ko": "복잡한 문제를 단계별로 나누어 추론하는 MCP 서버.",
+    "keywords": [
+      "thinking",
+      "추론",
+      "reasoning",
+      "단계별",
+      "step",
+      "사고",
+      "복잡한문제"
+    ]
+  },
+  "time": {
+    "desc_en": "Timezone-aware current time and conversion tools with zero API keys.",
+    "desc_ko": "API 키 없이 현재 시각 조회·타임존 변환을 제공하는 시간 MCP 서버.",
+    "keywords": [
+      "time",
+      "시간",
+      "timezone",
+      "타임존",
+      "clock",
+      "시계",
+      "schedule",
+      "스케줄"
+    ]
+  },
+  "weather": {
+    "desc_en": "Keyless weather info for current conditions and forecasts via Open-Meteo.",
+    "desc_ko": "API 키 없이 현재 날씨·예보를 조회하는 Open-Meteo 기반 날씨 MCP 서버.",
+    "keywords": [
+      "weather",
+      "날씨",
+      "forecast",
+      "예보",
+      "temperature",
+      "기온",
+      "open-meteo"
+    ]
+  },
+  "context7": {
+    "desc_en": "Up-to-date library documentation lookup for 3rd-party APIs.",
+    "desc_ko": "외부 라이브러리·API 최신 공식 문서를 검색하는 MCP 서버.",
+    "keywords": [
+      "context7",
+      "라이브러리문서",
+      "api문서",
+      "documentation",
+      "3rd-party",
+      "doc"
+    ]
+  },
+  "wikipedia": {
+    "desc_en": "Search and read Wikipedia articles in multiple languages.",
+    "desc_ko": "위키백과 문서를 다국어로 검색·조회하는 MCP 서버.",
+    "keywords": [
+      "wikipedia",
+      "위키백과",
+      "위키",
+      "encyclopedia",
+      "백과사전"
+    ]
+  },
+  "github": {
+    "desc_en": "GitHub repository management, issues, PRs, and commit history.",
+    "desc_ko": "깃허브 레포지토리·이슈·PR·커밋 관리를 위한 MCP 서버.",
+    "keywords": [
+      "github",
+      "깃허브",
+      "pull request",
+      "pr",
+      "이슈",
+      "issue",
+      "repository",
+      "레포지토리"
+    ]
+  },
+  "notion": {
+    "desc_en": "Official Notion server to search, read, create, and update pages and databases.",
+    "desc_ko": "Notion 페이지·데이터베이스 검색·조회·생성·수정을 위한 공식 MCP 서버.",
+    "keywords": [
+      "notion",
+      "노션",
+      "pages",
+      "database",
+      "데이터베이스",
+      "docs",
+      "문서"
+    ]
+  },
+  "slack": {
+    "desc_en": "Full-featured Slack server to read, search, and post channel and DM messages.",
+    "desc_ko": "Slack 채널·DM 조회·검색·전송을 위한 고기능 MCP 서버.",
+    "keywords": [
+      "slack",
+      "슬랙",
+      "chat",
+      "채팅",
+      "message",
+      "메시지",
+      "channel",
+      "협업"
+    ]
+  },
+  "google-workspace": {
+    "desc_en": "Google Workspace server for Gmail, Drive, and Calendar search and management.",
+    "desc_ko": "Gmail·Drive·Calendar 검색·관리를 위한 Google Workspace MCP 서버.",
+    "keywords": [
+      "gmail",
+      "지메일",
+      "google drive",
+      "구글 드라이브",
+      "calendar",
+      "캘린더",
+      "workspace",
+      "이메일"
+    ]
+  },
+  "brave-search": {
+    "desc_en": "Web search with Brave Search API for current information.",
+    "desc_ko": "Brave 검색 API로 최신 정보를 웹검색하는 MCP 서버.",
+    "keywords": [
+      "search",
+      "검색",
+      "brave",
+      "브레이브",
+      "websearch",
+      "웹검색",
+      "최신정보"
+    ]
   }
 }

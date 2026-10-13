@@ -118,6 +118,13 @@ class HermesDynamicRunner:
                 _log.warning("Failed to set job recovering: %s", _jre)
 
         successful_outputs = state_manager.get_all_success_values()
+        compressed_outputs = {}
+        for k, v in successful_outputs.items():
+            if isinstance(v, str) and len(v) > 600:
+                compressed_outputs[k] = v[:400] + f"\n... [truncated {len(v)-600} chars] ...\n" + v[-200:]
+            else:
+                compressed_outputs[k] = v
+
         initial_outputs = [
             {
                 "output_key": r["output_key"],
@@ -143,8 +150,8 @@ class HermesDynamicRunner:
             _disc_digest = ""
         replan_prompt = (
             f"We are executing a multi-agent system to solve this task: {task}\n\n"
-            "We have already successfully executed several nodes and generated the following outputs:\n"
-            f"{json.dumps(successful_outputs, ensure_ascii=False, indent=2)}\n\n"
+            "We have already successfully executed several nodes and generated the following outputs (summarized):\n"
+            f"{json.dumps(compressed_outputs, ensure_ascii=False, indent=2)}\n\n"
             f"However, during execution, the following nodes failed:\n{failed_info}\n\n"
             + ((_disc_digest + "\n\n") if _disc_digest else "") +
             "Please generate a new EXECUTABLE DAG of agents to complete the REMAINING parts of the task, focusing on fixing the reported failures.\n"
@@ -1083,6 +1090,25 @@ class HermesDynamicRunner:
                 failed_nodes = [r for r in runner_results if r["status"] == "failed"]
                 if not failed_nodes:
                     break
+
+                # [Graceful Recovery Bypass] 선행 노드가 실패했더라도
+                # 후속 다운스트림 노드들이 이미 모두 성공하여 산출물을 완성했다면 무의미한 재계획 스킵
+                successful_names = {r["name"] for r in runner_results if r["status"] == "success"}
+                edges = plan.get("edges", []) if isinstance(plan, dict) else []
+                truly_blocking_failed = []
+                for f_node in failed_nodes:
+                    f_name = f_node.get("name", "")
+                    downstream = [e[1] for e in edges if e[0] == f_name]
+                    if downstream and any(d in successful_names for d in downstream):
+                        _log.info("Node '%s' failed initially but downstream nodes %s succeeded. Skipping redundant recovery.", f_name, downstream)
+                        continue
+                    truly_blocking_failed.append(f_node)
+
+                if not truly_blocking_failed:
+                    _log.info("All failed nodes are non-blocking or superseded by successful downstream executions. Bypassing recovery loop.")
+                    break
+
+                failed_nodes = truly_blocking_failed
                 recovery_attempt += 1
                 _log.info("Recovery attempt %d/%d for %d failed node(s)", recovery_attempt, max_recovery, len(failed_nodes))
                 check_timeout()

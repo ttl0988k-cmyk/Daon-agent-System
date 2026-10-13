@@ -191,6 +191,11 @@ app.whenReady().then(async () => {
     // ── STEP 2b: Start Laya Decision Engine (Port 8765) ──
     supervisor.startLayaProcess(8765);
 
+    // ── STEP 2c: Start Skill Ranker (Port 8766) [FIX 2026-10-13] ──
+    //  임베딩 스킬 사전선별 서비스. 과거엔 Startup VBS 런처가 부팅 시 1회만 띄워
+    //  죽으면 복구가 안 됐다 — Laya 와 동일하게 슈퍼바이저가 감시·재기동한다.
+    supervisor.startSkillRankerProcess(8766);
+
     // ── STEP 3: Start Watchdog ──
     supervisor.startWatchdog(DEFAULT_PORT);
 
@@ -321,6 +326,8 @@ app.whenReady().then(async () => {
         try {
           if (!supervisor.ttsProcess) supervisor.startTtsProcess(TTS_PORT);
           if (!supervisor.layaProcess) supervisor.startLayaProcess(8765);
+          // [FIX 2026-10-13] SkillRanker(8766)도 재기동 사이클에 포함
+          if (!supervisor.skillRankerProcess) supervisor.startSkillRankerProcess(8766);
         } catch (e) {
           merr('[RestartOrch] TTS/Laya respawn failed: ' + (e && e.message));
         }

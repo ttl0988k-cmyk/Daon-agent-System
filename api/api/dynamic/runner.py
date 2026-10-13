@@ -427,12 +427,42 @@ def _run_node_with_retries(
                     def _safe_name(raw: str) -> str:
                         return _mcp_re.sub(r'[^A-Za-z0-9_]', '_', str(raw or ''))
                     
+                    def _clean_schema_node(node):
+                        if isinstance(node, list):
+                            return [_clean_schema_node(item) for item in node]
+                        if not isinstance(node, dict):
+                            return node
+                        import copy
+                        n = copy.copy(node)
+                        for meta_key in ("$schema", "$id", "title"):
+                            n.pop(meta_key, None)
+                        if "const" in n:
+                            c_val = n.pop("const")
+                            if "enum" not in n:
+                                n["enum"] = [c_val]
+                        if "properties" in n:
+                            if isinstance(n["properties"], dict):
+                                n["properties"] = {k: _clean_schema_node(v) for k, v in n["properties"].items()}
+                            else:
+                                n["properties"] = {}
+                        if "items" in n and isinstance(n["items"], (dict, list)):
+                            n["items"] = _clean_schema_node(n["items"])
+                        for comp_key in ("anyOf", "oneOf", "allOf"):
+                            if comp_key in n and isinstance(n[comp_key], list):
+                                n[comp_key] = [_clean_schema_node(item) for item in n[comp_key]]
+                        if not any(k in n for k in ("type", "enum", "anyOf", "oneOf", "allOf", "$ref")):
+                            n["type"] = "object" if "properties" in n else "string"
+                        return n
+
                     def _normalize_input_schema(schema):
-                        if not schema:
+                        if not schema or not isinstance(schema, dict):
                             return {"type": "object", "properties": {}}
-                        if schema.get("type") == "object" and "properties" not in schema:
-                            return {**schema, "properties": {}}
-                        return schema
+                        cleaned = _clean_schema_node(schema)
+                        if cleaned.get("type") != "object":
+                            cleaned["type"] = "object"
+                        if "properties" not in cleaned or not isinstance(cleaned["properties"], dict):
+                            cleaned["properties"] = {}
+                        return cleaned
                     
                     _injected_count = 0
                     for _t in _mcp_tools:

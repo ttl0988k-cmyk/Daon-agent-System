@@ -27,6 +27,10 @@ class ServerSupervisor {
     this.pythonProcess = null;
     this.ttsProcess = null;
     this.layaProcess = null;
+    // [FIX 2026-10-13] SkillRanker(8766) — Laya(8765)와 동일하게 슈퍼바이저가 관리한다.
+    //  과거엔 Startup VBS 런처가 부팅 시 1회만 띄우고 재시도가 없어, 조용히 죽으면
+    //  복구가 안 됐다(2026-10-13 실측: 8766 down). Laya 처럼 여기서 감시·재기동한다.
+    this.skillRankerProcess = null;
     this.watchdogTimer = null;
     this.watchdogRestartCount = 0;
     this.watchdogSuppressUntil = 0;
@@ -588,6 +592,19 @@ class ServerSupervisor {
     return null;
   }
 
+  // [FIX 2026-10-13] SkillRanker(8766) 스크립트 탐색 — findLayaScript 와 동일 규칙.
+  findSkillRankerScript() {
+    const candidates = [
+      path.join(process.resourcesPath || '', 'daon_runtime', 'skill_ranker.py'),
+      path.join(__dirname, '..', '..', 'daon_runtime', 'skill_ranker.py'),
+      path.join('C:\\daon\\Daon agent System', 'daon_runtime', 'skill_ranker.py'),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  }
+
   async isLayaHealthy(port = 8765) {
     return new Promise((resolve) => {
       const req = http.get(`http://127.0.0.1:${port}/health`, (res) => {
@@ -647,6 +664,58 @@ class ServerSupervisor {
     } catch (err) {
       this.merr(`[ServerSupervisor] Failed to spawn Laya process: ${err.message}`);
       this.layaProcess = null;
+      return null;
+    }
+  }
+
+  // [FIX 2026-10-13] SkillRanker(8766) 헬스 프로브 — isLayaHealthy 와 동일 로직(포트만 다름).
+  async isSkillRankerHealthy(port = 8766) {
+    return this.isLayaHealthy(port);
+  }
+
+  // [FIX 2026-10-13] SkillRanker(8766) 상주 기동 — startLayaProcess 와 동일 규칙
+  //  (정상이면 no-op, 스크립트 탐색 후 python 으로 spawn, cwd=daon_runtime 상위).
+  //  Laya 는 --port 인자를 받고 SkillRanker 는 스크립트 내 PORT 상수를 쓰므로 인자 없음.
+  async startSkillRankerProcess(port = 8766) {
+    if (this.isQuitting) return null;
+
+    const alreadyHealthy = await this.isSkillRankerHealthy(port);
+    if (alreadyHealthy) {
+      this.mlog(`[ServerSupervisor] Skill Ranker is already healthy on http://127.0.0.1:${port}`);
+      return null;
+    }
+
+    const script = this.findSkillRankerScript();
+    if (!script) {
+      this.mlog(`[ServerSupervisor] skill_ranker.py not found. Skill preselect will be skipped.`);
+      return null;
+    }
+
+    const pythonPath = this.findPythonPath();
+    const cwd = path.dirname(path.dirname(script));
+
+    try {
+      this.mlog(`[ServerSupervisor] Starting Skill Ranker: ${pythonPath} "${script}"`);
+      this.skillRankerProcess = spawn(pythonPath, [script], {
+        cwd,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      this.skillRankerProcess.on('error', (err) => {
+        this.merr(`[ServerSupervisor] Skill Ranker process error: ${err && err.message}`);
+        this.skillRankerProcess = null;
+      });
+
+      this.skillRankerProcess.on('exit', (code, signal) => {
+        this.mlog(`[ServerSupervisor] Skill Ranker exited (code=${code}, signal=${signal})`);
+        this.skillRankerProcess = null;
+      });
+
+      return this.skillRankerProcess;
+    } catch (err) {
+      this.merr(`[ServerSupervisor] Failed to spawn Skill Ranker process: ${err.message}`);
+      this.skillRankerProcess = null;
       return null;
     }
   }
@@ -732,6 +801,13 @@ class ServerSupervisor {
     this.watchdogTimer = setInterval(() => {
       if (this.isQuitting) return;
 
+      // [FIX 2026-10-13] 서브 데몬(Laya 8765 / SkillRanker 8766) 주기 보증.
+      //  과거엔 각각 부팅 시 1회만 확인해, 조용히 죽으면 복구 경로가 없었다
+      //  (실측: 8766 down 후 재기동 트리거 부재). 30초마다 헬스 확인 후
+      //  죽은 것만 재기동한다 — 정상이면 startXxxProcess 가 즉시 no-op.
+      if (!this.layaProcess) { this.startLayaProcess(8765); }
+      if (!this.skillRankerProcess) { this.startSkillRankerProcess(8766); }
+
       // If server process was adopted, check if PID is still alive
       if (this.pythonProcess && this.pythonProcess._adopted && this.pythonProcess.pid && !this.isProcessAlive(this.pythonProcess.pid)) {
         this.merr(`[Watchdog] Adopted server PID ${this.pythonProcess.pid} died — spawning new server...`);
@@ -791,6 +867,10 @@ class ServerSupervisor {
     if (this.layaProcess && this.layaProcess.pid) {
       this.killProcessTree(this.layaProcess.pid);
       this.layaProcess = null;
+    }
+    if (this.skillRankerProcess && this.skillRankerProcess.pid) {
+      this.killProcessTree(this.skillRankerProcess.pid);
+      this.skillRankerProcess = null;
     }
   }
 }

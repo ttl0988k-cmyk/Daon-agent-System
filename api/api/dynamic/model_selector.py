@@ -577,7 +577,7 @@ class DynamicModelSelector:
                     strengths.append('code')
                 if any(k in mid_lower for k in ('reason', 'think', 'r1', 'o1', 'o3')):
                     strengths.append('reasoning')
-                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus', 'deepseek', 'gpt', 'claude', 'gemini', 'qwen', 'kimi')):
+                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus', 'deepseek', 'gpt', 'claude', 'gemini', 'qwen', 'kimi', 'muse')):
                     strengths.extend(['code', 'reasoning'])
                 if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'mini', 'free')):
                     strengths.append('fast')
