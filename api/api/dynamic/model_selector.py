@@ -569,17 +569,30 @@ class DynamicModelSelector:
             from api.managers.model_manager import model_manager
             groups = model_manager.get_available_models()
 
-            # Helper: infer strengths from model_id name
+            # Helper: infer strengths from model_id name.
+            # 토큰 경계로 매칭한다 — 'max'/'mini' 같은 취약 키워드가
+            # 'minimax' 같은 이름에 부분매칭되어 code/reasoning 강도를
+            # 오부여하던 버그를 막는다 (2026-10-14). 예: MiniMax-M2.7이
+            # 'max'/'mini' 오탐으로 code 강도를 얻어 코드 생성 노드에
+            # 폴백되던 문제.
+            def _has_tok(name: str, toks) -> bool:
+                parts = set(re.split(r'[^a-z0-9]+', name))
+                return any(t in parts for t in toks)
+
             def _infer_strengths(mid: str) -> list[str]:
                 mid_lower = mid.lower()
+                # MiniMax 계열은 경량/범용으로 취급 — 이름에 'minimax'가 있으면
+                # fast 강도만 부여하고 code/reasoning은 주지 않는다.
+                if 'minimax' in mid_lower:
+                    return ['fast']
                 strengths = []
                 if any(k in mid_lower for k in ('code', 'coder', 'dev')):
                     strengths.append('code')
                 if any(k in mid_lower for k in ('reason', 'think', 'r1', 'o1', 'o3')):
                     strengths.append('reasoning')
-                if any(k in mid_lower for k in ('pro', 'ultra', 'max', 'sonnet', 'opus', 'deepseek', 'gpt', 'claude', 'gemini', 'qwen', 'kimi', 'muse')):
+                if _has_tok(mid_lower, ('pro', 'ultra', 'max', 'sonnet', 'opus', 'deepseek', 'gpt', 'claude', 'gemini', 'qwen', 'kimi', 'muse')):
                     strengths.extend(['code', 'reasoning'])
-                if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'mini', 'free')):
+                if any(k in mid_lower for k in ('flash', 'fast', 'lite', 'free')) or _has_tok(mid_lower, ('mini', 'small')):
                     strengths.append('fast')
                 if any(k in mid_lower for k in ('creative', 'art', 'image', 'vision', 'vl')):
                     strengths.append('creative')
@@ -874,6 +887,13 @@ class DynamicModelSelector:
             # custom_providers.json 에 실제로 등록된 모델만 허용.
             if _registered_models and profile.provider in _registered_models:
                 if model_id not in _registered_models[profile.provider]:
+                    continue
+            # 코드/추론 강도가 요구되는 노드에서는 'fast'-only 경량 모델을
+            # 폴백 후보에서 제외한다. 이름 기반 강도 추론이 부정확해도
+            # (예: MiniMax-M2.7) 코드 생성 노드에 경량 모델이 끼는 것을
+            # 이중으로 막는 안전망 (2026-10-14).
+            if required_strength in ("code", "reasoning", "review", "qa", "debug"):
+                if not (set(profile.strengths) & {"code", "reasoning"}):
                     continue
             
             score, breakdown = self._score_model(
