@@ -228,6 +228,43 @@ def _call_transcribe_api(audio_bytes, filename, language=None, initial_prompt=No
     return text
 
 
+def _block_torch_import():
+    """torch import 를 ImportError 로 차단하는 meta-path finder 를 등록한다.
+
+    번들 server.exe 에 포함된 torch 는 shm.dll 의존성 손상(WinError 126)으로
+    `import torch` 시 ImportError 가 아니라 OSError 를 던진다. ctranslate2 의
+    model_spec.py 는 `except ImportError` 만 잡으므로 이 OSError 가 ctranslate2
+    import 전체를 죽여 faster-whisper 로드가 실패한다(실측: "Local faster-whisper
+    model not available" 502).
+
+    faster-whisper 추론에는 torch 가 전혀 필요 없다(converters 전용). torch
+    import 를 ImportError 로 치환해 ctranslate2 가 정상 로드되도록 한다.
+    """
+    import importlib.abc
+
+    class _TorchBlocker(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == 'torch' or fullname.startswith('torch.'):
+                raise ImportError(
+                    'torch blocked for faster-whisper (bundle torch shm.dll broken)'
+                )
+            return None
+
+    _blocker = _TorchBlocker()
+    # 이미 (부분) 로드된 torch 제거
+    for _k in [k for k in list(sys.modules) if k == 'torch' or k.startswith('torch.')]:
+        sys.modules.pop(_k, None)
+    sys.meta_path.insert(0, _blocker)
+    return _blocker
+
+
+def _unblock_torch_import(_blocker):
+    try:
+        sys.meta_path.remove(_blocker)
+    except ValueError:
+        pass
+
+
 def _load_local_whisper():
     """Lazy-load the faster-whisper model (thread-safe singleton)."""
     global _local_whisper_model, _model_ready
@@ -242,7 +279,9 @@ def _load_local_whisper():
             'Loading local faster-whisper model: %s (device=%s)...',
             _local_whisper_model_name, _local_whisper_device,
         )
+        _torch_blocker = None
         try:
+            _torch_blocker = _block_torch_import()
             from faster_whisper import WhisperModel
 
             if _local_whisper_device == 'cpu':
@@ -272,6 +311,9 @@ def _load_local_whisper():
             _logger.exception('Failed to load local faster-whisper model')
             _local_whisper_model = False
             return None
+        finally:
+            if _torch_blocker is not None:
+                _unblock_torch_import(_torch_blocker)
 
 
 _cpu_fallback_whisper_model = None

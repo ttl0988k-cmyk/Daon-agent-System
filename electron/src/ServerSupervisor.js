@@ -502,10 +502,13 @@ class ServerSupervisor {
 
     try {
       if (isPackaged) {
-        const ttsExePath = this.findServerExe();
-        const cwd = path.dirname(ttsExePath);
-        this.ttsProcess = spawn(ttsExePath, ['--tts-mode', '--tts-port', port.toString()], {
-          cwd,
+        // [2026-10-14 TTS Supertonic 수정] server.exe(PyInstaller 번들)에는 supertonic/onnxruntime
+        // 모듈이 없어서 --tts-mode 로 띄우면 `from supertonic import TTS`가 실패 → Edge 403 → 500.
+        // → 시스템 파이썬(Python312)으로 tts_server.py 를 직접 실행해 supertonic 상주 로드를 살린다.
+        const pythonPath = this.findPythonPath();
+        const ttsScript = path.join(process.resourcesPath || '', 'tts_server.py');
+        this.ttsProcess = spawn(pythonPath, [ttsScript, '--port', port.toString()], {
+          cwd: path.dirname(ttsScript),
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe']
         });

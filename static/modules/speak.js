@@ -23,6 +23,14 @@ var _speakVolume = 0.8;          // 0.0~1.0 — 에이전트 음성 볼륨 (loca
 var _currentEdgeTtsGain = null;  // 재생 중인 Edge TTS GainNode (실시간 볼륨 반영용)
 var _currentEdgeTtsAudioEl = null; // <audio> 폴백 재생 엘리먼트 (실시간 볼륨 반영용)
 
+// ── [목소리 선택] Supertonic 10종 (F1~F5 여성 / M1~M5 남성) ──
+var SUPERTONIC_VOICES = ['F1', 'F2', 'F3', 'F4', 'F5', 'M1', 'M2', 'M3', 'M4', 'M5'];
+var SUPERTONIC_VOICE_LABELS = {
+    F1: '여성 F1 (차분·기본)', F2: '여성 F2', F3: '여성 F3 (밝음)', F4: '여성 F4', F5: '여성 F5',
+    M1: '남성 M1 (차분·기본)', M2: '남성 M2 (뉴스)', M3: '남성 M3', M4: '남성 M4', M5: '남성 M5'
+};
+var _supertonicVoice = 'F1';     // 선택된 Supertonic 목소리 (localStorage 저장)
+
 /**
  * Initialize voice output. Pre-load SpeechSynthesis voices and set default.
  * Called from chat.js after SSE connection is established.
@@ -67,7 +75,16 @@ function initSpeak() {
     } catch (e) { /* ignore */ }
     _updateVolumeSliderUI();
 
-    console.log('[Speak] Initialized. Muted:', _speakMuted, 'Volume:', Math.round(_speakVolume * 100) + '%', 'EdgeTTS:', _edgeTtsSupported);
+    // [목소리 선택] 저장된 Supertonic 목소리 복원 (F1~F5/M1~M5)
+    try {
+        const savedVoice = localStorage.getItem('daon_supertonic_voice');
+        if (savedVoice && SUPERTONIC_VOICES.indexOf(savedVoice) !== -1) {
+            _supertonicVoice = savedVoice;
+        }
+    } catch (e) { /* ignore */ }
+    _updateVoiceSelectUI();
+
+    console.log('[Speak] Initialized. Muted:', _speakMuted, 'Volume:', Math.round(_speakVolume * 100) + '%', 'Voice:', _supertonicVoice);
 }
 
 /**
@@ -168,8 +185,9 @@ function _speakViaEdgeTts(text) {
     // edge-tts synthesis never blocks the main agent server (9090).
     // Fallback: the main server also exposes /api/speak/tts (same edge-tts
     // backend) so voice still works when the dedicated TTS server is not running.
-    const dedicatedUrl = location.protocol + '//' + location.hostname + ':9091/tts?' + new URLSearchParams({ text: text }).toString();
-    const mainUrl = location.origin + '/api/speak/tts?' + new URLSearchParams({ text: text }).toString();
+    const voiceParams = new URLSearchParams({ text: text, voice: _supertonicVoice });
+    const dedicatedUrl = location.protocol + '//' + location.hostname + ':9091/tts?' + voiceParams.toString();
+    const mainUrl = location.origin + '/api/speak/tts?' + voiceParams.toString();
 
     _fetchAndPlayTts(dedicatedUrl, text, function () {
         // Dedicated TTS server unavailable → try the main server route.
@@ -416,4 +434,40 @@ function stopSpeak() {
     if (typeof speechSynthesis !== 'undefined') {
         speechSynthesis.cancel();
     }
+}
+
+// ── [목소리 선택] Supertonic 10종 UI ────────────────────────────
+
+/**
+ * 목소리 선택 변경 핸들러 (index.html select에서 호출).
+ * @param {string} voice - 'F1'~'F5' / 'M1'~'M5'
+ */
+function setSpeakVoice(voice) {
+    if (!voice || SUPERTONIC_VOICES.indexOf(voice) === -1) return;
+    _supertonicVoice = voice;
+    try {
+        localStorage.setItem('daon_supertonic_voice', voice);
+    } catch (e) { /* ignore */ }
+    _updateVoiceSelectUI();
+    showToast('🎙️ 목소리: ' + (SUPERTONIC_VOICE_LABELS[voice] || voice));
+}
+
+/**
+ * 목소리 선택 UI 동기화. select가 있으면 현재 값으로 맞추고,
+ * 미리듣기 버튼이 있으면 현재 목소리로 짧은 문장을 재생한다.
+ */
+function _updateVoiceSelectUI() {
+    const sel = document.getElementById('speakVoiceSelect');
+    if (sel) {
+        sel.value = _supertonicVoice;
+    }
+}
+
+/**
+ * 현재 목소리로 미리듣기 문장 재생.
+ */
+function previewSpeakVoice() {
+    const sample = '안녕하세요, 저는 다온입니다.';
+    _speakLastTime = 0;  // cooldown 해제
+    _doSpeak(sample);
 }
