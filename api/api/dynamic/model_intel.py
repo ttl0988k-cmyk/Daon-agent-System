@@ -62,6 +62,10 @@ AGENTIC_BLEND = 0.3
 # Undated public source: usable but discounted.
 _UNDATED_FRESHNESS = 0.7
 
+# LiveBench 실측 소스 신뢰도 (제3자 리더보드, 릴리스 고정).
+# seed 의 수기 벤치마크보다 최신·실측이므로 우선 사용한다 (2026-10-15).
+_LB_SRC_CONF = 0.9
+
 # Capability axes shown to the CEO.
 CAPABILITIES = ["coding", "reasoning", "debugging", "agentic", "tool_use", "context"]
 
@@ -283,20 +287,80 @@ class ModelIntel:
 
     # ── EVIDENCE + FINAL layers ──
 
-    def _blend_capability(self, nk: str, cap: str, daon_stats: dict, depth: int):
+    @staticmethod
+    def _livebench_lookup(model_id: str, cap: str):
+        """LiveBench 실측 → (점수 0..1, as_of 'YYYY-MM-DD', 정보dict). 없으면 (None, None, {}).
+
+        LiveBench 는 seed 와 달리 매 릴리스 갱신되는 실측 소스다(2026-10-15).
+        seed 에 없는 신모델도 여기서 커버되므로, '이름추정 폴백'이
+        실측 고성능 모델을 이기던 문제의 근본 해결책이 된다.
+        """
+        try:
+            from api.dynamic.livebench_source import get_livebench_source
+            src = get_livebench_source()
+            if not src.available:
+                return None, None, {}
+            sc = src.score(model_id, cap)
+            if sc is None:
+                return None, None, {}
+            hit = src.resolve(model_id)
+            name, ver = hit if hit else (None, None)
+            st = src.stats()
+            rel = st.get("v2_rel" if ver == "v2" else "v1_rel") or ""
+            as_of = rel.replace("_", "-") or None
+            return max(0.0, min(1.0, sc)), as_of, {
+                "livebench_model": name, "livebench_version": ver, "release": as_of,
+            }
+        except Exception as e:
+            _logger.debug("model_intel: livebench lookup failed for %s/%s: %s", model_id, cap, e)
+            return None, None, {}
+
+    def _blend_capability(self, nk: str, cap: str, daon_stats: dict, depth: int,
+                          lb_public=None, lb_as_of=None, lb_info=None):
         """Blend PUBLIC + DAON for ONE capability of ONE normalized model id.
+
+        PUBLIC 우선순위 (2026-10-15):
+          1. LiveBench 실측 (lb_public) — 있으면 seed 를 덮어쓴다.
+          2. seed benchmarks/capabilities
+        seed 에 없는 모델도 LiveBench 가 있으면 판정 가능하다.
 
         Returns (final_score or None, evidence_dict).
         """
         entry = self._entries.get(nk)
+        lb_fresh = self._freshness(lb_as_of) if lb_as_of else 0.0
+
+        # seed 에 없는 모델 — LiveBench 만으로 판정한다.
         if entry is None:
-            return None, {}
+            if lb_public is None:
+                return None, {}
+            w = _LB_SRC_CONF * (lb_fresh or _UNDATED_FRESHNESS)
+            return max(0.0, min(1.0, lb_public)), {
+                "capability": cap, "public": lb_public, "daon_samples": 0,
+                "w_pub": round(w, 3), "w_daon": 0.0,
+                "flag": "livebench_only", "source": "livebench", **(lb_info or {}),
+            }
+
         evidence = {
             "capability": cap, "public": None, "daon_samples": 0,
             "w_pub": 0.0, "w_daon": 0.0, "flag": None,
         }
 
-        public_val = self._public_capabilities(entry).get(cap)
+        # PUBLIC 레이어: LiveBench 실측 > seed 수기 벤치마크
+        if lb_public is not None:
+            public_val = max(0.0, min(1.0, lb_public))
+            pub_src_conf = _LB_SRC_CONF
+            pub_fresh = lb_fresh or _UNDATED_FRESHNESS
+            evidence["source"] = "livebench"
+            evidence.update(lb_info or {})
+        else:
+            public_val = self._public_capabilities(entry).get(cap)
+            pub = entry.get("public") or {}
+            try:
+                pub_src_conf = max(0.0, min(1.0, float(pub.get("source_confidence", 0.8))))
+            except (TypeError, ValueError):
+                pub_src_conf = 0.8
+            pub_fresh = self._entry_freshness(entry)
+            evidence["source"] = "seed"
         evidence["public"] = public_val
 
         daon = ((daon_stats or {}).get(nk) or {}).get(cap)
@@ -318,12 +382,7 @@ class ModelIntel:
         # Evidence weights.
         w_pub = 0.0
         if public_val is not None:
-            pub = entry.get("public") or {}
-            try:
-                src_conf = max(0.0, min(1.0, float(pub.get("source_confidence", 0.8))))
-            except (TypeError, ValueError):
-                src_conf = 0.8
-            w_pub = src_conf * self._entry_freshness(entry)
+            w_pub = pub_src_conf * pub_fresh
 
         w_daon = 0.0
         daon_val = None
@@ -342,7 +401,7 @@ class ModelIntel:
         else:
             final = public_val
 
-        if public_val is not None and n == 0:
+        if public_val is not None and n == 0 and evidence.get("source") != "livebench":
             evidence["flag"] = "high_potential_unverified"
         evidence["w_pub"] = round(w_pub, 3)
         evidence["w_daon"] = round(w_daon, 3)
@@ -366,14 +425,33 @@ class ModelIntel:
         if cap not in CAPABILITIES:
             return None, {}
         nk = _normalize_id(model_id)
+        # seed 엔트리가 없어도 LiveBench 실측이 있으면 판정한다(2026-10-15).
+        # 이 조기 반환이 'seed 에 이름이 맞아야만 점수 획득' 문제의 원인이었다.
         if nk not in self._entries:
-            return None, {}
+            lb_score, lb_as_of, lb_info = self._livebench_lookup(model_id, cap)
+            if lb_score is None:
+                return None, {}
+            score, ev = self._blend_capability(
+                nk, cap, daon_stats or {}, depth=0,
+                lb_public=lb_score, lb_as_of=lb_as_of, lb_info=lb_info)
+            if cap != "agentic":
+                ag, ag_as_of, ag_info = self._livebench_lookup(model_id, "agentic")
+                if ag is not None:
+                    score = (1.0 - AGENTIC_BLEND) * score + AGENTIC_BLEND * ag
+                    ev["agentic_blended"] = True
+            return score, ev
 
-        score, ev = self._blend_capability(nk, cap, daon_stats or {}, depth=0)
+        lb_score, lb_as_of, lb_info = self._livebench_lookup(model_id, cap)
+        score, ev = self._blend_capability(
+            nk, cap, daon_stats or {}, depth=0,
+            lb_public=lb_score, lb_as_of=lb_as_of, lb_info=lb_info)
         # Harness nodes are agents: blend the agentic axis into non-agentic
         # capabilities when agentic evidence exists.
         if score is not None and cap != "agentic":
-            ag_score, _ = self._blend_capability(nk, "agentic", daon_stats or {}, depth=0)
+            ag, ag_as_of, ag_info = self._livebench_lookup(model_id, "agentic")
+            ag_score, _ = self._blend_capability(
+                nk, "agentic", daon_stats or {}, depth=0,
+                lb_public=ag, lb_as_of=ag_as_of, lb_info=ag_info)
             if ag_score is not None:
                 score = (1.0 - AGENTIC_BLEND) * score + AGENTIC_BLEND * ag_score
                 ev["agentic_blended"] = True
@@ -406,7 +484,38 @@ class ModelIntel:
         nk = _normalize_id(model_id)
         entry = self._entries.get(nk)
         if entry is None:
-            return ""
+            # seed 수기 데이터가 없어도 LiveBench 실측이 있으면 요약한다
+            # (2026-10-15). '실측 근거 없는 모델'을 CEO 리포트에서 숨기면
+            # 왜 그 모델이 뽑혔는지 설명할 수 없다.
+            try:
+                from api.dynamic.livebench_source import get_livebench_source
+                lb = get_livebench_source()
+            except Exception:
+                lb = None
+            if lb is None or not lb.available or lb.resolve(model_id) is None:
+                return ""
+            star_parts = []
+            any_score = False
+            for cap in CAPABILITIES:
+                sc = lb.score(model_id, cap)
+                if sc is None:
+                    star_parts.append(f"{cap}: -")
+                else:
+                    any_score = True
+                    n_stars = max(1, min(5, int(round(sc * 5))))
+                    star_parts.append(f"{cap}: {'★' * n_stars}{'☆' * (5 - n_stars)}")
+            if not any_score:
+                return ""
+            hit = lb.resolve(model_id) or (None, None)
+            st = lb.stats()
+            rel = str(st.get("v2_rel" if hit[1] == "v2" else "v1_rel") or "").replace("_", "-")
+            total_samples = sum(int(v.get("samples", 0))
+                                for v in (((daon_stats or {}).get(nk)) or {}).values())
+            ev_parts = [f"근거: LiveBench {rel} ({hit[0]})",
+                        f"DAON 실전: {total_samples}회" if total_samples
+                        else "DAON 실전: 아직 없음"]
+            return (f"{model_id}\n  " + " | ".join(star_parts)
+                    + "\n  " + " | ".join(ev_parts))
 
         star_parts = []
         has_public = False

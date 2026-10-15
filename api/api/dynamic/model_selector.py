@@ -109,6 +109,48 @@ _WEIGHT_PRESETS: dict[str, dict[str, float]] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# 선택 회전(Rotation) 정책 — "1위 고정 투입" 방지
+# ---------------------------------------------------------------------------
+# 대표님 지시 (2026-10-15): 1순위만 무조건 배정하면 매번 같은 모델만 노드에
+# 투입된다. 1·2순위를 함께 참조해 둘 중 하나를 고르되, 품질이 동급일 때만
+# 회전시킨다(품질 게이트). 라이브벤치/실적이 갈리는 모델을 억지로 번갈아
+# 넣으면 손해이므로, 1위 대비 밴드 이내 후보만 회전 풀에 넣는다.
+_ROTATION_ENABLED = os.environ.get("DAON_SELECTOR_ROTATION", "1") not in ("0", "false", "False")
+_ROTATION_BAND_RATIO = 0.05      # 1위 대비 5% 이내 = 동급으로 간주
+_ROTATION_MAX_CANDIDATES = 3     # 회전 풀 최대 크기(1·2·3순위까지)
+_ROTATION_COOLDOWN_S = 180.0     # 같은 역할에서 직전 모델 재선택 방지 창
+
+# 이름 기반 강도 추정이 맞았을 때 주는 점수.
+# 1.0(=만점)이 아니라 중립값을 준다 — 실측(LiveBench/ModelIntel)이 없는
+# 모델이 '이름만 맞아서' 실측 고성능 모델을 이기던 역설을 막는다(2026-10-15).
+_NAME_MATCH_HIT = 0.6
+
+# ---------------------------------------------------------------------------
+# 비(非)LLM 모델 차단 — 미디어 생성/임베딩 모델은 LLM 노드 후보가 아니다
+# ---------------------------------------------------------------------------
+# 실측 결함 (2026-10-15): image-01(MiniMax 이미지생성)이 designer 노드에,
+# bytedance/seedance-1-5-pro(영상생성)·heygen-video-1(아바타영상)·
+# lyria-3-pro(음악생성)가 coding 후보로 진입했다. 이름 기반 강도 추론이
+# 'pro' 토큰이나 키워드 부재를 code/reasoning 으로 오부여하기 때문이다.
+# 이들을 LLM 노드에 투입하면 코드를 못 쓰므로 후보 단계에서 원천 차단한다.
+_NON_LLM_MODEL_PATTERNS = [
+    r'^image[-_]?\d', r'\bimage[-_]', r'-image\b', r'\bimagegen',
+    r'seedance', r'lyria', r'heygen', r'\bveo[-_]?\d', r'\bsora\b',
+    r'\bkling', r'runway', r'\bpika\b', r'\bminimax[-_]?image',
+    r'-video\b', r'^video[-_]', r'\bvideo[-_]gen', r'\bavatar\b',
+    r'\btts\b', r'whisper', r'voice[-_]?clone', r'musicgen', r'\bsuno\b',
+    r'embed', r'^bge[-_]', r'\brerank', r'\bdall[-_]?e', r'^flux',
+    r'sd[-_]?xl', r'stable[-_]?diffusion', r'midjourney',
+]
+_NON_LLM_RE = re.compile("|".join(_NON_LLM_MODEL_PATTERNS), re.I)
+
+
+def is_non_llm_model(model_id: str) -> bool:
+    """LLM 노드 후보로 쓸 수 없는 미디어/임베딩 모델인지 판정한다."""
+    return bool(model_id) and bool(_NON_LLM_RE.search(model_id))
+
+
 # 난이도 추론 키워드 — 작업 본문(task)/역할(role)에서 감지한다.
 # 비용 관련 단어는 의도적으로 없다: 난이도는 순수하게 작업 특성만으로 판단한다.
 _DIFFICULTY_HEAVY_PATTERNS = [
@@ -548,13 +590,127 @@ class DynamicModelSelector:
         # observe what the selector chose and why, then tune blend weights.
         self._selection_log: list[dict] = []
         self._selection_log_max = 200
-        
+        # 회전 상태: 역할별 (모델별 투입횟수, 직전 선택, 직전 시각).
+        # 디스크에 영속화해 서버 재기동 후에도 라운드로빈이 이어진다.
+        self._rotation_path = Path.home() / ".hermes" / "selector_rotation.json"
+        self._rotation_lock = threading.Lock()
+        self._rotation: dict = self._load_rotation()
+
         for p in (profiles or _DEFAULT_PROFILES):
             self._profiles[p.model_id] = p
-        
+
         # Load custom provider profiles dynamically
         self._load_custom_profiles()
-    
+
+    # ── Rotation state (1·2순위 교대 투입) ──
+
+    def _load_rotation(self) -> dict:
+        try:
+            if self._rotation_path.exists():
+                return json.loads(self._rotation_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            _logger.warning("Failed to load rotation state: %s", e)
+        return {}
+
+    def _save_rotation(self):
+        try:
+            self._rotation_path.parent.mkdir(parents=True, exist_ok=True)
+            self._rotation_path.write_text(
+                json.dumps(self._rotation, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            _logger.warning("Failed to save rotation state: %s", e)
+
+    def _pick_from_band(self, role: str, scored: list) -> tuple[int, str, list]:
+        """1·2순위(이상)를 품질 게이트 후 교대 투입한다.
+
+        scored: [(score, ModelProfile, breakdown), ...] 점수 내림차순 정렬 상태.
+
+        반환: (선택 인덱스, 모드, 회전풀 모델명 리스트)
+            모드: "rank1"(1위 그대로) | "rotate"(2·3순위로 교대) | "single" | "narrow"
+
+        설계 근거:
+          - 품질 게이트: 1위 대비 _ROTATION_BAND_RATIO 이내만 후보(동급).
+            밴드 밖 모델을 억지로 투입하면 품질 손해이므로 제외한다.
+          - 최소 사용 우선(least-used): 결정적 라운드로빈. 무작위가 아니라
+            재현 가능하고, 특정 모델에 영구 고정되는 것을 막는다.
+          - 쿨다운: 같은 역할에서 직전 모델이 곧바로 재선택되는 것을 차단.
+        """
+        if not _ROTATION_ENABLED or len(scored) < 2:
+            return 0, "single", []
+
+        top_score = scored[0][0]
+        if top_score <= 0.0:
+            return 0, "rank1", []
+
+        floor = top_score * (1.0 - _ROTATION_BAND_RATIO)
+        # 밴드 = 1위 대비 5% 이내 모델, 최대 3개.
+        # 단, '같은 실모델'이 밴드를 중복 점유하면 회전 다양성이 사라진다 —
+        # 예: muse-spark-1.3-contributor 와 muse-spark-1.3-contributor-free 는
+        # LiveBench 해석명이 둘 다 muse-spark-1.3 이다(2026-10-15). 해석명
+        # 기준으로 접어 중복을 제거하고, 3개를 채울 때까지 아래로 내려간다.
+        band = []
+        seen_identity = set()
+        for i, (s, _p, _b) in enumerate(scored):
+            if s < floor:
+                break                      # 내림차순 정렬이므로 이후도 전부 미달
+            ident = None
+            if isinstance(_b, dict):
+                ident = (_b.get("_livebench") or {}).get("livebench_model")
+            ident = ident or _p.model_id
+            if ident in seen_identity:
+                continue
+            seen_identity.add(ident)
+            band.append((i, s))
+            if len(band) >= _ROTATION_MAX_CANDIDATES:
+                break
+        if len(band) < 2:
+            return 0, "narrow", [scored[i][1].model_id for i, _ in band]
+
+        key = role or "?"
+        with self._rotation_lock:
+            st = self._rotation.setdefault(key, {"counts": {}, "last": None, "last_ts": 0.0})
+            counts = st.setdefault("counts", {})
+            last = st.get("last")
+            last_ts = float(st.get("last_ts", 0.0) or 0.0)
+            now = time.time()
+
+            pool = list(band)
+            # 쿨다운: 방금 쓴 모델은 잠시 제외(대안이 있을 때만)
+            if last and len(pool) > 1 and (now - last_ts) < _ROTATION_COOLDOWN_S:
+                alt = [(i, s) for i, s in pool if scored[i][1].model_id != last]
+                if alt:
+                    pool = alt
+
+            # 최소 투입 우선 → 동률이면 점수 높은 쪽
+            pool.sort(key=lambda t: (counts.get(scored[t[0]][1].model_id, 0), -t[1]))
+            idx = pool[0][0]
+            chosen_id = scored[idx][1].model_id
+
+            counts[chosen_id] = counts.get(chosen_id, 0) + 1
+            st["last"] = chosen_id
+            st["last_ts"] = now
+            st["total"] = int(st.get("total", 0) or 0) + 1
+            self._save_rotation()
+
+        names = [scored[i][1].model_id for i, _ in band]
+        return idx, ("rank1" if idx == 0 else "rotate"), names
+
+    def rotation_stats(self) -> dict:
+        """역할별 투입 분포(관측용) — 회전이 실제로 도는지 확인한다."""
+        out = {}
+        for role, st in (self._rotation or {}).items():
+            counts = st.get("counts", {}) or {}
+            total = sum(int(v or 0) for v in counts.values())
+            out[role] = {
+                "total": total,
+                "counts": dict(sorted(counts.items(), key=lambda kv: -int(kv[1] or 0))),
+                "share": {k: round(int(v or 0) / total, 3) for k, v in counts.items()} if total else {},
+                "last": st.get("last"),
+            }
+        return out
+
     def _load_custom_profiles(self):
         """Load ModelProfiles from the SAME source the chat/debate UI uses.
 
@@ -706,11 +862,29 @@ class DynamicModelSelector:
         ctx_keys = context_keys or ["overall"]
         
         # 1. Strength (Task/Role Fit)
-        # Model Intelligence first: when a blended FINAL capability score
-        # (public benchmarks + DAON field evidence, weighted by the Evidence
-        # layer) exists for this model+capability, it replaces the binary
-        # name-match so real capability gaps (e.g. 3.8-Max vs 3.7) become
-        # visible. Falls back to legacy name inference when no intel applies.
+        # 우선순위 (2026-10-15):
+        #   ① LiveBench 역할 축 실측 — 노드 역할에 맞는 분야(design_layout,
+        #      research, browser, long_horizon …) 점수. '노드별 최적 모델 선별'.
+        #   ② ModelIntel capability — 공개 벤치마크 + DAON 실전 블렌딩
+        #   ③ 이름 추정 — 위 둘 다 없을 때만. 최대값(1.0)이 아니라 중립값을
+        #      준다. 1.0 을 주면 미검증 모델이 실측 고성능 모델을 이긴다.
+        _lb_role = None
+        _lb_role_ev = {}
+        try:
+            from api.dynamic.livebench_source import get_livebench_source
+            _lbs = get_livebench_source()
+            if _lbs.available:
+                _lb_role = _lbs.role_score(profile.model_id, role)
+                if _lb_role is not None:
+                    _hit = _lbs.resolve(profile.model_id) or (None, None)
+                    _lb_role_ev = {"axes": list(_lbs.role_axes(role).keys()),
+                                   "role_score": round(_lb_role, 4),
+                                   "livebench_model": _hit[0],
+                                   "source": "livebench_role"}
+        except Exception:
+            _lb_role, _lb_role_ev = None, {}
+        scores["_livebench"] = _lb_role_ev or {}
+
         _intel_score = None
         _intel_ev = {}
         try:
@@ -721,10 +895,16 @@ class DynamicModelSelector:
         except Exception:
             _intel_score, _intel_ev = None, {}
         scores["_intel"] = _intel_ev or {}
-        if _intel_score is not None:
+
+        if _lb_role is not None:
+            scores["strength"] = _lb_role
+            scores["_strength_src"] = "livebench_role"
+        elif _intel_score is not None:
             scores["strength"] = _intel_score
+            scores["_strength_src"] = "model_intel"
         elif required_strength in profile.strengths:
-            scores["strength"] = 1.0
+            scores["strength"] = _NAME_MATCH_HIT
+            scores["_strength_src"] = "name_match"
         else:
             related = {
                 "code": ["code", "reasoning"],
@@ -738,7 +918,8 @@ class DynamicModelSelector:
             }
             matching = set(related.get(required_strength, [required_strength]))
             overlap = len(matching & set(profile.strengths))
-            scores["strength"] = min(1.0, overlap / max(1, len(matching)) * 1.2)
+            scores["strength"] = min(0.6, overlap / max(1, len(matching)) * 0.8)
+            scores["_strength_src"] = "name_partial"
             
         # 2. Historical Success Rate
         scores["success_rate"] = self._history.get_success_rate(
@@ -875,7 +1056,20 @@ class DynamicModelSelector:
         except Exception:
             _daon_stats = {}
 
+        # 무료 티어 중복 제거: 같은 모델의 '-free' 변형이 유료 정식판과 함께
+        # 등록돼 있으면 후보에 2번 나타난다(예: muse-spark-1.3-contributor 와
+        # ...-contributor-free). 무료 티어는 상위 제공자 쿼터/403 이 잦아
+        # 신뢰도가 낮으므로, 정식판이 있으면 무료 변형은 후보에서 제외한다.
+        # (무료 전용 모델 — space-bunny-free 등 — 은 그대로 유지된다.)
+        _paid_ids = {m for m in self._profiles if not m.endswith("-free")}
+
         for model_id, profile in self._profiles.items():
+            # 미디어 생성/임베딩 모델은 LLM 노드 후보가 아니다(원천 차단).
+            if is_non_llm_model(model_id):
+                continue
+            # 유료 정식판이 있는 '-free' 변형 제외(중복 후보 방지)
+            if model_id.endswith("-free") and model_id[:-5] in _paid_ids:
+                continue
             if allowed is not None:
                 if profile.provider not in allowed:
                     continue
@@ -917,7 +1111,19 @@ class DynamicModelSelector:
             scored.append((score, profile, breakdown))
         
         scored.sort(key=lambda x: x[0], reverse=True)
-        
+
+        # ── 1·2순위 교대 투입 (회전) ──────────────────────────────────
+        # 1위만 무조건 배정하면 매번 같은 모델이 노드에 고정 투입된다.
+        # 품질 게이트(1위 대비 5% 밴드) 안에서 최소 사용 모델을 골라 교대.
+        _pick_idx, _pick_mode, _band_names = 0, "rank1", []
+        try:
+            _pick_idx, _pick_mode, _band_names = self._pick_from_band(role, scored)
+            if _pick_idx > 0:
+                scored.insert(0, scored.pop(_pick_idx))
+        except Exception as e:
+            _logger.warning("Rotation pick failed, falling back to rank1: %s", e)
+            _pick_idx, _pick_mode, _band_names = 0, "rank1", []
+
         # Build fallback chain
         chain = []
         for score, profile, breakdown in scored[:top_k]:
@@ -963,6 +1169,11 @@ class DynamicModelSelector:
             "frameworks": task_context.get("frameworks", []),
             "context_keys": context_keys,
             "difficulty": difficulty,
+            "rotation": {
+                "mode": _pick_mode,
+                "band": _band_names,
+                "chosen": chain[0]["model"] if chain else None,
+            },
         }
         
         # Phase 2: record the selection (chain + per-model evidence) into the
@@ -974,6 +1185,8 @@ class DynamicModelSelector:
                 "required_strength": required_strength,
                 "difficulty": difficulty,
                 "context_keys": list(context_keys),
+                "pick_mode": _pick_mode,
+                "band": _band_names,
                 "chain": [
                     {
                         "model": c.get("model"),
