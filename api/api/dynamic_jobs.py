@@ -34,6 +34,16 @@ except Exception:
     _DYNAMIC_JOBS = {}
     _LINEAGE = {}
 
+# Wake Queue 부팅 배선 (Phase 1): 미전달 깨우기 복구 + 디스패처 시작.
+# import 시점 실행은 recover_interrupted_jobs()와 같은 기존 패턴을 따른다.
+# 전부 guarded — 실패해도 잡 로딩/서버 부팅에 영향을 주지 않는다.
+try:
+    from api.wake_queue import recover_stale, ensure_dispatcher
+    recover_stale()
+    ensure_dispatcher()
+except Exception:
+    pass
+
 _DYNAMIC_JOBS_LOCK = threading.Lock()
 _CANCELLED_JOBS = set()
 
@@ -421,15 +431,36 @@ def push_harness_started(session_id: str, run_id: str, task: str = '') -> None:
 
 
 def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True) -> None:
-    """하네스 백그라운드 잡 완료/실패를 해당 세션의 활성 챗 스트림에 push한다.
+    """하네스 백그라운드 잡 완료/실패를 해당 세션에 전달한다.
 
-    챗 경로에서 시작된 하네스(execute_dynamic_harness background=True)가 끝나면
-    사용자가 다른 탭을 보고 있어도 챗으로 결과 알림이 도착하도록 한다.
-    활성 스트림이 없으면(턴 종료 후 SSE 닫힘) 조용히 무시한다 — 하네스 탭
-    폴링(/api/dynamic/status)이 결과를 보여주므로 유실되지 않는다.
+    1) Wake Queue에 영속 기록 — 스트림 유무와 무관하게 항상 (유일한 진실).
+       디스패처가 busy 해소 후 자율 깨우기 턴으로 배달한다.
+    2) 기존 라이브 스트림 push (빠른 경로, 유지).
+    3) 스트림이 없고 Wake가 꺼져 있을 때만(DAON_WAKE_QUEUE=0) 기존처럼
+       DB pending 공지(save_notice)에 저장 — 킬스위치 완전 복귀용.
+       Wake가 켜져 있을 때는 디스패처가 전담하므로 save_notice를 건너뛰어
+       다음 사용자 턴과의 중복 보고를 방지한다.
+    (2026-10-17: Wake Queue Phase 1. 짧은 잡은 기존 경로로 즉시 push.)
     """
     if not session_id:
         return
+    try:
+        from api.wake_queue import enqueue_wake, wake_enabled
+        _wake_on = wake_enabled()
+    except Exception:
+        _wake_on = False
+    if _wake_on:
+        try:
+            enqueue_wake(
+                kind="harness_done",
+                dedup_key=f"harness:{run_id}",
+                target_session_id=session_id,
+                run_id=run_id,
+                ok=ok,
+                summary=(result or "")[:500],
+            )
+        except Exception:
+            pass
     try:
         from api.config import get_stream_queue
         q = get_stream_queue(session_id)
@@ -439,8 +470,29 @@ def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True
                 'ok': bool(ok),
                 'result': result or '',
             }))
+            return
     except Exception:
         pass
+    # 스트림 없음 → Wake OFF일 때만 기존 pending 공지 (다음 턴에 보고)
+    if not _wake_on:
+        try:
+            _job_store.save_notice(session_id, run_id, result or "", ok=ok)
+        except Exception:
+            pass
+
+
+def take_pending_harness_notices(session_id: str) -> list:
+    """세션의 미전달 하네스 완료 공지를 수령한다 (streaming.py 턴 시작 시 호출).
+
+    조회와 동시에 delivered=1로 표시하므로 중복 보고되지 않는다.
+    실패 시 빈 리스트 (무해 폴백).
+    """
+    if not session_id:
+        return []
+    try:
+        return _job_store.take_pending_notices(session_id)
+    except Exception:
+        return []
 
 
 def _derive_phase(job: dict) -> int:

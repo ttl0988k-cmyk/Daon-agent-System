@@ -117,6 +117,39 @@ class HarnessJobStore:
 
                         CREATE INDEX IF NOT EXISTS idx_lineage_parent ON dynamic_lineage(parent_run_id);
                         CREATE INDEX IF NOT EXISTS idx_lineage_root ON dynamic_lineage(root_run_id);
+
+                        CREATE TABLE IF NOT EXISTS dynamic_notices (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL,
+                            run_id TEXT NOT NULL,
+                            ok INTEGER NOT NULL DEFAULT 1,
+                            result TEXT,
+                            created_at REAL NOT NULL,
+                            delivered INTEGER NOT NULL DEFAULT 0
+                        );
+
+                        CREATE INDEX IF NOT EXISTS idx_notices_session ON dynamic_notices(session_id, delivered);
+
+                        CREATE TABLE IF NOT EXISTS wake_events (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            dedup_key TEXT NOT NULL UNIQUE,
+                            kind TEXT NOT NULL,
+                            target_session_id TEXT,
+                            target_profile TEXT,
+                            run_id TEXT,
+                            inbox_id INTEGER,
+                            ok INTEGER NOT NULL DEFAULT 1,
+                            summary TEXT,
+                            wake_depth INTEGER NOT NULL DEFAULT 0,
+                            status TEXT NOT NULL DEFAULT 'pending',
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            next_retry_at REAL,
+                            last_error TEXT,
+                            created_at REAL NOT NULL,
+                            delivered_at REAL
+                        );
+
+                        CREATE INDEX IF NOT EXISTS idx_wake_pending ON wake_events(status, target_session_id);
                     """)
                     conn.commit()
 
@@ -543,4 +576,69 @@ class HarnessJobStore:
                     jobs[rid] = job
         except Exception as e:
             _logger.error(f"[HarnessJobStore] Error loading recent jobs: {e}")
+        return jobs
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Harness Done Notices (2026-10-15: 턴 종료 후 끝난 백그라운드 잡 완료 공지)
+    # ──────────────────────────────────────────────────────────────────────────
+    # push_harness_done()은 활성 SSE 스트림이 있을 때만 챗창에 push한다.
+    # 턴이 이미 끝난 뒤(스트림 닫힘) 잡이 완료되면 알림이 유실되므로,
+    # DB에 pending 공지로 영속 저장해 다음 턴 시작 시 라온이 보고하도록 한다.
+
+    def save_notice(self, session_id: str, run_id: str, result: str = "", ok: bool = True) -> None:
+        """하네스 완료 공지를 pending 상태로 저장한다 (동기 직접 쓰기)."""
+        if not session_id or not run_id:
+            return
+        try:
+            with self._lock:
+                conn = self._connect()
+                try:
+                    conn.execute(
+                        "INSERT INTO dynamic_notices (session_id, run_id, ok, result, created_at, delivered)"
+                        " VALUES (?, ?, ?, ?, ?, 0)",
+                        (session_id, run_id, 1 if ok else 0, result or "", time.time()),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception as e:
+            _logger.error(f"[HarnessJobStore] Error saving notice {run_id}: {e}")
+
+    def take_pending_notices(self, session_id: str) -> List[Dict[str, Any]]:
+        """세션의 미전달 공지를 조회하고 delivered=1로 표시한다 (원자적 수령)."""
+        if not session_id:
+            return []
+        try:
+            with self._lock:
+                conn = self._connect()
+                try:
+                    cur = conn.execute(
+                        "SELECT id, session_id, run_id, ok, result, created_at"
+                        " FROM dynamic_notices WHERE session_id = ? AND delivered = 0"
+                        " ORDER BY created_at ASC",
+                        (session_id,),
+                    )
+                    rows = cur.fetchall()
+                    if rows:
+                        ids = [r["id"] for r in rows]
+                        placeholders = ",".join("?" for _ in ids)
+                        conn.execute(
+                            f"UPDATE dynamic_notices SET delivered = 1 WHERE id IN ({placeholders})",
+                            ids,
+                        )
+                        conn.commit()
+                    return [
+                        {
+                            "run_id": r["run_id"],
+                            "ok": bool(r["ok"]),
+                            "result": r["result"] or "",
+                            "created_at": r["created_at"],
+                        }
+                        for r in rows
+                    ]
+                finally:
+                    conn.close()
+        except Exception as e:
+            _logger.error(f"[HarnessJobStore] Error taking notices for {session_id}: {e}")
+            return []
         return jobs

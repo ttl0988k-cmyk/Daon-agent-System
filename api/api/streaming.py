@@ -1726,10 +1726,57 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # [Laya 이중 주입 방어]: Laya가 전용 스킬을 이미 핀포인트로 직배송 주입한 경우,
           # 기존 8766 랭커(_build_skill_hint)의 중복 힌트는 스킵하여 토큰 낭비를 원천 차단한다.
           _skill_hint = "" if has_laya_skill else _build_skill_hint(msg_text, context=_skill_context(s))
+          # [하네스 완료 공지 주입 2026-10-15]: 턴 종료 후 끝난 백그라운드 잡은
+          # push_harness_done()이 DB pending 공지로 저장해 둔다. 다음 턴 시작 시
+          # 여기서 주입하면 라온이 챗창에 완료 보고를 한다. 수령 즉시 delivered=1
+          # 처리되므로 중복 보고 없음. 실패 시 빈 문자열 (무해 폴백).
+          _harness_notice_ctx = ""
+          try:
+              from api.dynamic_jobs import take_pending_harness_notices as _take_hnotices
+              _pend = _take_hnotices(session_id) or []
+              if _pend:
+                  _nb = []
+                  for _n in _pend:
+                      _st = "완료" if _n.get("ok") else "오류"
+                      _rs = str(_n.get("result") or "")[:2000]
+                      _nb.append(
+                          f"[★ 백그라운드 하네스 {_st} 공지 — 대표님께 챗창에 보고할 것]\n"
+                          f"- run_id: {_n.get('run_id', '')}\n"
+                          f"- 결과 요약: {_rs}\n"
+                          f"- 지침: 이 턴 응답 맨 앞에서 완료 사실을 먼저 보고하라. "
+                          f"결과가 길면 핵심만 요약하고 전체는 'Dynamic Harness 세션' 탭에서 확인 가능하다고 안내하라."
+                      )
+                  _harness_notice_ctx = "\n\n".join(_nb)
+          except Exception:
+              _harness_notice_ctx = ""
+          # [백그라운드 기상 폴백 2026-10-17]: 브라우저가 닫혀 프론트 기상 폴러가
+          # 동작하지 않았을 때를 대비 — 미배달 완료 watch를 턴 시작 시 주입한다.
+          # 수령 즉시 delivered 처리로 중복 보고 없음. 실패 시 빈 문자열 (무해 폴백).
+          _wake_ctx = ""
+          try:
+              from api.wake import peek_completions as _wake_peek, mark_delivered as _wake_ack
+              _w_active, _w_done = _wake_peek(session_id)
+              if _w_done:
+                  _wb = []
+                  for _c in _w_done:
+                      _wb.append(
+                          f"[★ 백그라운드 작업 완료(기상) — 대표님께 챗창에 보고할 것]\n"
+                          f"- 라벨: {_c.get('label', '')} ({_c.get('kind', '')}/{_c.get('ref', '')})\n"
+                          f"- 결과: {str(_c.get('summary') or '')[:2000]}\n"
+                          + (f"- 이어할 일: {_c.get('next', '')}\n" if _c.get('next') else "")
+                          + f"- 지침: 이 턴 응답 맨 앞에서 완료 사실을 먼저 보고하고, '이어할 일'이 있으면 끊김 없이 계속 진행하라."
+                      )
+                  _wake_ctx = "\n\n".join(_wb)
+                  try:
+                      _wake_ack([_c.get('id') for _c in _w_done if _c.get('id')])
+                  except Exception:
+                      pass
+          except Exception:
+              _wake_ctx = ""
           user_message_payload = build_user_payload(
               workspace=s.workspace,
               msg_text=msg_text,
-              workspace_ctx=_skill_hint,
+              workspace_ctx=(_skill_hint + ("\n\n" + _harness_notice_ctx if _harness_notice_ctx else "") + ("\n\n" + _wake_ctx if _wake_ctx else "")),
               attachments=attachments,
           )
 
@@ -2029,6 +2076,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                       )
               except Exception as _relay_err:
                   _logger.warning("Auto-report relay to Raon failed: %s", _relay_err)
+
+          # ── Wake Queue drain (Phase 1): 이 턴 종료로 바쁨이 해소됐으므로
+          # 대기 중인 깨우기가 있으면 디스패처에 즉시 nudge. 비차단(Event.set),
+          # 실패해도 본 흐름과 무관 (guarded).
+          try:
+              from api.wake_queue import kick as _wake_kick
+              _wake_kick(session_id)
+          except Exception:
+              pass
 
           # ── Agent Voice Output: LLM 요약 생성 (done 이후 백그라운드로 실행) ──
           if _job_tools:
