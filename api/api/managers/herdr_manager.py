@@ -557,7 +557,7 @@ class HerdrManager:
                 f"[실행 결과 및 보고]:\n{body_to_report[:3000]}"
             )
             try:
-                send_agent_message(
+                _mid = send_agent_message(
                     sender=sender_label,
                     recipient="raon",
                     body=synthetic_body
@@ -565,7 +565,9 @@ class HerdrManager:
                 dispatched.append({
                     "recipient": "raon",
                     "task": task_summary,
-                    "body": synthetic_body
+                    "body": synthetic_body,
+                    # Wake Queue Phase 2: dedup 키(inbox:{id}) 연결용 (§5-E)
+                    "inbox_id": _mid,
                 })
                 _logger.info("[HerdrManager] Synthesized fallback completion report from %s to Raon inbox.", sender_label)
             except Exception as e:

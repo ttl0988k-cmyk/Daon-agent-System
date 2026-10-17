@@ -228,7 +228,102 @@ def execute_agent_task(
 
 
 def relay_report_to_raon(sender: str, dispatched_reports: List[Dict[str, Any]], workspace: Optional[str] = None) -> bool:
-    """Relay an asynchronous completion report to Raon, triggering an autonomous review turn."""
+    """Relay an asynchronous completion report to Raon, triggering an autonomous review turn.
+
+    Phase 2 (Wake Queue §5-C): Wake ON이면 즉시 깨우기 스레드를 띄우지 않고
+    영속 큐(wake_events)에 기록한 뒤 True를 반환한다. busy/무세션은 폐기가
+    아니라 pending 대기 — 디스패처가 해소 후 배달한다. dedup 키는 inbox_id
+    기준이므로 streaming relay와 herdr relay가 같은 보고를 넣어도 1건이다.
+    Wake OFF(DAON_WAKE_QUEUE=0)이면 기존 즉시 깨우기 동작 그대로.
+    """
+    try:
+        from api.wake_queue import wake_enabled
+        if wake_enabled():
+            return _relay_via_wake_queue(sender, dispatched_reports)
+    except Exception as e:
+        _logger.warning("[AutoReportRelay] Wake queue path failed, falling back: %s", e)
+    return _relay_immediate(sender, dispatched_reports, workspace)
+
+
+def _relay_via_wake_queue(sender: str, dispatched_reports: List[Dict[str, Any]]) -> bool:
+    """워커 보고를 wake_events에 큐잉한다. busy여도 유실 없이 True."""
+    from api.wake_queue import enqueue_wake, resolve_new_depth, _resolve_profile_session
+    import hashlib
+
+    if not dispatched_reports:
+        return False
+    # 깊이: 발신 턴 스탬프 우선, 없으면 라온 세션 휴리스틱 (§5-C)
+    stamped: List[int] = []
+    for r in dispatched_reports:
+        try:
+            if isinstance(r, dict) and r.get("wake_depth"):
+                stamped.append(int(r.get("wake_depth")))
+        except Exception:
+            continue
+    depth = 0
+    try:
+        if stamped:
+            depth = max(stamped)
+        else:
+            s0 = _resolve_profile_session("raon")
+            if s0 is not None:
+                depth = resolve_new_depth(s0.session_id)
+    except Exception:
+        depth = max(stamped) if stamped else 0
+    if depth >= MAX_RELAY_DEPTH:
+        _logger.warning(
+            "[AutoReportRelay] Max relay depth (%d) reached, refusing to enqueue report from %s.",
+            MAX_RELAY_DEPTH, sender,
+        )
+        return False
+    handled = 0
+    for r in dispatched_reports:
+        try:
+            if not isinstance(r, dict):
+                continue
+            iid = r.get("inbox_id")
+            if iid is not None:
+                try:
+                    key = f"inbox:{int(iid)}"
+                except Exception:
+                    key = f"inbox:{iid}"
+            else:
+                h = hashlib.md5(
+                    f"{sender}|{r.get('task', '')}|{(r.get('body') or '')[:200]}".encode("utf-8", "ignore")
+                ).hexdigest()[:12]
+                key = f"worker:{h}"
+            task = (r.get("task") or "작업 보고")[:200]
+            body_head = (r.get("body") or "")[:300]
+            # summary는 task+짧은 머리만 — 전문은 inbox에 있고 깨우기 턴의
+            # 시스템 프롬프트에 자동 주입된다 (§6, 주입 실측 확인됨)
+            summary = f"[{task}] {body_head}".strip()[:500]
+            enqueue_wake(
+                kind="worker_report",
+                dedup_key=key,
+                target_session_id=None,
+                target_profile="raon",
+                inbox_id=iid if isinstance(iid, int) else None,
+                ok=True,
+                summary=summary,
+                sender=sender,
+                task=task,
+                wake_depth=depth,
+            )
+            handled += 1  # dedup 적중도 처리된 것으로 간주 (배달 보장됨)
+        except Exception as e:
+            _logger.warning("[AutoReportRelay] Failed to queue report from %s: %s", sender, e)
+            continue
+    if handled:
+        _logger.info(
+            "[AutoReportRelay] Queued %d report(s) from %s for Raon wake-up (depth=%d).",
+            handled, sender, depth,
+        )
+        return True
+    return False
+
+
+def _relay_immediate(sender: str, dispatched_reports: List[Dict[str, Any]], workspace: Optional[str] = None) -> bool:
+    """Wake OFF 또는 폴백용 기존 즉시 깨우기 (동작 변경 없음)."""
     from api.models import all_sessions, get_session
     from api.config import ACTIVE_SESSION_STREAMS, STREAMS, STREAMS_LOCK
     from api.streaming import BroadcastQueue, _run_agent_streaming

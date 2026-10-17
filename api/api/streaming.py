@@ -567,8 +567,13 @@ def cancel_session_streams(session_id: str, exclude_stream_id: str = None) -> bo
     return cancelled_any
 
 
-def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None, reasoning_effort=None):
-    """Run agent in background thread, writing SSE events to STREAMS[stream_id]."""
+def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None, reasoning_effort=None, is_wake_turn=False, wake_depth=0):
+    """Run agent in background thread, writing SSE events to STREAMS[stream_id].
+
+    is_wake_turn/wake_depth (Wake Queue Phase 3): 깨우기 턴이면 True와 그 깊이.
+    디스패처가 전달한다. 턴 시작 시점에 세션 속성에 기록되어 후속 완료 이벤트의
+    wake_depth 판정 휴리스틱이 읽는다. 기본값으로 하위호환 유지.
+    """
     q = STREAMS.get(stream_id)
     if q is None:
         return
@@ -612,6 +617,13 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
         s = get_session(session_id)
         # (Workspace override removed to allow user-selected paths)
         s.model = model
+        # Wake Queue Phase 3: 턴 종류/깊이를 세션에 기록 — 후속 완료 이벤트의
+        # wake_depth 판정 휴리스틱(resolve_new_depth)이 읽는다. guarded.
+        try:
+            s._wake_turn = bool(is_wake_turn)
+            s._wake_depth = int(wake_depth or 0) if is_wake_turn else 0
+        except Exception:
+            pass
 
         _agent_lock = _get_session_agent_lock(session_id)
         # TD1: set thread-local env context so concurrent sessions don't clobber globals
@@ -1304,8 +1316,10 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               except Exception as _sp_e:
                   print(f"[webui] WARNING: system_prompt invalidation failed: {_sp_e}", flush=True)
 
-          # Reset collaborative relay loop guard on user message turn
-          if hasattr(s, "_relay_count"):
+          # Reset collaborative relay loop guard on user message turn only —
+          # 깨우기 턴에서는 리셋하지 않는다 (깊이 가드 무력화 방지, §5-D).
+          # DB wake_depth가 주 가드이며 이 속성은 하위호환용으로 유지한다.
+          if not is_wake_turn and hasattr(s, "_relay_count"):
               s._relay_count = 0
 
           # ── Inject Browser Context if active ──
@@ -1688,6 +1702,16 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           if _ephemeral_prompt:
               workspace_system_msg += "\n\n" + _ephemeral_prompt
 
+          # Wake Queue Phase 3: 사용자 턴이 inbox를 선소비했으면 해당 깨우기 닫기.
+          # compose_system_message의 inbox 주입(mark_read) 뒤에 실행해야 한다.
+          # 깨우기 턴에서는 닫지 않는다 (배달 대상이므로).
+          if not is_wake_turn:
+              try:
+                  from api.wake_queue import close_consumed_by_user_turn as _wclose
+                  _wclose(session_id, getattr(s, "profile", None))
+              except Exception:
+                  pass
+
           # Clean up any trailing interrupted assistant messages from a previous cancelled run
           while s.messages and s.messages[-1].get('role') == 'assistant':
               _last_c = str(s.messages[-1].get('content') or '')
@@ -2010,6 +2034,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                           )
                           if sent_count > 0:
                               m['content'] = cleaned_content
+                              # Wake Queue Phase 2: 발신 턴 깊이 스탬프 — relay가
+                              # 이 값으로 wake_depth를 이어 릴레이 체인을 잇는다.
+                              # 깨우기 턴 발신이면 depth+1, 일반 턴이면 0.
+                              try:
+                                  _nd = (int(wake_depth or 0) + 1) if is_wake_turn else 0
+                                  for _d in (details or []):
+                                      if isinstance(_d, dict):
+                                          _d.setdefault("wake_depth", _nd)
+                                          _d.setdefault("sender_session", s.session_id)
+                              except Exception:
+                                  pass
                               dispatched_reports = details
                               _logger.info(
                                   f"[AgentMessaging] {_sender_profile} dispatched {sent_count} message(s) from session {s.session_id}"

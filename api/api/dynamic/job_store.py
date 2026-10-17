@@ -140,6 +140,8 @@ class HarnessJobStore:
                             inbox_id INTEGER,
                             ok INTEGER NOT NULL DEFAULT 1,
                             summary TEXT,
+                            sender TEXT,
+                            task TEXT,
                             wake_depth INTEGER NOT NULL DEFAULT 0,
                             status TEXT NOT NULL DEFAULT 'pending',
                             attempts INTEGER NOT NULL DEFAULT 0,
@@ -160,6 +162,18 @@ class HarnessJobStore:
                         conn.execute("ALTER TABLE dynamic_jobs ADD COLUMN plan_json TEXT")
                         conn.commit()
                         _logger.info("[HarnessJobStore] Migrated dynamic_jobs table: added plan_json column")
+
+                    # Wake Queue Phase 2 migration: sender/task columns (기존 DB 무파괴 추가)
+                    try:
+                        cur = conn.execute("PRAGMA table_info(wake_events)")
+                        wcols = {row[1] for row in cur.fetchall()}
+                        if "sender" not in wcols:
+                            conn.execute("ALTER TABLE wake_events ADD COLUMN sender TEXT")
+                        if "task" not in wcols:
+                            conn.execute("ALTER TABLE wake_events ADD COLUMN task TEXT")
+                        conn.commit()
+                    except Exception:
+                        pass
                 finally:
                     conn.close()
         except Exception as e:

@@ -47,6 +47,15 @@ _WAKE_MAX_ATTEMPTS = 3
 _DISPATCH_POLL_INTERVAL = 1.0  # 초 (memory_store._QUEUE_POLL_INTERVAL과 동일)
 _SUMMARY_LIMIT = 500  # 깨우기 프롬프트에 싣는 요약 상한 (자)
 
+# 릴레이 체인 깊이 상한 — collaborator.MAX_RELAY_DEPTH와 같은 값 (Phase 2).
+# 검사는 배달 시점에 wake_events.wake_depth 기준으로 수행한다 (§5-C).
+_MAX_RELAY_DEPTH = 8
+try:
+    from api.collaborator import MAX_RELAY_DEPTH as _COLLAB_MAX_DEPTH
+    _MAX_RELAY_DEPTH = int(_COLLAB_MAX_DEPTH or 8)
+except Exception:
+    pass
+
 
 def wake_enabled() -> bool:
     """킬스위치. DAON_WAKE_QUEUE=0이면 디스패처·enqueue 모두 정지."""
@@ -97,7 +106,53 @@ def _connect() -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous=NORMAL")
     except Exception:
         pass
+    _ensure_wake_schema(conn)
     return conn
+
+
+def _ensure_wake_schema(conn: sqlite3.Connection) -> None:
+    """wake_events 테이블 자급 보장 (Phase 2: sender/task 포함).
+
+    테이블 생성은 job_store._ensure_schema가 부팅 시 수행하지만, 디스패처·
+    enqueue가 job_store 초기화 순서와 무관하게 동작하도록 여기서도 보장한다.
+    전부 IF NOT EXISTS / PRAGMA 확인 후 ALTER — 기존 DB 무파괴.
+    """
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS wake_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dedup_key TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL,
+                target_session_id TEXT,
+                target_profile TEXT,
+                run_id TEXT,
+                inbox_id INTEGER,
+                ok INTEGER NOT NULL DEFAULT 1,
+                summary TEXT,
+                sender TEXT,
+                task TEXT,
+                wake_depth INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_retry_at REAL,
+                last_error TEXT,
+                created_at REAL NOT NULL,
+                delivered_at REAL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wake_pending "
+            "ON wake_events(status, target_session_id)"
+        )
+        cur = conn.execute("PRAGMA table_info(wake_events)")
+        wcols = {row[1] for row in cur.fetchall()}
+        if "sender" not in wcols:
+            conn.execute("ALTER TABLE wake_events ADD COLUMN sender TEXT")
+        if "task" not in wcols:
+            conn.execute("ALTER TABLE wake_events ADD COLUMN task TEXT")
+        conn.commit()
+    except Exception as e:
+        _logger.warning("[WakeQueue] ensure schema failed: %s", e)
 
 
 # ─────────────────────────────────────────────
@@ -113,6 +168,8 @@ def enqueue_wake(
     inbox_id: Optional[int] = None,
     ok: bool = True,
     summary: str = "",
+    sender: Optional[str] = None,
+    task: Optional[str] = None,
     wake_depth: int = 0,
 ) -> bool:
     """완료 이벤트를 영속 큐에 기록한다. INSERT OR IGNORE (dedup).
@@ -129,13 +186,15 @@ def enqueue_wake(
                 cur = conn.execute(
                     """INSERT OR IGNORE INTO wake_events
                        (dedup_key, kind, target_session_id, target_profile,
-                        run_id, inbox_id, ok, summary, wake_depth,
+                        run_id, inbox_id, ok, summary, sender, task, wake_depth,
                         status, attempts, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)""",
                     (
                         dedup_key, kind, target_session_id, target_profile,
                         run_id, inbox_id, 1 if ok else 0,
                         (summary or "")[:_SUMMARY_LIMIT],
+                        (sender or "")[:200] if sender else None,
+                        (task or "")[:200] if task else None,
                         int(wake_depth or 0), time.time(),
                     ),
                 )
@@ -174,6 +233,82 @@ def pending_sessions() -> List[str]:
         return []
 
 
+def pending_profiles() -> List[str]:
+    """세션 미지정(profile만) pending이 있는 프로필 목록 (Phase 2).
+
+    워커 보고는 배달 시점에 프로필로 세션을 해석하므로(§4-3),
+    target_session_id가 비어 있는 행을 별도로 수집한다.
+    """
+    try:
+        now = time.time()
+        with _DB_LOCK:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    """SELECT DISTINCT target_profile FROM wake_events
+                       WHERE status = 'pending'
+                         AND (target_session_id IS NULL OR target_session_id = '')
+                         AND target_profile IS NOT NULL
+                         AND target_profile != ''
+                         AND (next_retry_at IS NULL OR next_retry_at <= ?)""",
+                    (now,),
+                )
+                return [r[0] for r in cur.fetchall() if r[0]]
+            finally:
+                conn.close()
+    except Exception as e:
+        _logger.warning("[WakeQueue] pending_profiles failed: %s", e)
+        return []
+
+
+def claim_pending_for_profile(profile: str) -> List[Dict[str, Any]]:
+    """그 프로필 앞으로 온 pending 전부를 원자적으로 processing 전환 후 반환.
+
+    세션 해석은 호출자(디스패처)가 _resolve_profile_session으로 수행한다.
+    """
+    if not profile:
+        return []
+    try:
+        now = time.time()
+        with _DB_LOCK:
+            conn = _connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cur = conn.execute(
+                    """SELECT id, dedup_key, kind, target_session_id, target_profile,
+                              run_id, inbox_id, ok, summary, sender, task, wake_depth,
+                              attempts, created_at
+                       FROM wake_events
+                       WHERE status = 'pending'
+                         AND (target_session_id IS NULL OR target_session_id = '')
+                         AND target_profile = ?
+                         AND (next_retry_at IS NULL OR next_retry_at <= ?)
+                       ORDER BY created_at ASC""",
+                    (str(profile), now),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    ids = [r["id"] for r in rows]
+                    ph = ",".join("?" for _ in ids)
+                    conn.execute(
+                        f"UPDATE wake_events SET status = 'processing' WHERE id IN ({ph})",
+                        ids,
+                    )
+                conn.commit()
+                return [dict(r) for r in rows]
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+    except Exception as e:
+        _logger.warning("[WakeQueue] claim for profile failed (%s): %s", profile, e)
+        return []
+
+
 def claim_pending_for_session(session_id: str) -> List[Dict[str, Any]]:
     """그 세션의 배달 가능 pending 전부를 원자적으로 processing 전환 후 반환.
 
@@ -190,7 +325,7 @@ def claim_pending_for_session(session_id: str) -> List[Dict[str, Any]]:
                 conn.execute("BEGIN IMMEDIATE")
                 cur = conn.execute(
                     """SELECT id, dedup_key, kind, target_session_id, target_profile,
-                              run_id, inbox_id, ok, summary, wake_depth,
+                              run_id, inbox_id, ok, summary, sender, task, wake_depth,
                               attempts, created_at
                        FROM wake_events
                        WHERE status = 'pending'
@@ -356,6 +491,8 @@ def recover_stale() -> int:
 
     부팅 시점에 살아 있는 processing은 전부 미완료이므로(배달 중 턴은 서버와
     함께 죽었다) 시간 조건 없이 복구한다. memory_store 크래시 복구 패턴 미러링.
+    이어서 Phase 3 부팅 보정: 서버 다운 중 done/error가 된 잡 중 wake 기록이
+    없는 최근 잡을 보정 enqueue한다 (§7 마지막 행).
     """
     try:
         with _DB_LOCK:
@@ -369,12 +506,165 @@ def recover_stale() -> int:
                 n = cur.rowcount or 0
                 if n:
                     _logger.info("[WakeQueue] Recovered %d stale processing events to pending.", n)
-                return n
             finally:
                 conn.close()
     except Exception as e:
         _logger.warning("[WakeQueue] recover_stale failed: %s", e)
         return 0
+    # Phase 3 부팅 보정 (guarded — 실패해도 복구 카운트와 부팅에 영향 없음)
+    try:
+        n += backfill_missing_harness()
+    except Exception as e:
+        _logger.warning("[WakeQueue] boot backfill failed: %s", e)
+    return n
+
+
+def backfill_missing_harness(window_hours: float = 24.0, limit: int = 50) -> int:
+    """서버 다운 중 완료된 잡의 보정 enqueue (§7 마지막 행).
+
+    dynamic_jobs에서 status가 done/error이고 updated_at이 최근(window 내)인데
+    wake_events에 dedup_key 'harness:{run_id}'가 없는 잡을 찾아 보정 기록한다.
+    취소된 잡(set_job_cancelled → status 'cancelled')은 대상이 아니다.
+    고대 잡의 기습 깨우기를 막기 위해 window 밖은 무시한다.
+    """
+    found = 0
+    try:
+        from api.dynamic.job_store import HarnessJobStore as _Store
+        store = _Store()
+        try:
+            store.flush()
+        except Exception:
+            pass
+        with _DB_LOCK:
+            conn = _connect()
+            try:
+                cutoff = time.time() - float(window_hours) * 3600.0
+                cur = conn.execute(
+                    """SELECT run_id, session_id, status, result, error, updated_at
+                       FROM dynamic_jobs
+                       WHERE status IN ('done', 'error')
+                         AND updated_at >= ?
+                       ORDER BY updated_at DESC LIMIT ?""",
+                    (cutoff, int(limit)),
+                )
+                jobs = [dict(r) for r in cur.fetchall()]
+                existing = set()
+                if jobs:
+                    ph = ",".join("?" for _ in jobs)
+                    keys = [f"harness:{j['run_id']}" for j in jobs]
+                    cur2 = conn.execute(
+                        f"SELECT dedup_key FROM wake_events WHERE dedup_key IN ({ph})",
+                        keys,
+                    )
+                    existing = {r[0] for r in cur2.fetchall()}
+            finally:
+                conn.close()
+        for j in jobs:
+            try:
+                key = f"harness:{j.get('run_id')}"
+                if key in existing:
+                    continue
+                sid = j.get("session_id") or ""
+                if not sid:
+                    continue
+                ok = (j.get("status") == "done")
+                summ = (j.get("result") or j.get("error") or "")[:_SUMMARY_LIMIT]
+                if enqueue_wake(
+                    kind="harness_done",
+                    dedup_key=key,
+                    target_session_id=sid,
+                    run_id=j.get("run_id"),
+                    ok=ok,
+                    summary=summ,
+                    wake_depth=0,
+                ):
+                    found += 1
+            except Exception:
+                continue
+        if found:
+            _logger.info("[WakeQueue] Boot backfilled %d harness completion(s).", found)
+    except Exception as e:
+        _logger.warning("[WakeQueue] backfill_missing_harness failed: %s", e)
+    return found
+
+
+def mark_consumed(ids: List[int]) -> None:
+    """사용자 턴이 이미 소비한 보고를 done으로 닫는다 (재깨우기 방지, §7).
+
+    last_error에 사유를 남겨 delivered와 구분한다.
+    """
+    if not ids:
+        return
+    try:
+        with _DB_LOCK:
+            conn = _connect()
+            try:
+                ph = ",".join("?" for _ in ids)
+                conn.execute(
+                    f"UPDATE wake_events SET status = 'done', delivered_at = ?, "
+                    f"last_error = 'consumed_by_user_turn' WHERE id IN ({ph})",
+                    [time.time()] + list(ids),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:
+        _logger.warning("[WakeQueue] mark_consumed failed: %s", e)
+
+
+def close_consumed_by_user_turn(session_id: str, profile: Optional[str] = None) -> int:
+    """사용자 턴 시작 시: inbox가 이미 소비한 worker_report를 done으로 닫는다.
+
+    시스템 프롬프트의 inbox 주입(format_inbox_prompt, mark_read=True)이 끝난
+    뒤에 호출해야 한다. 해당 세션/프로필 앞으로 온 pending worker_report 중
+    inbox 행이 이미 읽음(read_flag=1)이면 사용자 턴이 본 것이므로 깨우지 않는다.
+    inbox_id가 없는 행은 판단 불가 — 그대로 둔다.
+    """
+    closed = 0
+    try:
+        with _DB_LOCK:
+            conn = _connect()
+            try:
+                if session_id:
+                    cur = conn.execute(
+                        """SELECT id, inbox_id FROM wake_events
+                           WHERE status = 'pending' AND kind = 'worker_report'
+                             AND target_session_id = ? AND inbox_id IS NOT NULL""",
+                        (session_id,),
+                    )
+                    rows = [dict(r) for r in cur.fetchall()]
+                else:
+                    rows = []
+                if profile:
+                    cur = conn.execute(
+                        """SELECT id, inbox_id FROM wake_events
+                           WHERE status = 'pending' AND kind = 'worker_report'
+                             AND (target_session_id IS NULL OR target_session_id = '')
+                             AND target_profile = ? AND inbox_id IS NOT NULL""",
+                        (str(profile),),
+                    )
+                    rows = rows + [dict(r) for r in cur.fetchall()]
+            finally:
+                conn.close()
+        if not rows:
+            return 0
+        try:
+            from api.memory_store import get_agent_inbox as _get_inbox
+            _unread = _get_inbox("raon", unread_only=True, limit=200) or []
+            unread_ids = {m.get("id") for m in _unread if m.get("id") is not None}
+        except Exception:
+            return 0
+        consumed = [r["id"] for r in rows if r.get("inbox_id") not in unread_ids]
+        if consumed:
+            mark_consumed(consumed)
+            closed = len(consumed)
+            _logger.info(
+                "[WakeQueue] Closed %d worker_report(s) consumed by user turn (%s).",
+                closed, session_id,
+            )
+    except Exception as e:
+        _logger.warning("[WakeQueue] close_consumed failed: %s", e)
+    return closed
 
 
 # ─────────────────────────────────────────────
@@ -394,6 +684,85 @@ def _resolve_session(session_id: str):
         return s
     except Exception:
         return None
+
+
+def _resolve_profile_session(profile: str):
+    """프로필로 가장 최근 비아카이브 세션을 해석한다. 생성은 하지 않는다.
+
+    §4-3: 깨우기 위해 새 세션을 만들지는 않는다. 해석할 세션이 없으면
+    호출자가 dropped 처리한다. (find_or_create 탐색부 미러링, 생성부 제외)
+    """
+    if not profile:
+        return None
+    try:
+        from api.models import all_sessions, get_session
+        canon = str(profile).strip().lower()
+        for s_info in all_sessions():
+            try:
+                p = (s_info.get("profile") or "").lower()
+                if p in (canon, "raon", "라온") if canon in ("raon", "라온") else (p == canon):
+                    if s_info.get("archived"):
+                        continue
+                    s = get_session(s_info["session_id"])
+                    if s is not None and not bool(getattr(s, "archived", False)):
+                        return s
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def current_turn_depth(session_id: str) -> int:
+    """그 세션의 현재 턴 깊이. 깨우기 턴이면 _wake_depth, 아니면 0.
+
+    _run_agent_streaming이 턴 시작 시점에 세션 속성에 기록한다 (Phase 3).
+    어떤 실패에도 0 (깊이 모르면 최하위로 취급 — 안전 방향).
+    """
+    if not session_id:
+        return 0
+    try:
+        s = _resolve_session(session_id)
+        if s is None:
+            return 0
+        if bool(getattr(s, "_wake_turn", False)):
+            return int(getattr(s, "_wake_depth", 0) or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def resolve_new_depth(session_id: Optional[str] = None, stamped: Optional[List[int]] = None) -> int:
+    """새 완료 이벤트의 wake_depth를 결정한다.
+
+    stamped: 발신 턴이 직접 찍어준 깊이 목록 (streaming turn-end 스탬프).
+    없으면 세션 휴리스틱: 깨우기 턴에서 위임된 작업이면 depth+1, 아니면 0.
+    """
+    best = 0
+    try:
+        for d in (stamped or []):
+            try:
+                if int(d) > best:
+                    best = int(d)
+            except Exception:
+                continue
+        if best:
+            return best
+        if session_id:
+            cur = current_turn_depth(session_id)
+            if cur or _is_wake_turn(session_id):
+                return cur + 1
+    except Exception:
+        pass
+    return best
+
+
+def _is_wake_turn(session_id: str) -> bool:
+    try:
+        s = _resolve_session(session_id)
+        return bool(getattr(s, "_wake_turn", False)) if s is not None else False
+    except Exception:
+        return False
 
 
 def _is_busy(session_id: str) -> bool:
@@ -438,10 +807,17 @@ def build_wake_prompt(events: List[Dict[str, Any]]) -> str:
     blocks = []
     for ev in events:
         if (ev.get("kind") or "") == "worker_report":
-            # Phase 2에서 채움. Phase 1에서는 도달하지 않음.
+            # Phase 2: 본문 전문을 싣지 않는다. 본문은 agent_inbox에 있으며
+            # 깨우기 턴의 시스템 프롬프트에 inbox 미읽음이 자동 주입된다
+            # (streaming_prompts compose_system_message §6 — 실측 확인됨).
+            # 만일 주입이 비어 있으면(inbox 선소비) summary+조회 지시로 대체.
+            _sender = ev.get("sender") or "동료 에이전트"
+            _task = (ev.get("task") or ev.get("summary") or "작업 보고")[:200]
+            _iid = ev.get("inbox_id")
             blocks.append(
-                f"- 종류: 동료 보고 / inbox_id: {ev.get('inbox_id')}\n"
-                f"- 요약: {(ev.get('summary') or '')[:_SUMMARY_LIMIT]}"
+                f"- 종류: 동료 작업 완료 보고 / 발신: {_sender} / 작업: {_task}\n"
+                + (f"- inbox_id: {_iid} (agent_inbox에서 본문 확인)\n" if _iid else "")
+                + f"- 결과 요약(일부): {(ev.get('summary') or '')[:_SUMMARY_LIMIT]}"
             )
             continue
         run_id = ev.get("run_id") or ""
@@ -527,6 +903,33 @@ def _drain_once() -> None:
             _deliver_async(sid, events)
         except Exception as e:
             _logger.warning("[WakeQueue] drain error (%s): %s", sid, e)
+    # Phase 2: 프로필 앞으로 온 보고 — 배달 시점에 세션 해석 (§4-3)
+    for profile in pending_profiles():
+        try:
+            s = _resolve_profile_session(profile)
+            if s is None:
+                # 해석할 세션 없음 — 새 세션을 만들지 않고 dropped (워커 보고는
+                # agent_inbox에 남아 있어 다음 사용자 턴에서 주입된다)
+                events = claim_pending_for_profile(profile)
+                if events:
+                    drop(
+                        [ev["id"] for ev in events if ev.get("id")],
+                        reason=f"no live session for profile {profile}",
+                    )
+                    _logger.info(
+                        "[WakeQueue] Dropped %d event(s): no live session for profile %s.",
+                        len(events), profile,
+                    )
+                continue
+            sid = s.session_id
+            if _is_busy(sid):
+                continue
+            events = claim_pending_for_profile(profile)
+            if not events:
+                continue
+            _deliver_async(sid, events)
+        except Exception as e:
+            _logger.warning("[WakeQueue] profile drain error (%s): %s", profile, e)
 
 
 def _deliver_async(session_id: str, events: List[Dict[str, Any]]) -> None:
@@ -560,6 +963,20 @@ def _deliver_thread(session_id: str, events: List[Dict[str, Any]]) -> None:
             drop(ids, reason="target session gone/archived")
             _logger.info("[WakeQueue] Dropped %d event(s): session %s gone.", len(ids), session_id)
             return
+        # Phase 2 — 배달 시점 깊이 가드 (§5-C): 릴레이 체인이 상한에 닿으면
+        # 깨우지 않고 dropped + 경고. 세션 속성이 아닌 DB wake_depth 기준.
+        try:
+            _max_depth = max(int(ev.get("wake_depth") or 0) for ev in events)
+        except Exception:
+            _max_depth = 0
+        if _max_depth >= _MAX_RELAY_DEPTH:
+            drop(ids, reason=f"relay depth {_max_depth} >= {_MAX_RELAY_DEPTH}")
+            _logger.warning(
+                "[WakeQueue] Relay depth %d reached for session %s — "
+                "dropping %d event(s) to stop ping-pong loop.",
+                _max_depth, session_id, len(ids),
+            )
+            return
         prompt = build_wake_prompt(events)
         # 기존 relay_report_to_raon과 동일한 깨우기 실행 경로
         from api.config import STREAMS, STREAMS_LOCK
@@ -573,6 +990,7 @@ def _deliver_thread(session_id: str, events: List[Dict[str, Any]]) -> None:
         thr = threading.Thread(
             target=_run_agent_streaming,
             args=(s.session_id, prompt, model, workspace, stream_id),
+            kwargs={"is_wake_turn": True, "wake_depth": _max_depth},
             daemon=True,
             name="WakeTurn",
         )

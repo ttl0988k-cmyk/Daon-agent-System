@@ -1369,7 +1369,8 @@ def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = 
                 structured_body += '\n---\n' + body
 
             if to and structured_body:
-                if send_agent_message(sender, to, structured_body, cc=cc or None, run_id=run_id):
+                _mid = send_agent_message(sender, to, structured_body, cc=cc or None, run_id=run_id)
+                if _mid:
                     sent += 1
                     details.append({
                         "sender": sender,
@@ -1379,6 +1380,8 @@ def parse_and_dispatch_messages(sender: str, text: str, run_id: Optional[str] = 
                         "context": context,
                         "cc": cc,
                         "body": body,
+                        # Wake Queue Phase 2: dedup 키(inbox:{id}) 연결용 (§5-E)
+                        "inbox_id": _mid,
                     })
             return ''  # 출력에서 메시지 블록 제거
 

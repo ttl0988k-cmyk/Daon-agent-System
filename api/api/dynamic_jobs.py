@@ -430,7 +430,8 @@ def push_harness_started(session_id: str, run_id: str, task: str = '') -> None:
         pass
 
 
-def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True) -> None:
+def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True,
+                      wake_depth: Optional[int] = None) -> None:
     """하네스 백그라운드 잡 완료/실패를 해당 세션에 전달한다.
 
     1) Wake Queue에 영속 기록 — 스트림 유무와 무관하게 항상 (유일한 진실).
@@ -451,6 +452,14 @@ def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True
         _wake_on = False
     if _wake_on:
         try:
+            if wake_depth is None:
+                # Phase 2: 발신 턴 깊이 자동 판정 — 깨우기 턴에서 위임된 작업이면
+                # depth+1로 기록해 릴레이 체인을 잇는다 (§5-C)
+                try:
+                    from api.wake_queue import resolve_new_depth as _resolve_depth
+                    wake_depth = _resolve_depth(session_id)
+                except Exception:
+                    wake_depth = 0
             enqueue_wake(
                 kind="harness_done",
                 dedup_key=f"harness:{run_id}",
@@ -458,6 +467,7 @@ def push_harness_done(session_id: str, run_id: str, result: str, ok: bool = True
                 run_id=run_id,
                 ok=ok,
                 summary=(result or "")[:500],
+                wake_depth=int(wake_depth or 0),
             )
         except Exception:
             pass
