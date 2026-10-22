@@ -11,6 +11,7 @@ import json
 import time
 import tempfile
 import threading
+import subprocess
 import email.parser
 import urllib.request
 import urllib.error
@@ -340,10 +341,38 @@ def _transcribe_local(audio_bytes, language=None, initial_prompt=None):
     print("[STT Pipeline] Decode start", flush=True)
     suffix = '.webm'
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    wav_path = None
     try:
         os.write(tmp_fd, audio_bytes)
         os.close(tmp_fd)
         print(f"[STT Pipeline] Decode end (bytes={len(audio_bytes)})", flush=True)
+
+        # ── [2026-10-14 STT 무음 인식 수정] ──
+        # 브라우저 MediaRecorder 가 만든 webm(opus) 은 스트리밍 녹음 특성상 컨테이너
+        # 헤더에 duration/seek 정보가 불완전해, faster-whisper 의 내부 ffmpeg 디코더가
+        # 오디오를 무음으로 잘못 해석한다(실측: audio_duration 은 잡히는데 text="").
+        # → ffmpeg 로 16kHz mono wav 로 재인코딩해 whisper 에 넘기면 안정적으로 디코딩된다.
+        _ff_fd, wav_path = tempfile.mkstemp(suffix='.wav')
+        os.close(_ff_fd)
+        try:
+            proc = subprocess.run(
+                ['ffmpeg', '-y', '-v', 'error',
+                 '-i', tmp_path,
+                 '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le',
+                 wav_path],
+                capture_output=True, timeout=60,
+            )
+            if proc.returncode != 0 or not os.path.exists(wav_path) or os.path.getsize(wav_path) < 1000:
+                stderr = proc.stderr.decode('utf-8', errors='replace')
+                _logger.warning("[STT Pipeline] ffmpeg wav 변환 실패(%s), 원본 webm 그대로 시도", stderr[:200])
+                wav_path = None
+            else:
+                transcribe_path = wav_path
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            _logger.warning("[STT Pipeline] ffmpeg 사용 불가(%s), 원본 webm 그대로 시도", e)
+            wav_path = None
+
+        transcribe_path = wav_path if wav_path else tmp_path
 
         lang = language or 'ko'
         t0 = time.perf_counter()
@@ -352,7 +381,7 @@ def _transcribe_local(audio_bytes, language=None, initial_prompt=None):
         print(f"[STT Pipeline] Whisper start (device={used_device}, prompt='{initial_prompt or ''}')", flush=True)
         try:
             segments, info = model.transcribe(
-                tmp_path,
+                transcribe_path,
                 language=lang,
                 initial_prompt=initial_prompt,
                 beam_size=1,
@@ -369,7 +398,7 @@ def _transcribe_local(audio_bytes, language=None, initial_prompt=None):
             try:
                 cpu_model = _get_cpu_fallback_model()
                 segments, info = cpu_model.transcribe(
-                    tmp_path,
+                    transcribe_path,
                     language=lang,
                     initial_prompt=initial_prompt,
                     beam_size=1,
@@ -395,6 +424,11 @@ def _transcribe_local(audio_bytes, language=None, initial_prompt=None):
             os.unlink(tmp_path)
         except OSError:
             pass
+        if wav_path:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
 
 
 def handle_post_whisper_transcribe(handler, parsed):

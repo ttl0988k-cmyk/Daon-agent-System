@@ -40,7 +40,9 @@ export const api = {
    */
   async createSession(profile, workspace = 'C:\\daon', model = '') {
     try {
-      const payload = { profile, workspace };
+      // 🚨 작업장(multi) 표면 명시 (2026-10-21): 서버가 클래식(webui) 세션과
+      // 작업장 세션을 교차 차단할 수 있도록 표면을 새긴다.
+      const payload = { profile, workspace, surface: 'multi' };
       if (model) payload.model = model;
 
       const res = await fetch('/api/session/new', {
@@ -63,7 +65,7 @@ export const api = {
    * Start chat execution (generates stream_id)
    * ⚠️ CAUTION: Starting chat on a busy session will cancel previous execution!
    */
-  async startChat(sessionId, message, workspace = 'C:\\daon', model = '') {
+  async startChat(sessionId, message, workspace = 'C:\\daon', model = '', profile = '') {
     try {
       const payload = {
         session_id: sessionId,
@@ -71,6 +73,12 @@ export const api = {
         workspace
       };
       if (model) payload.model = model;
+      // 🚨 필수: pane 이 자기 프로필을 명시한다. 생략하면 서버가 세션의 기존
+      // 프로필로 에이전트를 돌려, 프라다 pane 지시가 라온 세션에서 실행되는
+      // 세션 엉킴이 발생한다(2026-10-21 수정).
+      if (profile) payload.profile = profile;
+      // 🚨 요청 표면 명시 (2026-10-21): 표면이 다르면 서버가 409 SURFACE_MISMATCH.
+      payload.surface = 'multi';
 
       const res = await fetch('/api/chat/start', {
         method: 'POST',

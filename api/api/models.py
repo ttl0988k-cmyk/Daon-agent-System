@@ -253,14 +253,17 @@ def get_session(sid):
         return s
     raise KeyError(sid)
 
-def new_session(workspace=None, model=None, persist=True, profile=None):
+def new_session(workspace=None, model=None, persist=True, profile=None, surface=None):
     # Use _cfg.DEFAULT_MODEL (not the import-time snapshot) so save_settings() changes take effect
     try:
         from api.profiles import get_active_profile_name
-        _profile = profile or get_active_profile_name()
+        _active = get_active_profile_name()
+        _profile = profile or (_active if _active and _active != 'default' else 'raon')
     except ImportError:
-        _profile = profile
-    s = Session(workspace=workspace or get_last_workspace(), model=model or _cfg.DEFAULT_MODEL, profile=_profile)
+        _profile = profile or 'raon'
+    if not _profile or _profile == 'default':
+        _profile = 'raon'
+    s = Session(workspace=workspace or get_last_workspace(), model=model or _cfg.DEFAULT_MODEL, profile=_profile, surface=surface)
     with LOCK:
         SESSIONS[s.session_id] = s
         SESSIONS.move_to_end(s.session_id)
@@ -290,8 +293,8 @@ def all_sessions():
                     and s.get('source') not in ('subagent', 'delegate', 'child')
                 ]
                 for s in result:
-                    if not s.get('profile'):
-                        s['profile'] = 'default'
+                    if not s.get('profile') or s.get('profile') == 'default':
+                        s['profile'] = 'raon'
                 return result
         except Exception:
             _logger.warning("Failed to read session index, falling back to SQLite", exc_info=True)
@@ -340,8 +343,8 @@ def all_sessions():
                     if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
                 ]
                 for s in result:
-                    if not s.get('profile'):
-                        s['profile'] = 'default'
+                    if not s.get('profile') or s.get('profile') == 'default':
+                        s['profile'] = 'raon'
                 # Re-generate index file so future calls are O(1)
                 try:
                     SESSION_INDEX_FILE.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -164,6 +164,7 @@ def handle_post_session_new(handler, body) -> bool:
         workspace=body.get('workspace'),
         model=body.get('model'),
         profile=body.get('profile'),
+        surface=body.get('surface') or 'webui',
         persist=False,
     )
     _save_session_async(s)

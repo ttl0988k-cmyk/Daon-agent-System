@@ -297,8 +297,23 @@ def execute_tool_calls_concurrent(
             result = invoke_tool(agent, function_name, function_args, effective_task_id, tool_call.id)
         except Exception as tool_error:
             result = f"Error executing tool '{function_name}': {tool_error}"
-            logger.error("_invoke_tool raised for %s: %s", function_name, tool_error, exc_info=True)
+        logger.error("_invoke_tool raised for %s: %s", function_name, tool_error, exc_info=True)
         duration = time.time() - start
+        # ── Patch Registry: 수정 대상 파일의 load-bearing 패치 경고를 결과에 주입 ──
+        # 2026-10-19: 종전엔 streaming.py가 SSE 'patch_warning' 이벤트만 발신했으나
+        # 프론트에도 모델에도 수신자가 없어 완전히 죽은 코드였다. 도구 결과
+        # (observation)는 모델이 반드시 읽으므로 여기 붙여야 실제 방어선이 된다.
+        if function_name in ('write_file', 'write_to_file', 'patch', 'apply_diff') and isinstance(function_args, dict):
+            try:
+                _pr_target = function_args.get('path') or function_args.get('file_path') or ''
+                if _pr_target and isinstance(result, str):
+                    from api.patch_registry import get_warning_block
+                    _pr_warn = get_warning_block(_pr_target)
+                    if _pr_warn:
+                        result = f"{result}\n\n{_pr_warn}"
+                        logging.info("patch registry warning attached: %s", _pr_target)
+            except Exception as _pr_exc:
+                logging.debug("patch registry warning hook skipped: %s", _pr_exc)
         is_error, _ = _detect_tool_failure(function_name, result)
         if is_error:
             logger.info("tool %s failed (%.2fs): %s", function_name, duration, result[:200])
@@ -759,6 +774,21 @@ def execute_tool_calls_sequential(
                 function_result = f"Error executing tool '{function_name}': {tool_error}"
                 logger.error("handle_function_call raised for %s: %s", function_name, tool_error, exc_info=True)
             tool_duration = time.time() - tool_start_time
+
+        # ── Patch Registry: 수정 대상 파일의 load-bearing 패치 경고를 결과에 주입 ──
+        # 2026-10-19: concurrent 경로(_run_tool)와 동일한 방어선. 순차 실행일 때도
+        # 파일 수정 도구 결과에 경고가 붙어야 모델이 보존 규칙을 인지한다.
+        if function_name in ('write_file', 'write_to_file', 'patch', 'apply_diff') and isinstance(function_args, dict):
+            try:
+                _pr_target = function_args.get('path') or function_args.get('file_path') or ''
+                if _pr_target and isinstance(function_result, str):
+                    from api.patch_registry import get_warning_block
+                    _pr_warn = get_warning_block(_pr_target)
+                    if _pr_warn:
+                        function_result = f"{function_result}\n\n{_pr_warn}"
+                        logging.info("patch registry warning attached (seq): %s", _pr_target)
+            except Exception as _pr_exc:
+                logging.debug("patch registry warning hook skipped (seq): %s", _pr_exc)
 
         result_preview = function_result if agent.verbose_logging else (
             function_result[:200] if len(function_result) > 200 else function_result

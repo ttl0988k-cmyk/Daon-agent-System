@@ -355,7 +355,11 @@ async function loadSecretsList() {
     listEl.querySelectorAll('.secret-delete-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const nm = btn.getAttribute('data-name');
-        if (!nm || !confirm("'" + nm + "' 시크릿을 삭제하시겠습니까?")) return;
+        if (!nm) return;
+        const ok = window.daonConfirm
+          ? await window.daonConfirm(`'${nm}' 시크릿을 삭제하시겠습니까?`, { title: '시크릿 삭제', confirmText: '삭제', danger: true })
+          : confirm(`'${nm}' 시크릿을 삭제하시겠습니까?`);
+        if (!ok) return;
         btn.disabled = true;
         try {
           await _st.api.deleteSecret(nm);

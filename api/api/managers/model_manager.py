@@ -26,13 +26,17 @@ def _get_custom_providers_path() -> Path:
 def _load_custom_providers() -> dict:
     """Load custom providers from JSON file — the SINGLE SOURCE OF TRUTH.
 
-    Returns dict with keys: 'presets', 'providers'
-    - presets: provider_name → {base_url, label, models?}
+    Returns dict with keys: 'presets', 'providers', 'disabled'
+    - presets: provider_name → {base_url, label} (add-templates only.
+      presets NEVER contribute models — see _get_all_provider_models.)
     - providers: provider_name → {api_key, base_url, models, label}
+    - disabled: [provider_name...] user-deleted blocklist. env 키만으로
+      부활하는 preset provider(opencode-zen 등)를 영구 차단한다.
+      (대표님 지시 2026-10-17: 설정창 삭제가 전체 목록에 연동.)
     """
     path = _get_custom_providers_path()
     # Seed from hardcoded presets ONLY on first run (no file yet).
-    result = {'presets': dict(_PROVIDER_PRESETS), 'providers': {}}
+    result = {'presets': dict(_PROVIDER_PRESETS), 'providers': {}, 'disabled': []}
     if path.exists():
         try:
             # utf-8-sig: tolerate a UTF-8 BOM if an external tool (e.g. PowerShell)
@@ -57,13 +61,19 @@ def _load_custom_providers() -> dict:
                     result['providers'] = {
                         normalize_opencode_provider(pname): pcfg for pname, pcfg in file_providers.items()
                     }
+                file_disabled = data.get('disabled', [])
+                if isinstance(file_disabled, list):
+                    result['disabled'] = sorted({
+                        normalize_opencode_provider(str(x))
+                        for x in file_disabled if str(x).strip()
+                    })
         except Exception as e:
             print(f"[ModelManager] Warning: failed to load custom_providers.json: {e}")
     return result
 
 
 def _save_custom_providers(providers: dict) -> None:
-    """Save custom providers to JSON file, preserving presets."""
+    """Save custom providers to JSON file, preserving presets + disabled."""
     path = _get_custom_providers_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,30 +83,78 @@ def _save_custom_providers(providers: dict) -> None:
     try:
         current = _load_custom_providers()
         current['providers'] = providers
-        # Write back: presets (from file if exists) + providers
+        # Write back: presets + providers + disabled (all from file if exists)
         out = {
             'presets': current.get('presets', {}),
             'providers': providers,
+            'disabled': current.get('disabled', []),
         }
         path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
     except (PermissionError, OSError, IOError) as e:
         print(f"[ModelManager] Warning: Cannot write custom_providers.json: {e}")
         raise RuntimeError(f"Cannot save provider data: {e}")
 
-    # 모바일 연동 동기화 (daon_remote_connector의 모델 동기화 비동기 호출)
+
+def _set_provider_disabled(name: str, disabled: bool) -> list:
+    """disabled 차단목록에 추가/제거하고 파일에 영속화. 정규화된 목록 반환."""
+    cname = normalize_opencode_provider((name or '').strip().lower())
+    if not cname:
+        return []
+    path = _get_custom_providers_path()
     try:
-        import sys as _sys
-        import threading as _thr
-        _conn_dir = r'c:\daon\mobile\LLM\chat\connector'
-        if _conn_dir not in _sys.path:
-            _sys.path.insert(0, _conn_dir)
-        import daon_remote_connector as _drc
-        _thr.Thread(target=_drc.sync_models_to_supabase_and_config, daemon=True).start()
+        raw = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
+        if not isinstance(raw, dict):
+            raw = {}
     except Exception:
-        pass
+        raw = {}
+    cur = raw.get('disabled', [])
+    if not isinstance(cur, list):
+        cur = []
+    normed = sorted({normalize_opencode_provider(str(x)) for x in cur if str(x).strip()})
+    if disabled:
+        if cname not in normed:
+            normed.append(cname)
+            normed.sort()
+    else:
+        normed = [x for x in normed if x != cname]
+    raw['disabled'] = normed
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
+    except (PermissionError, OSError, IOError) as e:
+        print(f"[ModelManager] Warning: Cannot persist disabled list: {e}")
+    return normed
 
 
-# ── Hidden models ───────────────────────────────────────────────────────
+def _scrub_preset_models(name: str) -> bool:
+    """해당 preset 엔트리에서 models를 제거(추가용 템플릿만 남김). 변경 시 True."""
+    cname = normalize_opencode_provider((name or '').strip().lower())
+    if not cname:
+        return False
+    path = _get_custom_providers_path()
+    try:
+        raw = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
+        if not isinstance(raw, dict):
+            return False
+    except Exception:
+        return False
+    presets = raw.get('presets', {})
+    if not isinstance(presets, dict):
+        return False
+    changed = False
+    for pname, pcfg in list(presets.items()):
+        if normalize_opencode_provider(pname) == cname and isinstance(pcfg, dict) and 'models' in pcfg:
+            del pcfg['models']
+            changed = True
+    if changed:
+        try:
+            path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
+        except (PermissionError, OSError, IOError) as e:
+            print(f"[ModelManager] Warning: Cannot scrub preset models: {e}")
+    return changed
+
+
+# ── Hidden models ──
 # No hardcoded hidden-model list. If a provider's /models endpoint omits
 # models, add them manually via the provider UI — they are persisted in
 # custom_providers.json (the single source of truth) and survive re-fetches.
@@ -203,26 +261,28 @@ class ModelManager:
     def _get_all_provider_models(self) -> Dict[str, List[Dict[str, str]]]:
         """Get provider→models mapping from the single source of truth (custom_providers.json).
 
-        Merges: custom providers[].models (first) + presets[].models.
-
-        2026-09-03 kimi-k3 사고 대책: merge 순서를 custom-first로 바꾼다.
-        resolve_model_provider의 정확/대소문자 무시 매칭이 이 dict 순서대로
-        돌기 때문에, 프리셋(opencode-go 33모델 — deepseek-v4-flash, minimax-m3
-        등 동명 모델 포함)이 먼저면 사용자가 등록한 프로바이더를 거치지 않고
-        opencode.ai로 라우팅되어 크레딧이 소진되었다.
+        단일 진실 원천 (대표님 지시 2026-10-17): 오직 'providers' 섹션
+        (사용자가 UI에서 명시 등록)만 모델 출처다. presets는 추가용
+        템플릿(base_url/label)일 뿐 모델을 기여하지 않는다.
+        실측 결함: presets에 models가 박혀 있으면(구 파일 잔재: opencode-zen
+        11종) env 키 존재만으로 /api/models·하네스·확장에 미등록 모델이
+        노출돼 잔액 0 호출 → 전멸했다. disabled 차단목록도 여기서 제외.
         """
         data = _load_custom_providers()
         result = {}
+        disabled = {normalize_opencode_provider(str(x)) for x in (data.get('disabled') or []) if str(x).strip()}
 
-        # 1) Models from custom providers (user-added, with API keys) — 최우선
+        # Models from custom providers (user-added) ONLY — presets 제외
         for pname, pcfg in data.get('providers', {}).items():
-            if isinstance(pcfg, dict) and 'models' in pcfg:
-                result[pname] = list(pcfg['models'])
-
-        # 2) Models from presets (built-in providers) — 사용자 등록에 없을 때만
-        for pname, pcfg in data.get('presets', {}).items():
-            if isinstance(pcfg, dict) and 'models' in pcfg:
-                result.setdefault(pname, list(pcfg['models']))
+            if not isinstance(pcfg, dict) or 'models' not in pcfg:
+                continue
+            try:
+                ckey = normalize_opencode_provider(pname)
+            except Exception:
+                ckey = str(pname).strip().lower()
+            if ckey in disabled:
+                continue
+            result[pname] = list(pcfg['models'])
 
         return result
 
@@ -294,6 +354,8 @@ class ModelManager:
                     _save_custom_providers(providers)
                 except RuntimeError as e:
                     raise ValueError(str(e))
+                _set_provider_disabled(merge_target, False)
+                _set_provider_disabled(name, False)
                 return {'success': True, 'provider': merge_target, 'merged_into': merge_target,
                         'added_count': added_count, 'models': merged}
 
@@ -326,18 +388,47 @@ class ModelManager:
             _save_custom_providers(providers)
         except RuntimeError as e:
             raise ValueError(str(e))
+        _set_provider_disabled(name, False)
         return {'success': True, 'provider': name, 'models': models or []}
 
     def delete_custom_provider(self, name: str) -> dict:
-        """Delete a custom provider."""
-        name = name.strip().lower()
+        """Delete a custom provider — 설정창 삭제가 전체 목록에 연동된다.
+
+        대표님 지시 (2026-10-17): providers 삭제 + disabled 차단목록 등록 +
+        preset models 스크럽을 한 번에 수행한다. env 키만으로 부활하던
+        preset provider(opencode-zen 등)도 presets-only 이름으로 삭제하면
+        차단+스크럽돼 /api/models·하네스·확장 등 모든 목록에서 사라진다.
+        """
+        raw = (name or '').strip().lower()
+        cname = normalize_opencode_provider(raw)
+        if not raw:
+            raise ValueError('Provider name is required')
         data = _load_custom_providers()
         providers = data.get('providers', {})
-        if name in providers:
-            del providers[name]
+        presets = data.get('presets', {}) or {}
+        removed = False
+        for key in {raw, cname}:
+            if key in providers:
+                del providers[key]
+                removed = True
+        preset_hit = any(
+            normalize_opencode_provider(pn) == cname for pn in presets
+        )
+        if not removed and not preset_hit:
+            raise KeyError(f"Provider '{name}' not found")
+        if removed:
             _save_custom_providers(providers)
-            return {'success': True, 'provider': name}
-        raise KeyError(f"Provider '{name}' not found")
+        _set_provider_disabled(cname, True)
+        _scrub_preset_models(cname)
+        try:
+            from api.dynamic.model_selector import get_model_selector
+            _sel = get_model_selector()
+            if _sel is not None:
+                _sel.refresh_profiles()
+        except Exception:
+            pass
+        return {'success': True, 'provider': cname, 'removed_entry': removed,
+                'preset_scrubbed': preset_hit, 'disabled': True}
 
     def update_custom_provider_models(self, name: str, models: List[Dict[str, str]]) -> dict:
         """Update models list for a custom provider."""
@@ -774,8 +865,18 @@ class ModelManager:
         _custom_names = set(custom_providers.keys())
 
         # 1) Preset providers (built-in, from custom_providers.json presets)
+        # ── 설정창 연동 (대표님 지시 2026-10-17) ──
+        # env 키만으로 preset이 모델 목록에 부활하던 구멍을 막는다.
+        # preset 그룹은 사용자가 명시 등록한 경우(providers 섹션에 키+모델 보유,
+        # 또는 auth.json 크리덴셜 풀에 토큰)에만 노출한다. 둘 다 없으면
+        # 설정창에 없는 provider이므로 목록에서 제외한다.
+        _explicitly_registered = set(_custom_names) | {
+            str(_ak).strip().lower() for _ak, _av in (auth_keys or {}).items() if _av
+        }
         for provider in ALLOWED_PRESETS:
             if provider in provider_models:
+                if str(provider).strip().lower() not in _explicitly_registered:
+                    continue
                 display_name = custom_data.get('presets', {}).get(provider, {}).get('label', provider.capitalize())
                 has_key = bool(
                     any(os.environ.get(v) for v in _env_variants(provider)) or
@@ -835,6 +936,67 @@ class ModelManager:
         """Return known provider presets (name → {base_url, label, models?})."""
         data = _load_custom_providers()
         return data.get('presets', dict(_PROVIDER_PRESETS))
+
+    def get_harness_allowed_providers(self) -> List[str]:
+        """하네스용 허용 provider_key 목록 — 사용자가 명시 등록한 것만.
+
+        대표님 지시 (2026-10-17): 하네스는 '앱에 설정된 모델'만 쓴다.
+        실측 결함: get_available_models()는 환경변수 키 존재만으로 preset
+        provider(opencode-zen 등)를 available에 올린다. 서버 프로세스에
+        OPENCODE_ZEN_API_KEY가 주입돼 있으면 Zen 전체(opus-5-5·sonnet-5-5)가
+        후보에 들어 잔액 0인데도 호출 시도 → 7노드 전멸·복구 루프.
+        이 헬퍼는 custom_providers.json 'providers' 섹션(api_key+models 보유,
+        = 사용자가 UI에서 명시 등록) + auth.json credential_pool 토큰 보유
+        provider만 반환한다. presets 단독(env 키만)은 제외.
+        provider_key 기준 정렬 리스트. 실패 시 빈 리스트(호출부가 None 폴백).
+        disabled 차단목록은 auth 풀에 토큰이 있어도 제외한다.
+        """
+        allowed: set = set()
+        try:
+            data = _load_custom_providers()
+            _dis = {normalize_opencode_provider(str(x)) for x in (data.get('disabled') or []) if str(x).strip()}
+        except Exception:
+            _dis = set()
+        try:
+            data = _load_custom_providers()
+            for pname, pcfg in (data.get('providers') or {}).items():
+                if not isinstance(pcfg, dict):
+                    continue
+                if pcfg.get('api_key') and pcfg.get('models'):
+                    try:
+                        allowed.add(normalize_opencode_provider(pname))
+                    except Exception:
+                        allowed.add(str(pname).strip().lower())
+        except Exception:
+            pass
+        try:
+            candidate_homes = []
+            try:
+                from api.profiles import get_active_hermes_home
+                candidate_homes.append(get_active_hermes_home())
+            except Exception:
+                pass
+            candidate_homes.append(Path.home() / '.hermes')
+            for home in candidate_homes:
+                try:
+                    auth_path = home / 'auth.json'
+                    if not auth_path.exists():
+                        continue
+                    auth_data = json.loads(auth_path.read_text(encoding='utf-8'))
+                    pool = auth_data.get('credential_pool', {})
+                    for provider_name, credentials in pool.items():
+                        if credentials and credentials[0].get('access_token'):
+                            try:
+                                _ck = normalize_opencode_provider(provider_name)
+                            except Exception:
+                                _ck = str(provider_name).strip().lower()
+                            if _ck not in _dis:
+                                allowed.add(_ck)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return sorted(allowed)
 
 
 model_manager = ModelManager()

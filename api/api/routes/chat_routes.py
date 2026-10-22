@@ -68,12 +68,18 @@ def handle_get_active_streams(handler, parsed) -> bool:
     for sid, stid in active_items:
         if stid in STREAMS and stid not in cancelled_set:
             prof = ''
+            surf = ''
             try:
                 s = get_session(sid)
                 prof = getattr(s, 'profile', '') or ''
+                # 🚨 실행 표면 노출 (2026-10-21): 작업장(multi) 프론트가 클래식
+                # (webui) 세션의 진행 스트림에 붙어 세션이 엉키는 것을 막기 위해
+                # 각 활성 스트림의 surface 를 함께 반환한다. 프론트는
+                # surface === 'webui' 인 스트림은 무시해야 한다.
+                surf = getattr(s, 'surface', '') or ''
             except Exception:
                 pass
-            result.append({'session_id': sid, 'stream_id': stid, 'profile': prof})
+            result.append({'session_id': sid, 'stream_id': stid, 'profile': prof, 'surface': surf})
     return j(handler, {'active_streams': result})
 
 
@@ -232,8 +238,26 @@ def handle_post_chat_start(handler, body) -> bool:
     workspace = str(Path(body.get('workspace') or s.workspace).expanduser().resolve())
     model = body.get('model') or s.model
     _profile_override = body.get('profile')
-    if _profile_override:
-        s.profile = _profile_override
+    # 🚨 fail-closed (2026-10-21): 세션 프로필과 다른 프로필의 지시를 세션에
+    # 강제로 덮어쓰면, 작업장 pane 지시가 다른 에이전트 세션에서 실행되는
+    # "세션 엉킴"이 발생한다. 불일치는 거부하고 클라이언트가 자기 프로필의
+    # 새 세션을 만들도록 PROFILE_MISMATCH 를 돌려준다.
+    if _profile_override and str(_profile_override) != str(s.profile or ''):
+        _logger.warning(
+            "PROFILE_MISMATCH session=%s session_profile=%s requested=%s",
+            s.session_id, s.profile, _profile_override,
+        )
+        return bad(handler, 'PROFILE_MISMATCH', 409)
+    # 🚨 원천 봉쇄 (2026-10-21): 실행 표면 교차 차단.
+    # 클래식(webui) 세션과 작업장(multi) 세션은 서로의 대화를 물을 수 없다.
+    # 프론트 가드를 우회한 요청도 서버가 SURFACE_MISMATCH(409)로 거부한다.
+    _req_surface = body.get('surface')
+    if _req_surface and s.surface and str(_req_surface) != str(s.surface):
+        _logger.warning(
+            "SURFACE_MISMATCH session=%s session_surface=%s requested=%s",
+            s.session_id, s.surface, _req_surface,
+        )
+        return bad(handler, 'SURFACE_MISMATCH', 409)
     s.workspace = workspace
     s.model = model
     # #27 fix: save()를 데몬 스레드로 비동기화하여 HTTP 응답이 즉시 반환되도록 함.
@@ -246,7 +270,11 @@ def handle_post_chat_start(handler, body) -> bool:
             _logger.warning("Async save failed for session %s", s.session_id, exc_info=True)
     threading.Thread(target=_save_async, daemon=True).start()
     set_last_workspace(workspace)
-    _surface_decl = str(body.get('surface') or '').strip() or 'webui'
+    # 🚨 표면 고정 (2026-10-21): 요청이 surface를 안 보내면 기존 세션 표면을
+    # 유지한다. 여기서 무조건 'webui'로 덮어쓰면 확장(chrome_extension) 세션이
+    # 표면 미지정 요청 한 번에 webui로 오염되어, 다음 확장 요청이
+    # 409 SURFACE_MISMATCH로 영구 차단된다. (패치 #27 의도와 일치)
+    _surface_decl = str(body.get('surface') or '').strip() or (s.surface or 'webui')
     s.surface = _surface_decl
     # Auto-cancel any existing stream for this session so the new message
     # doesn't have to wait for the previous run_conversation() to finish.

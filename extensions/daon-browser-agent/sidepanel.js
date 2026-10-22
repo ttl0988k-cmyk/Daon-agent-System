@@ -71,6 +71,14 @@ const chatContainer = document.getElementById('chatContainer');
 const welcomeCard = document.getElementById('welcomeCard');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
+// 🔗 앱 세션 이어받기 바
+const currentSessionLabel = document.getElementById('currentSessionLabel');
+const switchSessionBtn = document.getElementById('switchSessionBtn');
+const sessionPicker = document.getElementById('sessionPicker');
+const sessionPickerList = document.getElementById('sessionPickerList');
+const sessionPickerClose = document.getElementById('sessionPickerClose');
+const manualSessionInput = document.getElementById('manualSessionInput');
+const manualSessionBtn = document.getElementById('manualSessionBtn');
 
 // Quick Action Buttons
 const quickListTabsBtn = document.getElementById('quickListTabsBtn');
@@ -277,6 +285,7 @@ async function loadSession() {
         } else {
           clearChatUI();
         }
+        updateSessionLabel();
         return;
       }
     } catch (e) {
@@ -320,7 +329,11 @@ async function createNewSession() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         workspace: 'C:\\daon',
-        model: selectedModel ? selectedModel : (serverDefaultModel || undefined)
+        model: selectedModel ? selectedModel : (serverDefaultModel || undefined),
+        // 🚨 필수 (2026-10-21): surface 미지정 시 서버가 세션 표면을 'webui'로
+        // 저장해, 이어지는 /api/chat/start(surface='chrome_extension')가
+        // 409 SURFACE_MISMATCH로 거부된다. 세션 생성 시점에 표면을 못박는다.
+        surface: 'chrome_extension'
       })
     });
     if (res.ok) {
@@ -328,6 +341,7 @@ async function createNewSession() {
       currentSessionId = data.session.session_id;
       await chrome.storage.local.set({ daon_browser_session_id: currentSessionId });
       clearChatUI();
+      updateSessionLabel();
       console.log('[DAON Agent] 새 세션 생성 완료:', currentSessionId);
       return currentSessionId;
     }
@@ -337,6 +351,7 @@ async function createNewSession() {
   currentSessionId = 'browser_' + Math.random().toString(36).substring(2, 10);
   await chrome.storage.local.set({ daon_browser_session_id: currentSessionId });
   clearChatUI();
+  updateSessionLabel();
   return currentSessionId;
 }
 
@@ -345,6 +360,77 @@ function clearChatUI() {
   if (welcomeCard) chatContainer.appendChild(welcomeCard);
   attachedContext = null;
   updateAttachedPill();
+}
+
+// ── 3-1. 🔗 앱 세션 이어받기 (앱 채팅 ↔ 확장 동일 세션 공유) ──────────────
+function updateSessionLabel() {
+  if (!currentSessionLabel) return;
+  currentSessionLabel.textContent = currentSessionId || '(없음)';
+  currentSessionLabel.title = currentSessionId || '';
+}
+
+async function switchToSession(sid) {
+  sid = String(sid || '').trim();
+  if (!sid) return;
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/session?session_id=${encodeURIComponent(sid)}`);
+    if (!res.ok) {
+      if (sessionPickerList) sessionPickerList.innerHTML = '<div class="session-picker-empty">⚠️ 세션을 찾을 수 없습니다. ID를 확인해주세요.</div>';
+      return;
+    }
+    const data = await res.json();
+    currentSessionId = sid;
+    await chrome.storage.local.set({ daon_browser_session_id: currentSessionId });
+    const messages = data.session?.messages || [];
+    if (messages.length > 0) {
+      renderRestoredMessages(messages);
+    } else {
+      clearChatUI();
+    }
+    updateSessionLabel();
+    if (sessionPicker) sessionPicker.classList.add('hidden');
+    appendMessage('bot', `🔗 앱 세션을 이어받았습니다.\n세션: \`${sid}\`\n제목: ${(data.session?.title || '(무제)').replace(/[<>&]/g, '')}\n이어서 질문하시면 같은 대화 맥락으로 답합니다.`);
+  } catch (e) {
+    console.error('세션 전환 실패:', e);
+    if (sessionPickerList) sessionPickerList.innerHTML = '<div class="session-picker-empty">⚠️ 연결 실패. 다온 앱(9090)이 켜져 있는지 확인해주세요.</div>';
+  }
+}
+
+async function openSessionPicker() {
+  if (!sessionPicker || !sessionPickerList) return;
+  sessionPicker.classList.remove('hidden');
+  sessionPickerList.innerHTML = '<div class="session-picker-empty">불러오는 중...</div>';
+  try {
+    const res = await fetch(`${SERVER_BASE}/api/sessions`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const sessions = (data.sessions || []).slice(0, 15);
+    if (sessions.length === 0) {
+      sessionPickerList.innerHTML = '<div class="session-picker-empty">최근 대화가 없습니다.</div>';
+      return;
+    }
+    sessionPickerList.innerHTML = '';
+    for (const s of sessions) {
+      const btn = document.createElement('button');
+      btn.className = 'session-picker-item' + (s.session_id === currentSessionId ? ' current' : '');
+      const title = (s.title || '(무제)').slice(0, 40);
+      const msgCount = s.message_count ?? s.messages?.length ?? '';
+      const updated = s.updated_at ? new Date((s.updated_at > 1e12 ? s.updated_at : s.updated_at * 1000)).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      const div = document.createElement('div');
+      div.className = 't';
+      div.textContent = (s.session_id === currentSessionId ? '✅ ' : '') + title;
+      const meta = document.createElement('div');
+      meta.className = 'm';
+      meta.textContent = `${s.session_id} · ${msgCount !== '' ? msgCount + '개' : ''} ${updated}`;
+      btn.appendChild(div);
+      btn.appendChild(meta);
+      btn.addEventListener('click', () => switchToSession(s.session_id));
+      sessionPickerList.appendChild(btn);
+    }
+  } catch (e) {
+    console.error('세션 목록 조회 실패:', e);
+    sessionPickerList.innerHTML = '<div class="session-picker-empty">⚠️ 목록을 못 가져왔습니다. 다온 앱(9090) 연결을 확인해주세요.</div>';
+  }
 }
 
 // ── 4. 멀티탭 감지 및 활성 탭 추적 (Multi-Tab Sensor) ─────────────────────
@@ -900,9 +986,10 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
 2. [직전 액션 결과 자동 인지]: 당신이 실행한 조작의 성공/실패 결과는 위 [직전 브라우저 액션 실행 결과]로 즉시 보고됩니다. 따라서 조작 후 사용자에게 "확인해주세요"라고 되묻지 마세요!
 3. [브라우저 전용 액션 태그 사용 필수]: 데스크톱용 내부 브라우저 도구(browser_*)나 터미널/파이썬 스크립트 도구를 쓰지 마세요. 웹페이지 조작 및 입력은 오직 아래의 XML 액션 태그(<daon_action ... />)를 사용해야 실제 브라우저에서 즉각 실행됩니다.
 4. [실시간 조작 액션 태그]: 브라우저 조작이 필요할 때는 반드시 아래의 XML 액션 태그를 응답에 포함하세요. 크롬 확장 프로그램이 실제 브라우저에서 즉시 실행합니다:
-   - 버튼/카드/링크 클릭: <daon_action action="click" nodeId="12" />  ★권장  /  또는 <daon_action action="click" target="버튼텍스트 또는 CSS셀렉터" nth="1" />
+   - 버튼/카드/링크 클릭: <daon_action action="click" nodeId="12" /> (또는 node_id="12")  ★권장  /  또는 <daon_action action="click" target="버튼텍스트 또는 CSS셀렉터" nth="1" />
+   - 체크박스/스위치: 스냅샷에 checked="true" 또는 checked="false" 로 상태가 노출됩니다. 클릭 후 실행 결과에도 [상태: checked=true/false]가 반환되므로 토글 여부를 즉시 검증할 수 있습니다.
    - 마우스 호버(드롭다운/메뉴 열기): <daon_action action="hover" nodeId="12" />  ★권장  /  또는 <daon_action action="hover" target="메뉴텍스트 또는 셀렉터" nth="1" />
-   - 키보드 입력(Enter, Escape 등): <daon_action action="press" key="Enter" nodeId="3" />  ★권장  /  또는 <daon_action action="press" key="Enter" target="입력창(선택)" />
+   - 키보드 입력(Enter, Escape 등): <daon_action action="press" key="Enter" nodeId="3" />  ★권장  /  또는 <daon_action action="press" key="Escape" /> (모달/확인창 닫기)
    - 대화형 요소 스냅샷 추출: <daon_action action="snapshot" />
    - 현재 화면 캡처(스크린샷): <daon_action action="screenshot" />
    - 잠시 대기(로딩 대기 등): <daon_action action="wait" ms="1500" />
@@ -913,9 +1000,13 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
    - 텍스트 입력: <daon_action action="type" nodeId="3" text="입력내용" />  ★권장  /  또는 <daon_action action="type" target="입력창ID/셀렉터" text="입력내용" nth="1" />
    - 스크롤: <daon_action action="scroll" direction="down|up" />
    - 드롭다운 선택(네이티브 select): <daon_action action="select" nodeId="7" value="Design" />  ★ 스냅샷에 →select="값" 이 보이면 그 값을 쓰세요.
+   ⚠️ [절대 규칙: 1턴 1액션 원칙 - 연속 액션 태그 금지]:
+   - 한 번의 응답에는 반드시 오직 1개의 <daon_action ... /> 태그만 포함하세요!
+   - 한 번에 여러 개의 액션 태그를 연달아 넣으면 첫 번째 액션 실행 후 화면(DOM)이 변경되어 그 뒤의 액션들이 엉뚱한 요소를 누르거나 실패합니다.
+   - 하나의 액션을 실행하면 브라우저가 화면을 갱신한 뒤 새 스냅샷과 함께 다음 턴이 자동으로 이어지므로, 반드시 한 번에 하나씩 차례대로 실행하세요!
    ⚠️ [요소 지정 규칙 — nodeId 우선 (필수)]:
    - 먼저 <daon_action action="snapshot" /> 로 스냅샷을 찍으면 각 요소에 nodeId가 함께 표시됩니다. 예: [#3|nodeId=7] <button> "검색"
-   - 클릭/호버/입력은 반드시 그 nodeId로 지정하세요 (예: <daon_action action="click" nodeId="7" />). nodeId는 스냅샷 시점의 정확한 요소를 가리킵니다.
+   - 클릭/호버/입력은 반드시 그 nodeId로 지정하세요 (예: <daon_action action="click" nodeId="7" />). nodeId는 스냅샷 시점의 정확한 요소를 가리킵니다. (nodeId 와 node_id 모두 완전 지원)
    - 스냅샷 이후 페이지가 바뀌면 실행이 자동으로 거부됩니다(엉뚱한 요소 조작 방지). 이때 [⚠️ 페이지 변경 감지] 안내가 오므로, 다시 스냅샷을 찍고 새 nodeId로 재시도하세요. 같은 nodeId로 반복 시도하지 마세요.
    - nodeId가 없는 요소에 한해서만 target=셀렉터를 사용하세요.
    - type/click/press가 "가려져 있습니다(covered)"로 거부되면 확장이 자동으로 오버레이(자동완성 드롭다운)를 걷어내고 1회 재판정합니다. 그래도 실패하면 다시 스냅샷을 찍으세요.
@@ -923,7 +1014,7 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
    - 단어, 문장, 검색어, 프롬프트 등 모든 텍스트는 반드시 단 1개의 <daon_action action="type" target="프롬프트창 또는 셀렉터" text="완전한 문자열" /> 태그로 입력하세요!
    - 확장 프로그램 시스템이 브라우저 내부에서 실제 사람처럼 한 글자씩 무작위 지연(25~65ms)을 주며 휴먼 리듬으로 자동 타이핑하므로, 봇 감지가 완벽히 회피됩니다.
    - 절대로 <daon_action action="press" key="...">와 wait로 글자를 하나씩 쪼개지 마세요! (press는 합성 키 이벤트라 실제 입력창에 글자가 써지지 않고 실패합니다.)
-5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우, 첫 번째 액션(<daon_action action="navigate" ... />)을 실행하면 브라우저가 이동한 뒤 변경된 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다! 따라서 미래 화면의 요소를 미리 추측해서 누르려 하지 말고, [이동/클릭] → [새 화면 확인 후 후속 동작] 순서대로 자연스럽게 단계를 이어가세요. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
+5. [연속 자율 실행 지원]: 사용자의 지시가 여러 단계(예: "네이버로 이동해서 AI뉴스 검색해봐")로 구성된 경우에도 반드시 한 번에 하나의 액션만 호출하세요. 첫 번째 액션을 실행하면 브라우저가 화면을 갱신한 뒤 새 화면 컨텍스트와 함께 다음 턴이 자동으로 이어집니다. 모든 목표가 완료되면 액션 태그 없이 최종 요약 결과를 사용자에게 설명하고 마무리하세요.
 6. [대화 태도]: 불필요한 사족 없이, 친절하고 명쾌하게 자신감 넘치는 어조로 행동하세요. (예: "네! 네이버로 이동해서 검색을 진행할게요. <daon_action action=\\"navigate\\" url=\\"https://www.naver.com\\" />")
 7. [Laya 초고속 결정 엔진 (fast_decision_engine) 협업 지침]:
    - 화면에 버튼/메뉴/링크가 너무 많거나 복잡하여 원하는 조작 대상을 찾기 어려울 때,
@@ -983,8 +1074,12 @@ async function sendMessage(customText = null, isAutoFollowup = false) {
       })
     });
 
-    if (startRes.status === 404) {
-      console.warn('[DAON Agent] 세션 만료됨(404). 새 세션 생성 후 재시도...');
+    // 404(세션 만료)뿐 아니라 409(SURFACE_MISMATCH / PROFILE_MISMATCH)도
+    // 기존 세션을 버리고 이 표면('chrome_extension') 전용 새 세션으로 재시도한다.
+    // (2026-10-21: 웹UI에서 함께 쓰던 세션이 확장 표면과 충돌해 409로 멈추던 문제)
+    if (startRes.status === 404 || startRes.status === 409) {
+      const _reason = startRes.status === 404 ? '세션 만료' : '세션 표면/프로필 불일치';
+      console.warn(`[DAON Agent] ${_reason}(${startRes.status}). 새 세션 생성 후 재시도...`);
       await createNewSession();
       startRes = await fetch(`${SERVER_BASE}/api/chat/start`, {
         method: 'POST',
@@ -1200,9 +1295,23 @@ async function parseAndExecuteActions(text, bubble) {
   let executedAny = false;
   // 슬래시 유무 유연 매칭 (<daon_action ... /> 또는 <daon_action ...>)
   const regex = /<daon_action\s+([^>]+?)\/?>/gi;
-  let match;
+  const allMatches = [];
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    allMatches.push(m);
+  }
 
-while ((match = regex.exec(text)) !== null) {
+  if (allMatches.length > 0) {
+    // ★ [2026-10-21 패치] 연속 액션 태그 무효화 방지: 1턴 1액션 강제
+    // 한 응답에 여러 액션이 포함된 경우, 첫 번째 액션만 실행하고 화면을 갱신한 뒤 자율 루프로 다음 단계를 이어간다.
+    if (allMatches.length > 1) {
+      console.warn(`[DAON Agent] 한 응답에 ${allMatches.length}개의 액션 태그가 감지되었습니다. DOM 정합성을 위해 첫 번째 액션만 실행하고 다음 단계로 자동 연결합니다.`);
+      appendActionCard(bubble, `🛡️ [안전 조치] DOM 정합성을 위해 1번째 액션만 먼저 실행하고 최신 화면 확인 후 다음 동작으로 연결합니다. (후속 ${allMatches.length - 1}개 액션 대기)`);
+      if (!currentGoal) currentGoal = lastUserPrompt || '연속 작업 수행';
+      isAutoLooping = true;
+    }
+
+    const match = allMatches[0];
     executedAny = true;
     const actionKey = actionKeyOf(match[0]);
     if (actionKey) {
@@ -1210,8 +1319,7 @@ while ((match = regex.exec(text)) !== null) {
     }
     const attrStr = match[1];
     // ⚠️ 2026-09-10 패치: 속성값에 반대 따옴표가 포함된 CSS 셀렉터(input[placeholder*='x'] 등)를
-    // 온전히 파싱하도록 개선. 기존 [^"']+ 패턴은 값 내부의 반대 따옴표에서 조기 종료되어
-    // target이 잘렸음 (예: "input[placeholder*=" 까지만 인식 → 입력 실패).
+    // 온전히 파싱하도록 개선.
     const getAttr = (name) => {
       const dq = attrStr.match(new RegExp(`\\b${name}="([^"]*)"`, 'i'));
       if (dq) return dq[1];
@@ -1220,12 +1328,8 @@ while ((match = regex.exec(text)) !== null) {
     };
 
     const action = (getAttr('action') || '').toLowerCase();
-const target = getAttr('target');
+    const target = getAttr('target');
     const urlVal = getAttr('url');
-    // ★ 2026-09-22 — tab_id 정규화. 도구 스키마에 tab_id 인자가 없어
-    //   `<daon_action action="switch_tab" tab_id="null" />` 처럼 문자열 "null"이 들어온다.
-    //   종전에는 이 문자열이 그대로 쓰여 탭 전환이 **항상 실패**했다(대표님 "탭이 안 바뀐다" 증상).
-    //   "null"/"undefined"/빈값은 없는 것으로 간주해 target 폴백이 살아나게 한다.
     const rawTabId = getAttr('tab_id');
     const tabIdVal = (rawTabId && rawTabId !== 'null' && rawTabId !== 'undefined' && rawTabId.trim() !== '')
       ? rawTabId : null;
@@ -1235,10 +1339,8 @@ const target = getAttr('target');
     const nth = parseInt(getAttr('nth') || '1', 10) || 1;
     const keyVal = getAttr('key') || 'Enter';
     const waitMs = parseInt(getAttr('ms') || '1000', 10) || 1000;
-    // ★ nodeId: 스냅샷이 부여한 런타임 신원 (2026-09-19 jev guard 이식)
-    //   스냅샷→실행 사이 DOM이 바뀌면 guard 검증에서 실행이 거부된다(엉뚱한 요소 조작 차단).
-    //   nodeId가 있으면 target보다 우선한다.
-    const rawNodeId = getAttr('nodeid') || getAttr('node_id');
+    // ★ nodeId / node_id / node-id 별칭 완벽 통합 지원
+    const rawNodeId = getAttr('nodeid') || getAttr('node_id') || getAttr('node-id');
     const nodeIdVal = (rawNodeId !== null && rawNodeId !== '' && !isNaN(Number(rawNodeId)))
       ? Number(rawNodeId) : null;
 
@@ -1279,7 +1381,7 @@ const target = getAttr('target');
       const label = nodeIdVal !== null ? `요소 #${nodeIdVal}` : `"${target}"`;
       const card = appendActionCard(bubble, `🖱️ [클릭] ${label}${nth > 1 ? ` (${nth}번째)` : ''} 시도 중...`);
       const res = await executeBrowserAction('ACT_CLICK',
-        nodeIdVal !== null ? { nodeId: nodeIdVal } : { target, nth });
+        nodeIdVal !== null ? { nodeId: nodeIdVal, node_id: nodeIdVal } : { target, nth });
       updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 클릭 실패: ${res.error}`, !res.ok);
       lastActionResults.push({
         summary: `CLICK(${label}${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` +
@@ -1292,7 +1394,7 @@ const target = getAttr('target');
       const label = nodeIdVal !== null ? `요소 #${nodeIdVal}` : `"${target}"`;
       const card = appendActionCard(bubble, `🔍 [호버] ${label}${nth > 1 ? ` (${nth}번째)` : ''} 마우스 호버 중...`);
       const res = await executeBrowserAction('ACT_HOVER',
-        nodeIdVal !== null ? { nodeId: nodeIdVal } : { target, nth });
+        nodeIdVal !== null ? { nodeId: nodeIdVal, node_id: nodeIdVal } : { target, nth });
       updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 호버 실패: ${res.error}`, !res.ok);
       lastActionResults.push({
         summary: `HOVER(${label}${nth > 1 ? `, nth=${nth}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` +
@@ -1305,7 +1407,7 @@ const target = getAttr('target');
       const keyLabel = nodeIdVal !== null ? `요소 #${nodeIdVal}` : (target ? `"${target}"` : '현재 포커스');
       const card = appendActionCard(bubble, `⌨️ [키 입력] [${keyVal}] → ${keyLabel} 실행 중...`);
       const res = await executeBrowserAction('ACT_PRESS_KEY',
-        nodeIdVal !== null ? { key: keyVal, nodeId: nodeIdVal } : { key: keyVal, target, nth });
+        nodeIdVal !== null ? { key: keyVal, nodeId: nodeIdVal, node_id: nodeIdVal } : { key: keyVal, target, nth });
       updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 키 입력 실패: ${res.error}`, !res.ok);
       lastActionResults.push({
         summary: `PRESS_KEY("${keyVal}"${nodeIdVal !== null ? `, 요소 #${nodeIdVal}` : ''}): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` +
@@ -1318,7 +1420,7 @@ const target = getAttr('target');
       const label = nodeIdVal !== null ? `요소 #${nodeIdVal}` : `"${target}"`;
       const card = appendActionCard(bubble, `⌨️ [입력] ${label}에 "${inputVal}" 입력 중...`);
       const res = await executeBrowserAction('ACT_TYPE',
-        nodeIdVal !== null ? { nodeId: nodeIdVal, text: inputVal } : { target, text: inputVal, nth });
+        nodeIdVal !== null ? { nodeId: nodeIdVal, node_id: nodeIdVal, text: inputVal } : { target, text: inputVal, nth });
       updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 입력 실패: ${res.error}`, !res.ok);
       lastActionResults.push({
         summary: `TYPE(${label}, "${inputVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` +
@@ -1327,15 +1429,12 @@ const target = getAttr('target');
       if (res.ok) await settle();   // [4차] 300ms 고정 → 2 RAF or 50ms
     }
     // 8-b. 셀렉트 옵션 선택 (select) — 네이티브 <select> 전용 [4차 jev 이식]
-    //   원본 browser.py L152~157: '관찰된 옵션'에서만 고르고 input+change 를 함께 디스패치.
-    //   스냅샷이 노출한 selectValue 를 value 로 넘긴다.
-    //   사용: <daon_action action="select" nodeId="7" value="Design" />
     else if (action === 'select' && (target || nodeIdVal !== null)) {
       const selVal = getAttr('value') || getAttr('select_value') || inputVal || '';
       const label = nodeIdVal !== null ? `요소 #${nodeIdVal}` : `"${target}"`;
       const card = appendActionCard(bubble, `📋 [선택] ${label} → "${selVal}" 선택 중...`);
       const res = await executeBrowserAction('ACT_SELECT',
-        nodeIdVal !== null ? { nodeId: nodeIdVal, value: selVal } : { target, nth, value: selVal });
+        nodeIdVal !== null ? { nodeId: nodeIdVal, node_id: nodeIdVal, value: selVal } : { target, nth, value: selVal });
       updateActionCard(card, res.ok ? `✅ ${res.message}` : `❌ 선택 실패: ${res.error}`, !res.ok);
       lastActionResults.push({
         summary: `SELECT(${label}, "${selVal}"): ${res.ok ? '성공' : '실패'} — ${res.ok ? res.message : res.error}` +
@@ -1387,9 +1486,12 @@ const target = getAttr('target');
       if (res && res.ok && Array.isArray(res.data)) {
         // ★ nodeId를 함께 노출 — 클릭/입력 시 selector 재탐색 대신 nodeId로 지정하면
         //   스냅샷 시점과 동일한 요소가 보장되고, 페이지가 바뀌면 실행이 거부된다.
-        const summary = res.data.slice(0, 70).map(it =>
-          `[#${it.index}|nodeId=${it.nodeId}] <${it.role || it.tag}> "${it.text}"${it.value ? ` 값="${it.value}"` : ''}${it.selectValue ? ` →select="${it.selectValue}"` : ''} (${it.selector})`
-        ).join('\n');
+        const summary = res.data.slice(0, 70).map(it => {
+          const checkedStr = (it.checked !== undefined) ? ` checked="${it.checked}"` : '';
+          const valStr = it.value ? ` 값="${it.value}"` : '';
+          const selStr = it.selectValue ? ` →select="${it.selectValue}"` : '';
+          return `[#${it.index}|nodeId=${it.nodeId}] <${it.role || it.tag}> "${it.text}"${checkedStr}${valStr}${selStr} (${it.selector})`;
+        }).join('\n');
         updateActionCard(card, `✅ 스냅샷 완료 (총 ${res.data.length}개 요소 감지)`);
         lastActionResults.push({ summary: `SNAPSHOT(): 성공 (총 ${res.data.length}개 대화형 요소 감지됨):\n${summary}` });
       } else {
@@ -1569,6 +1671,32 @@ function setupEventListeners() {
     });
   }
 
+  // 🔗 앱 세션 이어받기
+  if (switchSessionBtn) {
+    switchSessionBtn.addEventListener('click', async () => {
+      if (sessionPicker && !sessionPicker.classList.contains('hidden')) {
+        sessionPicker.classList.add('hidden');
+      } else {
+        await openSessionPicker();
+      }
+    });
+  }
+  if (sessionPickerClose) {
+    sessionPickerClose.addEventListener('click', () => {
+      if (sessionPicker) sessionPicker.classList.add('hidden');
+    });
+  }
+  if (manualSessionBtn) {
+    manualSessionBtn.addEventListener('click', async () => {
+      if (manualSessionInput) await switchToSession(manualSessionInput.value);
+    });
+  }
+  if (manualSessionInput) {
+    manualSessionInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') await switchToSession(manualSessionInput.value);
+    });
+  }
+
   if (modelSelect) {
     modelSelect.addEventListener('change', async () => {
       selectedModel = modelSelect.value;
@@ -1642,9 +1770,11 @@ function setupEventListeners() {
       try {
         const res = await chrome.tabs.sendMessage(activeTab.id, { action: 'GET_PAGE_SNAPSHOT' }, { frameId: 0 });
         if (res && res.ok && res.data) {
-          const list = res.data.map(i =>
-            `[#${i.index}|nodeId=${i.nodeId}] <${i.role || i.tag}> "${i.text}"${i.value ? ` 값="${i.value}"` : ''} (셀렉터: ${i.selector})`
-          ).join('\n');
+          const list = res.data.map(i => {
+            const checkedStr = (i.checked !== undefined) ? ` checked="${i.checked}"` : '';
+            const valStr = i.value ? ` 값="${i.value}"` : '';
+            return `[#${i.index}|nodeId=${i.nodeId}] <${i.role || i.tag}> "${i.text}"${checkedStr}${valStr} (셀렉터: ${i.selector})`;
+          }).join('\n');
           sendMessage(`이 페이지에서 발견된 대화형 요소 목록입니다:\n${list}\n\n이 중에서 어떤 동작을 수행할 수 있는지 추천해줘.`);
         }
       } catch (e) {
@@ -1853,7 +1983,8 @@ async function executeSingleCommand(cmd) {
   try {
     const action = String(cmd.action || '').toLowerCase();
     const target = cmd.target || '';
-    const nodeId = cmd.node_id != null ? Number(cmd.node_id) : null;
+    const rawNid = cmd.node_id != null ? cmd.node_id : (cmd.nodeId != null ? cmd.nodeId : null);
+    const nodeId = (rawNid != null && rawNid !== '' && !isNaN(Number(rawNid))) ? Number(rawNid) : null;
     const nth = parseInt(cmd.nth || 1, 10) || 1;
     const key = cmd.key || 'Enter';
     const text = cmd.text || '';
@@ -1861,10 +1992,11 @@ async function executeSingleCommand(cmd) {
     if (action === 'new_tab') return await handleNewTab(cmd.url || target);
     if (action === 'switch_tab') return await handleSwitchTab(cmd.tab_id || target);
     if (action === 'close_tab') return await handleCloseTab(cmd.tab_id || target);
-    if (action === 'click') return await executeBrowserAction('ACT_CLICK', nodeId != null ? { nodeId } : { target, nth });
-    if (action === 'type') return await executeBrowserAction('ACT_TYPE', nodeId != null ? { nodeId, text } : { target, text, nth });
-    if (action === 'hover') return await executeBrowserAction('ACT_HOVER', nodeId != null ? { nodeId } : { target, nth });
-    if (action === 'press') return await executeBrowserAction('ACT_PRESS_KEY', nodeId != null ? { key, nodeId } : { key, target, nth });
+    if (action === 'click') return await executeBrowserAction('ACT_CLICK', nodeId != null ? { nodeId, node_id: nodeId } : { target, nth });
+    if (action === 'type') return await executeBrowserAction('ACT_TYPE', nodeId != null ? { nodeId, node_id: nodeId, text } : { target, text, nth });
+    if (action === 'hover') return await executeBrowserAction('ACT_HOVER', nodeId != null ? { nodeId, node_id: nodeId } : { target, nth });
+    if (action === 'press') return await executeBrowserAction('ACT_PRESS_KEY', nodeId != null ? { key, nodeId, node_id: nodeId } : { key, target, nth });
+    if (action === 'select') return await executeBrowserAction('ACT_SELECT', nodeId != null ? { nodeId, node_id: nodeId, value: cmd.value || text } : { target, nth, value: cmd.value || text });
     if (action === 'scroll') return await executeBrowserAction('ACT_SCROLL', { direction: cmd.direction || 'down' });
     if (action === 'snapshot') return await executeBrowserAction('GET_PAGE_SNAPSHOT');
     if (action === 'screenshot') {

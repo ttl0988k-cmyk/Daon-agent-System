@@ -16,19 +16,14 @@ if (net.setDefaultAutoSelectFamily) {
   net.setDefaultAutoSelectFamily(false);
 }
 
-// ── CDP 9222 Port Relaunch Guarantee ──
-// Ensure remote-debugging-port switch lands on the real command line of the main process
-//
-// SECURITY (audit R14 / P1-2): port 9222 is a CORE product dependency (internal
-// browser agent, demo recording, Playwright toolset) and MUST stay enabled. It is
-// already bound to loopback. The only hardening applied here is narrowing
-// `remote-allow-origins` from the wildcard `*` to the local server origin, so a
-// random web page cannot open a CDP WebSocket to this process. Do NOT disable the
-// port — that breaks the product.
-const NEEDED_CDP_PORT = '9222';
-const CDP_ALLOWED_ORIGINS = 'http://localhost:9090,http://127.0.0.1:9090';
-app.commandLine.appendSwitch('remote-debugging-port', NEEDED_CDP_PORT);
-app.commandLine.appendSwitch('remote-allow-origins', CDP_ALLOWED_ORIGINS);
+// ── CDP 9222 포트 제거 (2026-10-22) ──
+// 9222(remote-debugging-port)는 구 구조에서 '앱 내부 브라우저(WebContentsView) +
+// demo recording + Playwright toolset'이 공유하던 포트였다.
+// 현재는 브라우저 자동화를 8088 스켈레톤 서비스(browser_service)가 전담하고
+// demo_to_skill 은 사용하지 않으므로 포트를 열지 않는다.
+// 되살리려면: 아래 remote-debugging-port/remote-allow-origins 스위치 2줄 복원 +
+// ServerSupervisor.js 의 BROWSER_CDP_URL 주입 복원 + api/api/routes/__init__.py 의
+// /api/demo/* 라우트 재등록. 백업 = _backup_20261022/
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-features', 'WebAuthentication');
 
@@ -37,14 +32,6 @@ try {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 } catch (e) {
   console.warn('[Electron] Failed to set userAgentFallback:', e && e.message);
-}
-
-if (!process.argv.some((a) => String(a).indexOf('--remote-debugging-port=') === 0)) {
-  console.log('[CDP] --remote-debugging-port missing in argv — relaunching once to guarantee CDP 9222.');
-  app.relaunch({
-    args: process.argv.slice(1).concat(['--remote-debugging-port=' + NEEDED_CDP_PORT]),
-  });
-  app.exit(0);
 }
 
 // ── Single Instance Lock ──
@@ -132,6 +119,23 @@ app.whenReady().then(async () => {
 
   // Chrome Header normalization for WebAuthn / User-Agent consistency
   attachChromeHeaderNormalization(session.defaultSession, 'defaultSession');
+
+  // ── [2026-10-14 마이크 권한 수정] ──
+  // Electron 은 기본적으로 getUserMedia(마이크/카메라) 권한 요청을 거부한다.
+  // 명시적 권한 핸들러가 없으면 웹 음성입력(STT)의 navigator.mediaDevices.getUserMedia({audio:true})
+  // 가 NotAllowedError 로 조용히 실패한다. 모바일(일반 브라우저)에선 브라우저가 권한 프롬프트를
+  // 띄워 동작했지만 Electron 앱에선 권한 핸들러 부재로 음성 입력이 통째로 막혔다.
+  // → 'media' 권한 요청/체크를 명시적으로 허용해 마이크 음성챗을 살린다.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    // 'media' (마이크/카메라), 'notifications', 'clipboard-sanitized-write' 등
+    // 로컬 앱이 요구하는 권한은 전부 허용한다. 외부 사이트로의 내비게이션은
+    // WindowManager 의 will-navigate 가드가 이미 차단하므로 위험은 낮다.
+    callback(true);
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    // 'media' 체크는 항상 허용 → getUserMedia 성공. 그 외도 로컬 앱이므로 허용.
+    return true;
+  });
 
   // Window Manager: Splash
   windowManager = new WindowManager({ mlog, merr });

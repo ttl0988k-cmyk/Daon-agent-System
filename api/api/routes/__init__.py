@@ -225,17 +225,20 @@ from api.routes.mcp_routes import (
 )
 from api.routes.score_routes import handle_get_score_evaluate
 from api.routes.speak_routes import handle_tts
-from api.routes.demo_to_skill_routes import (
-    handle_get_demo_status,
-    handle_get_demo_events,
-    handle_post_demo_start,
-    handle_post_demo_stop,
-    handle_post_demo_cancel,
-    handle_post_demo_text_workflow,
-    handle_post_demo_add_event,
-    handle_post_skill_approve,
-    handle_post_skill_reject,
-)
+# [2026-10-22] demo_to_skill(데모 녹화→스킬 변환) 비활성: 실사용 0건 + UI 미연결.
+# 9222 CDP 의존이었고 현재는 ego lite handOff / 8088 로 대체 가능.
+# 되살리려면 아래 import 와 /api/demo/* 라우트 등록을 복원한다.
+# from api.routes.demo_to_skill_routes import (
+#     handle_get_demo_status,
+#     handle_get_demo_events,
+#     handle_post_demo_start,
+#     handle_post_demo_stop,
+#     handle_post_demo_cancel,
+#     handle_post_demo_text_workflow,
+#     handle_post_demo_add_event,
+#     handle_post_skill_approve,
+#     handle_post_skill_reject,
+# )
 from api.routes.debate_routes import (
     handle_post_debate_start,
     handle_post_debate_next,
@@ -272,6 +275,10 @@ from api.routes.skills_hub_routes import (
 )
 from api.routes.boardroom_routes import (
     handle_post_boardroom_broadcast,
+    handle_get_boardroom_live,
+    handle_get_boardroom_selection,
+    handle_post_boardroom_selection,
+    handle_get_boardroom_last,
 )
 from api.routes.dynamic_routes import (
     handle_post_dynamic_run,
@@ -279,6 +286,10 @@ from api.routes.dynamic_routes import (
     handle_post_dynamic_approve,
     handle_post_dynamic_answer,
     handle_post_dynamic_cancel,
+)
+from api.wake import (
+    handle_get_wake_poll,
+    handle_post_wake_ack,
 )
 from api.routes.style_card_routes import (
     handle_get_style_cards,
@@ -415,13 +426,14 @@ GET_EXACT_ROUTES = {
     '/api/crons/output': handle_get_cron_output,
     '/api/crons/recent': handle_get_cron_recent,
     '/api/dashboard/metrics': handle_get_dashboard_metrics,
-    '/api/demo/events': handle_get_demo_events,
-    '/api/demo/status': handle_get_demo_status,
     '/api/diff/history': handle_get_diff_history,
     '/api/diff/preview': handle_get_diff_preview,
     '/api/docs/list': handle_get_docs_list,
     '/api/docs/status': handle_get_docs_status,
     '/api/dynamic/status': handle_get_dynamic_status,
+    '/api/boardroom/live': handle_get_boardroom_live,
+    '/api/boardroom/selection': handle_get_boardroom_selection,
+    '/api/boardroom/last': handle_get_boardroom_last,
     '/api/file': handle_get_file_read,
     '/api/file/raw': handle_get_file_raw,
     '/api/file/select': handle_get_file_select,
@@ -481,6 +493,7 @@ GET_EXACT_ROUTES = {
     '/api/workers': handle_get_workers,
     '/api/workers/status': handle_get_worker_status,
     '/api/workers/stream': handle_get_worker_stream,
+    '/api/wake/poll': handle_get_wake_poll,
     '/api/workspaces': handle_get_workspaces,
     '/api/workspaces/select': handle_get_workspace_select,
     '/favicon.ico': handle_get_favicon,
@@ -508,6 +521,7 @@ POST_RAW_ROUTES = {
 # ── POST Parsed Handlers (receives (handler, parsed)) ──
 POST_PARSED_ROUTES = {
     '/api/system/last-restart/ack': handle_post_last_restart_ack,
+    '/api/wake/ack': handle_post_wake_ack,
 }
 
 # ── O(1) POST Route Registry (receives (handler, body)) ──
@@ -552,16 +566,10 @@ POST_EXACT_ROUTES = {
     '/api/debate/cancel': handle_post_debate_cancel,
     '/api/debate/next': handle_post_debate_next,
     '/api/debate/start': handle_post_debate_start,
-    '/api/demo/add-event': handle_post_demo_add_event,
-    '/api/demo/cancel': handle_post_demo_cancel,
-    '/api/demo/skill/approve': handle_post_skill_approve,
-    '/api/demo/skill/reject': handle_post_skill_reject,
-    '/api/demo/start': handle_post_demo_start,
-    '/api/demo/stop': handle_post_demo_stop,
-    '/api/demo/text-workflow': handle_post_demo_text_workflow,
     '/api/docs/generate': handle_post_docs_generate,
     '/api/dynamic/run': handle_post_dynamic_run,
     '/api/boardroom/broadcast': handle_post_boardroom_broadcast,
+    '/api/boardroom/selection': handle_post_boardroom_selection,
     '/api/file/apply-diff': handle_post_file_apply_diff,
     '/api/file/apply-preview': handle_post_file_apply_preview,
     '/api/file/create': handle_post_file_create,

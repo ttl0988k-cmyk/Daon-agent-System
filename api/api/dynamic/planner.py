@@ -196,6 +196,26 @@ def _resolve_planner_model_chain(preferred_model: Optional[str] = None, task: st
         if d not in candidates:
             candidates.append(d)
 
+    # ── 등록 모델 필터 (대표님 지시 2026-10-17) ──
+    # 체인 최종 후보를 '앱에 설정된 모델'(get_available_models 등록 id)에만
+    # 한정한다. 미등록명(standard fallback 잔재, 구 캐시명 등)은 호출 시도
+    # 자체가 무단 과금/실패 루프가 되므로 제외. 전부 걸러지면 원본 유지
+    # (fail-open — 빈 체인으로 플래너를 멈추지 않는다).
+    try:
+        from api.managers import model_manager as _mm2
+        _reg_ids = set()
+        for _g in _mm2.get_available_models():
+            for _m in _g.get("models", []):
+                _mid = _m.get("id") if isinstance(_m, dict) else str(_m)
+                if _mid:
+                    _reg_ids.add(_mid)
+                    _reg_ids.add(str(_mid).lower())
+        _filtered = [c for c in candidates if c in _reg_ids or str(c).lower() in _reg_ids]
+        if _filtered:
+            candidates = _filtered
+    except Exception as _e:
+        _log.debug("planner chain registered-model filter bypassed: %s", _e)
+
     return candidates
 
 

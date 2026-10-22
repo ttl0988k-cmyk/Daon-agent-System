@@ -308,6 +308,28 @@ def _compress_past_browser_context(content: str) -> str:
     return f"[이전 브라우저 화면 컨텍스트 생략됨{tab_info}]\n{user_req}"
 
 
+def _extract_clean_user_message(content: str) -> str:
+    """사용자 메시지에서 브라우저 환경 덤프, 시스템 지침 등 내부 프롬프트를 제거하고 순수 질문만 반환."""
+    if not isinstance(content, str):
+        return content
+    if "[연속 자율 실행 모드" in content:
+        return "🔄 [연속 자율 진행 피드백]"
+    if "[사용자 요청]" in content:
+        parts = content.split("[사용자 요청]", 1)
+        user_text = parts[1].strip()
+        for marker in ("[브라우저 제어", "[구글 크롬", "[직전 브라우저", "(참고: 브라우저 조작"):
+            if marker in user_text:
+                user_text = user_text.split(marker, 1)[0].strip()
+        return user_text
+    if "[실시간 브라우저 환경 컨텍스트" in content or "[현재 웹 브라우저" in content:
+        lines = content.splitlines()
+        filtered = [l for l in lines if not l.startswith("[") and not l.startswith("■") and not l.startswith("- ") and not l.startswith('"""')]
+        clean = "\n".join(filtered).strip()
+        if clean:
+            return clean
+    return content
+
+
 def _sanitize_messages_for_api(messages):
     """Return a deep copy of messages with only API-safe fields.
 
@@ -567,7 +589,7 @@ def cancel_session_streams(session_id: str, exclude_stream_id: str = None) -> bo
     return cancelled_any
 
 
-def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None, reasoning_effort=None, is_wake_turn=False, wake_depth=0):
+def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, attachments=None, planning_mode=False, open_tabs=None, media_options=None, reasoning_effort=None, is_wake_turn=False, wake_depth=0, no_tools=False):
     """Run agent in background thread, writing SSE events to STREAMS[stream_id].
 
     is_wake_turn/wake_depth (Wake Queue Phase 3): 깨우기 턴이면 True와 그 깊이.
@@ -1164,6 +1186,15 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           except Exception as _surface_e:
               print(f"[webui] WARNING: surface toolset filter failed: {_surface_e}", flush=True)
 
+          # ── 발언 전용(no_tools) 모드: 도구 0개 ──────────────────────────
+          # boardroom 슬롯은 협의·발언이 목적이며, Continue-now 넛지로
+          # 실제 작업(파일 생성·브라우저 조작)이 실행되는 것을 구조적으로 차단.
+          # valid_tool_names==[] 이면 _looks_like_intermediate_ack()의
+          # 첫 번째 조건(self.valid_tool_names and ...)이 False → 넛지永不 발동.
+          if no_tools:
+              _toolsets = []
+              print(f"[webui] no_tools=True -> toolsets=[] (발언 전용)", flush=True)
+
           # Fallback model from profile config (e.g. for rate-limit recovery)
           _fallback = _cfg.get('fallback_model') or None
           if _fallback:
@@ -1499,6 +1530,34 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               agent, s, session_id, cancel_event, stream_id=stream_id,
               user_prompt=(msg_text or ""))
 
+          # ── [Lazy-MCP-Guard 2026-10-22] 최종 안전망 ──
+          # 어떤 주입 경로(streaming_tools / dynamic runner / 플러그인)로 들어왔든,
+          # lazy 모드에서는 개별 mcp_ 스키마를 LLM 컨텍스트에서 제거한다.
+          # 라우터(call_mcp_tool / list_mcp_tools)와 관리도구(mcp_manage)는 유지하므로
+          # 능력 손실 없이 턴당 토큰만 줄어든다. 레지스트리 등록도 그대로다.
+          try:
+              if os.getenv("DAON_LAZY_MCP", "1").strip().lower() not in ("0", "false", "no", "off"):
+                  if hasattr(agent, 'tools') and isinstance(agent.tools, list):
+                      _KEEP_MCP = {'call_mcp_tool', 'list_mcp_tools', 'mcp_manage'}
+                      _before_cnt = len(agent.tools)
+                      _kept = []
+                      _dropped = 0
+                      for _t in agent.tools:
+                          _nm = _t.get('function', {}).get('name', '')
+                          if _nm.startswith('mcp_') and _nm not in _KEEP_MCP:
+                              _dropped += 1
+                              continue
+                          _kept.append(_t)
+                      if _dropped:
+                          agent.tools = _kept
+                      print(
+                          "[Lazy-MCP-Guard] agent.tools %d -> %d (dropped %d individual mcp schemas, lazy=True)"
+                          % (_before_cnt, len(agent.tools), _dropped),
+                          flush=True,
+                      )
+          except Exception as _e_lmg:
+              print("[Lazy-MCP-Guard] safety net failed: %s" % _e_lmg, flush=True)
+
           is_browser_session = bool(
               getattr(s, 'surface', None) == 'chrome_extension' or
               "[실시간 브라우저 환경 컨텍스트" in (msg_text or "") or
@@ -1721,20 +1780,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   break
 
           # TD1: Persist user message to history immediately so it's saved even if agent crashes
-          display_user_msg = msg_text
-          if "[연속 자율 실행 모드" in msg_text:
-              display_user_msg = "🔄 [연속 자율 진행 피드백]"
-          elif "[사용자 요청]" in msg_text:
-              parts = msg_text.split("[사용자 요청]", 1)
-              display_user_msg = parts[1].strip()
-              if "[브라우저 제어" in display_user_msg:
-                  display_user_msg = display_user_msg.split("[브라우저 제어", 1)[0].strip()
-              if "[구글 크롬" in display_user_msg:
-                  display_user_msg = display_user_msg.split("[구글 크롬", 1)[0].strip()
-              if "[직전 브라우저" in display_user_msg:
-                  display_user_msg = display_user_msg.split("[직전 브라우저", 1)[0].strip()
-              if "(참고: 브라우저 조작" in display_user_msg:
-                  display_user_msg = display_user_msg.split("(참고: 브라우저 조작", 1)[0].strip()
+          display_user_msg = _extract_clean_user_message(msg_text)
 
           if not any(m.get('role') == 'user' and m.get('content') in (msg_text, display_user_msg) for m in s.messages[-2:]):
               user_msg = {'role': 'user', 'content': display_user_msg or msg_text, 'timestamp': int(time.time())}
@@ -1848,7 +1894,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           print(f"[webui-debug] run_conversation completed for session={session_id}", flush=True)
           _result_msgs = result.get('messages')
           if _result_msgs:
-              s.messages = [m for m in _result_msgs if m.get('role') != 'system']
+              new_msgs = []
+              for m in _result_msgs:
+                  if m.get('role') == 'system':
+                      continue
+                  if m.get('role') == 'user' and isinstance(m.get('content'), str):
+                      m_copy = dict(m)
+                      m_copy['content'] = _extract_clean_user_message(m_copy['content'])
+                      new_msgs.append(m_copy)
+                  else:
+                      new_msgs.append(m)
+              s.messages = new_msgs
           if cancel_event.is_set():
               while s.messages and s.messages[-1].get('role') == 'assistant':
                   _lc = str(s.messages[-1].get('content') or '')

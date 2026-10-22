@@ -283,7 +283,7 @@ CONTEXT_TRUNCATE_TAIL_RATIO = 0.2
 _SKILLS_PROMPT_CACHE_MAX = 8
 _SKILLS_PROMPT_CACHE: OrderedDict[tuple, str] = OrderedDict()
 _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
-_SKILLS_SNAPSHOT_VERSION = 1
+_SKILLS_SNAPSHOT_VERSION = 2  # v2 (2026-10-17): 외부/플러그인 스킬 디렉터리도 포함
 
 
 def _skills_prompt_snapshot_path() -> Path:
@@ -301,20 +301,39 @@ def clear_skills_system_prompt_cache(*, clear_snapshot: bool = False) -> None:
             logger.debug("Could not remove skills prompt snapshot: %s", e)
 
 
-def _build_skills_manifest(skills_dir: Path) -> dict[str, list[int]]:
-    """Build an mtime/size manifest of all SKILL.md and DESCRIPTION.md files."""
+def _build_skills_manifest(
+    skills_dir: Path,
+    extra_dirs: "list[Path] | None" = None,
+) -> dict[str, list[int]]:
+    """Build an mtime/size manifest of all SKILL.md and DESCRIPTION.md files.
+
+    [2026-10-17] 외부/플러그인 스킬 디렉터리도 포함한다 — 그래야 Ranker
+    스냅샷(8766이 읽는 파일)이 플러그인 스킬 변경에도 무효화·재생성된다.
+    외부 키는 ``ext{i}/`` 접두로 충돌을 피한다.
+    """
+    dirs: list[Path] = [skills_dir] + [d for d in (extra_dirs or []) if d != skills_dir]
     manifest: dict[str, list[int]] = {}
-    for filename in ("SKILL.md", "DESCRIPTION.md"):
-        for path in iter_skill_index_files(skills_dir, filename):
-            try:
-                st = path.stat()
-            except OSError:
+    for i, base in enumerate(dirs):
+        try:
+            if not base.exists():
                 continue
-            manifest[str(path.relative_to(skills_dir))] = [st.st_mtime_ns, st.st_size]
+            prefix = "" if i == 0 else f"ext{i}/"
+            for filename in ("SKILL.md", "DESCRIPTION.md"):
+                for path in iter_skill_index_files(base, filename):
+                    try:
+                        st = path.stat()
+                    except OSError:
+                        continue
+                    manifest[prefix + str(path.relative_to(base))] = [st.st_mtime_ns, st.st_size]
+        except Exception:
+            continue
     return manifest
 
 
-def _load_skills_snapshot(skills_dir: Path) -> Optional[dict]:
+def _load_skills_snapshot(
+    skills_dir: Path,
+    extra_dirs: "list[Path] | None" = None,
+) -> Optional[dict]:
     """Load the disk snapshot if it exists and its manifest still matches."""
     snapshot_path = _skills_prompt_snapshot_path()
     if not snapshot_path.exists():
@@ -327,7 +346,7 @@ def _load_skills_snapshot(skills_dir: Path) -> Optional[dict]:
         return None
     if snapshot.get("version") != _SKILLS_SNAPSHOT_VERSION:
         return None
-    if snapshot.get("manifest") != _build_skills_manifest(skills_dir):
+    if snapshot.get("manifest") != _build_skills_manifest(skills_dir, extra_dirs):
         return None
     return snapshot
 
@@ -484,7 +503,7 @@ def build_skills_system_prompt(
             return cached
 
     # ── Layer 2: disk snapshot ────────────────────────────────────────
-    snapshot = _load_skills_snapshot(skills_dir)
+    snapshot = _load_skills_snapshot(skills_dir, external_dirs)
 
     skills_by_category: dict[str, list[tuple[str, str]]] = {}
     category_descriptions: dict[str, str] = {}
@@ -518,24 +537,51 @@ def build_skills_system_prompt(
     else:
         # Cold path: full filesystem scan + write snapshot for next time
         skill_entries: list[dict] = []
-        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
-            is_compatible, frontmatter, desc = _parse_skill_file(skill_file)
-            entry = _build_snapshot_entry(skill_file, skills_dir, frontmatter, desc)
-            skill_entries.append(entry)
-            if not is_compatible:
-                continue
-            skill_name = entry["skill_name"]
-            if entry["frontmatter_name"] in disabled or skill_name in disabled:
-                continue
+
+        def _maybe_show(entry: dict, frontmatter: dict) -> None:
+            if entry["frontmatter_name"] in disabled or entry["skill_name"] in disabled:
+                return
             if not _skill_should_show(
                 extract_skill_conditions(frontmatter),
                 available_tools,
                 available_toolsets,
             ):
-                continue
+                return
             skills_by_category.setdefault(entry["category"], []).append(
                 (entry["frontmatter_name"], entry["description"])
             )
+
+        _seen_snapshot_names: set[str] = set()
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            is_compatible, frontmatter, desc = _parse_skill_file(skill_file)
+            entry = _build_snapshot_entry(skill_file, skills_dir, frontmatter, desc)
+            _seen_snapshot_names.add(entry["frontmatter_name"])
+            skill_entries.append(entry)
+            if not is_compatible:
+                continue
+            _maybe_show(entry, frontmatter)
+
+        # ── [2026-10-17] 외부/플러그인 디렉터리도 스냅샷에 영속 ──
+        # SkillRanker(8766)는 스냅샷 파일만 읽으므로, 플러그인 스킬이 여기에
+        # 들어가야 랭커 선별 대상이 된다. 로컬 우선(충돌 시 외부 스킵) —
+        # 아래 라이브 외부 스캔과 동일한 precedence.
+        for ext_dir in external_dirs:
+            if not ext_dir.exists():
+                continue
+            for skill_file in iter_skill_index_files(ext_dir, "SKILL.md"):
+                try:
+                    is_compatible, frontmatter, desc = _parse_skill_file(skill_file)
+                except Exception as e:
+                    logger.debug("Error reading external skill %s: %s", skill_file, e)
+                    continue
+                entry = _build_snapshot_entry(skill_file, ext_dir, frontmatter, desc)
+                if entry["frontmatter_name"] in _seen_snapshot_names:
+                    continue
+                _seen_snapshot_names.add(entry["frontmatter_name"])
+                skill_entries.append(entry)
+                if not is_compatible:
+                    continue
+                _maybe_show(entry, frontmatter)
 
         # Read category-level DESCRIPTION.md files
         for desc_file in iter_skill_index_files(skills_dir, "DESCRIPTION.md"):
@@ -553,7 +599,7 @@ def build_skills_system_prompt(
 
         _write_skills_snapshot(
             skills_dir,
-            _build_skills_manifest(skills_dir),
+            _build_skills_manifest(skills_dir, external_dirs),
             skill_entries,
             category_descriptions,
         )

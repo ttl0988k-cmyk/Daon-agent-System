@@ -570,9 +570,9 @@
 
     // 5. 버튼/링크 텍스트 내용으로 탐색
     for (const doc of docs) {
-      const candidates = Array.from(doc.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"]'));
+      const candidates = Array.from(doc.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [role="link"], span[role="button"]'));
       for (const c of candidates) {
-        const text = (c.innerText || c.textContent || c.value || '').trim();
+        const text = (c.innerText || c.textContent || c.value || c.getAttribute('aria-label') || '').trim();
         if (text.toLowerCase().includes(lowerQuery)) {
           addMatch(c);
         }
@@ -605,7 +605,20 @@
 
     if (matches.length === 0) return null;
 
-    // ⚠️ 핵심: 가시성(visible) 요소를 최우선으로 정렬
+    // ⚠️ 핵심 1: 열려있는 모달/확인창([role="dialog"], dialog[open], [aria-modal="true"], .modal) 내부 요소를 최우선으로 정렬
+    // (배경 페이지의 동일 텍스트 버튼보다 현재 띄워진 '양식 지우기', '취소' 등의 모달 버튼이 항상 우선 선택됨)
+    try {
+      const activeModal = document.querySelector('dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], .modal.show, .modal.open, .modal[style*="display: block"]');
+      if (activeModal && matches.length > 1) {
+        matches.sort((a, b) => {
+          const inA = activeModal.contains(a) ? 1 : 0;
+          const inB = activeModal.contains(b) ? 1 : 0;
+          return inB - inA;
+        });
+      }
+    } catch (_) {}
+
+    // ⚠️ 핵심 2: 가시성(visible) 요소를 최우선으로 정렬
     // 숨겨진 GNB 검색창(#gnb_svc_search_input 등)보다 실제 화면의 검색창이 항상 먼저 선택됨
     if (matches.length > 1) {
       const visibleMatches = matches.filter(el => isElementVisible(el));
@@ -813,11 +826,27 @@
   function simulateClick(element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-    const mouseEvents = ['mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click'];
     const rect = element.getBoundingClientRect();
     const clientX = rect.left + rect.width / 2;
     const clientY = rect.top + rect.height / 2;
 
+    // ⚠️ 최신 프레임워크(React 18+, Material-UI, Polymer/Google Forms)의 PointerEvent 지원
+    const pointerEvents = ['pointerover', 'pointerenter', 'pointerdown'];
+    pointerEvents.forEach(eventType => {
+      try {
+        element.dispatchEvent(new PointerEvent(eventType, {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+          pointerId: 1,
+          isPrimary: true
+        }));
+      } catch (_) {}
+    });
+
+    const mouseEvents = ['mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click'];
     mouseEvents.forEach(eventType => {
       const event = new MouseEvent(eventType, {
         view: window,
@@ -828,6 +857,18 @@
       });
       element.dispatchEvent(event);
     });
+
+    try {
+      element.dispatchEvent(new PointerEvent('pointerup', {
+        view: window,
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        pointerId: 1,
+        isPrimary: true
+      }));
+    } catch (_) {}
 
     if (typeof element.focus === 'function') element.focus();
     if (typeof element.click === 'function') element.click();
@@ -857,29 +898,63 @@
     const target = element || document.activeElement || document.body;
     if (typeof target.focus === 'function') target.focus();
 
-    const isEnter = key.toLowerCase() === 'enter';
-    const isSpace = key.toLowerCase() === 'space' || key === ' ';
-    const isEscape = key.toLowerCase() === 'escape';
-    const isTab = key.toLowerCase() === 'tab';
-    const isBackspace = key.toLowerCase() === 'backspace';
+    const lowerKey = String(key || '').toLowerCase();
+    const isEnter = lowerKey === 'enter';
+    const isSpace = lowerKey === 'space' || key === ' ';
+    const isEscape = lowerKey === 'escape' || lowerKey === 'esc';
+    const isTab = lowerKey === 'tab';
+    const isBackspace = lowerKey === 'backspace';
 
     const keyCode = isEnter ? 13 : (isEscape ? 27 : (isTab ? 9 : (isSpace ? 32 : (isBackspace ? 8 : (key.charCodeAt(0) || 0)))));
 
-    const keyEvents = ['keydown', 'keypress', 'keyup'];
+    const eventInit = {
+      key: isSpace ? ' ' : (isEscape ? 'Escape' : (isEnter ? 'Enter' : key)),
+      code: isEnter ? 'Enter' : (isEscape ? 'Escape' : (isTab ? 'Tab' : (isSpace ? 'Space' : (isBackspace ? 'Backspace' : key)))),
+      keyCode: keyCode,
+      which: keyCode,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window
+    };
+
+    const keyEvents = ['keydown', 'keyup'];
     keyEvents.forEach(type => {
-      target.dispatchEvent(new KeyboardEvent(type, {
-        key: isSpace ? ' ' : key,
-        code: isEnter ? 'Enter' : (isEscape ? 'Escape' : (isTab ? 'Tab' : (isSpace ? 'Space' : (isBackspace ? 'Backspace' : key)))),
-        keyCode: keyCode,
-        which: keyCode,
-        bubbles: true,
-        cancelable: true,
-        view: window
-      }));
+      target.dispatchEvent(new KeyboardEvent(type, eventInit));
+      // Escape 및 Enter: 글로벌(window/document) 리스너에 등록된 모달/폼 핸들러도 함께 트리거
+      if (isEscape || isEnter) {
+        try { document.dispatchEvent(new KeyboardEvent(type, eventInit)); } catch (_) {}
+        try { window.dispatchEvent(new KeyboardEvent(type, eventInit)); } catch (_) {}
+      }
     });
 
+    // ⚠️ Escape 시 모달 닫기 강력 보완 (HTML5 dialog 및 모달 닫기/취소 버튼 폴백)
+    if (isEscape) {
+      try {
+        const openDialogs = document.querySelectorAll('dialog[open]');
+        for (const d of openDialogs) {
+          d.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }));
+          if (d.open && typeof d.close === 'function') {
+            d.close();
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const activeModal = document.querySelector('dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], .modal.show, .modal.open, .modal[style*="display: block"]');
+        if (activeModal) {
+          const cancelBtn = Array.from(activeModal.querySelectorAll('button, [role="button"], a')).find(el => {
+            const txt = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
+            return /^(취소|닫기|cancel|close|dismiss)$/i.test(txt);
+          });
+          if (cancelBtn) {
+            simulateClick(cancelBtn);
+          }
+        }
+      } catch (_) {}
+    }
+
     // ⚠️ 단일 문자 또는 Space 키인 경우 실제 DOM에 텍스트가 삽입되도록 execCommand 보완
-    // (브라우저는 보안상 합성 KeyboardEvent만으로는 DOM에 글자를 적지 않음)
     if (isSpace) {
       try { document.execCommand('insertText', false, ' '); } catch (e) {}
     } else if (key.length === 1 && !isEnter && !isEscape && !isTab) {
@@ -1018,6 +1093,12 @@
           if (/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(first)) cls = `.${first}`;
         }
 
+        // ★ [2026-10-21 패치] 체크박스/라디오/스위치 checked 상태 정밀 추출
+        let checked = undefined;
+        if (type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch' || role === 'menuitemcheckbox' || role === 'menuitemradio') {
+          checked = ('checked' in el) ? Boolean(el.checked) : (el.getAttribute('aria-checked') === 'true' || el.classList.contains('checked') || el.classList.contains('active'));
+        }
+
         items.push({
           index: ++count,
           nodeId,                               // ★ 실행 시 이 값으로 지정 (권장)
@@ -1026,6 +1107,7 @@
           type,
           text: text.slice(0, 60),
           value: ('value' in el) ? String(el.value ?? '').slice(0, 60) : '',
+          checked: checked,
           selector: id || nameAttr || cls || tag
         });
 
@@ -1100,13 +1182,17 @@
           (async () => {
             try {
               let el = null;
-              // ① nodeId 경로 (권장): 스냅샷 시점 노드를 guard 검증 후 실행
-              if (request.nodeId !== undefined && request.nodeId !== null) {
-                const res = await resolveGuardedRecover(Number(request.nodeId));
+              // ① nodeId / node_id 별칭 통합 지원: 스냅샷 시점 노드를 guard 검증 후 실행
+              const reqNodeId = (request.nodeId !== undefined && request.nodeId !== null)
+                ? request.nodeId
+                : ((request.node_id !== undefined && request.node_id !== null) ? request.node_id : null);
+
+              if (reqNodeId !== null) {
+                const res = await resolveGuardedRecover(Number(reqNodeId));
                 if (res.ok) {
                   el = res.el;
                 } else {
-                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
+                  console.warn(`[DAON Agent] nodeId #${reqNodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
                   if (request.target || request.selector) {
                     el = findElement(request.target || request.selector, request.nth || 1, { isClick: true });
                   }
@@ -1120,15 +1206,30 @@
                 el = findElement(request.target || request.selector, request.nth || 1, { isClick: true });
               }
               if (!el) {
-                sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector}" (nth: ${request.nth || 1})` });
+                sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector || '(지정되지 않음)'}" (nth: ${request.nth || 1})` });
                 return;
               }
               showFeedback(el, `클릭: ${request.target || '버튼'}`);
               simulateClick(el);
+
+              // ★ [2026-10-21 패치] 클릭 후 체크박스/라디오/스위치 변경 상태 즉시 확인 및 결과 응답
+              let checkedInfo = '';
+              let isNowChecked = undefined;
+              const targetCheckEl = (el.type === 'checkbox' || el.type === 'radio' || el.getAttribute?.('role') === 'checkbox' || el.getAttribute?.('role') === 'switch')
+                ? el
+                : el.querySelector?.('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="switch"]');
+              if (targetCheckEl) {
+                isNowChecked = ('checked' in targetCheckEl)
+                  ? Boolean(targetCheckEl.checked)
+                  : (targetCheckEl.getAttribute('aria-checked') === 'true' || targetCheckEl.classList.contains('checked'));
+                checkedInfo = ` [상태: checked=${isNowChecked}]`;
+              }
+
               sendResponse({
                 ok: true,
                 nodeId: __daonReg.ids.get(el) ?? null,
-                message: `클릭 완료: <${el.tagName.toLowerCase()}> "${(el.innerText || el.value || '').trim().slice(0, 30)}"`,
+                checked: isNowChecked,
+                message: `클릭 완료: <${el.tagName.toLowerCase()}> "${(el.innerText || el.value || '').trim().slice(0, 30)}"${checkedInfo}`,
                 url: window.location.href
               });
             } catch (err) {
@@ -1142,12 +1243,16 @@
           (async () => {
             try {
               let el = null;
-              if (request.nodeId !== undefined && request.nodeId !== null) {
-                const res = await resolveGuardedRecover(Number(request.nodeId));
+              const reqNodeId = (request.nodeId !== undefined && request.nodeId !== null)
+                ? request.nodeId
+                : ((request.node_id !== undefined && request.node_id !== null) ? request.node_id : null);
+
+              if (reqNodeId !== null) {
+                const res = await resolveGuardedRecover(Number(reqNodeId));
                 if (res.ok) {
                   el = res.el;
                 } else {
-                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
+                  console.warn(`[DAON Agent] nodeId #${reqNodeId} guard 미충족 (${res.reason}), target/selector로 자동 폴백:`, request.target || request.selector);
                   if (request.target || request.selector) {
                     el = findElement(request.target || request.selector, request.nth || 1, { isClick: false });
                   }
@@ -1160,7 +1265,7 @@
                 el = findElement(request.target || request.selector, request.nth || 1, { isClick: false });
               }
               if (!el) {
-                sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector}" (nth: ${request.nth || 1})` });
+                sendResponse({ ok: false, error: `요소를 찾을 수 없습니다: "${request.target || request.selector || '(지정되지 않음)'}" (nth: ${request.nth || 1})` });
                 return;
               }
               showFeedback(el, `호버: ${request.target || '요소'}`);
@@ -1184,8 +1289,12 @@
               const key = request.key || 'Enter';
               let el = null;
               let viaNode = false;
-              if (request.nodeId !== undefined && request.nodeId !== null) {
-                const res = await resolveGuardedRecover(Number(request.nodeId));
+              const reqNodeId = (request.nodeId !== undefined && request.nodeId !== null)
+                ? request.nodeId
+                : ((request.node_id !== undefined && request.node_id !== null) ? request.node_id : null);
+
+              if (reqNodeId !== null) {
+                const res = await resolveGuardedRecover(Number(reqNodeId));
                 if (res.ok) {
                   el = res.el;
                   viaNode = true;
@@ -1217,12 +1326,16 @@
           (async () => {
             try {
               let el = null;
-              if (request.nodeId !== undefined && request.nodeId !== null) {
-                const res = await resolveGuardedRecover(Number(request.nodeId));
+              const reqNodeId = (request.nodeId !== undefined && request.nodeId !== null)
+                ? request.nodeId
+                : ((request.node_id !== undefined && request.node_id !== null) ? request.node_id : null);
+
+              if (reqNodeId !== null) {
+                const res = await resolveGuardedRecover(Number(reqNodeId));
                 if (res.ok) {
                   el = res.el;
                 } else {
-                  console.warn(`[DAON Agent] nodeId #${request.nodeId} guard 미충족 (${res.reason}), input target/selector로 자동 폴백:`, request.target || request.selector);
+                  console.warn(`[DAON Agent] nodeId #${reqNodeId} guard 미충족 (${res.reason}), input target/selector로 자동 폴백:`, request.target || request.selector);
                   if (request.target || request.selector) {
                     el = findElement(request.target || request.selector, request.nth || 1, { isInput: true });
                   }
@@ -1236,32 +1349,15 @@
               }
 
               if (!el) {
-                sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector}"` });
+                sendResponse({ ok: false, error: `입력 필드를 찾을 수 없습니다: "${request.target || request.selector || '(지정되지 않음)'}"` });
                 return;
               }
               const visible = isElementVisible(el);
               showFeedback(el, `입력: "${request.text}"`);
               const verified = await simulateTyping(el, request.text);
-              // ── ★ [4차] combobox 제안 대기 (jev 이식) ────────────────────────
-              // 원본: "Editable ARIA comboboxes wait for visible options, capped at 200ms"
-              // 입력 직후 자동완성이 뜨는 것을 기다려 준다. 그러면 다음 액션이
-              // 'covered'(오버레이가 입력창을 덮음)로 막히는 상황이 애초에 안 생긴다.
-              // → 우리의 사후 복구(resolveGuardedRecover)를 최후 수단으로 물러나게 한다.
               try { await waitForSuggestions(el, 200); } catch (e) {}
-              // ── [2026-09-19 2차 수정] type 자기-stale 해소 ─────────────────────
-              // 문제: guardOf()는 'value'/'aria-expanded'를 guard에 포함한다.
-              //   그래서 type이 검색창 value를 바꾸는 순간 그 노드 자체가 stale이 되고,
-              //   뒤따르는 press(Enter)/click이 "상태가 변경되었습니다"로 거부됐다.
-              //   실측: type(nodeId=4) 성공 → press Enter(nodeId=4) → stale 거부.
-              //   '입력 → Enter'는 검색의 기본 패턴이라 매번 재스냅샷을 요구하면 실사용 불가.
-              // ── ★ [4차 확장] guard 뿐 아니라 pageKey 도 재캡처 ────────────────
-              //   pageKey 에는 모든 폼 값이 들어가므로, type 은 pageKey 도 바꾼다.
-              //   재캡처하지 않으면 4차에서 추가한 지문 비교가 같은 이유로 press 를 막는다.
-              //   (type 이 변경한 상태는 '예상된 변경'이므로 새 baseline 으로 확정)
-              //   gone/disconnected/hidden 검사는 그대로 유지되므로 위험은 낮다.
               try {
-                let nid = (request.nodeId !== undefined && request.nodeId !== null)
-                  ? Number(request.nodeId) : null;
+                let nid = reqNodeId !== null ? Number(reqNodeId) : null;
                 if (nid === null && __daonReg.ids) nid = __daonReg.ids.get(el) ?? null;
                 if (nid !== null) {
                   const g = guardOf(el);
@@ -1287,22 +1383,16 @@
         }
 
         // ── ★ [4차] 네이티브 SELECT 옵션 선택 (jev 이식) ─────────────────────
-        // 원본 browser.py L152~157:
-        //   if (action.kind==='select') {
-        //     if (e.tagName!=='SELECT' || ![options].some(o=>o.value===action.value
-        //         && !o.disabled && !o.closest('optgroup[disabled]'))) return null;
-        //     e.value=action.value;
-        //     e.dispatchEvent(new Event('input',{bubbles:true}));
-        //     e.dispatchEvent(new Event('change',{bubbles:true}));
-        //   }
-        // 핵심: 옵션을 '관찰된 것'에서만 고르고(모델이 임의 값 생성 불가),
-        //       프레임워크가 반응하도록 input+change 를 함께 디스패치한다.
         case 'ACT_SELECT': {
           (async () => {
             try {
               let el = null;
-              if (request.nodeId !== undefined && request.nodeId !== null) {
-                const res = await resolveGuardedRecover(Number(request.nodeId));
+              const reqNodeId = (request.nodeId !== undefined && request.nodeId !== null)
+                ? request.nodeId
+                : ((request.node_id !== undefined && request.node_id !== null) ? request.node_id : null);
+
+              if (reqNodeId !== null) {
+                const res = await resolveGuardedRecover(Number(reqNodeId));
                 if (!res.ok) {
                   sendResponse({ ok: false, stale: true, reason: res.reason, error: res.error });
                   return;
@@ -1316,7 +1406,7 @@
                 return;
               }
               if (el.tagName !== 'SELECT') {
-                sendResponse({ ok: false, error: `요소 #${request.nodeId} 는 <select> 가 아닙니다 (${el.tagName}).` });
+                sendResponse({ ok: false, error: `요소 #${reqNodeId ?? '(알수없음)'} 는 <select> 가 아닙니다 (${el.tagName}).` });
                 return;
               }
               const want = String(request.value ?? '');
@@ -1340,8 +1430,7 @@
               el.dispatchEvent(new Event('change', { bubbles: true }));
               // 재캡처 — select 도 폼 값/guard 를 바꾸므로 자기-stale 을 해소한다
               try {
-                let nid = (request.nodeId !== undefined && request.nodeId !== null)
-                  ? Number(request.nodeId) : null;
+                let nid = reqNodeId !== null ? Number(reqNodeId) : null;
                 if (nid === null && __daonReg.ids) nid = __daonReg.ids.get(el) ?? null;
                 if (nid !== null) {
                   const g = guardOf(el);

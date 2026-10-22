@@ -28,7 +28,16 @@ def safe_resolve(root: Path, requested: str) -> Path:
 def _security_headers(handler):
     """Add security and CORS headers to every response."""
     handler.send_header('X-Content-Type-Options', 'nosniff')
-    handler.send_header('X-Frame-Options', 'DENY')
+    # /multi는 v2 작업장 탭의 동일-origin iframe에 내장되므로 SAMEORIGIN 허용.
+    # 그 외는 클릭재킹 방지를 위해 DENY 유지. 외부 사이트 임베드는 계속 차단됨.
+    try:
+        _p = (getattr(handler, 'path', '') or '').split('?', 1)[0]
+    except Exception:
+        _p = ''
+    if _p == '/multi' or _p == '/multi.html' or _p.startswith('/multi/') or _p.startswith('/static/multi/'):
+        handler.send_header('X-Frame-Options', 'SAMEORIGIN')
+    else:
+        handler.send_header('X-Frame-Options', 'DENY')
     handler.send_header('Referrer-Policy', 'same-origin')
     handler.send_header('Access-Control-Allow-Origin', '*')
     handler.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')

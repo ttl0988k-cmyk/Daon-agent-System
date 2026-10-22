@@ -120,7 +120,27 @@ Sync-FolderWithRobocopy (Join-Path $src 'skills') (Join-Path $dst 'skills') @('_
 Sync-FolderWithRobocopy (Join-Path $src 'plugins') (Join-Path $dst 'plugins') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 Sync-FolderWithRobocopy (Join-Path $src 'browser_service') (Join-Path $dst 'browser_service') @('__pycache__', '.pytest_cache', '.git', 'tests') @('*.pyc')
 
-Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills + plugins + browser_service) → $dst" -ForegroundColor Green
+# ── 3-2. 동기화: Electron 메인 프로세스 (resources/app 폴더 방식) ──
+$dstApp = Join-Path $dst 'app'
+if (-not (Test-Path $dstApp)) {
+    New-Item -ItemType Directory -Path $dstApp -Force | Out-Null
+}
+Copy-Item (Join-Path $src 'package.json') (Join-Path $dstApp 'package.json') -Force
+Sync-FolderWithRobocopy (Join-Path $src 'electron') (Join-Path $dstApp 'electron') @('__pycache__', '.pytest_cache', '.git', 'tests', 'node_modules') @()
+
+# app.asar 가 남아있으면 Electron이 app/ 폴더 대신 asar를 우선 로드하므로 비활성화
+$asarFile = Join-Path $dst 'app.asar'
+if (Test-Path $asarFile) {
+    try {
+        $stampAsar = Get-Date -Format 'yyyyMMdd_HHmmss'
+        Rename-Item $asarFile "app.asar.disabled_$stampAsar" -Force -ErrorAction Stop
+        Write-Host "[OK] 기존 app.asar -> app.asar.disabled_$stampAsar 비활성화 완료 (app/ 폴더 로드 모드)" -ForegroundColor Green
+    } catch {
+        Write-Host "[안내] app.asar 파일 잠김 (앱 실행 중). 앱 재시작 직후 자동으로 비활성화됩니다." -ForegroundColor Yellow
+    }
+}
+
+Write-Host "[OK] 전체 동기화 완료 (UI + hermes-agent + api + skills + plugins + browser_service + Electron app) → $dst" -ForegroundColor Green
 Write-Host "     백업: $backup"
 
 # ── 4. 검증: 핵심 파일 크기 비교 ──
@@ -145,6 +165,12 @@ if ($Open) {
         $srv | Stop-Process -Force
     }
     Start-Sleep -Seconds 2
+    # 앱 종료 후 app.asar 가 남아있으면 안전하게 비활성화 (app/ 폴더 로드 보장)
+    if (Test-Path $asarFile) {
+        $stampAsar = Get-Date -Format 'yyyyMMdd_HHmmss'
+        Rename-Item $asarFile "app.asar.disabled_$stampAsar" -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] 기존 app.asar 비활성화 완료 -> resources/app 폴더로 실행" -ForegroundColor Green
+    }
     # Clean any orphaned _MEI* extraction folders from daon_runtime
     $runtimeDirs = @(
         (Join-Path (Split-Path $dst) 'daon_runtime'),

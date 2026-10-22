@@ -111,6 +111,63 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
 
         mcp_manager = get_mcp_manager()
 
+        # ── [Laya On-Demand 2026-10-17] 후보=등록 전체+카탈로그, 선택된 standby 서버는 일시 연결 ──
+        # 종전엔 연결된 서버만 후보라 꺼둔 MCP는 Laya가 고를 수 없었다.
+        # 이제 등록 전체를 후보로 넘기고, 고른 standby 서버는 여기서 깨운 뒤
+        # 아래 기존 루프가 그대로 등록한다 (enabled 변경·config 저장 없음 → 재기동 시 standby 복귀).
+        # 깨우기 실패분은 후보에서 제외(fail-open). playwright는 8088 스켈레톤을 쓰므로 후보 제외.
+        # [임베딩 이관 2026-10-17] Laya prune보다 SkillRanker /rank_mcps를 먼저 시도.
+        # 실측: 동일 20케이스 TOP1 18/20·TOP3 19/20 (Laya 4/20). 랭커 무확신/실패 시 Laya 폴백.
+        _preselected_all = None
+        if user_prompt:
+            try:
+                from api.laya_client import laya_client as _laya_prune_client, get_mcp_desc_map
+                _all_registered = [
+                    s.get('server_id') for s in (mcp_manager.list_servers() or [])
+                    if s.get('server_id') and s.get('server_id') != 'playwright'
+                ]
+                _ranker_hit = False
+                try:
+                    import json as _js, urllib.request as _url
+                    _rq = _url.Request(
+                        'http://127.0.0.1:8766/rank_mcps',
+                        data=_js.dumps({'prompt': user_prompt, 'top_n': 3}).encode('utf-8'),
+                        headers={'Content-Type': 'application/json'})
+                    _rr = _url.urlopen(_rq, timeout=5)
+                    _rd = _js.loads(_rr.read().decode('utf-8') or '{}')
+                    if _rd.get('confident') and _rd.get('mcps'):
+                        _ranked = [m.get('name') for m in _rd['mcps'] if m.get('name')]
+                        # 등록된 서버만 (카탈로그 기준이라 미등록 ID가 섞일 수 있음)
+                        _ranked = [s for s in _ranked if s in _all_registered]
+                        if _ranked:
+                            _preselected_all = _ranked
+                            _ranker_hit = True
+                            _logger.info("[MCP-Preselect] ranker hit: %s (margin=%s)",
+                                         _ranked, _rd.get('margin'))
+                except Exception as _e_rank:
+                    _logger.debug("ranker preselect bypassed: %s", _e_rank)
+                if not _ranker_hit:
+                    _mcp_descs_all = get_mcp_desc_map(_all_registered) or None
+                    _preselected_all = _laya_prune_client.prune_mcp(
+                        user_prompt, _all_registered, mcp_descriptions=_mcp_descs_all)
+                if _preselected_all:
+                    _already_on = {
+                        sid for sid, c in mcp_manager._connections.items()
+                        if getattr(c, 'connected', False)
+                    }
+                    _to_wake = [s for s in _preselected_all if s not in _already_on]
+                    if _to_wake:
+                        _wake_res = mcp_manager.connect_transient_many(_to_wake)
+                        _wake_failed = {s for s, _ok in _wake_res.items() if not _ok}
+                        if _wake_failed:
+                            _logger.info("[Laya-OnDemand] transient connect failed, excluded: %s", sorted(_wake_failed))
+                            _preselected_all = [s for s in _preselected_all if s not in _wake_failed]
+                        else:
+                            _logger.info("[Laya-OnDemand] woken standby servers: %s", _to_wake)
+            except Exception as _e_wake:
+                _logger.debug("Laya on-demand preselect bypassed: %s", _e_wake)
+                _preselected_all = None
+
         # Wait up to 3 seconds for active MCP servers (15 * 0.2s)
         mcp_tools: List[Dict[str, Any]] = []
         for _ in range(15):
@@ -218,12 +275,19 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
             _summary_servers = sorted(tools_by_server.items())
             if user_prompt:
                 try:
-                    from api.laya_client import laya_client as _laya_prune_client, get_mcp_desc_map
-                    _all_sids = [sid for sid, _ in _summary_servers]
-                    # [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
-                    # 카탈로그에서 {sid: 설명}을 만들어 prune_mcp에 넘긴다. 읽기 실패 시 None → ID만 전달(fail-open).
-                    _mcp_descs = get_mcp_desc_map(_all_sids) or None
-                    _needed = _laya_prune_client.prune_mcp(user_prompt, _all_sids, mcp_descriptions=_mcp_descs)
+                    _needed = None
+                    if _preselected_all is not None:
+                        # [2026-10-17] 위에서 등록 전체로 이미 선별 → Laya 재호출 없이 재사용
+                        _wanted = set(_preselected_all)
+                        _needed = [sid for sid, _ in _summary_servers if sid in _wanted]
+                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=%s (registry-wide, reused)", user_prompt, _needed)
+                    else:
+                        from api.laya_client import laya_client as _laya_prune_client, get_mcp_desc_map
+                        _all_sids = [sid for sid, _ in _summary_servers]
+                        # [FIX 2026-10-13] MCP 카탈로그 — 신규 MCP는 JSON 1줄로 온보딩, Laya 코드 수정 불필요.
+                        # 카탈로그에서 {sid: 설명}을 만들어 prune_mcp에 넘긴다. 읽기 실패 시 None → ID만 전달(fail-open).
+                        _mcp_descs = get_mcp_desc_map(_all_sids) or None
+                        _needed = _laya_prune_client.prune_mcp(user_prompt, _all_sids, mcp_descriptions=_mcp_descs)
                     if _needed:
                         _needed_set = set(_needed)
                         _summary_servers = [(sid, tl) for sid, tl in _summary_servers if sid in _needed_set]
@@ -328,13 +392,25 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                 "type": "function",
                 "function": {
                     "name": "list_mcp_tools",
-                    "description": "List available tools and input parameter schemas for active MCP servers.",
+                    "description": (
+                        "List available tools for active MCP servers — returns name + short description "
+                        "+ parameter summary (param names, types, '*' = required). "
+                        "To get ONE tool's full parameter schema, also pass tool_name."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "server_name": {
                                 "type": "string",
                                 "description": "Optional: server ID to inspect (e.g. 'filesystem'). Omit to list all."
+                            },
+                            "tool_name": {
+                                "type": "string",
+                                "description": (
+                                    "Optional: exact tool name. Requires server_name. "
+                                    "Returns that single tool's detailed schema (use when the "
+                                    "summary is not enough to build the arguments)."
+                                )
                             }
                         }
                     }
@@ -344,8 +420,94 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
             if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
                 agent.valid_tool_names.add("list_mcp_tools")
 
+            # ── [2026-10-19 토큰 최적화] inputSchema 축약 ──
+            # rea MCP는 도구 139개 inputSchema 합계가 551,161자(examples·$schema 포함)라
+            # list_mcp_tools(server_name='rea') 1회가 1,405,920자(~164,940 토큰)를 반환해
+            # 컨텍스트를 즉사시켰다. 목록 모드는 파라미터 이름/타입/필수만 남기고,
+            # 상세는 tool_name 단일 조회로 분리한다.
+            def _slim_schema(node, _depth: int = 0, _max_depth: int = 4, _max_items: int = 40):
+                """examples/$schema 등 비용만 큰 키를 제거한 스키마 사본."""
+                try:
+                    if _depth > _max_depth:
+                        return '...'
+                    if isinstance(node, list):
+                        return [_slim_schema(_x, _depth + 1, _max_depth, _max_items) for _x in node[:3]]
+                    if not isinstance(node, dict):
+                        return node
+                    _drop = {'examples', '$schema', '$id', 'additionalProperties', 'outputSchema', 'title'}
+                    out = {}
+                    for _i, (_k, _v) in enumerate(node.items()):
+                        if _k in _drop:
+                            continue
+                        if _i >= _max_items:
+                            out['_truncated'] = f'+{len(node) - _max_items} more keys'
+                            break
+                        out[_k] = _slim_schema(_v, _depth + 1, _max_depth, _max_items)
+                    return out
+                except Exception:
+                    return {}
+
+            def _summarize_input_schema(sch, _max_props: int = 30) -> dict:
+                """properties → {파라미터명: '타입'} 요약 ('*' = 필수)."""
+                try:
+                    if not isinstance(sch, dict):
+                        return {}
+                    # anyOf/oneOf/allOf 병합 — rea는 anyOf[0]에 실스키마를 둔다
+                    for _uk in ('anyOf', 'oneOf', 'allOf'):
+                        _cand = sch.get(_uk)
+                        if isinstance(_cand, list) and _cand and isinstance(_cand[0], dict):
+                            sch = _cand[0]
+                            break
+                    props = sch.get('properties')
+                    if not isinstance(props, dict) or not props:
+                        return {}
+                    _req = set(sch.get('required') or [])
+                    out = {}
+                    for _i, (_k, _v) in enumerate(props.items()):
+                        if _i >= _max_props:
+                            out['...'] = f'(+{len(props) - _max_props} more params)'
+                            break
+                        _t = ''
+                        if isinstance(_v, dict):
+                            _t = _v.get('type') or ''
+                            if not _t:
+                                for _uk in ('anyOf', 'oneOf', 'allOf'):
+                                    _u = _v.get(_uk)
+                                    if isinstance(_u, list) and _u and isinstance(_u[0], dict):
+                                        _t = _u[0].get('type') or ''
+                                        if _t:
+                                            break
+                            if not _t and isinstance(_v.get('properties'), dict):
+                                _t = 'object'
+                        if _t:
+                            out[_k] = f"{_t}{'*' if _k in _req else ''}"
+                        else:
+                            out[_k] = '*' if _k in _req else 'any'
+                    return out
+                except Exception:
+                    return {}
+
             def _list_mcp_router_handler(args: dict, **kwargs) -> str:
                 target_srv = (args.get('server_name') or args.get('server') or '').strip().lower()
+                target_tool = (args.get('tool_name') or args.get('tool') or '').strip()
+                # ── 단일 도구 상세 조회 (server_name + tool_name) ──
+                if target_srv and target_tool:
+                    for sid, tool_list in tools_by_server.items():
+                        if sid.lower() != target_srv:
+                            continue
+                        for t in tool_list:
+                            if (t.get('name') or '').lower() == target_tool.lower():
+                                return json.dumps({
+                                    "server": sid,
+                                    "tool": t.get('name'),
+                                    "description": (t.get('description') or ''),
+                                    "parameters": _slim_schema(t.get('inputSchema') or {}),
+                                }, ensure_ascii=False, indent=2)
+                        break
+                    return json.dumps(
+                        {"error": f"tool '{target_tool}' not found on server '{target_srv}'"},
+                        ensure_ascii=False)
+                # ── 목록 모드: 파라미터 요약만 (상세는 tool_name으로) ──
                 grouped = {}
                 for sid, tool_list in tools_by_server.items():
                     if target_srv and sid.lower() != target_srv:
@@ -354,11 +516,27 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                         {
                             "name": t.get('name'),
                             "description": (t.get('description') or '')[:120],
-                            "parameters": t.get('inputSchema', {})
+                            "parameters": _summarize_input_schema(t.get('inputSchema') or {})
                         }
                         for t in tool_list
                     ]
-                return json.dumps({"servers": grouped}, ensure_ascii=False, indent=2)
+                payload = json.dumps({"servers": grouped}, ensure_ascii=False, indent=2)
+                # 하드 상한 — 비정상적으로 큰 스키마가 와도 컨텍스트 폭발 방지.
+                # 초과 시 앞부분을 잘라내는 대신 서버 인덱스로 폴백한다
+                # (잘라내면 뒤쪽 서버가 통째로 사라져 어떤 서버가 있는지조차 안 보임).
+                _LIMIT = 60000
+                if len(payload) > _LIMIT:
+                    index = {
+                        sid: {"tool_count": len(tl), "call": f"list_mcp_tools(server_name='{sid}')"}
+                        for sid, tl in grouped.items()
+                    }
+                    payload = json.dumps({
+                        "servers_index": index,
+                        "note": (f"full listing would exceed {_LIMIT} chars — showing server index. "
+                                 "Call again with server_name for one server's tool list, "
+                                 "or server_name + tool_name for a single tool's schema."),
+                    }, ensure_ascii=False, indent=2)
+                return payload
 
             registry.register(
                 name="list_mcp_tools",
@@ -374,6 +552,26 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                 description="List available tools for active MCP servers",
             )
 
+        # ── [Lazy-MCP-DIAG 2026-10-22] agent.tools 실측: 44 -> 295 로 늘어나는 지점 포착용 ──
+        try:
+            if hasattr(agent, "tools") and isinstance(agent.tools, list):
+                _names_all = [t.get("function", {}).get("name", "") for t in agent.tools if isinstance(t, dict)]
+                _names_mcp = [n for n in _names_all if n.startswith("mcp_")]
+                print(
+                    "[Lazy-MCP-DIAG] lazy=%s registered=%d agent.tools=%d mcp_individual=%d"
+                    % (use_lazy_mcp, injected_count, len(_names_all), len(_names_mcp)),
+                    flush=True,
+                )
+                if _names_mcp:
+                    _by_srv = {}
+                    for _n in _names_mcp:
+                        _parts = _n.split("_")
+                        _key = _parts[1] if len(_parts) > 1 else "?"
+                        _by_srv[_key] = _by_srv.get(_key, 0) + 1
+                    print("[Lazy-MCP-DIAG] mcp by server: %s" % sorted(_by_srv.items(), key=lambda kv: -kv[1])[:12], flush=True)
+        except Exception as _e_diag:
+            print("[Lazy-MCP-DIAG] failed: %s" % _e_diag, flush=True)
+
         if injected_count > 0:
             if use_lazy_mcp:
                 _logger.info("Registered %d MCP tools (Lazy MCP Router: call_mcp_tool & list_mcp_tools exposed to LLM).", injected_count)
@@ -381,6 +579,24 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                 _logger.info("Registered %d MCP tools into Hermes registry + agent.tools (Eager mode).", injected_count)
     except Exception as e:
         _logger.warning("Failed to inject MCP tools: %s", e, exc_info=True)
+
+    # ── [DIAG-TOOLS 2026-10-22] 매 턴 agent.tools 구성 진단 ──
+    try:
+        _diag_tools = getattr(agent, "tools", None)
+        if isinstance(_diag_tools, list):
+            _KEEP_DIAG = ("call_mcp_tool", "list_mcp_tools", "mcp_manage")
+            _names = [(_t.get("function", {}) or {}).get("name", "") for _t in _diag_tools if isinstance(_t, dict)]
+            _mcp_ind = [n for n in _names if n.startswith("mcp_") and n not in _KEEP_DIAG]
+            _keep = [n for n in _names if n in _KEEP_DIAG]
+            print(
+                "[DIAG-TOOLS] lazy=%s registered_mcp=%d agent.tools=%d mcp_individual=%d router=%d"
+                % (use_lazy_mcp, injected_count, len(_names), len(_mcp_ind), len(_keep)),
+                flush=True,
+            )
+            if _mcp_ind:
+                print("[DIAG-TOOLS] LEAK individual mcp in agent.tools: %s" % ", ".join(_mcp_ind[:15]), flush=True)
+    except Exception as _e_diag:
+        print("[DIAG-TOOLS] diag failed: %s" % _e_diag, flush=True)
 
     return injected_count
 
@@ -770,6 +986,10 @@ def inject_daon_action_tool(agent: Any) -> None:
                         "node_id": {
                             "type": "integer",
                             "description": "스냅샷에서 확인된 대상 요소의 정수 번호 (옵션)"
+                        },
+                        "nodeId": {
+                            "type": "integer",
+                            "description": "스냅샷에서 확인된 대상 요소의 정수 번호 (node_id의 camelCase 별칭)"
                         }
                     },
                     "required": ["action"]
@@ -790,7 +1010,13 @@ def inject_daon_action_tool(agent: Any) -> None:
             direction = args.get('direction', '')
             key = args.get('key', '')
             nth = args.get('nth')
-            node_id = args.get('node_id')
+            raw_node_id = args.get('node_id') if args.get('node_id') is not None else args.get('nodeId')
+            node_id = None
+            if raw_node_id is not None:
+                try:
+                    node_id = int(raw_node_id)
+                except (ValueError, TypeError):
+                    node_id = None
 
             attr_parts = [f'action="{action}"']
             if target:
@@ -808,6 +1034,7 @@ def inject_daon_action_tool(agent: Any) -> None:
             if nth is not None:
                 attr_parts.append(f'nth="{nth}"')
             if node_id is not None:
+                attr_parts.append(f'nodeId="{node_id}"')
                 attr_parts.append(f'node_id="{node_id}"')
 
             tag = f"<daon_action {' '.join(attr_parts)} />"
@@ -816,7 +1043,7 @@ def inject_daon_action_tool(agent: Any) -> None:
                 from api import browser_ext_bridge as _bx
                 _cmd = {"action": action, "target": target, "text": text, "selector": selector,
                         "url": url, "direction": direction, "key": key,
-                        "nth": nth, "node_id": node_id}
+                        "nth": nth, "node_id": node_id, "nodeId": node_id}
                 _cid = _bx.enqueue(_cmd)
                 _res = _bx.wait_result(_cid, timeout=25.0)
                 if _res is not None:
@@ -1240,6 +1467,220 @@ def inject_colleague_tools(agent: Any, session_id: str = None) -> None:
         _logger.warning("Colleague tool injection failed: %s", e)
 
 
+def inject_boardroom_tools(agent: Any, session_id: str = None) -> None:
+    """Inject the convene_boardroom tool — 라온이 채팅에서 회의실을 소집한다.
+
+    라온은 회의실에 '참석하지 않는다'. 안건을 정리해 이 도구를 호출하면
+    빌·셜록·토니·프라다·다온 + CLI 워커가 1차 토론하고, 라온이 사회자로서
+    취합 → 이견 재질의 → 합의까지 진행한 뒤 결론을 돌려준다.
+    회의 진행 상황은 회의실 탭이 /api/boardroom/live 폴링으로 지켜본다.
+    """
+    try:
+        from tools.registry import registry
+
+        _schema = {
+            "type": "function",
+            "function": {
+                "name": "convene_boardroom",
+                "description": (
+                    "회의실을 소집해 전문 에이전트 팀(빌:개발, 셜록:검수, 토니:기획, "
+                    "프라다:디자인, 다온:응대, 코덱스/클로드 워커)에게 안건을 토론시킵니다. "
+                    "라온은 발언자로 참석하지 않고 사회자·통합자로만 일합니다 — "
+                    "1차 토론 → 라온 취합 → 이견이 있으면 해당 에이전트 재질의 → 합의까지 반복한 뒤 "
+                    "합의 결론·남은 이견·다음 단계(작업 목록)를 돌려줍니다. "
+                    "대표님이 '회의해봐', '토론시켜봐', '의견 모아봐'라고 지시하면 "
+                    "대표님 요구를 실행 가능한 안건 문장으로 정리해 이 도구를 호출하세요. "
+                    "결과는 반드시 채팅창에서 대표님께 보고하고 승인을 받으세요. "
+                    "승인 뒤에 작업장으로 넘어갑니다."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agenda": {
+                            "type": "string",
+                            "description": (
+                                "회의 안건. 대표님의 원문을 그대로 넣지 말고, "
+                                "무엇을 결정/설계/검토해야 하는지가 드러나게 정리한 문장."
+                            )
+                        },
+                        "participants": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "참여시킬 에이전트 키 목록 "
+                                "(bill, sherlock, tony, prada, daon, worker-codex, worker-claude). "
+                                "생략하면 회의실 탭에서 대표님이 체크한 참여 선택을 그대로 따르고, "
+                                "저장된 선택이 없을 때만 전체 참여한다. "
+                                "대표님이 회의실 탭에서 참여자를 골라 뒀다면 이 인자는 넘기지 마세요."
+                            )
+                        },
+                        "max_rounds": {
+                            "type": "integer",
+                            "description": "1차 토론 + 재질의 최대 라운드 (기본 3, 최대 3)"
+                        }
+                    },
+                    "required": ["agenda"]
+                }
+            }
+        }
+
+        def _boardroom_handler(args: dict, **kwargs) -> str:
+            agenda = (args.get("agenda") or args.get("task") or args.get("topic") or "").strip()
+            if not agenda:
+                return json.dumps({"ok": False, "error": "agenda is required"}, ensure_ascii=False)
+
+            try:
+                from api.routes.boardroom_routes import (
+                    run_boardroom, resolve_selected_slots, _format_report,
+                    live_reset, live_emit, MAX_ROUNDS, remember_panes,
+                    get_saved_slots, get_saved_models,
+                )
+            except Exception as e:  # noqa: BLE001
+                return json.dumps({"ok": False, "error": f"boardroom unavailable: {e}"},
+                                  ensure_ascii=False)
+
+            # 참여자 결정:
+            #   * participants를 명시하면 그 값을 그대로 존중한다(다른 호출자 보호).
+            #   * 생략하면 회의실 탭이 저장해 둔 참여 선택(POST /api/boardroom/selection)을
+            #     쓴다. 그래야 채팅에서 소집해도 체크 해제한 에이전트가 빠진다.
+            #   * 저장값도 없으면 기존대로 전체 참여(하위호환).
+            raw_participants = args.get("participants")
+            saved_slots = get_saved_slots() if raw_participants is None else None
+            if saved_slots:
+                selected = saved_slots
+                source = "boardroom_selection"
+            else:
+                selected = resolve_selected_slots(raw_participants)
+                source = "participants" if raw_participants is not None else "all_slots"
+            if not selected:
+                return json.dumps({"ok": False, "error": "참여 에이전트가 없습니다."},
+                                  ensure_ascii=False)
+
+            # 슬롯별 모델도 회의실 탭 선택을 따른다(하드코딩 {} 였던 부분).
+            models = get_saved_models()
+
+            try:
+                max_rounds = int(args.get("max_rounds") or MAX_ROUNDS)
+            except (TypeError, ValueError):
+                max_rounds = MAX_ROUNDS
+
+            _logger.info("[convene_boardroom] agenda=%s source=%s participants=%s models=%s",
+                         agenda[:60], source, [s[0] for s in selected], models)
+            live_reset(agenda)
+            try:
+                res = run_boardroom(
+                    agenda, selected, models=models, emit=live_emit,
+                    max_rounds=max(1, min(max_rounds, MAX_ROUNDS)),
+                )
+            except Exception as e:  # noqa: BLE001
+                _logger.exception("[convene_boardroom] run failed")
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+            payload = {
+                "ok": bool(res.get("ok")),
+                "agenda": res.get("agenda"),
+                "rounds": res.get("rounds"),
+                "consensus": res.get("consensus"),
+                "summary": res.get("summary"),
+                "points": res.get("points"),
+                "disagreements": res.get("disagreements"),
+                "next_steps": res.get("next_steps"),
+                "report": _format_report(res),
+                "workshop_panes": remember_panes(res),
+                "instruction": (
+                    "위 'report'를 대표님께 채팅창에서 그대로 보고하세요. "
+                    "요약을 지어내지 말고 report 내용을 사용하고, "
+                    "마지막에 승인을 요청하세요. 승인 전에는 작업장을 열지 마세요. "
+                    "대표님이 승인하면 open_workshop 도구를 호출하세요."
+                ),
+            }
+            return json.dumps(payload, ensure_ascii=False)
+
+        def _open_workshop_handler(args: dict, **kwargs) -> str:
+            try:
+                from api.routes.boardroom_routes import get_last_panes
+            except Exception as e:  # noqa: BLE001
+                return json.dumps({"ok": False, "error": f"workshop unavailable: {e}"},
+                                  ensure_ascii=False)
+            info = get_last_panes()
+            panes = info.get("panes") or []
+            if not panes:
+                # 폴백: 회의 기록이 없더라도 작업장 기본 구성(라온, 빌, 프라다, 셜록)으로 열기 지원
+                panes = [
+                    {"profile": "raon", "sessionId": session_id or "", "model": "", "slot": "01", "speaker": "라온 (사회자·통합)", "kind": "agent"},
+                    {"profile": "bill", "sessionId": "", "model": "", "slot": "02", "speaker": "빌 (개발)", "kind": "agent"},
+                    {"profile": "prada", "sessionId": "", "model": "", "slot": "05", "speaker": "프라다 (디자인)", "kind": "agent"},
+                    {"profile": "sherlock", "sessionId": "", "model": "", "slot": "03", "speaker": "셜록 (검수)", "kind": "agent"},
+                ]
+            _logger.info("[open_workshop] handing off %d panes for agenda=%s",
+                         len(panes), (info.get("agenda") or "일반 작업")[:50])
+            return json.dumps({
+                "ok": True,
+                "panes": panes,
+                "agenda": info.get("agenda") or "작업장 가동",
+                "rounds": info.get("rounds", 1),
+                "next_steps": info.get("next_steps", []),
+                "instruction": (
+                    "작업장(멀티뷰) 화면을 성공적으로 열고 참여 에이전트를 pane으로 복원했습니다! "
+                    "이제 말로만 끝내지 말고, 지금 즉시 delegate_to_agent(agent_name='bill'|'prada'|'sherlock'|'tony', task='...') "
+                    "도구를 연속 호출하여 각 에이전트에게 실제 구현 작업을 배분하세요."
+                ),
+            }, ensure_ascii=False)
+
+        _open_workshop_schema = {
+            "type": "function",
+            "function": {
+                "name": "open_workshop",
+                "description": (
+                    "회의 결론에 대한 대표님 승인이 떨어진 뒤, 작업장(멀티뷰)을 열고 "
+                    "작업을 시작합니다. 회의에 참여했던 에이전트들이 각자 자기 세션 맥락을 "
+                    "안고 pane으로 복원되므로, 이어서 결론의 next_steps를 배분하면 됩니다. "
+                    "⚠️ 대표님이 '해', '승인', '진행해' 등으로 명확히 승인한 뒤에만 호출하세요. "
+                    "승인 전에 호출하면 회의 맥락 없이 빈 작업장이 열립니다."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []}
+            }
+        }
+
+        registry.register(
+            name="convene_boardroom",
+            toolset="agent-boardroom",
+            schema={
+                "name": "convene_boardroom",
+                "description": _schema["function"]["description"],
+                "parameters": _schema["function"]["parameters"],
+            },
+            handler=_boardroom_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Convene the boardroom: agents debate, Raon moderates and returns a conclusion",
+        )
+        registry.register_toolset_alias("boardroom", "agent-boardroom")
+        _append_tool_if_missing(agent, _schema, "convene_boardroom")
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("convene_boardroom")
+
+        registry.register(
+            name="open_workshop",
+            toolset="agent-boardroom",
+            schema={
+                "name": "open_workshop",
+                "description": _open_workshop_schema["function"]["description"],
+                "parameters": _open_workshop_schema["function"]["parameters"],
+            },
+            handler=_open_workshop_handler,
+            check_fn=lambda: True,
+            is_async=False,
+            description="Open the multi-view workshop with the last meeting's agent sessions",
+        )
+        _append_tool_if_missing(agent, _open_workshop_schema, "open_workshop")
+        if hasattr(agent, "valid_tool_names") and isinstance(agent.valid_tool_names, set):
+            agent.valid_tool_names.add("open_workshop")
+        _logger.debug("Injected convene_boardroom + open_workshop tools into agent.")
+    except Exception as e:
+        _logger.warning("Boardroom tool injection failed: %s", e)
+
+
 def register_all_streaming_tools(
     agent: Any,
     session: Any,
@@ -1263,5 +1704,6 @@ def register_all_streaming_tools(
     inject_fast_decision_tool(agent)
     inject_worker_tools(agent)
     inject_colleague_tools(agent, session_id=session_id)
+    inject_boardroom_tools(agent, session_id=session_id)
     _deduplicate_agent_tools(agent)
     return mcp_count

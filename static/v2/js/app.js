@@ -1,10 +1,10 @@
-import { liveBrowser } from './browser_viewer.js?v=20261012_dock10';
+import { liveBrowser } from './browser_viewer.js?v=20261022_viewerclose';
 /**
  * DAON Workspace v2.5 - Single Page Orchestration Controller
  * Connects Achromatic Studio UI with real DAON Python Backend Engines.
  */
 
-import { DaonAPI } from './api.js?v=20261011_harnesspoll';
+import { DaonAPI } from './api.js?v=20261018_boardroom';
 import { initSecretsUI } from './secrets.js';
 import { bgmPlayer } from './music_player.js?v=20261012_bgm1';
 
@@ -55,6 +55,23 @@ let _isVoiceRecording = false;
 let _autoTTS = localStorage.getItem('daon_auto_tts') === 'true';
 let _currentSpeakingBtn = null;
 let _currentSpeakingAudio = null;
+let _lastReadAloudAt = 0;
+let _lastReadAloudText = '';
+let _speakSessionSeq = 0;
+let _ttsActive = false; // 문장 사이 합성 대기 포함, 전체 읽기 세션 재생 중 여부
+const TTS_UI_VERSION = 'v17'; // 스피커 버튼 툴팁에 표시 — 구버전 실행 여부 판별용
+const _ttsAudios = new Set(); // 생성된 모든 Audio 추적 — 정지 시 전부 중단 (겹친 세션 잔류음 방지)
+function _ttsStopAll() {
+  _speakSessionSeq++;
+  _ttsActive = false;
+  _lastReadAloudAt = 0;
+  try {
+    _ttsAudios.forEach(a => { try { a.pause(); } catch (_) {} });
+    _ttsAudios.clear();
+  } catch (_) {}
+  _currentSpeakingAudio = null;
+  try { window.speechSynthesis?.cancel(); } catch (_) {}
+}
 
 
 // ── 세션 유효 메시지 서명 생성기 (타 기기 새 메시지 감지 및 무한 렌더링 루프 방지) ──
@@ -175,9 +192,95 @@ function formatTime(timestamp) {
   return date.toTimeString().split(' ')[0];
 }
 
+// ── In-App Confirm Dialog (Electron & Web safe, non-blocking) ────────────────
+// 네이티브 confirm()은 Electron WebContentsView 환경 및 외부 SDK(Reticle 등)의
+// 모킹 간섭으로 인해 취소(false/undefined)가 강제 반환되거나 포커스 드롭이 발생함.
+// 인앱 모달로 대체하여 100% 안정적으로 동작하게 함.
+export function daonConfirm(message, {
+  title = '확인',
+  confirmText = '확인',
+  cancelText = '취소',
+  danger = false
+} = {}) {
+  return new Promise((resolve) => {
+    let modal = document.getElementById('daon-confirm-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'daon-confirm-modal';
+      modal.className = 'fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-150';
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+      <div class="bg-surface-container-lowest border border-black/15 dark:border-white/15 rounded-[14px] w-full max-w-[420px] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150 select-none">
+        <div class="px-5 py-3.5 border-b border-black/10 dark:border-white/10 flex items-center justify-between bg-surface-container-low">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-[20px] ${danger ? 'text-red-500' : 'text-primary'}">${danger ? 'warning' : 'help_outline'}</span>
+            <h3 class="font-label-md font-semibold text-on-surface text-[14px]">${escapeHtml(title)}</h3>
+          </div>
+          <button type="button" class="_cfm-close p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-on-surface-variant flex items-center justify-center cursor-pointer">
+            <span class="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+        <div class="p-5 text-[13px] leading-relaxed text-on-surface font-body-sm whitespace-pre-wrap">${escapeHtml(message)}</div>
+        <div class="px-5 py-3 border-t border-black/10 dark:border-white/10 bg-surface-container-low flex items-center justify-end gap-2">
+          <button type="button" class="_cfm-cancel px-3.5 py-1.5 border border-black/15 dark:border-white/15 rounded-[8px] text-[12px] font-label-md text-on-surface hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer">${escapeHtml(cancelText)}</button>
+          <button type="button" class="_cfm-ok px-4 py-1.5 rounded-[8px] text-[12px] font-label-md font-medium text-white ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-primary text-on-primary hover:bg-black/80'} shadow-sm transition-all cursor-pointer">${escapeHtml(confirmText)}</button>
+        </div>
+      </div>
+    `;
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+
+    function cleanup(result) {
+      document.removeEventListener('keydown', keyHandler, true);
+      modal.classList.add('hidden');
+      modal.style.display = 'none';
+      modal.innerHTML = '';
+      resolve(result);
+    }
+
+    function keyHandler(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cleanup(false);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        cleanup(true);
+      }
+    }
+
+    modal.querySelector('._cfm-close')?.addEventListener('click', () => cleanup(false));
+    modal.querySelector('._cfm-cancel')?.addEventListener('click', () => cleanup(false));
+    modal.querySelector('._cfm-ok')?.addEventListener('click', () => cleanup(true));
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) cleanup(false);
+    });
+    document.addEventListener('keydown', keyHandler, true);
+    setTimeout(() => {
+      const okBtn = modal.querySelector('._cfm-ok');
+      if (okBtn) okBtn.focus();
+    }, 50);
+  });
+}
+window.daonConfirm = daonConfirm;
+
+// 외부 스크립트에 의해 window.confirm이 변조/침묵된 경우 네이티브 confirm 복구
+try {
+  if (typeof window.confirm !== 'function' || window.confirm.toString().includes('DIALOG_OPENED')) {
+    const _ifr = document.createElement('iframe');
+    _ifr.style.display = 'none';
+    document.body.appendChild(_ifr);
+    if (_ifr.contentWindow?.confirm) {
+      window.confirm = _ifr.contentWindow.confirm.bind(window);
+    }
+    _ifr.remove();
+  }
+} catch (_) {}
+
 // ── DOM Initialization ────────────────────────────────────────────────────────
 
 async function initApp() {
+  try { ensureWorkshopShell(); } catch (e) { console.error('ensureWorkshopShell err:', e); }
   try { initTabs(); } catch (e) { console.error('initTabs err:', e); }
   try { initMobileSidebar(); } catch (e) { console.error('initMobileSidebar err:', e); }
   try { initSidebarResizer(); } catch (e) { console.error('initSidebarResizer err:', e); }
@@ -227,7 +330,8 @@ function initTabs() {
     'dynamic-harness': 'Dynamic Harness 세션 (격리 샌드박스 런타임)',
     'agent-boardroom': '정적 에이전트 회의실 (8 Dedicated Agent Matrix)',
     'plugin-mcp': '플러그인 & MCP 스토어 (Model Context Protocol)',
-    'agent-skills': '에이전트 스킬 (Capability Registry & Slots)'
+    'agent-skills': '에이전트 스킬 (Capability Registry & Slots)',
+    'agent-workshop': '작업장 — 멀티뷰 작업장 (Multi-View Workshop)'
   };
 
   window.activateTab = function(targetId) {
@@ -285,11 +389,15 @@ function initTabs() {
     }
 
     // Lazy load tab data from real backend on tab switch
+    if (targetId === 'agent-boardroom') refreshBoardroomWorkerModelStates();
     if (targetId === 'plugin-mcp') loadLiveMcpServers();
     if (targetId === 'agent-skills') loadLiveSkills();
+    if (targetId === 'agent-workshop') ensureWorkshopFrame();
 
-    document.documentElement.classList.toggle('tab-fit', targetId !== 'chat-session');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    // [mobile-fixed-chat] 모든 탭을 뷰포트 고정 레이아웃으로 통일.
+    // 채팅만 예외였을 때는 문서 전체 스크롤이 발생해 모바일에서 화면이 흔들렸다.
+    document.documentElement.classList.add('tab-fit');
+    resetScrollForTab(targetId);
   };
 
   tabButtons.forEach(btn => {
@@ -324,7 +432,12 @@ async function loadSessions() {
     delSelBtn.addEventListener('click', async () => {
       const ids = [...state.selectedSessions];
       if (ids.length === 0) return;
-      if (!confirm(`선택한 ${ids.length}개 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+      const ok = await daonConfirm(`선택한 ${ids.length}개 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`, {
+        title: '선택 세션 일괄 삭제',
+        confirmText: '삭제',
+        danger: true
+      });
+      if (!ok) return;
       for (const id of ids) {
         try { await DaonAPI.deleteSession(id); } catch (e) { console.warn('session delete failed:', id, e); }
         state.selectedSessions.delete(id);
@@ -467,7 +580,13 @@ async function loadSessions() {
       delBtn.innerHTML = '<span class="material-symbols-outlined text-[15px]">delete</span>';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (confirm(`'${sess.title || '선택한 세션'}'을(를) 삭제하시겠습니까?`)) {
+        const title = sess.title || '선택한 세션';
+        const ok = await daonConfirm(`'${title}'을(를) 삭제하시겠습니까?`, {
+          title: '세션 삭제',
+          confirmText: '삭제',
+          danger: true
+        });
+        if (ok) {
           await DaonAPI.deleteSession(sess.session_id);
           state.selectedSessions.delete(sess.session_id);
           if (state.runningSessionIds) state.runningSessionIds.delete(sess.session_id);
@@ -628,6 +747,15 @@ async function switchSession(sessionId) {
         personaSelect.value = prof;
       }
       DaonAPI.switchProfile(prof).catch(() => {});
+    } else {
+      // 프로필 미지정 세션은 항상 기본 오케스트레이터 'raon'으로 안전 복원 (프라다/타 에이전트 페르소나 잔류 방지)
+      state.currentAgentPersona = 'raon';
+      localStorage.setItem('daon_active_persona', 'raon');
+      const personaSelect = document.getElementById('agent-persona-select');
+      if (personaSelect && personaSelect.querySelector('option[value="raon"]')) {
+        personaSelect.value = 'raon';
+      }
+      DaonAPI.switchProfile('raon').catch(() => {});
     }
 
     renderSessionMessages(sess.messages || [], false);
@@ -752,16 +880,26 @@ function initComposer() {
     const btn = e.target.closest('.read-aloud-btn');
     if (btn) {
       e.stopPropagation();
+      // [핵심 1] 재생 중이면 텍스트 검사와 무관하게 즉시 전부 정지!
+      const isPlaying = _ttsActive || _ttsAudios.size > 0 || (_currentSpeakingAudio && !_currentSpeakingAudio.paused) || (window.speechSynthesis && window.speechSynthesis.speaking);
+      if (isPlaying) {
+        _ttsStopAll();
+        try {
+          document.querySelectorAll('.read-aloud-btn').forEach(b => {
+            const ic = b.querySelector('.material-symbols-outlined');
+            if (ic) ic.textContent = 'volume_up';
+            b.title = '소리내어 읽기 ' + TTS_UI_VERSION;
+          });
+        } catch (_) {}
+        _currentSpeakingBtn = null;
+        return;
+      }
+      // [핵심 2] 실제 v2 DOM 클래스(.response-body 또는 .msg-content)로 텍스트 추출
       const article = btn.closest('article') || btn.closest('.chat-bubble-assistant');
       let text = '';
       if (article) {
-        const contentEl = article.querySelector('.chat-assistant-content') || article.querySelector('.font-body-md') || article.querySelector('div[id^="msg-content"]');
+        const contentEl = article.querySelector('.response-body') || article.querySelector('.msg-content');
         text = contentEl ? contentEl.innerText : '';
-      }
-      if (!text) {
-        // Fallback: previous element text
-        const bubble = btn.closest('div.flex-col')?.querySelector('.chat-assistant-content');
-        text = bubble ? bubble.innerText : '';
       }
       if (text) {
         readAloudText(text, btn);
@@ -880,7 +1018,8 @@ async function handleSendMessage() {
   if (!state.currentSessionId) {
     try {
       const titlePrompt = message ? message.slice(0, 24) : (hasFiles ? state.pendingFiles[0].name : '새 세션');
-      const res = await DaonAPI.createSession(titlePrompt);
+      const targetProfile = state.currentAgentPersona || 'raon';
+      const res = await DaonAPI.createSession(titlePrompt, targetProfile);
       state.currentSessionId = res?.session_id || res?.session?.session_id;
       await loadSessions();
     } catch (err) {
@@ -1035,6 +1174,7 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
   const streamStartTime = Date.now();
   let reasoningStartTime = null;
   let fullResponse = '';
+  let lastToolMark = 0; // 마지막 도구 활동 시점의 fullResponse 길이 — 자동TTS는 이 뒤(최종 보고)만 읽음
   let currentStatusBase = '⏳ 에이전트 작업 시작 중...';
 
   // ── 실시간 작업 상태 바 (작업 중 표시 및 실시간 초 카운터) ──
@@ -1150,6 +1290,7 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       scrollChatToBottom(false);
     },
     onStep(stepData) {
+      lastToolMark = fullResponse.length;
       clearThinkingState(contentEl);
       console.log('Stream step:', stepData);
       setStatus('⚙️ 작업 단계 진행 중...', 'cached');
@@ -1165,6 +1306,7 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       }
     },
     onToolCall(toolData) {
+      lastToolMark = fullResponse.length;
       clearThinkingState(contentEl);
       console.log('Tool call:', toolData);
       const ev = toolData?.event || toolData?.type || '';
@@ -1187,6 +1329,20 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
         } catch (_) {}
         return;
       }
+      // 채팅 → 회의실: 라온이 회의를 소집하면 회의실 탭으로 넘어가 토론을 중계한다.
+      // (라온은 발언자가 아니라 사회자 — 진행/결론은 회의실 탭에서 지켜본다.)
+      if (name === 'convene_boardroom') {
+        setStatus('🏛️ 회의실 소집 중... (에이전트 토론 → 라온 취합 → 재질의)', 'groups');
+        try { startBoardroomLiveWatch(); } catch (_) {}
+        try {
+          if (typeof window.activateTab === 'function') window.activateTab('agent-boardroom');
+        } catch (_) {}
+        return;
+      }
+      if (name === 'open_workshop') {
+        setStatus('🏗️ 작업장으로 승계 중...', 'construction');
+        return;
+      }
       if (name.includes('browser') || name.includes('navigate') || name.includes('web_') || name.includes('playwright')) {
         let url = '';
         try {
@@ -1205,9 +1361,12 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       scrollChatToBottom();
     },
     onToolResult(data) {
+      lastToolMark = fullResponse.length;
       setStatus('⚙️ 도구 실행 완료 · 결과 분석 중...', 'sync');
+      try { handleBoardroomToolResult(data); } catch (e) { console.warn('boardroom tool result err:', e); }
     },
     onHarnessStarted(data) {
+      lastToolMark = fullResponse.length;
       // 챗에서 백그라운드 하네스가 시작되면 run_id가 push된다.
       // 이 run_id로 하네스 탭 폴링을 시작해, 챗에서 비동기로 돌린 작업의
       // 진행상황을 'Dynamic Harness 세션' 탭에서 실시간으로 볼 수 있게 한다.
@@ -1231,6 +1390,8 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
     },
     onHarnessDone(data) {
       // 백그라운드 하네스 잡 완료 알림 (턴이 살아있을 때만 도착)
+      // 하네스 완료 이후 텍스트 = 최종 보고 → 자동TTS 표시를 여기로 갱신
+      lastToolMark = fullResponse.length;
       try {
         const ok = data?.ok !== false;
         const res = String(data?.result || '').trim();
@@ -1300,7 +1461,11 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
 
       try {
         const doneSid = data && data.session && data.session.session_id;
-        if (doneSid && doneSid !== state.currentSessionId) {
+        const doneProfile = String(data?.session?.profile || '').toLowerCase();
+        const currentProfile = String(state.currentAgentPersona || 'raon').toLowerCase();
+        // 🚨 세션 하이재킹 차단: 프로필이 불일치하는 외부/서브 에이전트 세션의 doneSid 로 메인 세션을 덮어쓰지 않는다
+        const isProfileCompatible = !doneProfile || doneProfile === currentProfile || (currentProfile.includes('raon') && doneProfile.includes('raon'));
+        if (doneSid && doneSid !== state.currentSessionId && isProfileCompatible) {
           console.log('[SSE] onDone: session rotated', state.currentSessionId, '→', doneSid);
           const prevSid = state.currentSessionId;
           state.currentSessionId = doneSid;
@@ -1345,10 +1510,27 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       loadSessions();
       scrollChatToBottom(true);
 
-      // 자동 음성 읽기(TTS) 활성화 시 본문 음성 출력
+      // 자동 음성 읽기(TTS): 마지막 도구 사용 이후의 최종 보고만 읽기 (중간 작업보고 제외)
       if (_autoTTS && fullResponse) {
-        const readBtn = bubble.querySelector('.read-aloud-btn');
-        readAloudText(fullResponse, readBtn);
+        // lastToolMark 뒤가 비어있어도 fullResponse 전체를 넘기지 않고, pickAutoTTSText가 지능적으로 결론부만 추출하도록 처리
+        const rawFinal = (lastToolMark > 0 && lastToolMark < fullResponse.length)
+          ? fullResponse.slice(lastToolMark)
+          : fullResponse;
+        const speakText = pickAutoTTSText(rawFinal);
+        if (speakText) {
+          // bubble이 동기화로 교체됐을 수 있으니 못 찾으면 화면의 마지막 읽기 버튼으로 폴백
+          let readBtn = null;
+          try {
+            readBtn = bubble.querySelector('.read-aloud-btn')
+              || [...document.querySelectorAll('.read-aloud-btn')].pop() || null;
+          } catch (_) { readBtn = null; }
+          try {
+            window._ttsDiag = `v=${TTS_UI_VERSION} mark=${lastToolMark}/${fullResponse.length} speak=${speakText.length}`;
+            console.log('[TTS-auto]', window._ttsDiag);
+            if (readBtn) readBtn.title = `자동읽기 ${window._ttsDiag} (클릭 시 정지)`;
+          } catch (_) {}
+          readAloudText(speakText, readBtn, { mode: 'replace' });
+        }
       }
 
       onFinish?.();
@@ -1376,30 +1558,179 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
 // ── Voice Input (STT) & Voice Output (TTS) Module ─────────────────────────────
 
 /**
- * 텍스트 음성 출력 (TTS) - 2단계 스마트 보이스 (Edge TTS 자연스러운 한국어 -> Web Speech API 폴백)
+ * 텍스트 음성 출력 (TTS) - 3단계 스마트 보이스
+ * (Supertonic 로컬 고품질 한국어 -> Edge TTS -> Web Speech API 폴백)
+ * 목소리: Supertonic 10종 (F1~F5 여성 / M1~M5 남성), localStorage 'daon_tts_voice' 저장
  */
-function readAloudText(text, btnElement) {
-  // 이미 재생 중인 경우 정지 토글
-  const isPlaying = (_currentSpeakingAudio && !_currentSpeakingAudio.paused) || (window.speechSynthesis && window.speechSynthesis.speaking);
+const TTS_VOICES = ['F1', 'F2', 'F3', 'F4', 'F5', 'M1', 'M2', 'M3', 'M4', 'M5'];
+function getTTSVoice() {
+  try {
+    const v = (localStorage.getItem('daon_tts_voice') || 'F1').toUpperCase();
+    return TTS_VOICES.includes(v) ? v : 'F1';
+  } catch (_) { return 'F1'; }
+}
+/**
+ * 자동 TTS용 정제:
+ * 1. '최종 결과', '결과 보고', '요약', '결론' 등의 섹션이 있으면 해당 섹션만 추출
+ * 2. 없으면 마지막 5문단만 읽는다 (핵심 결론 위주)
+ */
+function pickAutoTTSText(full) {
+  if (!full) return '';
+  let text = String(full)
+    .replace(/```[\s\S]*?```/g, ' ')      // 코드 블록 제거
+    .replace(/https?:\/\/\S+/g, ' ')      // URL 제거
+    .replace(/^>.*$/gm, ' ')              // 인용구 제거
+    .trim();
+  // 1순위: '최종 결과', '결과 보고', '결론', '요약' 헤더 뒤의 내용만 추출
+  // (이모지·번호 장식이 앞에 붙어도 인식: "## ✅ 최종 결과", "**요약**" 등)
+  const summaryMatch = text.match(/(?:^|\n)\s*(?:#{1,4}|\*\*)?\s*[^\n]{0,20}?(?:최종\s*결과|결과\s*보고|요약|결론|완료\s*내역)[^\n]*\n([\s\S]+)/i);
+  if (summaryMatch && summaryMatch[1].trim()) {
+    text = summaryMatch[1].trim();
+  } else {
+    // 2순위: 헤더가 없으면 마지막 5문단만 읽기 (핵심 결론 위주)
+    const paragraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    if (paragraphs.length > 5) {
+      text = paragraphs.slice(-5).join('\n\n');
+    }
+  }
+  // 특수문자 마크다운 기호 제거 + 공백 정리
+  text = text.replace(/[#*_~`]/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  // 음성으로 읽기에 너무 길면 최대 800자(약 7~8문장) 이내로 간결화 (한글 기준 여유분)
+  if (text.length > 800) {
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    let shortText = '';
+    for (const s of sentences) {
+      if ((shortText + s).length > 800) break;
+      shortText += (shortText ? ' ' : '') + s;
+    }
+    text = shortText || text.slice(0, 800) + '...';
+  }
+  return text;
+}
+/**
+ * TTS 문장 분할: 마침표·물음표·느낌표·마침표(。)·줄바꿈 기준.
+ * 너무 짧은 조각은 합성 오버헤드 방지로 병합, 200자 초과 조각은 강제 절단.
+ */
+function splitForTTS(t) {
+  const parts = String(t).split(/(?<=[.!?。])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+  const merged = [];
+  for (const p of parts) {
+    const last = merged[merged.length - 1];
+    if (last && last.length < 30 && (last.length + p.length + 1) < 200) {
+      merged[merged.length - 1] = last + ' ' + p;
+    } else merged.push(p);
+  }
+  const out = [];
+  for (const m of merged) {
+    if (m.length <= 200) out.push(m);
+    else { for (let i = 0; i < m.length; i += 200) out.push(m.slice(i, i + 200)); }
+  }
+  return out.filter(Boolean);
+}
+/**
+ * 문장 단위 순차 재생: 첫 문장 합성 즉시 재생 + 재생 중 다음 문장 프리페치.
+ * 중단(새 읽기/정지 버튼)이면 speakSession 불일치로 루프 탈출.
+ */
+function playTTSChunked(chunks, voice, speakSession, resetUI, fullFallbackText) {
+  const urls = new Array(chunks.length).fill(null);
+  const pending = new Map();
+  const fetchChunkUrl = async (chunkText) => {
+    const url = `/api/speak/tts?text=${encodeURIComponent(chunkText.slice(0, 500))}&voice=${voice}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('TTS HTTP ' + resp.status);
+    const buf = await resp.blob();
+    if (!buf || buf.size < 100) throw new Error('Empty audio');
+    return URL.createObjectURL(buf);
+  };
+  const ensureChunk = (i) => {
+    if (urls[i]) return Promise.resolve(urls[i]);
+    if (!pending.has(i)) {
+      pending.set(i, fetchChunkUrl(chunks[i]).then(u => { urls[i] = u; return u; }));
+    }
+    return pending.get(i);
+  };
+  const playOne = (url) => new Promise((resolve, reject) => {
+    if (speakSession !== _speakSessionSeq) return reject(new Error('stopped'));
+    const a = new Audio(url);
+    _ttsAudios.add(a);
+    try { if (_currentSpeakingAudio && _currentSpeakingAudio !== a) _currentSpeakingAudio.pause(); } catch (_) {}
+    _currentSpeakingAudio = a;
+    a.onended = () => { try { _ttsAudios.delete(a); } catch (_) {} resolve(); };
+    a.onerror = () => { try { _ttsAudios.delete(a); } catch (_) {} reject(new Error('audio error')); };
+    a.play().catch(reject);
+  });
+  const cleanup = () => urls.forEach(u => { try { if (u) URL.revokeObjectURL(u); } catch (_) {} });
+  const fallbackSpeech = () => {
+    if (speakSession !== _speakSessionSeq) return;
+    _currentSpeakingAudio = null;
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(fullFallbackText);
+      utterance.lang = 'ko-KR';
+      utterance.rate = 1.05;
+      try {
+        const voices = window.speechSynthesis.getVoices();
+        const koreanVoice = voices.find(v => v.lang.startsWith('ko') && (v.name.includes('SunHi') || v.name.includes('Heami') || v.name.includes('Google') || v.name.includes('Korean')));
+        if (koreanVoice) utterance.voice = koreanVoice;
+      } catch (_) {}
+      utterance.onend = resetUI;
+      utterance.onerror = resetUI;
+      window.speechSynthesis.speak(utterance);
+    } else resetUI();
+  };
+  (async () => {
+    try {
+      const firstP = ensureChunk(0);
+      if (chunks.length > 1) ensureChunk(1);
+      const firstUrl = await firstP;
+      if (speakSession !== _speakSessionSeq) { cleanup(); return; }
+      await playOne(firstUrl);
+      for (let idx = 1; idx < chunks.length; idx++) {
+        if (speakSession !== _speakSessionSeq) break;
+        if (idx + 1 < chunks.length) ensureChunk(idx + 1);
+        const u = await ensureChunk(idx);
+        if (speakSession !== _speakSessionSeq) break;
+        await playOne(u);
+      }
+      cleanup();
+      if (speakSession === _speakSessionSeq) resetUI();
+    } catch (e) {
+      cleanup();
+      fallbackSpeech();
+    }
+  })();
+}
+function readAloudText(text, btnElement, opts) {
+  // opts.mode: 'toggle' (수동 버튼: 재생 중 클릭 → 정지) / 'replace' (자동: 이전 중단 후 새 재생)
+  const mode = (opts && opts.mode) || 'toggle';
+  // 재생 중 읽기 버튼 클릭 → 전부 정지 후 종료 (같은/다른 버튼 구분 안 함:
+  // 채팅 동기화가 말풍선 DOM을 갈아엎으면 버튼 객체가 바뀌어 '다른 버튼'으로 오판됨).
+  // 수동 토글: 멈춘 상태에서 한 번 더 누르면 다시 재생. 자동 replace: 정지 후 새 재생 계속.
+  const isPlaying = _ttsActive || _ttsAudios.size > 0 || (_currentSpeakingAudio && !_currentSpeakingAudio.paused) || (window.speechSynthesis && window.speechSynthesis.speaking);
   if (isPlaying) {
-    if (_currentSpeakingAudio) {
-      try { _currentSpeakingAudio.pause(); _currentSpeakingAudio = null; } catch (_) {}
-    }
-    if (window.speechSynthesis) {
-      try { window.speechSynthesis.cancel(); } catch (_) {}
-    }
-    if (_currentSpeakingBtn) {
-      const icon = _currentSpeakingBtn.querySelector('.material-symbols-outlined');
-      if (icon) icon.textContent = 'volume_up';
-      _currentSpeakingBtn.title = '소리내어 읽기';
-    }
-    if (_currentSpeakingBtn === btnElement) {
-      _currentSpeakingBtn = null;
-      return;
-    }
+    _ttsStopAll();
+    // 구 DOM 참조가 끊겼을 수 있으니 화면의 모든 읽기 버튼 아이콘을 되돌림
+    try {
+      document.querySelectorAll('.read-aloud-btn').forEach(b => {
+        const ic = b.querySelector('.material-symbols-outlined');
+        if (ic) ic.textContent = 'volume_up';
+        b.title = '소리내어 읽기 ' + TTS_UI_VERSION;
+      });
+    } catch (_) {}
+    _currentSpeakingBtn = null;
+    if (mode === 'toggle') return;
   }
 
   if (!text || !text.trim()) return;
+
+  // 중복 호출 차단: 같은 텍스트가 600ms 안에 또 들어오면 무시 (이중 바인딩 안전망)
+  const _now = Date.now();
+  const _key = text.slice(0, 120);
+  if (_key === _lastReadAloudText && (_now - _lastReadAloudAt) < 600) return;
+  _lastReadAloudAt = _now;
+  _lastReadAloudText = _key;
+
+  // 이전 재생이 남아 있으면 전부 정지 (추적 중인 모든 오디오 + 브라우저 음성)
+  _ttsStopAll();
 
   // 마크다운 문법 및 특수코드 정제
   const cleanText = text
@@ -1417,18 +1748,31 @@ function readAloudText(text, btnElement) {
   if (btnElement) btnElement.title = '음성 읽기 정지';
 
   const resetUI = () => {
+    _ttsActive = false;
     if (icon) icon.textContent = 'volume_up';
-    if (btnElement) btnElement.title = '소리내어 읽기';
+    if (btnElement) btnElement.title = '소리내어 읽기 ' + TTS_UI_VERSION;
     _currentSpeakingBtn = null;
     _currentSpeakingAudio = null;
   };
 
-  // 1순위: 서버 Edge TTS 고품질 자연스러운 한국어 음성 (ko-KR-SunHiNeural)
-  const ttsUrl = `/api/speak/tts?text=${encodeURIComponent(cleanText.slice(0, 800))}`;
+  // 1순위: 서버 Supertonic 로컬 TTS (선택 목소리, 고품질 한국어)
+  // 긴 텍스트는 문장 단위로 쪼개 첫 문장부터 순차 재생 (체감 딜레이 7초→1초대)
+  const voice = getTTSVoice();
+  const speakSession = _speakSessionSeq;
+  const chunks = splitForTTS(cleanText);
+  const useChunked = chunks.length > 1 && cleanText.length > 80;
+  if (useChunked) {
+    _ttsActive = true;
+    playTTSChunked(chunks, voice, speakSession, resetUI, cleanText);
+    return;
+  }
+  const ttsUrl = `/api/speak/tts?text=${encodeURIComponent(cleanText.slice(0, 2000))}&voice=${voice}`;
   const audio = new Audio(ttsUrl);
+  _ttsAudios.add(audio);
   _currentSpeakingAudio = audio;
+  _ttsActive = true;
 
-  audio.onended = resetUI;
+  audio.onended = () => { try { _ttsAudios.delete(audio); } catch (_) {} resetUI(); };
   audio.onerror = () => {
     // 2순위: Edge TTS 실패 시 브라우저 내장 Web Speech API 폴백
     _currentSpeakingAudio = null;
@@ -1459,6 +1803,14 @@ function readAloudText(text, btnElement) {
  * 음성 입력(STT) 및 자동 TTS 토글 초기화
  */
 function initVoiceFeatures() {
+  // TTS 목소리 선택 셀렉트 (Supertonic 10종, localStorage 저장)
+  const ttsVoiceSel = document.getElementById('tts-voice-select');
+  if (ttsVoiceSel) {
+    ttsVoiceSel.value = getTTSVoice();
+    ttsVoiceSel.addEventListener('change', () => {
+      try { localStorage.setItem('daon_tts_voice', ttsVoiceSel.value); } catch (_) {}
+    });
+  }
   const autoTtsBtn = document.getElementById('auto-tts-toggle-btn');
   const autoTtsIcon = document.getElementById('auto-tts-icon');
   if (autoTtsBtn && autoTtsIcon) {
@@ -1483,7 +1835,7 @@ function initVoiceFeatures() {
         autoTtsIcon.classList.remove('text-primary');
         autoTtsIcon.classList.add('text-on-surface-variant/70');
         autoTtsBtn.title = '답변 자동 음성 읽기 꺼짐 (클릭 시 켜기)';
-        window.speechSynthesis?.cancel();
+        _ttsStopAll(); // window.speechSynthesis?.cancel() 대신 모든 TTS 오디오 강제 중단
       }
     });
   }
@@ -1984,7 +2336,19 @@ async function syncMultiDeviceChat() {
 
 function renderUserMessageContent(content, sessionId) {
   if (!content) return '';
-  let escaped = escapeHtml(content);
+  let cleanContent = String(content);
+
+  // ★ 실시간 브라우저 환경 컨텍스트가 포함된 경우 순수 사용자 요청만 추출하여 깔끔하게 노출
+  if (cleanContent.includes('[실시간 브라우저 환경 컨텍스트') || cleanContent.includes('[★ 현재 사용자가 직접 보고 있는 활성 브라우저 화면]')) {
+    const userReqMatch = cleanContent.match(/\[사용자 요청\][\s\S]*?(?:"""|```)?\s*([\s\S]+?)\s*(?:"""|```)?$/i);
+    if (userReqMatch && userReqMatch[1] && userReqMatch[1].trim()) {
+      cleanContent = userReqMatch[1].trim();
+    } else {
+      cleanContent = cleanContent.replace(/\[(?:실시간 브라우저 환경 컨텍스트|★ 현재 사용자가 직접 보고 있는 활성 브라우저 화면)[\s\S]*?\[사용자 요청\]\s*/i, '').trim();
+    }
+  }
+
+  let escaped = escapeHtml(cleanContent);
 
   // Parse attached file marker: [첨부 파일: a.png, b.mp4] or [Attached files: ...]
   const regex = /\[(?:첨부 파일|Attached files):\s*([^\]]+)\]/;
@@ -2137,7 +2501,7 @@ function appendAssistantMessage(text, timestamp, isStreaming = false, initialRea
         <span class="px-space-xs py-[1px] bg-surface-container rounded font-label-sm text-label-sm text-on-surface-variant">오케스트레이터</span>
       </div>
       <div class="flex items-center gap-space-xs text-on-surface-variant">
-        <button class="p-1 hover:text-on-surface transition-colors read-aloud-btn" title="소리내어 읽기" type="button">
+        <button class="p-1 hover:text-on-surface transition-colors read-aloud-btn" title="소리내어 읽기 ${TTS_UI_VERSION}" type="button">
           <span class="material-symbols-outlined text-[16px]">volume_up</span>
         </button>
         <button class="p-1 hover:text-on-surface transition-colors copy-msg-btn" title="복사" type="button">
@@ -2165,11 +2529,8 @@ function appendAssistantMessage(text, timestamp, isStreaming = false, initialRea
     navigator.clipboard?.writeText(content);
   });
 
-  // Attach read-aloud voice listener
-  article.querySelector('.read-aloud-btn')?.addEventListener('click', (e) => {
-    const content = article.querySelector('.response-body')?.innerText || '';
-    readAloudText(content, e.currentTarget);
-  });
+  // 읽기 버튼은 전역 위임 핸들러(문서 클릭, '.read-aloud-btn')에서만 처리
+  // (여기에 개별 바인딩을 추가하면 전역 위임과 중복 호출되어 음성이 두 번 나옴)
 
   // Thinking State timer setup
   const stateBox = article.querySelector('.agent-thinking-state');
@@ -2199,6 +2560,32 @@ function appendAssistantMessage(text, timestamp, isStreaming = false, initialRea
 }
 
 // ── Message Landing & Smart Auto-Scroll (프롬프트 창 위 완벽 안착) ─────────────
+
+/**
+ * [mobile-fixed-chat] 채팅 스크롤 주인 = 채팅 패널 내부 메시지 영역.
+ * 기존에는 window(문서) 스크롤이었으나, 모바일 주소창 접힘/펼침에 따라
+ * 화면이 커졌다 작아졌다 하고 fixed 컴포저가 흔들려서 내부 스크롤로 전환함.
+ * CSS: #tab-chat-session > div:first-child { overflow-y:auto }
+ */
+function getChatScroller() {
+  const panel = document.getElementById('tab-chat-session');
+  if (panel && panel.firstElementChild) return panel.firstElementChild;
+  return document.scrollingElement || document.documentElement;
+}
+
+/** 탭 전환 시 각 스크롤 영역만 안전하게 리셋 (window 스크롤 없음) */
+function resetScrollForTab(targetId) {
+  try {
+    if (targetId === 'chat-session') {
+      const sc = getChatScroller();
+      if (sc) sc.scrollTop = 0;
+    } else {
+      const panel = document.getElementById('tab-' + targetId);
+      if (panel) panel.scrollTop = 0;
+    }
+    if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+  } catch (e) { /* noop */ }
+}
 
 function getComposerTop() {
   const composer = document.querySelector('.floating-composer-container');
@@ -2262,12 +2649,13 @@ function landOnMessage(element) {
       }
     }
 
-    const headerOffset = 105; // 고정 상단 헤더(56px) + 탭 네비(44px) + 여백
+    const headerOffset = 12; // 내부 스크롤이므로 헤더 오프셋은 작은 여백만
+    const scroller = getChatScroller();
+    const sRect = scroller.getBoundingClientRect();
     const rect = target.getBoundingClientRect();
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-    const targetTop = rect.top + scrollTop - headerOffset;
+    const targetTop = scroller.scrollTop + (rect.top - sRect.top) - headerOffset;
 
-    window.scrollTo({
+    scroller.scrollTo({
       top: Math.max(0, targetTop),
       behavior: 'smooth'
     });
@@ -2289,14 +2677,17 @@ function scrollLastMessageToLanding(smooth = false, force = false) {
                    lastArticle.querySelector('.reasoning-block') || 
                    lastArticle;
 
+  const scroller = getChatScroller();
+  const sRect = scroller.getBoundingClientRect();
   const rect = targetEl.getBoundingClientRect();
-  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
   const composerTop = getComposerTop();
-  const safeLandingLine = composerTop - 40;
+  // 스크롤 영역 내부 좌표계로 변환 (뷰포트 좌표 → 영역 기준)
+  const safeLandingLine = (composerTop - sRect.top) - 40;
 
-  // 원하는 위치: rect.bottom이 safeLandingLine과 일치하도록 정확한 scrollTop 산출
-  const targetScrollTop = (rect.bottom + scrollTop) - safeLandingLine;
-  window.scrollTo({
+  // 원하는 위치: rect.bottom(영역 기준)이 safeLandingLine과 일치하도록 scrollTop 산출
+  const relBottom = rect.bottom - sRect.top;
+  const targetScrollTop = scroller.scrollTop + relBottom - safeLandingLine;
+  scroller.scrollTo({
     top: Math.max(0, targetScrollTop),
     behavior: smooth ? 'smooth' : 'auto'
   });
@@ -2346,26 +2737,27 @@ function initSmartChatScroll() {
     }
   }, { passive: true });
 
-  // 윈도우 스크롤 위치 감지 (마우스 스크롤바 직접 드래그 포함)
-  window.addEventListener('scroll', () => {
-    const scrollHeight = document.documentElement.scrollHeight;
-    const scrollPos = window.pageYOffset + window.innerHeight;
-    const distFromBottom = scrollHeight - scrollPos;
+  // 스크롤 위치 감지 (내부 스크롤 컨테이너 기준 — window는 더 이상 스크롤되지 않음)
+  const scroller = getChatScroller();
+  if (scroller) {
+    scroller.addEventListener('scroll', () => {
+      const distFromBottom = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
 
-    if (distFromBottom <= 80) {
-      // 바닥 80px 이내면 바닥 도달로 간주 -> 오토스크롤 재개
-      if (state.userScrolledUp) {
-        state.userScrolledUp = false;
-        updateScrollBottomButton();
+      if (distFromBottom <= 80) {
+        // 바닥 80px 이내면 바닥 도달로 간주 -> 오토스크롤 재개
+        if (state.userScrolledUp) {
+          state.userScrolledUp = false;
+          updateScrollBottomButton();
+        }
+      } else if (distFromBottom > 150) {
+        // 바닥에서 150px 이상 떨어져 있으면 위로 스크롤 상태로 설정
+        if (!state.userScrolledUp) {
+          state.userScrolledUp = true;
+          updateScrollBottomButton();
+        }
       }
-    } else if (distFromBottom > 150) {
-      // 바닥에서 150px 이상 떨어져 있으면 위로 스크롤 상태로 설정
-      if (!state.userScrolledUp) {
-        state.userScrolledUp = true;
-        updateScrollBottomButton();
-      }
-    }
-  }, { passive: true });
+    }, { passive: true });
+  }
 
   // 최신 메시지 플로팅 버튼 클릭 리스너
   const btn = document.getElementById('scroll-to-bottom-btn');
@@ -2401,18 +2793,20 @@ function scrollChatToBottom(forceSmooth = false, force = false) {
                      lastArticle.querySelector('.reasoning-block') || 
                      lastArticle;
 
+    const scroller = getChatScroller();
+    const sRect = scroller.getBoundingClientRect();
     const rect = targetEl.getBoundingClientRect();
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
     const composerTop = getComposerTop();
 
-    // 프롬프트 입력창 윗선보다 40px 위의 안전지대에 최신 답변이 안착(Landing)
-    const safeLandingLine = composerTop - 40;
-    const overflow = rect.bottom - safeLandingLine;
+    // 프롬프트 입력창 윗선보다 40px 위의 안전지대 (스크롤 영역 내부 좌표계)
+    const safeLandingLine = (composerTop - sRect.top) - 40;
+    const relBottom = rect.bottom - sRect.top;
+    const overflow = relBottom - safeLandingLine;
 
     // 답변의 바닥이 안전선을 뚫고 내려가거나 force 플래그가 켜져 있으면 정확한 위치로 스크롤!
     if (overflow > 1 || force) {
-      const targetScrollTop = (rect.bottom + scrollTop) - safeLandingLine;
-      window.scrollTo({
+      const targetScrollTop = scroller.scrollTop + relBottom - safeLandingLine;
+      scroller.scrollTo({
         top: Math.max(0, targetScrollTop),
         behavior: forceSmooth ? 'smooth' : 'auto'
       });
@@ -2876,19 +3270,17 @@ function initBoardroomShortcuts() {
       resetBoardroomSlots();
 
       appendBoardroomTranscript('00 사용자', `[브로드캐스트 지시] "${topic}"`, 'bg-primary text-on-primary');
-      appendBoardroomTranscript('01 의장', `안건을 접수했습니다. 선택된 ${selectedSlots.length}개 슬롯 동기화 라운드를 시작합니다 (실 에이전트 런타임)...`, 'bg-surface-container-highest text-on-surface');
+      appendBoardroomTranscript('01 사회자', `안건을 접수했습니다. 라온은 사회자로만 참여하고, 선택된 ${selectedSlots.length}개 에이전트가 토론합니다 (라운드 종료 시 라온이 취합→재질의).`, 'bg-surface-container-highest text-on-surface');
 
       // 슬롯별 선택 모델 수집 (기본 모델이면 생략 → 프로필 기본값 사용)
-      const slotModels = {};
-      document.querySelectorAll('.boardroom-model-select').forEach(sel => {
-        const s = sel.getAttribute('data-slot');
-        if (s && sel.value) slotModels[s] = sel.value;
-      });
+      // 저장값과 동일한 소스(드롭다운)에서 읽어 localStorage/서버 저장값과 어긋나지 않게 한다.
+      const slotModels = readBoardroomModelSelects();
 
       try {
         const res = await DaonAPI.broadcastBoardroom({ task: topic, sessionId: state.currentSessionId, models: slotModels, slots: selectedSlots });
         if (!res || !res.stream_id) throw new Error('stream_id를 받지 못했습니다');
         setBoardroomBusy(true);
+        refreshBoardroomWorkerModelStates();
 
         DaonAPI.connectSSE(res.stream_id, {
           onBoardroomSlot(d) {
@@ -2904,18 +3296,37 @@ function initBoardroomShortcuts() {
             const suffix = (typeof d.elapsed === 'number') ? `\n\n— ${d.elapsed}s` : '';
             appendBoardroomTranscript(tag, (d.text || '(응답 없음)') + suffix, cls);
           },
+          onBoardroomRoundStart(d) {
+            if (d && d.skipped) return;
+            appendBoardroomTranscript('01 사회자',
+              `── ${d.round}라운드 (${d.mode || ''}) ──`, 'bg-primary/10 text-on-surface');
+          },
+          onBoardroomModeration(d) {
+            const v = (d && d.verdict) || {};
+            const verdictTag = v.consensus
+              ? '합의 도달'
+              : `이견 ${((v.disagreements || []).length)}건 → 재질의`;
+            appendBoardroomTranscript('01 사회자 (취합)',
+              `${d.round}라운드 취합: ${verdictTag}\n${v.summary || ''}`, 'bg-sky-100 text-sky-900');
+          },
           onBoardroomDone(d) {
+            refreshBoardroomWorkerModelStates();
             const n = (d && Array.isArray(d.slots)) ? d.slots.length : selectedSlots.length;
-            appendBoardroomTranscript('01 의장', `${n}개 슬롯 전원 응답 완료. 회의 라운드를 정상 종료합니다.`, 'bg-emerald-100 text-emerald-800');
+            appendBoardroomTranscript('01 사회자', `${n}개 에이전트 발언 완료. 회의 라운드를 종료합니다.`, 'bg-emerald-100 text-emerald-800');
             setBoardroomBusy(false);
-            try { showBoardroomToWorkshop(d); } catch (e) { console.error('boardroom→workshop hand-off err:', e); }
+            // 버튼 없이 결론 카드만 남긴다 — 승인은 채팅에서, 승계는 자동(open_workshop).
+            try {
+              if (d && d.conclusion) showBoardroomConclusion(d.conclusion);
+            } catch (e) { console.error('boardroom conclusion render err:', e); }
           },
           onError() {
+            refreshBoardroomWorkerModelStates();
             appendBoardroomTranscript('오류', '회의 스트림이 종료되었습니다.', 'bg-rose-100 text-rose-800');
             setBoardroomBusy(false);
           }
         });
       } catch (err) {
+        refreshBoardroomWorkerModelStates();
         appendBoardroomTranscript('오류', `브로드캐스트 실패: ${err.message}`, 'bg-rose-100 text-rose-800');
         setBoardroomBusy(false);
       }
@@ -2931,15 +3342,21 @@ function initBoardroomShortcuts() {
 // 각 슬롯 카드의 체크박스로 '이번 회의에 참여할 에이전트/워커'를 고른다.
 // (2명이든 3명이든, 에이전트만/워커만/전체 자유 선택). 선택은 localStorage에
 // 저장되어 새로고침 후에도 유지된다. 브로드캐스트 시 선택 슬롯만 실제로 실행된다.
-const BOARDROOM_ALL_SLOTS = ['01', '02', '03', '04', '05', '06', '07', '08'];
-const BOARDROOM_AGENT_SLOTS = ['01', '02', '03', '04', '05', '06']; // 6 정적 에이전트
-const BOARDROOM_WORKER_SLOTS = ['07', '08'];                        // 2 CLI 워커
+// ⚠️ 라온(01)은 사회자 — 참석자가 아니므로 선택 목록에서 제외한다(2026-10-15 확정).
+const BOARDROOM_ALL_SLOTS = ['02', '03', '04', '05', '06', '07', '08'];
+const BOARDROOM_AGENT_SLOTS = ['02', '03', '04', '05', '06']; // 5 정적 에이전트 (라온 제외)
+const BOARDROOM_WORKER_SLOTS = ['07', '08'];                  // 2 CLI 워커
+
+// 슬롯별 모델 선택 저장 키. 서버(/api/boardroom/selection)가 진실의 원천이고
+// localStorage는 서버 조회 실패 시의 폴백이다.
+const BOARDROOM_MODELS_KEY = 'daon_boardroom_models';
+let _boardroomServerModels = null; // 서버 저장 모델(있으면 localStorage보다 우선)
 
 function initBoardroomSlotSelector() {
   const checks = [...document.querySelectorAll('.boardroom-slot-check')];
   if (checks.length === 0) return;
 
-  // 저장된 선택 복원 (없으면 전체 선택)
+  // 저장된 선택 복원 (localStorage — 즉시 반영. 서버 저장값이 있으면 곧 덮어쓴다)
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('daon_boardroom_slots') || 'null'); } catch (e) { saved = null; }
   const want = Array.isArray(saved) ? saved : BOARDROOM_ALL_SLOTS;
@@ -2970,6 +3387,27 @@ function initBoardroomSlotSelector() {
   bind('boardroom-sel-workers', BOARDROOM_WORKER_SLOTS);
 
   updateBoardroomSelectionCount();
+  // 서버에 저장된 선택이 있으면 그것을 우선 적용한다(채팅 소집 경로와 같은 기준).
+  restoreBoardroomSelectionFromServer(checks);
+}
+
+// 서버 저장값 우선 복원. 저장값이 없으면 위에서 적용한 localStorage 값이 그대로 남는다.
+async function restoreBoardroomSelectionFromServer(checks) {
+  let sel = null;
+  try { sel = await DaonAPI.getBoardroomSelection(); } catch (e) { sel = null; }
+  if (!sel || !sel.ok || !sel.saved) return;
+
+  const slots = Array.isArray(sel.slots) ? sel.slots : null;
+  if (slots && slots.length) {
+    checks.forEach(c => {
+      c.checked = slots.includes(c.getAttribute('data-slot'));
+      updateBoardroomSlotCard(c);
+    });
+    updateBoardroomSelectionCount();
+    try { localStorage.setItem('daon_boardroom_slots', JSON.stringify(slots)); } catch (e) { /* 무시 */ }
+  }
+  _boardroomServerModels = (sel.models && typeof sel.models === 'object') ? sel.models : null;
+  applyBoardroomModels(_boardroomServerModels);
 }
 
 function setBoardroomSlots(checks, slots) {
@@ -2999,38 +3437,255 @@ function persistBoardroomSlots() {
     const on = [...document.querySelectorAll('.boardroom-slot-check')].filter(c => c.checked).map(c => c.getAttribute('data-slot'));
     localStorage.setItem('daon_boardroom_slots', JSON.stringify(on));
   } catch (e) { /* 저장 실패는 무시 */ }
+  syncBoardroomSelectionToServer();
+}
+
+// ── 슬롯별 모델 선택 저장/복원 ────────────────────────────────────────────────
+// localStorage['daon_boardroom_models'] = {"02": "glm-5.3-flash", ...}
+// 서버(/api/boardroom/selection)에도 같이 올려서, 채팅에서 라온이 회의를 소집할 때
+// (convene_boardroom 도구) 같은 참여자·같은 모델이 쓰이게 한다.
+
+function readBoardroomModels() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BOARDROOM_MODELS_KEY) || 'null');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  } catch (e) { /* 손상된 값은 무시 */ }
+  return {};
+}
+
+// 현재 드롭다운에 선택된 {슬롯: 모델} — 브로드캐스트 시 수집하는 값과 동일한 소스.
+function readBoardroomModelSelects() {
+  const out = {};
+  document.querySelectorAll('.boardroom-model-select').forEach(sel => {
+    const slot = sel.getAttribute('data-slot');
+    if (slot && sel.value) out[slot] = sel.value;
+  });
+  return out;
+}
+
+// 저장값(localStorage ∪ 서버, 서버 우선)을 각 드롭다운에 적용한다.
+// /api/models 목록에 없는 모델이면 <option>을 직접 추가해 선택을 보존한다
+// (기본 모델로 조용히 되돌리지 않는다).
+function applyBoardroomModels(serverModels) {
+  const want = Object.assign({}, readBoardroomModels(), serverModels || {});
+  document.querySelectorAll('.boardroom-model-select').forEach(sel => {
+    const slot = sel.getAttribute('data-slot');
+    const model = slot ? want[slot] : '';
+    if (!model) return;
+    const known = [...sel.options].some(o => o.value === model);
+    if (!known) {
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = `${model} (저장됨)`;
+      sel.appendChild(opt);
+    }
+    sel.value = model;
+  });
+  try { localStorage.setItem(BOARDROOM_MODELS_KEY, JSON.stringify(want)); } catch (e) { /* 무시 */ }
+  return want;
+}
+
+function persistBoardroomModels() {
+  try {
+    localStorage.setItem(BOARDROOM_MODELS_KEY, JSON.stringify(readBoardroomModelSelects()));
+  } catch (e) { /* 저장 실패는 무시 */ }
+  syncBoardroomSelectionToServer();
+}
+
+// 회의실 탭의 현재 선택(참여 슬롯 + 슬롯별 모델)을 서버에 저장한다.
+// 실패해도 UI는 계속 동작해야 하므로 조용히 무시한다(서버 쪽은 저장값 없음 → 전체 참여 폴백).
+function syncBoardroomSelectionToServer() {
+  if (typeof DaonAPI.saveBoardroomSelection !== 'function') return;
+  const slots = [...document.querySelectorAll('.boardroom-slot-check')]
+    .filter(c => c.checked)
+    .map(c => c.getAttribute('data-slot'))
+    .filter(Boolean);
+  try {
+    DaonAPI.saveBoardroomSelection({ slots, models: readBoardroomModelSelects() });
+  } catch (e) { /* 무시 */ }
 }
 
 // 회의실 8슬롯의 모델 선택 <select>를 /api/models 실데이터로 채운다.
 async function loadBoardroomModels() {
+  let optsHtml = '';
   try {
     const res = await fetch(`${DaonAPI.baseUrl}/api/models`);
-    if (!res.ok) return;
-    const data = await res.json();
-    const groups = data.groups || [];
-    const optsHtml = groups.map(g => {
-      const glabel = escapeHtml(String(g.provider || g.provider_key || ''));
-      const inner = (g.models || []).map(m => {
-        const id = (typeof m === 'string') ? m : (m && m.id ? m.id : '');
-        const lbl = (typeof m === 'object' && m && m.label) ? m.label : id;
-        if (!id) return '';
-        return `<option value="${escapeHtml(String(id))}">${escapeHtml(String(lbl))}</option>`;
+    if (res.ok) {
+      const data = await res.json();
+      const groups = data.groups || [];
+      optsHtml = groups.map(g => {
+        const glabel = escapeHtml(String(g.provider || g.provider_key || ''));
+        const inner = (g.models || []).map(m => {
+          const id = (typeof m === 'string') ? m : (m && m.id ? m.id : '');
+          const lbl = (typeof m === 'object' && m && m.label) ? m.label : id;
+          if (!id) return '';
+          return `<option value="${escapeHtml(String(id))}">${escapeHtml(String(lbl))}</option>`;
+        }).join('');
+        return glabel ? `<optgroup label="${glabel}">${inner}</optgroup>` : inner;
       }).join('');
-      return glabel ? `<optgroup label="${glabel}">${inner}</optgroup>` : inner;
-    }).join('');
-    document.querySelectorAll('.boardroom-model-select').forEach(sel => {
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">기본 모델</option>' + optsHtml;
-      if (cur) sel.value = cur;
-    });
+    }
   } catch (e) {
     /* 모델 목록 조회 실패는 조용히 무시 — 기본 모델로 정상 동작 */
+  }
+
+  document.querySelectorAll('.boardroom-model-select').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">기본 모델</option>' + optsHtml;
+    if (cur) sel.value = cur;
+    // 선택 즉시 저장 — 페이지를 다시 열어도 슬롯별 모델이 유지된다.
+    if (!sel.dataset.modelBound) {
+      sel.dataset.modelBound = '1';
+      sel.addEventListener('change', () => persistBoardroomModels());
+    }
+  });
+
+  // 옵션을 채운 '직후' 저장값을 적용해 선택을 복원한다.
+  applyBoardroomModels(_boardroomServerModels);
+}
+
+const BOARDROOM_WORKER_MODEL_STATES = {
+  applied:  { label: '적용됨', icon: 'task_alt', cls: 'slot-model-applied' },
+  restored: { label: '재시작 후 복원됨', icon: 'history', cls: 'slot-model-restored' },
+  default:  { label: '기본값', icon: 'settings_backup_restore', cls: 'slot-model-default' },
+  failed:   { label: '실패', icon: 'error', cls: 'slot-model-failed' },
+  checking: { label: '상태 확인 중', icon: 'sync', cls: 'slot-model-default' }
+};
+const BOARDROOM_WORKER_KEYS = { '07': 'worker-codex', '08': 'worker-claude' };
+const BOARDROOM_DEFAULT_MODELS = {
+  '07': 'muse-spark-1.3-contributor (OpenCode Go)',
+  '08': 'deepseek-v4.1-flash (OpenCode Go)'
+};
+
+function setBoardroomWorkerModelState(slot, payload = {}) {
+  const slotId = String(slot || '').padStart(2, '0');
+  const row = document.getElementById(`slot-model-state-${slotId}`);
+  if (!row) return;
+  const badge = document.getElementById(`slot-model-badge-${slotId}`);
+  const label = row.querySelector('.slot-model-state-label');
+  const icon = badge && badge.querySelector('.material-symbols-outlined');
+  const modelNode = document.getElementById(`slot-model-name-${slotId}`);
+  const isolation = document.getElementById(`slot-model-isolation-${slotId}`);
+  const errorNode = document.getElementById(`slot-model-error-${slotId}`);
+  const select = document.querySelector(`.boardroom-model-select[data-slot="${slotId}"]`);
+  const selectedModel = String(payload.requested_model || (select && select.value) || '').trim();
+  const runningRaw = String(payload.model_running || payload.resolved_model || '').trim();
+  const parsed = runningRaw.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+  const runningModel = (parsed ? parsed[1] : runningRaw).trim();
+  const providerRaw = String((parsed && parsed[2]) || payload.provider || '').trim();
+  const providerLabel = ({ 'opencode-go': 'OpenCode Go', 'openrouter': 'OpenRouter', 'minimax': 'MiniMax' })[providerRaw.toLowerCase()] || providerRaw;
+  const hasError = !!String(payload.model_error || payload.error || '').trim();
+  let stateKey = 'checking';
+  let errorText = String(payload.model_error || payload.error || '').trim();
+
+  if (hasError) {
+    stateKey = 'failed';
+  } else if (selectedModel && runningModel && payload.model_saved === true && runningModel !== selectedModel) {
+    stateKey = 'failed';
+    errorText = `요청 모델(${selectedModel})과 실행 모델(${runningModel})이 다릅니다.`;
+  } else if (payload.model_restored === true || payload.restored === true || payload.model_source === 'restored' || payload.source === 'selection_restore') {
+    stateKey = 'restored';
+  } else if (!selectedModel && runningModel) {
+    stateKey = 'default';
+  } else if (runningModel && payload.model_saved === true && (!selectedModel || runningModel === selectedModel)) {
+    stateKey = 'applied';
+  }
+
+  const config = BOARDROOM_WORKER_MODEL_STATES[stateKey];
+  if (row.dataset.modelState !== stateKey) {
+    row.dataset.modelState = stateKey;
+    badge.classList.remove('slot-model-applied', 'slot-model-restored', 'slot-model-default', 'slot-model-failed');
+    badge.classList.add(config.cls);
+  }
+  if (label) label.textContent = config.label;
+  if (icon) icon.textContent = config.icon;
+
+  const displayModel = runningModel || selectedModel || (stateKey === 'default' ? BOARDROOM_DEFAULT_MODELS[slotId] : '');
+  const shortModel = displayModel.replace(/-contributor(?=\s|$)/, '');
+  const fullModel = [displayModel, providerLabel && !displayModel.includes(`(${providerLabel})`) ? `(${providerLabel})` : '']
+    .filter(Boolean).join(' ');
+  if (modelNode) {
+    const visibleParts = [shortModel, providerLabel].filter(Boolean);
+    modelNode.textContent = visibleParts.length
+      ? visibleParts.join(' · ')
+      : (stateKey === 'checking' ? '워커 모델 상태 확인 전' : '모델 정보 없음');
+    modelNode.title = fullModel || '실행 모델 정보가 아직 제공되지 않았습니다.';
+    modelNode.setAttribute('aria-label', fullModel || '실행 모델 정보가 아직 제공되지 않았습니다.');
+  }
+
+  const explicitlyIsolated = payload.isolated === true || payload.profile_isolated === true || payload.codex_home_isolated === true;
+  // 슬롯 07은 모델 실행 확인 시 백엔드의 전용 CODEX_HOME 계약을 적용한 것으로 표시한다.
+  const isolated = explicitlyIsolated || (slotId === '07' && !!runningModel && payload.model_saved === true && stateKey !== 'failed');
+  if (isolation) {
+    isolation.hidden = !isolated;
+    if (isolated && !isolation.textContent.trim()) {
+      isolation.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">shield_lock</span><span>격리됨</span>';
+    }
+    isolation.title = slotId === '07'
+      ? '개인 ~/.codex 설정과 분리된 슬롯 전용 CODEX_HOME 사용 확인'
+      : '별도 워커 프로필 사용 확인';
+  }
+
+  if (errorNode) {
+    const friendly = errorText
+      .replace(/^no_api_key:/, 'API 키 없음: ')
+      .replace(/^claude_requires_anthropic_native:/, 'Anthropic 네이티브 미지원: ')
+      .replace(/^unsupported_provider:/, '지원하지 않는 공급자: ')
+      .replace(/^set_worker_model failed:\s*/i, '모델 설정 실패: ');
+    errorNode.textContent = stateKey === 'failed'
+      ? (friendly || '요청한 모델을 워커에서 확인하지 못했습니다.')
+      : '';
+    errorNode.title = errorText || '';
+    errorNode.hidden = stateKey !== 'failed';
+    if (stateKey === 'failed') row.setAttribute('aria-describedby', errorNode.id);
+    else row.removeAttribute('aria-describedby');
+  }
+}
+
+let _boardroomWorkerModelRefresh = null;
+let _boardroomWorkerModelRefreshAgain = false;
+async function refreshBoardroomWorkerModelStates() {
+  if (_boardroomWorkerModelRefresh) {
+    _boardroomWorkerModelRefreshAgain = true;
+    return _boardroomWorkerModelRefresh;
+  }
+  _boardroomWorkerModelRefresh = (async () => {
+    do {
+      _boardroomWorkerModelRefreshAgain = false;
+      try {
+        const base = (typeof DaonAPI !== 'undefined' && DaonAPI.baseUrl) ? DaonAPI.baseUrl : '';
+        const response = await fetch(`${base}/api/workers`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`워커 상태 조회 HTTP ${response.status}`);
+        const data = await response.json();
+        const workers = Array.isArray(data.workers) ? data.workers : [];
+        const byName = new Map(workers.map(worker => [String(worker.name || ''), worker]));
+        for (const [slot, workerKey] of Object.entries(BOARDROOM_WORKER_KEYS)) {
+          const worker = byName.get(workerKey);
+          if (!worker) {
+            setBoardroomWorkerModelState(slot, { model_error: `${workerKey} 상태를 /api/workers 응답에서 찾지 못했습니다.` });
+            continue;
+          }
+          setBoardroomWorkerModelState(slot, worker);
+        }
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error || '알 수 없는 오류');
+        for (const slot of Object.keys(BOARDROOM_WORKER_KEYS)) {
+          setBoardroomWorkerModelState(slot, { model_error: `워커 모델 상태 조회 실패: ${message}` });
+        }
+        console.warn('[boardroom] worker model status refresh failed:', error);
+      }
+    } while (_boardroomWorkerModelRefreshAgain);
+  })();
+  try {
+    await _boardroomWorkerModelRefresh;
+  } finally {
+    _boardroomWorkerModelRefresh = null;
   }
 }
 
 function setBoardroomBusy(busy) {
   const btn = document.getElementById('boardroom-broadcast-btn');
   const input = document.getElementById('boardroom-input');
+
   if (btn) { btn.disabled = !!busy; btn.classList.toggle('opacity-50', !!busy); }
   if (input) input.disabled = !!busy;
   document.querySelectorAll('.boardroom-slot-check, .boardroom-sel-btn').forEach(el => { el.disabled = !!busy; });
@@ -3093,56 +3748,316 @@ const BOARDROOM_PROFILE_MAP = {
 };
 const BOARDROOM_MAX_PANES = 6; // 멀티뷰 MAX_PANES와 동일
 
-function showBoardroomToWorkshop(data) {
-  const sessions = (data && data.sessions) || {};
-  const keys = Object.keys(sessions).sort();
-  if (keys.length === 0) return;
+// ── Workshop (in-app Multi-View iframe) ───────────────────────────────────────
+// 회의실 승계/탭 진입 시 /multi?embed=1 을 iframe 에 lazy-load 하고 재진입 시 리로드한다.
+// /multi 는 동일 origin 이므로 iframe 이 부모 localStorage(daon_multi_panes)를 그대로 읽는다.
+const WORKSHOP_IFRAME_SRC = '/multi?embed=1';
+// ⚠️ 서버가 동적 라우트(/multi)에 X-Frame-Options: DENY 를 보내면 브라우저가 임베드를 차단한다.
+//    /static/ 정적 경로는 '같은 파일'을 서빙하면서 XFO 헤더가 없어 임베드 가능 → 자동 폴백.
+const WORKSHOP_IFRAME_FALLBACK_SRC = '/static/multi/index.html?embed=1';
+const WORKSHOP_FALLBACK_DELAY_MS = 4000;
 
-  // 스크린샷 6개 상한(멀티뷰 MAX_PANES), 라온을 첫 pane으로
-  const panes = [];
-  for (const slot of keys) {
-    const s = sessions[slot] || {};
-    const profileName = BOARDROOM_PROFILE_MAP[s.key] || s.profile || null;
-    if (!profileName) continue;
-    const isWorker = s.kind === 'worker';
-    panes.push({
-      profile: profileName,
-      sessionId: isWorker ? null : (s.session_id || null),
-      model: s.model || null,
-    });
+// 현재 유효한 워크숍 URL(폴백 사용 여부 반영)
+function workshopActiveSrc(frame) {
+  return frame.dataset.workshopFallbackUsed === '1'
+    ? WORKSHOP_IFRAME_FALLBACK_SRC
+    : (frame.getAttribute('data-src') || WORKSHOP_IFRAME_SRC);
+}
+
+// XFO 차단 감지 → 정적 경로로 1회 폴백(차단되면 contentDocument 가 null 로 남는다)
+function armWorkshopFallbackWatch(frame) {
+  if (frame.dataset.workshopFallbackArmed === '1') return;
+  frame.dataset.workshopFallbackArmed = '1';
+  setTimeout(() => {
+    if (frame.dataset.workshopFallbackUsed === '1') return;
+    if (frame.contentDocument) return;   // 정상 로드됨
+    console.warn('[workshop] /multi 임베드 차단(X-Frame-Options: DENY) → 정적 경로로 폴백:',
+      WORKSHOP_IFRAME_FALLBACK_SRC);
+    frame.dataset.workshopFallbackUsed = '1';
+    frame.setAttribute('src', WORKSHOP_IFRAME_FALLBACK_SRC);
+  }, WORKSHOP_FALLBACK_DELAY_MS);
+}
+
+// ⚠️ 서빙 셸 이원화 대응: `/` 는 static/v2/index.html 이 아니라 루트 index.html 을 서빙한다.
+//    (정적 마크업에 작업장 탭이 없는 셸에서도 동일 기능이 뜨도록 런타임 보강. 전부 멱등)
+const WORKSHOP_TAB_IDLE_CLASS = 'workspace-tab-btn flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] '
+  + 'text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] font-label-md text-label-md transition-all';
+const WORKSHOP_TAB_INNER_HTML = '<span class="material-symbols-outlined text-[16px]">construction</span>'
+  + '<span>작업장 (Multi-View)</span>';
+const WORKSHOP_PANEL_CLASS = 'workspace-panel hidden flex-col items-stretch w-full flex-1';
+const WORKSHOP_IFRAME_CLASS = 'w-full h-full block border-0 m-0 bg-surface-container-lowest';
+
+// initTabs() 가 NodeList 를 캡처하기 전에 호출되어야 한다(활성 스타일/패널 토글이 붙도록).
+function ensureWorkshopShell() {
+  const tabs = document.getElementById('workspace-tabs');
+  if (tabs && !tabs.querySelector('[data-target="agent-workshop"]')) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = WORKSHOP_TAB_IDLE_CLASS;
+    btn.setAttribute('data-target', 'agent-workshop');
+    btn.innerHTML = WORKSHOP_TAB_INNER_HTML;
+    tabs.appendChild(btn);
   }
-  if (panes.length === 0) return;
-  panes.sort((a, b) => (a.profile === 'raon' ? -1 : b.profile === 'raon' ? 1 : 0));
-  const limited = panes.slice(0, BOARDROOM_MAX_PANES);
+  if (!document.getElementById('tab-agent-workshop')) {
+    const main = document.querySelector('main');
+    if (main) {
+      const sec = document.createElement('section');
+      sec.id = 'tab-agent-workshop';
+      sec.className = WORKSHOP_PANEL_CLASS;
+      sec.setAttribute('aria-label', '작업장 (Multi-View)');
+      const fr = document.createElement('iframe');
+      fr.id = 'workshop-frame';
+      fr.setAttribute('data-src', WORKSHOP_IFRAME_SRC);
+      fr.setAttribute('loading', 'lazy');
+      fr.className = WORKSHOP_IFRAME_CLASS;
+      fr.title = '작업장 (Multi-View)';
+      sec.appendChild(fr);
+      main.appendChild(sec);
+    }
+  }
+  const anchorItem = document.querySelector('.sidebar-item[data-tab-target="agent-skills"]');
+  if (anchorItem && !document.querySelector('.sidebar-item[data-tab-target="agent-workshop"]')) {
+    const item = anchorItem.cloneNode(true);
+    item.setAttribute('data-tab-target', 'agent-workshop');
+    item.className = 'sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm '
+      + 'text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer';
+    const icon = item.querySelector('.material-symbols-outlined');
+    if (icon) icon.textContent = 'construction';
+    const label = item.querySelector('.truncate');
+    if (label) label.textContent = '작업장 (Multi-View)';
+    anchorItem.parentNode.appendChild(item);
+  }
+}
 
+// 최초 진입: data-src 를 src 로 승격(이때만 실제 네트워크 로드 발생 → 부팅 시 6-pane 미기동)
+function ensureWorkshopFrame() {
+  const frame = document.getElementById('workshop-frame');
+  if (!frame) return null;
+  if (!frame.getAttribute('src')) {
+    frame.addEventListener('load', () => { try { frame.dataset.workshopLoaded = '1'; } catch (_) {} }, { once: true });
+    frame.setAttribute('src', frame.getAttribute('data-src') || WORKSHOP_IFRAME_SRC);
+    armWorkshopFallbackWatch(frame);
+  }
+  return frame;
+}
+
+// 재진입/승계: 이미 붙은 프레임을 리로드해 갱신된 localStorage 승계를 반영
+function reloadWorkshopFrame() {
+  const frame = document.getElementById('workshop-frame');
+  if (!frame) return null;
+  if (!frame.getAttribute('src')) return ensureWorkshopFrame();   // 아직 미로드 → 로드만
+  // 정상 문서가 붙어 있으면 그대로 리로드, 차단/미로드면 유효 src 로 재세팅
+  if (frame.contentDocument) {
+    try { frame.contentWindow.location.reload(); return frame; } catch (_) {}
+  }
+  frame.setAttribute('src', workshopActiveSrc(frame));
+  armWorkshopFallbackWatch(frame);
+  return frame;
+}
+
+// ⚠️ 대표님 확정(2026-10-15): "작업장 가기" 버튼을 사용자에게 누르게 하지 않는다.
+//    승인은 채팅에서 라온이 받고, 라온이 open_workshop 도구를 호출하면
+//    프론트가 감지해 자동으로 작업장 탭을 연다(openBoardroomWorkshop).
+function openBoardroomWorkshop(panes) {
+  const raw = Array.isArray(panes) ? panes : [];
+  const mapped = raw
+    .filter(p => p && p.profile)
+    .map(p => ({
+      profile: BOARDROOM_PROFILE_MAP[p.profile] || p.profile,
+      sessionId: p.sessionId || null,
+      model: p.model || null,
+    }));
+  if (mapped.length === 0) return false;
+
+  // 라온(지휘자)을 맨 앞에 — 작업장이 라온 지휘로 시작한다.
+  const raonSession = (typeof state !== 'undefined' && state.currentSessionId) ? state.currentSessionId : null;
+  const list = [{ profile: 'raon', sessionId: raonSession, model: null }]
+    .concat(mapped)
+    .filter((p, i, arr) => arr.findIndex(q => q.profile === p.profile && q.sessionId === p.sessionId) === i)
+    .slice(0, BOARDROOM_MAX_PANES);
+
+  try {
+    localStorage.setItem('daon_multi_panes', JSON.stringify(
+      list.map(p => ({ profile: p.profile, sessionId: p.sessionId, model: p.model }))
+    ));
+    // 🚨 세션 엉킴 원천 차단: 클래식 활성 세션(daon_active_session_id)을 타 에이전트 세션으로 덮어쓰지 않는다.
+  } catch (e) {
+    console.warn('boardroom→workshop localStorage write failed:', e);
+    return false;
+  }
+  if (document.getElementById('tab-agent-workshop')) {
+    window.activateTab('agent-workshop');
+    reloadWorkshopFrame();          // iframe 리로드 → daon_multi_panes 승계 반영
+    return true;
+  }
+  console.warn('workshop panel missing — ensureWorkshopShell() 선행 실패');
+  return false;
+}
+
+// 도구 결과 페이로드를 dict로 꺼낸다(문자열/이중 인코딩 방어).
+function parseToolPayload(data) {
+  let v = data && (data.result ?? data.output ?? data.content ?? data.result_json);
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { return null; } }
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { return null; } }
+  return (v && typeof v === 'object') ? v : null;
+}
+
+// 라온의 open_workshop 도구 결과를 감지해 자동으로 작업장을 연다(버튼 없음).
+function handleBoardroomToolResult(data) {
+  const rawName = (data && (data.name || data.tool_name || (data.function && data.function.name))) || '';
+  if (String(rawName).toLowerCase() !== 'open_workshop') return;
+  const payload = parseToolPayload(data);
+  if (!payload || payload.ok === false) {
+    console.warn('open_workshop 실패:', payload && payload.error);
+    return;
+  }
+  if (openBoardroomWorkshop(payload.panes || [])) {
+    setStatus('🏗️ 작업장 승계 완료 — 라온 지휘로 작업 시작', 'construction');
+  }
+}
+
+// ── 회의실 라이브 중계 (도구 경로) ────────────────────────────────────────────
+// 라온이 채팅에서 convene_boardroom을 호출하면 SSE stream_id가 없다.
+// 서버가 전역 링버퍼(/api/boardroom/live)에 쌓은 이벤트를 폴링해 회의실 탭에 그린다.
+let _brLiveTimer = null;
+let _brLiveSince = 0;
+const BR_LIVE_INTERVAL_MS = 1500;
+
+function startBoardroomLiveWatch() {
+  stopBoardroomLiveWatch();
+  _brLiveSince = 0;
   const container = document.getElementById('boardroom-transcript-container');
-  if (!container) return;
+  if (container) container.innerHTML = '';
+  appendBoardroomTranscript('01 사회자',
+    '회의실을 소집했습니다. 참석 에이전트만 발언하고, 라온은 사회자로 취합·재질의합니다.',
+    'bg-surface-container-highest text-on-surface');
+  _brLiveTimer = setInterval(pollBoardroomLive, BR_LIVE_INTERVAL_MS);
+  pollBoardroomLive();
+}
 
-  const btnRow = document.createElement('div');
-  btnRow.className = 'flex flex-wrap items-center gap-3 pt-3 mt-1 border-t border-black/10';
-  btnRow.innerHTML = `
-    <button type="button" class="boardroom-to-workshop-btn px-3 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md text-[12px] font-medium hover:bg-black/80 transition-colors flex items-center gap-1.5 cursor-pointer">
-      <span class="material-symbols-outlined text-[15px]">construction</span>
-      <span>이 회의 세션 그대로 작업장 열기 (${limited.length} panes)</span>
-    </button>
-    <span class="font-code text-[11px] text-on-surface-variant">토론 맥락을 안고 멀티뷰 작업장으로 승계 → 라온 지휘로 작업 시작</span>
+function stopBoardroomLiveWatch() {
+  if (_brLiveTimer) { clearInterval(_brLiveTimer); _brLiveTimer = null; }
+}
+
+async function pollBoardroomLive() {
+  try {
+    const base = (typeof DaonAPI !== 'undefined' && DaonAPI.baseUrl) ? DaonAPI.baseUrl : '';
+    const r = await fetch(`${base}/api/boardroom/live?since=${_brLiveSince}`);
+    const d = await r.json();
+    if (!d || !d.ok) return;
+    for (const e of (d.events || [])) {
+      _brLiveSince = Math.max(_brLiveSince, e.seq || 0);
+      renderBoardroomLiveEvent(e);
+    }
+    if (!d.active) stopBoardroomLiveWatch();
+  } catch (_) { /* 폴링 실패는 조용히 무시(서버 재기동 등) */ }
+}
+
+function renderBoardroomLiveEvent(e) {
+  const ev = e.event;
+  const d = e.data || {};
+  if (ev === 'boardroom_round_start') {
+    if (d.skipped) return;
+    appendBoardroomTranscript('01 사회자',
+      `── ${d.round}라운드 (${d.mode || ''}) ──`, 'bg-primary/10 text-on-surface');
+    return;
+  }
+  if (ev === 'boardroom_slot') {
+    try { setBoardroomSlotState(d.slot, 'running'); } catch (_) {}
+    return;
+  }
+  if (ev === 'boardroom_reply') {
+    try { setBoardroomSlotState(d.slot, d.status === 'error' ? 'error' : 'done'); } catch (_) {}
+    const modelTag = d.model ? ` · ${d.model}` : '';
+    const tag = `${d.slot} ${d.speaker || ''}${modelTag}`.trim();
+    const cls = d.status === 'error'
+      ? 'bg-rose-100 text-rose-800'
+      : 'bg-surface-container-highest text-on-surface';
+    const suffix = (typeof d.elapsed === 'number') ? `\n\n— ${d.elapsed}s` : '';
+    appendBoardroomTranscript(tag, (d.text || '(응답 없음)') + suffix, cls);
+    return;
+  }
+  if (ev === 'boardroom_moderation') {
+    const v = d.verdict || {};
+    const verdictTag = v.consensus
+      ? '합의 도달'
+      : `이견 ${((v.disagreements || []).length)}건 → 재질의`;
+    appendBoardroomTranscript('01 사회자 (취합)',
+      `${d.round}라운드 취합: ${verdictTag}\n${v.summary || ''}`, 'bg-sky-100 text-sky-900');
+    return;
+  }
+  if (ev === 'boardroom_conclusion') {
+    showBoardroomConclusion(d);
+    return;
+  }
+  if (ev === 'boardroom_done') {
+    refreshBoardroomWorkerModelStates();
+    stopBoardroomLiveWatch();
+    return;
+  }
+}
+
+// 결론 카드 — 버튼 없이 결론만 보여준다(승인은 채팅에서, 승계는 자동).
+function showBoardroomConclusion(c) {
+  const container = document.getElementById('boardroom-transcript-container');
+  if (!container || !c) return;
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const list = (arr, title) => (Array.isArray(arr) && arr.length)
+    ? `<div class="mt-2"><div class="font-label-md font-semibold text-on-surface">${title}</div>`
+      + arr.map(x => `<div class="text-[13px] text-on-surface leading-relaxed">• ${esc(x)}</div>`).join('')
+      + '</div>'
+    : '';
+  const row = document.createElement('div');
+  row.className = 'mt-3 p-3 rounded-[10px] bg-surface-container-highest border border-black/10 animate-fadeIn';
+  row.innerHTML = `
+    <div class="flex items-center gap-2 mb-1">
+      <span class="material-symbols-outlined text-[18px] text-on-surface">gavel</span>
+      <span class="font-label-md font-semibold text-on-surface">회의 결론 (${esc(c.rounds || 1)}라운드${c.consensus ? ' · 합의' : ' · 이견 잔존'})</span>
+    </div>
+    <div class="text-[13px] text-on-surface leading-relaxed whitespace-pre-wrap">${esc(c.summary || '')}</div>
+    ${list(c.points, '합의 사항')}
+    ${list(c.disagreements, '남은 이견')}
+    ${list(c.next_steps, '다음 단계(작업)')}
+    <div class="mt-3 pt-2.5 border-t border-black/10 flex flex-wrap items-center justify-between gap-2">
+      <div class="text-[12px] text-on-surface-variant">채팅창에서 '승인'을 말하거나, 아래 버튼을 눌러 바로 작업장을 여세요:</div>
+      <button type="button" id="btn-boardroom-approve-workshop" class="px-3 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-700 text-white font-medium text-[13px] flex items-center gap-1.5 shadow-sm transition-all cursor-pointer">
+        <span class="material-symbols-outlined text-[16px]">construction</span>
+        <span>작업 승인 및 작업장 열기</span>
+      </button>
+    </div>
   `;
-  container.appendChild(btnRow);
+  container.appendChild(row);
   container.scrollTop = container.scrollHeight;
 
-  const btn = btnRow.querySelector('.boardroom-to-workshop-btn');
-  if (btn) {
-    btn.addEventListener('click', () => {
+  const approveBtn = row.querySelector('#btn-boardroom-approve-workshop');
+  if (approveBtn) {
+    approveBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      approveBtn.innerHTML = '<span class="material-symbols-outlined text-[16px] animate-spin">sync</span><span>작업장 여는 중...</span>';
       try {
-        localStorage.setItem('daon_multi_panes', JSON.stringify(
-          limited.map(p => ({ profile: p.profile, sessionId: p.sessionId, model: p.model }))
-        ));
-        const first = limited.find(p => p.sessionId) || limited[0];
-        if (first && first.sessionId) localStorage.setItem('daon_active_session_id', first.sessionId);
-      } catch (e) {
-        console.warn('boardroom→workshop localStorage write failed:', e);
+        let panesToOpen = Array.isArray(c.panes) && c.panes.length > 0 ? c.panes : [];
+        if (panesToOpen.length === 0) {
+          const lastRes = await fetch('/api/boardroom/last').then(r => r.json()).catch(() => null);
+          if (lastRes && Array.isArray(lastRes.panes) && lastRes.panes.length > 0) {
+            panesToOpen = lastRes.panes;
+          }
+        }
+        if (openBoardroomWorkshop(panesToOpen)) {
+          setStatus('🏗️ 회의 결론 승인 완료 — 작업장에서 작업을 시작합니다.', 'construction');
+        } else {
+          // 폴백: 기본 작업장 열기
+          if (typeof window.activateTab === 'function') {
+            window.activateTab('agent-workshop');
+            reloadWorkshopFrame();
+          }
+        }
+      } catch (err) {
+        console.warn('작업장 열기 실패:', err);
+      } finally {
+        approveBtn.disabled = false;
+        approveBtn.innerHTML = '<span class="material-symbols-outlined text-[16px]">done</span><span>작업장 열림</span>';
       }
-      window.open('/multi', '_blank');
     });
   }
 }
@@ -4663,7 +5578,12 @@ async function initSettingsModal() {
       providersList.querySelectorAll('.delete-provider-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const name = btn.getAttribute('data-name');
-          if (confirm(`'${name}' 제공자와 등록된 모델을 삭제하시겠습니까?`)) {
+          const ok = await daonConfirm(`'${name}' 제공자와 등록된 모델을 삭제하시겠습니까?`, {
+            title: '제공자 삭제',
+            confirmText: '삭제',
+            danger: true
+          });
+          if (ok) {
             await DaonAPI.deleteProvider(name);
             await loadProvidersList();
             try { await loadLiveProviders(); } catch (_) {}
@@ -4788,6 +5708,7 @@ async function initSettingsModal() {
       window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closePopover();
       });
+      window.addEventListener('resize', closePopover);
     }
     return globalModelPopover;
   }
@@ -4795,6 +5716,7 @@ async function initSettingsModal() {
   function closePopover() {
     if (globalModelPopover) {
       globalModelPopover.classList.add('hidden');
+      globalModelPopover.style.display = 'none';
       globalModelPopover.innerHTML = '';
     }
   }
@@ -5467,3 +6389,42 @@ if (document.readyState === 'loading') {
 } else {
   initApp().catch(err => console.error('[Fatal Bootstrap Error]:', err));
 }
+
+// ── [백그라운드 기상 폴러 2026-10-17] ──────────────────────────────
+// 서버에 등록된 watch(워커/터미널/하네스 백그라운드 작업) 중 완료된 것이
+// 있으면, 8초 간격 폴링으로 감지해 chat-input에 기상 메시지를 넣고
+// handleSendMessage()로 턴을 자동 오픈한다 = 서버가 라온을 깨운다.
+// 규칙: 스트리밍 중·사용자 입력 중·화면 숨김 상태에서는 절대 끼어들지 않고
+// 다음 폴링으로 연기한다. ack는 전송 직전에만 해서 중복 기상을 막는다.
+let __wakeTimer = null;
+async function wakePollOnce() {
+  try {
+    if (document.visibilityState !== 'visible') return;
+    if (!state.currentSessionId) return;
+    if (state.isStreaming || state.currentStreamId || state.activeStream) return;
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    if (input.value.trim()) return; // 사용자가 타이핑 중이면 건드리지 않음
+    const r = await DaonAPI.wakePoll(state.currentSessionId);
+    const done = (r && r.completions) || [];
+    if (!done.length) return;
+    await DaonAPI.wakeAck(done.map(c => c.id));
+    const lines = done.map(c => {
+      const mark = c.stale ? '⚠️ 기록유실' : (c.ok ? '✅ 완료' : '❌ 실패');
+      const need = c.needs_input ? '\n  ‼️ 라온의 입력이 필요해서 멈춰 있음 — 최우선 처리!' : '';
+      const summ = (c.summary || '(결과 없음)').slice(0, 600);
+      const nxt = c.next ? `\n  이어할 일: ${c.next}` : '';
+      return `• ${mark} [${c.label}] (${c.kind}/${c.ref})\n  결과: ${summ}${nxt}${need}`;
+    });
+    input.value = `🔔 [자동 기상 — 백그라운드 작업 완료 ${done.length}건]\n${lines.join('\n')}\n위 완료를 대표님께 먼저 보고하고, '이어할 일'이 있으면 끊김 없이 계속 진행해.`;
+    input.style.height = 'auto';
+    handleSendMessage();
+  } catch (e) {
+    console.warn('[wake] poll failed:', e);
+  }
+}
+function startWakePoller() {
+  if (__wakeTimer) return;
+  __wakeTimer = setInterval(wakePollOnce, 8000);
+}
+startWakePoller();

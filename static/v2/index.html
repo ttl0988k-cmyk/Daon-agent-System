@@ -2,7 +2,7 @@
 
 
 
-<html lang="en" style=""><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<html lang="en" style=""><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" name="viewport"/><meta content="web_dashboard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
 
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 
@@ -275,7 +275,106 @@ html.tab-fit, html.tab-fit body { height: 100% !important; overflow: hidden !imp
 html.tab-fit #main-layout-container { height: 100vh !important; min-height: 0 !important; overflow: hidden !important; }
 html.tab-fit #main-layout-container > main { min-height: 0 !important; overflow: hidden !important; }
 html.tab-fit .workspace-panel:not(.hidden) { height: 100% !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; }
+html.tab-fit .workspace-panel:not(.hidden) { height: 100% !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; }
 html.tab-fit .workspace-panel:not(.hidden) > * { flex-shrink: 0 !important; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   [mobile-fixed-chat] 모바일/전체 뷰포트 고정 채팅 레이아웃
+   - 기존에는 채팅 탭만 tab-fit 예외 → 문서(body) 전체 스크롤 → 모바일
+     주소창 접힘/펼침에 따라 fixed 컴포저가 흔들리고 화면이 커졌다 작아졌다 함.
+   - 해결: body 스크롤 제거, 채팅 메시지 영역만 내부 스크롤,
+           컴포저는 채팅 패널 하단에 절대 고정(뷰포트 변동 무관).
+   ════════════════════════════════════════════════════════════════════════ */
+html, body {
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+#main-layout-container {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+#main-layout-container > main {
+  flex: 1 1 auto;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+.workspace-panel:not(.hidden) {
+  flex: 1 1 auto;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+#tab-chat-session:not(.hidden) {
+  position: relative !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+#tab-chat-session > div:first-child {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+#tab-chat-session > .floating-composer-container {
+  position: absolute !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  padding-top: 8px !important;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+  z-index: 20 !important;
+}
+@media (max-width: 640px) {
+  #tab-chat-session > .floating-composer-container {
+    padding-top: 4px !important;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  /* [mobile-composer-compact] 모바일에서 컴포저가 화면 절반을 먹던 문제 완화 */
+  #tab-chat-session .floating-composer-container > div:last-child > p {
+    display: none !important;
+  }
+  #tab-chat-session .floating-composer-container > div:last-child > div:nth-child(2) {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none;
+    padding-bottom: 2px !important;
+  }
+  #tab-chat-session .floating-composer-container > div:last-child > div:nth-child(2)::-webkit-scrollbar {
+    display: none;
+  }
+  #tab-chat-session .floating-composer-container > div:last-child > div:nth-child(2) > * {
+    flex: 0 0 auto !important;
+  }
+  #tab-chat-session .floating-composer-container div[class*="bg-surface-container-lowest"] > div:last-child {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none;
+  }
+  #tab-chat-session .floating-composer-container div[class*="bg-surface-container-lowest"] > div:last-child::-webkit-scrollbar {
+    display: none;
+  }
+  #tab-chat-session .floating-composer-container div[class*="bg-surface-container-lowest"] > div:last-child > * {
+    flex: 0 0 auto !important;
+  }
+  #tab-chat-session .floating-composer-container #scroll-to-bottom-wrapper {
+    position: absolute !important;
+    top: -34px !important;
+    right: 14px !important;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
 </style>
 
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">tailwind.config={"darkMode":"class","theme":{"extend":{"colors":{"on-primary-container":"#858383","tertiary-fixed":"#e3e2e2","on-tertiary-container":"#848484","on-secondary-fixed":"#1b1c1c","on-error-container":"#93000a","on-primary-fixed-variant":"#474646","surface-container":"#eeeeee","on-surface-variant":"#444748","secondary-container":"#e1dfdf","inverse-surface":"#2f3131","on-tertiary":"#ffffff","surface-container-low":"#f3f3f4","surface-tint":"#5f5e5e","tertiary-container":"#1b1c1c","surface-variant":"#e2e2e2","on-secondary-fixed-variant":"#464747","tertiary-fixed-dim":"#c7c6c6","on-secondary":"#ffffff","secondary-fixed-dim":"#c7c6c6","tertiary":"#000000","inverse-primary":"#c9c6c5","surface-bright":"#f9f9f9","surface-dim":"#dadada","outline":"#747878","primary":"#000000","outline-variant":"#c4c7c7","surface-container-highest":"#e2e2e2","background":"#f9f9f9","on-surface":"#1a1c1c","inverse-on-surface":"#f0f1f1","on-background":"#1a1c1c","secondary":"#5e5e5e","on-error":"#ffffff","on-tertiary-fixed-variant":"#464747","on-primary-fixed":"#1c1b1b","primary-fixed":"#e5e2e1","primary-fixed-dim":"#c9c6c5","on-primary":"#ffffff","on-secondary-container":"#636262","error":"#ba1a1a","on-tertiary-fixed":"#1b1c1c","error-container":"#ffdad6","surface-container-high":"#e8e8e8","primary-container":"#1c1b1b","secondary-fixed":"#e4e2e2","surface":"#f9f9f9","surface-container-lowest":"#ffffff"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-2xl":"2.5rem","gutter-lg":"1.5rem","margin":"1rem","margin-md":"1.5rem","gutter":"1rem","space-xl":"1.5rem","space-md":"0.75rem","margin-lg":"3rem","space-xs":"0.25rem","space-sm":"0.5rem","space-lg":"1rem"},"fontFamily":{"label-sm":["Inter"],"headline-sm":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"body-sm":["Inter"],"display":["Inter"],"code":["JetBrains Mono"],"label-md":["Inter"],"body-lg":["Inter"],"headline-md":["Inter"]},"fontSize":{"label-sm":["11px",{"lineHeight":"14px","letterSpacing":"0.02em","fontWeight":"500"}],"headline-sm":["16px",{"lineHeight":"24px","letterSpacing":"-0.005em","fontWeight":"500"}],"headline-lg":["24px",{"lineHeight":"32px","letterSpacing":"-0.015em","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"22px","letterSpacing":"0em","fontWeight":"400"}],"body-sm":["13px",{"lineHeight":"18px","letterSpacing":"0.005em","fontWeight":"400"}],"display":["32px",{"lineHeight":"40px","letterSpacing":"-0.02em","fontWeight":"600"}],"code":["13px",{"lineHeight":"20px","letterSpacing":"0em","fontWeight":"400"}],"label-md":["13px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"26px","letterSpacing":"0em","fontWeight":"400"}],"headline-md":["20px",{"lineHeight":"28px","letterSpacing":"-0.01em","fontWeight":"500"}]}}}};</script><style id="boardroom-slot-style">
@@ -284,8 +383,19 @@ html.tab-fit .workspace-panel:not(.hidden) > * { flex-shrink: 0 !important; }
 [data-slot].slot-error{border-color:#f43f5e!important;}
 div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
 .slot-status-badge{white-space:nowrap;}
+.slot-model-state{display:flex;align-items:center;gap:6px;min-width:0;min-height:20px;margin-top:6px;}
+.slot-model-state[hidden],.slot-model-error[hidden],.slot-model-isolation[hidden]{display:none!important;}
+.slot-model-state-badge,.slot-model-isolation{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;white-space:nowrap;border-radius:4px;padding:2px 5px;font:500 10px/1.2 'JetBrains Mono',monospace;}
+.slot-model-state-badge .material-symbols-outlined,.slot-model-isolation .material-symbols-outlined{font-size:13px;line-height:1;}
+.slot-model-name{display:block;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 10px/1.3 'JetBrains Mono',monospace;color:#444748;}
+.slot-model-error{margin:3px 0 0;max-width:100%;overflow-wrap:anywhere;font-size:10px;line-height:1.3;color:#be123c;}
+.slot-model-applied{color:#047857;background:hsla(160,84%,39%,.10);}
+.slot-model-restored{color:#b45309;background:hsla(38,92%,50%,.12);}
+.slot-model-default{color:#444748;background:rgba(0,0,0,.04);}
+.slot-model-failed{color:#be123c;background:hsla(347,77%,50%,.10);}
+.slot-model-isolation{color:#047857;background:hsla(160,84%,39%,.10);}
 </style>
-</head><body class="bg-surface-container-lowest font-body-md text-on-surface antialiased"><div id="sidebar-backdrop" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden transition-opacity"></div><aside id="app-sidebar" class="fixed left-0 top-0 h-full w-[280px] sm:w-[270px] bg-surface border-r border-black/10 z-40 flex flex-col justify-between select-none transition-transform duration-300 -translate-x-full md:translate-x-0"><div class="flex flex-col flex-1 min-h-0"><div class="p-space-lg flex flex-col gap-space-md border-b border-black/10"><div class="flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-5 h-5 bg-primary flex items-center justify-center rounded-[2px]"><span class="text-[10px] font-mono text-on-primary font-bold">D</span></div><span class="font-headline-sm text-headline-sm text-on-surface">Daon Agent</span></div><div class="flex items-center gap-1.5"><div class="flex items-center text-on-surface-variant font-label-sm text-label-sm px-space-xs py-[2px] bg-surface-variant/40 rounded">v2.5</div><button id="sidebar-close-btn" class="md:hidden p-1 rounded hover:bg-black/5 text-on-surface-variant flex items-center justify-center cursor-pointer" type="button" title="사이드바 닫기"><span class="material-symbols-outlined text-[18px]">close</span></button></div></div><button class="w-full h-9 flex items-center justify-between px-space-md bg-surface-container-lowest border border-black/10 rounded-[10px] text-on-surface font-label-md text-label-md hover:bg-black/[0.03] transition-colors nav-tab-btn new-session-btn" data-action="new-session" data-tab-target="chat-session" type="button"><span class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[16px] text-on-surface-variant">edit_square</span>New session</span><span class="font-code text-code text-[11px] text-on-surface-variant">⌘N</span></button></div><div class="flex-1 overflow-y-auto px-space-md py-space-md space-y-space-lg"><nav class="flex flex-col gap-space-lg"><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Core Workspaces</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] transition-colors truncate bg-black/[0.06] text-on-surface font-medium cursor-pointer" data-tab-target="chat-session"><span class="material-symbols-outlined text-[16px]">chat</span><span class="truncate">Agent 채팅 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="material-symbols-outlined text-[16px]">bolt</span><span class="truncate">Dynamic Harness 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-boardroom"><span class="material-symbols-outlined text-[16px]">groups</span><span class="truncate">정적 에이전트 회의실 (8 Slots)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Extensions &amp; Skills</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="plugin-mcp"><span class="material-symbols-outlined text-[16px]">extension</span><span class="truncate">플러그인 &amp; MCP 스토어</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-skills"><span class="material-symbols-outlined text-[16px]">psychology</span><span class="truncate">에이전트 스킬 (Skills)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="flex items-center justify-between px-space-sm mb-space-xs"><label class="flex items-center gap-1.5 cursor-pointer select-none" title="전체 선택/해제"><input type="checkbox" id="sessions-select-all" class="w-3.5 h-3.5 cursor-pointer accent-red-600"><span class="font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider">Recent Threads</span></label><button id="delete-selected-sessions-btn" title="선택한 세션 삭제" class="text-[11px] font-label-sm text-on-surface-variant/70 hover:text-red-600 flex items-center gap-0.5 transition-colors cursor-pointer opacity-40 pointer-events-none" type="button"><span class="material-symbols-outlined text-[13px]">delete</span><span id="delete-selected-label">선택 삭제</span></button></div><div class="flex flex-col gap-[2px]" id="recent-threads-list"><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Architectural Scaffolding Schema</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="truncate">Autonomous Refactor Pipeline</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Vector Index Hybrid Tuning</span></a></div></div></nav></div></div><!-- Provider & Model Selection Slide Drawer -->
+</head><body class="bg-surface-container-lowest font-body-md text-on-surface antialiased"><div id="sidebar-backdrop" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden transition-opacity"></div><aside id="app-sidebar" class="fixed left-0 top-0 h-full w-[280px] sm:w-[270px] bg-surface border-r border-black/10 z-40 flex flex-col justify-between select-none transition-transform duration-300 -translate-x-full md:translate-x-0"><div class="flex flex-col flex-1 min-h-0"><div class="p-space-lg flex flex-col gap-space-md border-b border-black/10"><div class="flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-5 h-5 bg-primary flex items-center justify-center rounded-[2px]"><span class="text-[10px] font-mono text-on-primary font-bold">D</span></div><span class="font-headline-sm text-headline-sm text-on-surface">Daon Agent</span></div><div class="flex items-center gap-1.5"><div class="flex items-center text-on-surface-variant font-label-sm text-label-sm px-space-xs py-[2px] bg-surface-variant/40 rounded">v2.5</div><button id="sidebar-close-btn" class="md:hidden p-1 rounded hover:bg-black/5 text-on-surface-variant flex items-center justify-center cursor-pointer" type="button" title="사이드바 닫기"><span class="material-symbols-outlined text-[18px]">close</span></button></div></div><button class="w-full h-9 flex items-center justify-between px-space-md bg-surface-container-lowest border border-black/10 rounded-[10px] text-on-surface font-label-md text-label-md hover:bg-black/[0.03] transition-colors nav-tab-btn new-session-btn" data-action="new-session" data-tab-target="chat-session" type="button"><span class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[16px] text-on-surface-variant">edit_square</span>New session</span><span class="font-code text-code text-[11px] text-on-surface-variant">⌘N</span></button></div><div class="flex-1 overflow-y-auto px-space-md py-space-md space-y-space-lg"><nav class="flex flex-col gap-space-lg"><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Core Workspaces</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] transition-colors truncate bg-black/[0.06] text-on-surface font-medium cursor-pointer" data-tab-target="chat-session"><span class="material-symbols-outlined text-[16px]">chat</span><span class="truncate">Agent 채팅 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="material-symbols-outlined text-[16px]">bolt</span><span class="truncate">Dynamic Harness 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-boardroom"><span class="material-symbols-outlined text-[16px]">groups</span><span class="truncate">정적 에이전트 회의실 (라온 사회자 + 7 에이전트)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Extensions &amp; Skills</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="plugin-mcp"><span class="material-symbols-outlined text-[16px]">extension</span><span class="truncate">플러그인 &amp; MCP 스토어</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-skills"><span class="material-symbols-outlined text-[16px]">psychology</span><span class="truncate">에이전트 스킬 (Skills)</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-workshop"><span class="material-symbols-outlined text-[16px]">construction</span><span class="truncate">작업장 (Multi-View)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="flex items-center justify-between px-space-sm mb-space-xs"><label class="flex items-center gap-1.5 cursor-pointer select-none" title="전체 선택/해제"><input type="checkbox" id="sessions-select-all" class="w-3.5 h-3.5 cursor-pointer accent-red-600"><span class="font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider">Recent Threads</span></label><button id="delete-selected-sessions-btn" title="선택한 세션 삭제" class="text-[11px] font-label-sm text-on-surface-variant/70 hover:text-red-600 flex items-center gap-0.5 transition-colors cursor-pointer opacity-40 pointer-events-none" type="button"><span class="material-symbols-outlined text-[13px]">delete</span><span id="delete-selected-label">선택 삭제</span></button></div><div class="flex flex-col gap-[2px]" id="recent-threads-list"><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Architectural Scaffolding Schema</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="truncate">Autonomous Refactor Pipeline</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Vector Index Hybrid Tuning</span></a></div></div></nav></div></div><!-- Provider & Model Selection Slide Drawer -->
 
 <div class="px-space-md py-2 border-t border-black/10 bg-surface flex flex-col gap-1.5" id="provider-drawer-container">
 
@@ -515,7 +625,7 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
         </button>
         <button class="workspace-tab-btn flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] font-label-md text-label-md transition-all" data-target="agent-boardroom" type="button">
           <span class="material-symbols-outlined text-[16px]">groups</span>
-          <span>정적 에이전트 회의실 (8 Slots)</span>
+          <span>정적 에이전트 회의실 (라온 사회자 + 7 에이전트)</span>
         </button>
         <button class="workspace-tab-btn flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] font-label-md text-label-md transition-all" data-target="plugin-mcp" type="button">
           <span class="material-symbols-outlined text-[16px]">extension</span>
@@ -524,6 +634,10 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
         <button class="workspace-tab-btn flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] font-label-md text-label-md transition-all" data-target="agent-skills" type="button">
           <span class="material-symbols-outlined text-[16px]">psychology</span>
           <span>에이전트 스킬 (Skills)</span>
+        </button>
+        <button class="workspace-tab-btn flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.04] font-label-md text-label-md transition-all" data-target="agent-workshop" type="button">
+          <span class="material-symbols-outlined text-[16px]">construction</span>
+          <span>작업장 (Multi-View)</span>
         </button>
       </div>
     </nav>
@@ -571,7 +685,7 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
         <!-- Pinned Bottom Floating Composer for Chat -->
         <div class="fixed bottom-0 left-0 fixed-with-sidebar right-0 z-20 pointer-events-none pb-4 pt-8 bg-gradient-to-t from-surface-container-lowest via-surface-container-lowest/95 to-transparent floating-composer-container">
           <!-- Floating Scroll-to-Bottom Button (위로 스크롤 시 나타남) -->
-          <div id="scroll-to-bottom-wrapper" class="w-full max-w-[768px] mx-auto px-space-lg flex justify-end mb-2 pointer-events-auto transition-all duration-200 opacity-0 pointer-events-none translate-y-2">
+          <div id="scroll-to-bottom-wrapper" class="w-full max-w-[768px] mx-auto px-space-lg flex justify-end mb-2 transition-all duration-200 opacity-0 pointer-events-none translate-y-2">
             <button id="scroll-to-bottom-btn" type="button" class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high/95 hover:bg-surface-container-highest backdrop-blur border border-black/10 text-on-surface text-[12px] font-medium rounded-full shadow-md transition-all active:scale-95 cursor-pointer">
               <span class="material-symbols-outlined text-[15px] animate-bounce">arrow_downward</span>
               <span>최신 메시지</span>
@@ -607,6 +721,18 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
                   <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" id="auto-tts-toggle-btn" title="답변 자동 음성 읽기 (TTS 켜기/끄기)" type="button">
                     <span class="material-symbols-outlined text-[18px] text-on-surface-variant/70" id="auto-tts-icon">volume_up</span>
                   </button>
+                  <select class="h-8 rounded-[8px] text-[11px] text-on-surface-variant bg-transparent border border-black/10 px-1 cursor-pointer hover:border-black/25 transition-colors" id="tts-voice-select" title="TTS 목소리 선택 (여 F1~F5 / 남 M1~M5)">
+                    <option value="F1">여 F1</option>
+                    <option value="F2">여 F2</option>
+                    <option value="F3">여 F3</option>
+                    <option value="F4">여 F4</option>
+                    <option value="F5">여 F5</option>
+                    <option value="M1">남 M1</option>
+                    <option value="M2">남 M2</option>
+                    <option value="M3">남 M3</option>
+                    <option value="M4">남 M4</option>
+                    <option value="M5">남 M5</option>
+                  </select>
                   <button class="w-8 h-8 flex items-center justify-center rounded-[8px] text-on-surface-variant hover:text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" id="agent-mode-select-btn" title="에이전트 모드 선택" type="button">
                     <span class="material-symbols-outlined text-[18px]">hub</span>
                   </button>
@@ -672,7 +798,7 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
 
 <span class="text-on-surface font-semibold bg-black/[0.04] p-0.5 rounded block">+   circuitBreakerMs: 120</span>
 
-<span class="text-on-surface font-semibold bg-black/[0.04] p-0.5 rounded block">+ });</span></code></pre></div></div></div><!-- Harness Control Bar --><div class="p-space-md border border-black/10 rounded-[12px] bg-surface flex items-center justify-between"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-[20px] text-on-surface-variant">tune</span><div class="flex flex-col"><span class="font-label-md font-semibold text-on-surface">Dynamic Harness 런타임 제약 설정</span><span class="font-body-sm text-[12px] text-on-surface-variant">최대 재시도 3회 · 샌드박스 타임아웃 5000ms</span></div></div><div class="flex items-center gap-2"><button class="px-3 py-1.5 border border-black/10 rounded-[8px] font-label-md text-on-surface hover:bg-black/[0.04] transition-colors">디버그 덤프 다운로드</button><button class="px-3 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md font-medium hover:bg-black/80 transition-colors">새 하네스 작업 시작</button></div></div></div></div><!-- ================= TAB 3: AGENT BOARDROOM (8 SLOTS) ================= --><div class="workspace-panel hidden flex-col items-center w-full flex-1" id="tab-agent-boardroom"><div class="w-full max-w-[1440px] mx-auto px-space-lg flex-1 flex flex-col pt-4 pb-48 gap-space-lg"><div class="flex items-center justify-between border-b border-black/10 pb-space-sm"><div class="flex items-center gap-space-sm"><div class="px-2 py-0.5 bg-primary text-on-primary font-code text-[11px] font-semibold rounded">BOARDROOM</div><h2 class="font-headline-md text-headline-md font-semibold text-on-surface">정적 에이전트 회의실 (8 Dedicated Agent Slots)</h2></div><div class="flex items-center gap-2 font-code text-[12px] text-on-surface-variant"><span class="inline-block w-2 h-2 rounded-full bg-emerald-600"></span><span id="boardroom-selected-count">8/8 Agents Selected</span></div></div><div class="flex flex-wrap items-center gap-2 pb-1"><span class="font-code text-[11px] text-on-surface-variant mr-1">회의 참여:</span><button id="boardroom-sel-all" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">전체</button><button id="boardroom-sel-agents" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">에이전트만</button><button id="boardroom-sel-workers" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">워커만</button><button id="boardroom-sel-none" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">해제</button></div><!-- 8 Slot Grid --><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"><div data-slot="01" class="p-space-md bg-surface border border-black/10 rounded-[10px] flex flex-col justify-between min-h-[175px] hover:border-black/30 transition-all"><div class="flex items-start justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-[4px] bg-primary text-on-primary font-mono text-[12px] font-bold flex items-center justify-center">01</div><div><h4 class="font-label-md font-semibold text-on-surface">라온 (총괄기획)</h4><span class="font-code text-[11px] text-on-surface-variant">Orchestrator & PM</span></div></div><label class="boardroom-slot-check-wrap flex items-center gap-1 mr-1.5 cursor-pointer select-none" title="이번 회의에 참여할 슬롯"><input type="checkbox" class="boardroom-slot-check" data-slot="01" checked><span class="font-code text-[10px] text-on-surface-variant">참여</span></label><span class="slot-status-badge font-code text-[10px] text-on-surface-variant">READY</span></div><p class="font-body-sm text-[12px] text-on-surface-variant leading-relaxed">전체 회의 안건을 분배하고 최종 결론을 종합합니다.</p><div class="flex items-center justify-between pt-2 border-t border-black/[0.06] text-[11px] font-code"><span class="text-on-surface font-medium">profile: raon</span><span class="text-on-surface-variant">kind: agent</span></div>
+<span class="text-on-surface font-semibold bg-black/[0.04] p-0.5 rounded block">+ });</span></code></pre></div></div></div><!-- Harness Control Bar --><div class="p-space-md border border-black/10 rounded-[12px] bg-surface flex items-center justify-between"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-[20px] text-on-surface-variant">tune</span><div class="flex flex-col"><span class="font-label-md font-semibold text-on-surface">Dynamic Harness 런타임 제약 설정</span><span class="font-body-sm text-[12px] text-on-surface-variant">최대 재시도 3회 · 샌드박스 타임아웃 5000ms</span></div></div><div class="flex items-center gap-2"><button class="px-3 py-1.5 border border-black/10 rounded-[8px] font-label-md text-on-surface hover:bg-black/[0.04] transition-colors">디버그 덤프 다운로드</button><button class="px-3 py-1.5 bg-primary text-on-primary rounded-[8px] font-label-md font-medium hover:bg-black/80 transition-colors">새 하네스 작업 시작</button></div></div></div></div><!-- ================= TAB 3: AGENT BOARDROOM (8 SLOTS) ================= --><div class="workspace-panel hidden flex-col items-center w-full flex-1" id="tab-agent-boardroom"><div class="w-full max-w-[1440px] mx-auto px-space-lg flex-1 flex flex-col pt-4 pb-48 gap-space-lg"><div class="flex items-center justify-between border-b border-black/10 pb-space-sm"><div class="flex items-center gap-space-sm"><div class="px-2 py-0.5 bg-primary text-on-primary font-code text-[11px] font-semibold rounded">BOARDROOM</div><h2 class="font-headline-md text-headline-md font-semibold text-on-surface">정적 에이전트 회의실 (라온 사회자 + 7 에이전트)</h2></div><div class="flex items-center gap-2 font-code text-[12px] text-on-surface-variant"><span class="inline-block w-2 h-2 rounded-full bg-emerald-600"></span><span id="boardroom-selected-count">7/7 Agents Selected</span></div></div><div class="flex flex-wrap items-center gap-2 pb-1"><span class="font-code text-[11px] text-on-surface-variant mr-1">회의 참여:</span><button id="boardroom-sel-all" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">전체</button><button id="boardroom-sel-agents" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">에이전트만</button><button id="boardroom-sel-workers" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">워커만</button><button id="boardroom-sel-none" class="boardroom-sel-btn px-2.5 py-1 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors cursor-pointer" type="button">해제</button></div><!-- 8 Slot Grid --><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"><div data-slot="01" class="p-space-md bg-surface border border-black/10 rounded-[10px] flex flex-col justify-between min-h-[175px] hover:border-black/30 transition-all"><div class="flex items-start justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-[4px] bg-primary text-on-primary font-mono text-[12px] font-bold flex items-center justify-center">01</div><div><h4 class="font-label-md font-semibold text-on-surface">라온 (총괄기획)</h4><span class="font-code text-[11px] text-on-surface-variant">Orchestrator & PM</span></div></div><span class="font-code text-[10px] px-1.5 py-0.5 bg-primary/10 rounded text-on-surface-variant" title="라온은 사회자 — 발언하지 않습니다 (취합·재질의 전담)">사회자</span><span class="slot-status-badge font-code text-[10px] text-on-surface-variant">READY</span></div><p class="font-body-sm text-[12px] text-on-surface-variant leading-relaxed">회의에 참석하지 않습니다. 다른 에이전트의 발언을 취합하고, 이견이 있으면 재질의해 결론을 도출합니다.</p><div class="flex items-center justify-between pt-2 border-t border-black/[0.06] text-[11px] font-code"><span class="text-on-surface font-medium">profile: raon</span><span class="text-on-surface-variant">kind: agent</span></div>
 
 <select class="boardroom-model-select w-full mt-2 py-1 px-1.5 bg-surface-container-lowest border border-black/10 rounded-[6px] font-code text-[10px] text-on-surface cursor-pointer truncate" data-slot="01" title="슬롯 01 실행 모델 선택 (기본=프로필 모델)"><option value="">기본 모델</option></select>
 
@@ -747,6 +873,12 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
 </div><div data-slot="07" class="p-space-md bg-surface border border-black/10 rounded-[10px] flex flex-col justify-between min-h-[175px] hover:border-black/30 transition-all"><div class="flex items-start justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-[4px] bg-primary text-on-primary font-mono text-[12px] font-bold flex items-center justify-center">07</div><div><h4 class="font-label-md font-semibold text-on-surface">코덱스 워커</h4><span class="font-code text-[11px] text-on-surface-variant">Codex CLI Worker</span></div></div><label class="boardroom-slot-check-wrap flex items-center gap-1 mr-1.5 cursor-pointer select-none" title="이번 회의에 참여할 슬롯"><input type="checkbox" class="boardroom-slot-check" data-slot="07" checked><span class="font-code text-[10px] text-on-surface-variant">참여</span></label><span class="slot-status-badge font-code text-[10px] text-on-surface-variant">READY</span></div><p class="font-body-sm text-[12px] text-on-surface-variant leading-relaxed">OpenAI Codex CLI 워커 — 대규모 코드 작성·파일 수정을 실 수행합니다.</p><div class="flex items-center justify-between pt-2 border-t border-black/[0.06] text-[11px] font-code"><span class="text-on-surface font-medium">profile: worker-codex</span><span class="text-on-surface-variant">kind: worker</span></div>
 
 <select class="boardroom-model-select w-full mt-2 py-1 px-1.5 bg-surface-container-lowest border border-black/10 rounded-[6px] font-code text-[10px] text-on-surface cursor-pointer truncate" data-slot="07" title="슬롯 07 실행 모델 선택 (기본=프로필 모델)"><option value="">기본 모델</option></select>
+<div class="slot-model-state" id="slot-model-state-07" data-slot="07" data-model-state="checking" aria-live="polite" aria-atomic="true">
+  <span class="slot-model-state-badge slot-model-default" id="slot-model-badge-07"><span class="material-symbols-outlined" aria-hidden="true">sync</span><span class="slot-model-state-label">상태 확인 중</span></span>
+  <span class="slot-model-name" id="slot-model-name-07" title="">워커 모델 상태 조회 중…</span>
+  <span class="slot-model-isolation" id="slot-model-isolation-07" hidden title="개인 ~/.codex 설정과 분리된 슬롯 전용 CODEX_HOME"><span class="material-symbols-outlined" aria-hidden="true">shield_lock</span><span>격리됨</span></span>
+</div>
+<p class="slot-model-error" id="slot-model-error-07" hidden role="alert"></p>
 
 <button class="agent-dispatch-btn w-full mt-2 py-1 px-2 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors flex items-center justify-center gap-1 cursor-pointer" data-agent="코덱스 워커" type="button">
 
@@ -759,6 +891,12 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
 </div><div data-slot="08" class="p-space-md bg-surface border border-black/10 rounded-[10px] flex flex-col justify-between min-h-[175px] hover:border-black/30 transition-all"><div class="flex items-start justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-[4px] bg-primary text-on-primary font-mono text-[12px] font-bold flex items-center justify-center">08</div><div><h4 class="font-label-md font-semibold text-on-surface">클로드 워커</h4><span class="font-code text-[11px] text-on-surface-variant">Claude CLI Worker</span></div></div><label class="boardroom-slot-check-wrap flex items-center gap-1 mr-1.5 cursor-pointer select-none" title="이번 회의에 참여할 슬롯"><input type="checkbox" class="boardroom-slot-check" data-slot="08" checked><span class="font-code text-[10px] text-on-surface-variant">참여</span></label><span class="slot-status-badge font-code text-[10px] text-on-surface-variant">READY</span></div><p class="font-body-sm text-[12px] text-on-surface-variant leading-relaxed">Claude Code CLI 워커 — 심층 구현·리팩터링을 실 수행합니다.</p><div class="flex items-center justify-between pt-2 border-t border-black/[0.06] text-[11px] font-code"><span class="text-on-surface font-medium">profile: worker-claude</span><span class="text-on-surface-variant">kind: worker</span></div>
 
 <select class="boardroom-model-select w-full mt-2 py-1 px-1.5 bg-surface-container-lowest border border-black/10 rounded-[6px] font-code text-[10px] text-on-surface cursor-pointer truncate" data-slot="08" title="슬롯 08 실행 모델 선택 (기본=프로필 모델)"><option value="">기본 모델</option></select>
+<div class="slot-model-state" id="slot-model-state-08" data-slot="08" data-model-state="checking" aria-live="polite" aria-atomic="true">
+  <span class="slot-model-state-badge slot-model-default" id="slot-model-badge-08"><span class="material-symbols-outlined" aria-hidden="true">sync</span><span class="slot-model-state-label">상태 확인 중</span></span>
+  <span class="slot-model-name" id="slot-model-name-08" title="">워커 모델 상태 조회 중…</span>
+  <span class="slot-model-isolation" id="slot-model-isolation-08" hidden title="별도 워커 프로필이 명시 확인된 경우에만 표시"></span>
+</div>
+<p class="slot-model-error" id="slot-model-error-08" hidden role="alert"></p>
 
 <button class="agent-dispatch-btn w-full mt-2 py-1 px-2 border border-black/10 rounded-[6px] font-label-sm text-[11px] text-on-surface hover:bg-black/[0.05] transition-colors flex items-center justify-center gap-1 cursor-pointer" data-agent="클로드 워커" type="button">
 
@@ -881,7 +1019,12 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
     </div>
   </div>
 </div>
-</main></div><script src="/static/v2/js/app.js?v=20261013_darkbgm" type="module"></script>
+    <!-- ================= TAB 6: WORKSHOP (MULTI-VIEW EMBED) ================= -->
+    <section class="workspace-panel hidden flex-col items-stretch w-full flex-1" id="tab-agent-workshop" aria-label="작업장 (Multi-View)">
+      <!-- lazy-load: 최초 진입 시 JS 가 data-src 의 src="/multi?embed=1" 을 iframe src 로 승격(그 전까지 네트워크 로드 0) -->
+      <iframe id="workshop-frame" data-src="/multi?embed=1" loading="lazy" class="w-full h-full block border-0 m-0 bg-surface-container-lowest" title="작업장 (Multi-View)"></iframe>
+    </section>
+</main></div><script src="/static/v2/js/app.js?v=20261022_mobilefix" type="module"></script>
   <!-- ================= 1. WORKSPACE (PROJECT FOLDER) MODAL ================= -->
   <div id="workspace-modal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4 transition-opacity">
     <div class="bg-surface-container-lowest border border-black/10 rounded-[12px] w-full max-w-[500px] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
@@ -1084,20 +1227,6 @@ div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
   </div>
 
 
-    <!-- reticle:connect (dev only, localhost) -->
-    <script type="module">
-      (async () => {
-        try {
-          if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return;
-          const { reticle } = await import('https://cdn.jsdelivr.net/npm/@reticlehq/browser@3.6.0/+esm');
-          let local = await import('./reticle.local.js').catch(() => ({}));
-          if (!local.token) local = await import('/static/v2/reticle.local.js').catch(() => ({}));
-          if (!local.token) return;
-          reticle.connect({ projectId: 'daon-v2-9f2c4a1e', token: local.token });
-        } catch (e) { /* dev-only probe, ignore */ }
-      })();
-    </script>
-    <!-- /reticle:connect -->
 
   <!-- ================= 3. CUSTOM MCP ADD MODAL ================= -->
   <div id="mcp-add-modal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4 transition-opacity">

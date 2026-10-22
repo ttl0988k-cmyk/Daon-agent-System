@@ -143,9 +143,19 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
     "opencode-go": {
         "label": "OpenCode Go (zen/go)",
         "base_url": "https://opencode.ai/zen/go/v1",
-        "codex_model": "deepseek-v4.1-flash",
+        # ★ [2026-10-18 대표님 지시] Claude Code 직결용 Anthropic 네이티브 엔드포인트.
+        #   LiteLLM 을 경유하면 Anthropic tool_use ↔ OpenAI tool_calls 변환에서
+        #   "No tool output found for tool call" 400 이 터져 워커가 중간에 죽는다(실측).
+        #   여기에 붙이면 변환 0회 → tool 왕복 정상. 최종 URL = <이 값>/v1/messages
+        "anthropic_base_url": "https://opencode.ai/zen/go",
+        # [2026-10-18 대표님 지시] Codex 워커 모델 = 뮤즈 1.3 (muse-spark-1.3-contributor)
+        "codex_model": "muse-spark-1.3-contributor",
         "claude_alias": "claude-oc",
+        # Claude Code 는 deepseek 유지 (codex_model 과 분리— 대표님 지시는 Codex 만)
+        "claude_model": "deepseek-v4.1-flash",
         # 없으면 403(Cloudflare 1010) / 400(MissingSessionID)
+        # /v1/messages 는 x-api-key, /v1/responses 는 Authorization: Bearer 를
+        # 요구한다(실측). 즉 같은 키인데 엔드포인트별 인증 방식이 다르다.
         "headers": {"x-opencode-session": "daon-harness-worker"},
     },
     "opencode-zen": {
@@ -210,7 +220,10 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-DEFAULT_PROVIDER = "openrouter"
+# [2026-10-18 대표님 지시] 기본 프로바이더 = opencode-go
+#   → provider 미지정 시 Codex 는 muse-spark-1.3-contributor 로 돈다.
+#   (Claude 는 어차피 opencode-go 직결로 정규화되므로 영향 없음)
+DEFAULT_PROVIDER = "opencode-go"
 
 
 def resolve_provider(name: Optional[str]) -> str:
@@ -282,7 +295,10 @@ QUOTA_STORE_FILE = WORKER_ROOT / "_provider_quota.json"
 QUOTA_DEFAULT_COOLDOWN_SEC = 5 * 3600
 
 # 자동 폴백 기본 순서: 구독(한도 작음) 우선 → API 키 프로바이더
-FALLBACK_CHAIN = ("chatgpt", "openrouter", "opencode-go", "opencode-zen", "minimax")
+# [2026-10-18 대표님 지시] 자동 폴백에서 openrouter 제외.
+#   openrouter 는 Codex 기본 glm 경로였으나 폴백에서는 빼기로 결정.
+#   (명시적으로 provider='openrouter' 를 지정하면 여전히 쓸 수 있다 — 이 체인은 auto 전용)
+FALLBACK_CHAIN = ("chatgpt", "opencode-go", "opencode-zen", "minimax")
 AUTO_PROVIDER_ALIASES = ("auto", "chain", "fallback")
 
 _QUOTA_LOCK = threading.Lock()
@@ -974,6 +990,36 @@ def claude_alias_for(provider: str) -> str:
     return PROVIDERS[resolve_provider(provider)].get("claude_alias", "")
 
 
+# ── [2026-10-18 대표님 지시] Claude Code 는 Anthropic 네이티브 엔드포인트에
+#    "직결"한다. LiteLLM 을 경유하면 tool_use ↔ tool_calls 변환에서
+#    400(No tool output found for tool call)이 터져 워커가 중간에 죽는다(실측).
+#    선택된 프로바이더에 anthropic_base_url 이 없으면 이 프로바이더로 정규화한다.
+CLAUDE_DIRECT_PROVIDER = "opencode-go"
+
+# LiteLLM alias(claude-oc 등) → 프로바이더 실모델명.
+CLAUDE_ALIAS_TO_MODEL: Dict[str, str] = {
+    spec["claude_alias"]: (spec.get("claude_model") or spec.get("codex_model") or "")
+    for spec in PROVIDERS.values()
+    if spec.get("claude_alias")
+}
+
+
+def resolve_claude_model(provider: str, model: Optional[str] = None) -> str:
+    """Claude Code 의 --model / ANTHROPIC_MODEL 에 넣을 '실모델명'을 고른다.
+
+    직결 시 alias(claude-oc 등)는 업스트림이 모르므로 실모델명으로 환원한다.
+    비어 있으면 프로바이더 기본 실모델(claude_model > codex_model).
+    """
+    name = resolve_provider(provider)
+    spec = PROVIDERS[name]
+    real = spec.get("claude_model") or spec.get("codex_model") or ""
+    if not model or model == "auto":
+        return real
+    if model in CLAUDE_ALIAS_TO_MODEL:
+        return CLAUDE_ALIAS_TO_MODEL[model] or real
+    return model
+
+
 # ---------------------------------------------------------------------------
 # 명령 구성 / 환경
 # ---------------------------------------------------------------------------
@@ -990,9 +1036,12 @@ def build_command(harness: str, prompt: str, exe: str,
             # permission_profile also overrides config.toml's sandbox_mode, so
             # -s workspace-write still fell back to read-only (2 live tests).
             # Since stdin is DEVNULL there is no approval path: bypass it.
+            # ★ [2026-10-18] Codex 0.160.0 에서 --ask-for-approval 이 제거됨.
+            #   실측: "error: unexpected argument '--ask-for-approval' found"
+            #         → exit=2 즉시 사망(워커가 아무 일도 못 함).
+            #   승인 우회는 --dangerously-bypass-approvals-and-sandbox 가 전담한다.
             argv += [
                 "--dangerously-bypass-approvals-and-sandbox",
-                "--ask-for-approval", "never",
                 "--skip-git-repo-check",
             ]
         if model and model != "auto":
@@ -1065,13 +1114,37 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
             if name == "openrouter":
                 env["OPENROUTER_API_KEY"] = key
     else:
-        env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{LITELLM_PORT}"
-        env["ANTHROPIC_AUTH_TOKEN"] = LITELLM_MASTER_KEY
-        env["ANTHROPIC_MODEL"] = model or claude_alias_for(name)
-        # 세션 제목 생성 슬롯은 카탈로그에 실재하는 이름을 쓴다.
-        # (claude-qwen 같은 커스텀 alias 를 넣으면 Claude Code 가
-        #  "isn't described by this version's model catalog" 경고를 쏟아낸다)
-        env["ANTHROPIC_SMALL_FAST_MODEL"] = "claude-haiku-4-5"
+        direct = spec.get("anthropic_base_url")
+        if direct:
+            # ── [2026-10-18] Anthropic 네이티브 직결 (프로토콜 변환 0회) ──
+            # LiteLLM 경유 시 tool_use↔tool_calls 매칭이 어긋나
+            # "No tool output found for tool call" 400 으로 죽는다(실측).
+            env["ANTHROPIC_BASE_URL"] = direct
+            # ★ 인증 방식이 엔드포인트마다 다르다(실측):
+            #   /v1/messages(Anthropic) = x-api-key  ← ANTHROPIC_API_KEY
+            #   /v1/responses(OpenAI)   = Authorization: Bearer
+            # Claude Code 는 ANTHROPIC_API_KEY 를 x-api-key 로 보낸다.
+            # (ANTHROPIC_AUTH_TOKEN 은 Bearer 로 보내 401 이 된다)
+            env["ANTHROPIC_API_KEY"] = key
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            _cm = resolve_claude_model(name, model)
+            env["ANTHROPIC_MODEL"] = _cm
+            # 세션 제목 생성 슬롯도 같은 실모델을 쓴다.
+            # (claude-haiku-4-5 는 업스트림에 없어 404 가 난다)
+            env["ANTHROPIC_SMALL_FAST_MODEL"] = _cm
+            _hdrs = spec.get("headers") or {}
+            if _hdrs:
+                # x-opencode-session 이 없으면 400 MissingSessionID(실측)
+                env["ANTHROPIC_CUSTOM_HEADERS"] = "\n".join(
+                    f"{k}: {v}" for k, v in _hdrs.items())
+        else:
+            env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{LITELLM_PORT}"
+            env["ANTHROPIC_AUTH_TOKEN"] = LITELLM_MASTER_KEY
+            env["ANTHROPIC_MODEL"] = model or claude_alias_for(name)
+            # 세션 제목 생성 슬롯은 카탈로그에 실재하는 이름을 쓴다.
+            # (claude-qwen 같은 커스텀 alias 를 넣으면 Claude Code 가
+            #  "isn't described by this version's model catalog" 경고를 쏟아낸다)
+            env["ANTHROPIC_SMALL_FAST_MODEL"] = "claude-haiku-4-5"
         # 카탈로그에 없는 모델명을 써도 창 크기 강제 대기로 멈추지 않게 한다
         env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
     return env
@@ -1165,6 +1238,13 @@ def _run_single(
     harness = "codex" if harness == "codex" else "claude"
     prov = resolve_provider(provider)
 
+    # [2026-10-18] Claude Code 는 Anthropic 네이티브 엔드포인트에 직결한다.
+    # 선택된 프로바이더에 그 엔드포인트가 없으면 직결 프로바이더로 정규화한다.
+    # (LiteLLM 경유 = tool 왕복 400 실측 → 워커가 작업 중간에 죽는다)
+    if harness == "claude" and not PROVIDERS.get(prov, {}).get("anthropic_base_url"):
+        if PROVIDERS.get(CLAUDE_DIRECT_PROVIDER, {}).get("anthropic_base_url"):
+            prov = CLAUDE_DIRECT_PROVIDER
+
     result: Dict[str, Any] = {
         "ok": False, "harness": harness, "provider": prov,
         "exit_code": None, "elapsed": 0.0,
@@ -1235,20 +1315,26 @@ def _run_single(
                             and read_provider_key(n))
             )
             return result
-        # 게이트웨이가 떠 있어야 한다 (모든 alias 가 들어 있는 설정 보장)
-        try:
-            write_litellm_config()
-            st = gateway_status()
-            if not st.get("running"):
-                gateway_up()
-        except Exception:
-            pass
-        if not model:
-            model = claude_alias_for(prov)
-        _per = resolve_models_override(models, prov)
-        if _per:
-            # Claude Code 는 LiteLLM alias 를 받는 게 안전하다 (--model 값)
-            model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
+        if PROVIDERS[prov].get("anthropic_base_url"):
+            # 직결 프로바이더는 LiteLLM 게이트웨이가 필요 없다 (변환 손실 회피).
+            # --model 에는 실모델명이 들어가야 한다 (alias 는 업스트림이 모른다).
+            _per = resolve_models_override(models, prov)
+            model = resolve_claude_model(prov, _per or model or "")
+        else:
+            # 게이트웨이가 떠 있어야 한다 (모든 alias 가 들어 있는 설정 보장)
+            try:
+                write_litellm_config()
+                st = gateway_status()
+                if not st.get("running"):
+                    gateway_up()
+            except Exception:
+                pass
+            if not model:
+                model = claude_alias_for(prov)
+            _per = resolve_models_override(models, prov)
+            if _per:
+                # Claude Code 는 LiteLLM alias 를 받는 게 안전하다 (--model 값)
+                model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
 
     result["model"] = model
 
@@ -1812,6 +1898,12 @@ def start_background_job(
 
     prov = resolve_provider(provider)
 
+    # [2026-10-18] Claude Code 는 Anthropic 네이티브 엔드포인트에 직결한다.
+    # 선택된 프로바이더에 그 엔드포인트가 없으면 직결 프로바이더로 정규화한다.
+    if harness == "claude" and not PROVIDERS.get(prov, {}).get("anthropic_base_url"):
+        if PROVIDERS.get(CLAUDE_DIRECT_PROVIDER, {}).get("anthropic_base_url"):
+            prov = CLAUDE_DIRECT_PROVIDER
+
     exe = find_binary(harness)
     if not exe:
         return {
@@ -1870,18 +1962,23 @@ def start_background_job(
                 "error": f"[{prov}] 은(는) Claude Code 워커로 쓸 수 없습니다.",
                 "harness": harness,
             }
-        try:
-            write_litellm_config()
-            st = gateway_status()
-            if not st.get("running"):
-                gateway_up()
-        except Exception:
-            pass
-        if not model:
-            model = claude_alias_for(prov)
-        _per = resolve_models_override(models, prov)
-        if _per:
-            model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
+        if PROVIDERS[prov].get("anthropic_base_url"):
+            # 직결: --model 에 실모델명 (alias 는 업스트림이 모른다)
+            _per = resolve_models_override(models, prov)
+            model = resolve_claude_model(prov, _per or model or "")
+        else:
+            try:
+                write_litellm_config()
+                st = gateway_status()
+                if not st.get("running"):
+                    gateway_up()
+            except Exception:
+                pass
+            if not model:
+                model = claude_alias_for(prov)
+            _per = resolve_models_override(models, prov)
+            if _per:
+                model = claude_alias_for(prov) if _per.lower().startswith("claude-") else _per
 
     wd = prepare_workdir(workdir=workdir, isolate=isolate, label=harness)
     argv = build_command(harness, prompt, exe, full_auto=full_auto,

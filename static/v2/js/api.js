@@ -284,6 +284,17 @@ export const DaonAPI = {
       try { callbacks.onBoardroomDone?.(JSON.parse(e.data)); } catch { callbacks.onBoardroomDone?.({}); }
     });
 
+    // 회의실 오케스트레이터(2026-10-15) — 라운드 헤더와 사회자 취합.
+    // 이 둘이 빠지면 탭 직접 소집 시 '몇 라운드인지'와 '라온이 무엇을 취합했는지'가
+    // 화면에 안 남는다(reply·conclusion 만 보임). live 폴링 경로와 대칭.
+    es.addEventListener('boardroom_round_start', (e) => {
+      try { callbacks.onBoardroomRoundStart?.(JSON.parse(e.data)); } catch { callbacks.onBoardroomRoundStart?.({}); }
+    });
+
+    es.addEventListener('boardroom_moderation', (e) => {
+      try { callbacks.onBoardroomModeration?.(JSON.parse(e.data)); } catch { callbacks.onBoardroomModeration?.({}); }
+    });
+
     // ── Dynamic Harness: 백그라운드 잡 완료 알림 ─────────────────────────
     // 챗에서 execute_dynamic_harness(background=True)로 시작한 하네스가 끝나면
     // 해당 턴이 아직 살아있을 때 결과가 push된다. 턴이 이미 끝나 SSE가 닫혔으면
@@ -404,6 +415,26 @@ export const DaonAPI = {
   },
 
   /**
+   * Background Wake — 백그라운드 작업 완료 기상 폴러용.
+   * poll은 조회만 하고, ack는 자동 기상 직전에 호출해 중복 기상을 막는다.
+   */
+  async wakePoll(sessionId) {
+    const res = await fetch(`${this.baseUrl}/api/wake/poll?session_id=${encodeURIComponent(sessionId)}`);
+    if (!res.ok) throw new Error(`Wake poll failed: ${res.status}`);
+    return await res.json(); // { ok, active, completions }
+  },
+
+  async wakeAck(ids) {
+    const res = await fetch(`${this.baseUrl}/api/wake/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    if (!res.ok) throw new Error(`Wake ack failed: ${res.status}`);
+    return await res.json(); // { ok, acked }
+  },
+
+  /**
    * MCP Servers & Presets
    */
   async getMCPServers() {
@@ -466,6 +497,38 @@ export const DaonAPI = {
       throw new Error(err.error || `Boardroom broadcast failed: ${res.status}`);
     }
     return await res.json(); // { ok, stream_id, slots, slot_ids }
+  },
+
+  /**
+   * 회의실 탭의 참여 선택(슬롯 목록 + 슬롯별 모델)을 서버에 저장/조회한다.
+   * 서버가 기억해야 채팅에서 convene_boardroom으로 소집할 때도 같은 참여자가 쓰인다.
+   * 실패해도 회의실 UI는 계속 동작해야 하므로 예외를 던지지 않고 null을 돌려준다.
+   */
+  async getBoardroomSelection() {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/boardroom/selection`);
+      if (!res.ok) return null;
+      return await res.json(); // { ok, saved, slots, models }
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async saveBoardroomSelection({ slots = null, models = null } = {}) {
+    try {
+      const body = {};
+      if (Array.isArray(slots)) body.slots = slots;
+      if (models && typeof models === 'object') body.models = models;
+      const res = await fetch(`${this.baseUrl}/api/boardroom/selection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) return null;
+      return await res.json(); // { ok, saved, slots, models }
+    } catch (e) {
+      return null;
+    }
   },
 
   async startBoardroomMeeting({ sessionId, topic, models = ['deepseek-v4.1-flash', 'glm-5.3-flash'], maxTurns = 8 }) {

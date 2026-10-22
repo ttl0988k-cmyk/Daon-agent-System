@@ -18,6 +18,7 @@
   "build": {
     "appId": "com.daon.agentsystem",
     "productName": "DAON Agent System",
+    "asar": false,
     "files": [
       "electron/**/*",
       "package.json"

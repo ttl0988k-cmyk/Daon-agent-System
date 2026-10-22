@@ -141,8 +141,15 @@ function createRestartOrchestrator(deps = {}) {
         // [결함④ 수정②] unhealthy 선고 전 심층 재판정: 스왑된 onefile exe 는
         // _MEI 추출 때문에 수십 초 뒤에야 포트가 열린다. 한 번의 실패로
         // '불량 바이너리'로 확정하지 않고 긴 유예창(deepHealthCheck)으로 재판정한다.
-        if (!healthy && swapped && typeof deps.deepHealthCheck === 'function') {
-            log('[RestartOrch] first health check failed after swap — deep re-verdict before rollback.');
+        // [2026-10-19] 종전엔 `swapped`(재빌드)일 때만 이 재판정을 돌렸다. 그러나
+        // onefile 서버는 소스만 갱신해도(rebuild=false) _MEI 압축 해제에 수십 초가
+        // 걸려 첫 healthCheck 가 반드시 실패한다(실측: 스폰 0.03초 후 probe →
+        // ECONNREFUSED). 그 결과 정상 재기동도 매번
+        // 'server unhealthy after restart'(rolledBack:false, ok:false)로 오기록됐다.
+        // (2026-10-19 03:46 / 05:07 두 cycle 모두 이 패턴)
+        // 재빌드 여부와 무관하게 느린 부팅은 항상 발생하므로 조건을 제거한다.
+        if (!healthy && typeof deps.deepHealthCheck === 'function') {
+            log('[RestartOrch] first health check failed — deep re-verdict before rollback.');
             try {
                 healthy = await deps.deepHealthCheck() === true;
                 if (healthy) {

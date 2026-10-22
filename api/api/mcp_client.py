@@ -604,6 +604,7 @@ class MCPManager:
     def __init__(self):
         self._connections: dict[str, MCPServerConnection] = {}
         self._lock = threading.RLock()
+        self._loading = False
         # Use STATE_DIR (persistent app data) for PyInstaller / installed builds
         try:
             from api.config import STATE_DIR
@@ -616,6 +617,9 @@ class MCPManager:
         tmp_path = None
         with self._lock:
             try:
+                if getattr(self, '_loading', False):
+                    _logger.warning("MCPManager._save_config: skipped - config still loading (prevents partial write)")
+                    return
                 self._config_path.parent.mkdir(parents=True, exist_ok=True)
                 config_data = []
                 for server_id, conn in self._connections.items():
@@ -699,6 +703,8 @@ class MCPManager:
             return False  # Can't decode, assume valid
 
     def _load_config(self):
+        self._loading = True
+        _pending_connects = []
         if not self._config_path.exists():
             # Load defaults if config doesn't exist
             # filesystem + playmcp-gateway are always registered.
@@ -735,7 +741,7 @@ class MCPManager:
                         auto_connect=False,
                         _save=False  # defer save until all defaults are registered
                     )
-                    threading.Thread(target=self.connect_server, args=(preset_id,), daemon=True).start()
+                    _pending_connects.append(preset_id)
 
             # playmcp-gateway: custom HTTP server for KakaoTalk·Naver search (23 tools)
             # Always registered as a default so users can authenticate via OTT
@@ -750,7 +756,10 @@ class MCPManager:
                 auto_connect=False,
                 _save=False
             )
+            self._loading = False
             self._save_config()  # persist all defaults at once so they survive restart
+            for _sid in _pending_connects:
+                threading.Thread(target=self.connect_server, args=(_sid,), daemon=True).start()
             return
 
         try:
@@ -818,7 +827,7 @@ class MCPManager:
                         conn.error = "Token Expired (재인증 필요)"
                 elif enabled and server_id != 'playwright':
                     if server_id:
-                        threading.Thread(target=self.connect_server, args=(server_id,), daemon=True).start()
+                        _pending_connects.append(server_id)
 
             # Ensure playmcp-gateway is always registered even if missing from stale config
             if 'playmcp-gateway' not in loaded_ids:
@@ -835,8 +844,12 @@ class MCPManager:
                     _save=False
                 )
 
+            self._loading = False
             self._save_config()  # persist all servers at once after loading
+            for _sid in _pending_connects:
+                threading.Thread(target=self.connect_server, args=(_sid,), daemon=True).start()
         except Exception as e:
+            self._loading = False
             _logger.error("Failed to load MCP config: %s", e)
 
     def add_server(self, server_id: str, command: str, args: list[str] = None,
@@ -900,6 +913,57 @@ class MCPManager:
         conn.disconnect()
         self._save_config()
         return {'ok': True, 'server': conn.to_dict()}
+
+    def connect_transient(self, server_id: str) -> dict:
+        """일시 연결 (2026-10-17 Laya On-Demand).
+
+        Laya가 standby(꺼짐) 서버를 고르면 턴 시작 시 깨워 쓰고 세션 내내 유지한다.
+        enabled 플래그를 건드리지 않고 _save_config()도 호출하지 않으므로,
+        다음 재기동 때는 다시 standby로 돌아간다 (사용자 설정 불변).
+        실패해도 호출자가 후보에서 제외하면 되므로 fail-open.
+        """
+        conn = self._connections.get(server_id)
+        if not conn:
+            return {'ok': False, 'error': 'Server not found'}
+        try:
+            if getattr(conn, 'connected', False):
+                return {'ok': True, 'server': server_id, 'already': True}
+            ok = conn.connect()
+        except Exception as e:
+            return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+        if not ok:
+            return {'ok': False, 'error': getattr(conn, 'error', None) or 'Failed to connect'}
+        return {'ok': True, 'server': server_id}
+
+    def connect_transient_many(self, server_ids: list, timeout: float = 15.0) -> dict:
+        """여러 standby 서버를 병렬로 일시 연결. {server_id: ok} 반환.
+
+        전체 상한 timeout초 — 못 끝난 서버는 실패 취급하고 이번 턴 후보에서 빠진다
+        (백그라운드 스레드가 늦게 연결해도 다음 턴부터는 사용 가능). fail-open.
+        """
+        targets = [s for s in dict.fromkeys(server_ids or []) if s]
+        out: dict = {}
+        if not targets:
+            return out
+        try:
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=max(1, min(4, len(targets)))) as _ex:
+                _fut = {_ex.submit(self.connect_transient, sid): sid for sid in targets}
+                try:
+                    for _f in _cf.as_completed(_fut, timeout=timeout):
+                        _sid = _fut[_f]
+                        try:
+                            out[_sid] = bool(_f.result().get('ok'))
+                        except Exception:
+                            out[_sid] = False
+                except Exception:
+                    pass  # timeout 등 — 미완료는 아래 setdefault에서 실패 처리
+            for _sid in targets:
+                out.setdefault(_sid, False)
+        except Exception:
+            for _sid in targets:
+                out.setdefault(_sid, False)
+        return out
 
     def list_servers(self) -> list[dict]:
         """List all registered MCP server connections."""

@@ -1,49 +1,280 @@
 /* =============================================================================
    DAON Multi-Agent Orchestrator — multi.css
-   Cyberpunk Dark Glassmorphism Theme with Multi-Pane CSS Grid
+   v2 Design DNA reskin (2026-10-14)
+   -----------------------------------------------------------------------------
+   · Inter + JetBrains Mono + Material Symbols Outlined (v2 DNA)
+   · :root = Light 토큰 / html.dark = Dark 토큰  (localStorage 'daon_theme' 토글)
+   · 무채색 플랫 서피스 + 네온 글로우/그라데이션 제거
+   ⚠️ 레이아웃 구조·셀렉터명·클래스명은 1자도 변경하지 않았다.
+      (pane.js 등 런타임 주입 JS 6종이 참조하는 DOM 계약 유지)
    ============================================================================= */
 
-:root {
-  --bg-core: #07090e;
-  --bg-surface: rgba(15, 23, 42, 0.75);
-  --bg-surface-elevated: rgba(30, 41, 59, 0.7);
-  --bg-input: rgba(11, 16, 28, 0.85);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(255, 255, 255, 0.2);
-  --text-main: #f1f5f9;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+/* ── 0. Modern Slim Premium Scrollbar (v2 index.html 28~61줄 이식) ────────── */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+}
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.45);
+  background-clip: content-box;
+}
+html.dark { scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
+  background-clip: content-box;
+}
 
-  /* Agent Accent Colors */
+/* =============================================================================
+   0-1. Design Tokens — LIGHT (기본값)
+   기존 변수명 9종(--bg-core ~ --text-dim)은 이름 그대로 유지하고 값만 교체한다.
+   ============================================================================= */
+:root {
+  color-scheme: light;
+
+  --bg-core: #f9f9f9;
+  --bg-surface: rgba(255, 255, 255, 0.86);
+  --bg-surface-elevated: rgba(243, 243, 244, 0.9);
+  --bg-input: #ffffff;
+  --border-subtle: rgba(0, 0, 0, 0.10);
+  --border-active: rgba(0, 0, 0, 0.20);
+  --text-main: #1a1c1c;
+  --text-muted: #5e5e5e;
+  --text-dim: #747878;
+
+  /* v2 surface scale */
+  --bg-surface-container-lowest: #ffffff;
+  --bg-surface-container-low: #f3f3f4;
+  --bg-surface-container: #eeeeee;
+  --bg-surface-container-high: #e8e8e8;
+  --bg-surface-container-highest: #e2e2e2;
+  --bg-surface-variant: #e2e2e2;
+  --option-bg: #ffffff;
+  --option-color: #1a1c1c;
+
+  /* Interaction / 상태 반전 */
+  --primary-bg: #000000;
+  --primary-fg: #ffffff;
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --hover-bg-strong: rgba(0, 0, 0, 0.07);
+  --focus-color: #7c3aed;
+  --focus-ring: rgba(124, 58, 237, 0.15);
+  --accent-soft: rgba(124, 58, 237, 0.10);
+  --shadow-pane: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  /* Terminal / code blocks — 테마 무관 다크 패널 고정 */
+  --terminal-bg: #0c0d12;
+  --terminal-bg-soft: #14161f;
+  --terminal-border: rgba(255, 255, 255, 0.08);
+  --terminal-text: #cbd5e1;
+
+  /* Reasoning card */
+  --reasoning-bg: rgba(167, 139, 250, 0.10);
+  --reasoning-summary-bg: rgba(167, 139, 250, 0.14);
+  --reasoning-summary-color: #6b21a8;
+  --reasoning-summary-hover-bg: rgba(167, 139, 250, 0.24);
+  --reasoning-summary-hover-color: #581c87;
+  --reasoning-text-bg: rgba(0, 0, 0, 0.03);
+  --reasoning-text-color: #4c1d95;
+
+  /* Approval 카드 resolved 배경 */
+  --approval-approved-bg: rgba(16, 185, 129, 0.10);
+  --approval-rejected-bg: rgba(239, 68, 68, 0.10);
+
+  /* Tool-group counter / spinner */
+  --counter-bg: rgba(99, 102, 241, 0.12);
+  --counter-color: #4338ca;
+  --counter-border: rgba(99, 102, 241, 0.30);
+  --spinner-track: rgba(0, 0, 0, 0.15);
+
+  /* Agent Accent Colors (v2 팔레트 부분집합 — 색상값 유지, glow만 축소) */
   --accent-raon: #a855f7;       /* Royal Purple */
-  --accent-raon-glow: rgba(168, 85, 247, 0.3);
+  --accent-raon-glow: rgba(168, 85, 247, 0.12);
   --accent-bill: #06b6d4;       /* Cyber Cyan */
-  --accent-bill-glow: rgba(6, 182, 212, 0.3);
+  --accent-bill-glow: rgba(6, 182, 212, 0.12);
   --accent-sherlock: #f59e0b;   /* QA Amber */
-  --accent-sherlock-glow: rgba(245, 158, 11, 0.3);
+  --accent-sherlock-glow: rgba(245, 158, 11, 0.12);
   --accent-tony: #10b981;       /* Emerald */
-  --accent-tony-glow: rgba(16, 185, 129, 0.3);
+  --accent-tony-glow: rgba(16, 185, 129, 0.12);
   --accent-prada: #ec4899;      /* Neon Pink */
-  --accent-prada-glow: rgba(236, 72, 153, 0.3);
+  --accent-prada-glow: rgba(236, 72, 153, 0.12);
   --accent-codex: #38bdf8;        /* Sky Blue */
-  --accent-codex-glow: rgba(56, 189, 248, 0.3);
+  --accent-codex-glow: rgba(56, 189, 248, 0.12);
   --accent-claude: #f97316;       /* Anthropic Orange */
-  --accent-claude-glow: rgba(249, 115, 22, 0.3);
+  --accent-claude-glow: rgba(249, 115, 22, 0.12);
   --accent-default: #6366f1;    /* Indigo */
-  --accent-default-glow: rgba(99, 102, 241, 0.3);
+  --accent-default-glow: rgba(99, 102, 241, 0.12);
 
   /* Status Colors */
   --status-working: #10b981;
-  --status-working-glow: rgba(16, 185, 129, 0.4);
+  --status-working-glow: rgba(16, 185, 129, 0.16);
   --status-blocked: #ef4444;
-  --status-blocked-glow: rgba(239, 68, 68, 0.4);
+  --status-blocked-glow: rgba(239, 68, 68, 0.16);
   --status-waiting: #eab308;
   --status-idle: #64748b;
+
+  /* Radius (v2: 6px / 0.5rem / 0.75rem) */
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
 }
 
+/* =============================================================================
+   0-2. Design Tokens — DARK (html.dark · v2와 동일한 토글 방식)
+   ============================================================================= */
+html.dark {
+  color-scheme: dark;
+
+  --bg-core: #0c0d12;
+  --bg-surface: rgba(16, 18, 26, 0.78);
+  --bg-surface-elevated: rgba(28, 33, 50, 0.72);
+  --bg-input: rgba(20, 23, 34, 0.85);
+  --border-subtle: rgba(255, 255, 255, 0.11);
+  --border-active: rgba(255, 255, 255, 0.20);
+  --text-main: #f3f4f6;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --bg-surface-container-lowest: #12151f;
+  --bg-surface-container-low: #141723;
+  --bg-surface-container: #171b28;
+  --bg-surface-container-high: #1c2132;
+  --bg-surface-container-highest: #22283d;
+  --bg-surface-variant: #1a1e2d;
+  --option-bg: #141723;
+  --option-color: #f3f4f6;
+
+  --primary-bg: #ffffff;
+  --primary-fg: #0c0d12;
+  --hover-bg: rgba(255, 255, 255, 0.08);
+  --hover-bg-strong: rgba(255, 255, 255, 0.12);
+  --focus-color: #a78bfa;
+  --focus-ring: rgba(167, 139, 250, 0.18);
+  --accent-soft: rgba(167, 139, 250, 0.15);
+  --shadow-pane: 0 4px 16px rgba(0, 0, 0, 0.35);
+
+  --terminal-bg: #0c0d12;
+  --terminal-bg-soft: #14161f;
+  --terminal-border: rgba(255, 255, 255, 0.08);
+  --terminal-text: #cbd5e1;
+
+  --reasoning-bg: rgba(167, 139, 250, 0.12);
+  --reasoning-summary-bg: rgba(167, 139, 250, 0.16);
+  --reasoning-summary-color: #d8b4fe;
+  --reasoning-summary-hover-bg: rgba(167, 139, 250, 0.28);
+  --reasoning-summary-hover-color: #f3e8ff;
+  --reasoning-text-bg: rgba(0, 0, 0, 0.20);
+  --reasoning-text-color: #e9d5ff;
+
+  --approval-approved-bg: rgba(6, 78, 59, 0.25);
+  --approval-rejected-bg: rgba(136, 19, 55, 0.25);
+
+  --counter-bg: rgba(99, 102, 241, 0.30);
+  --counter-color: #a5b4fc;
+  --counter-border: rgba(99, 102, 241, 0.40);
+  --spinner-track: rgba(255, 255, 255, 0.15);
+}
+
+/* =============================================================================
+   0-3. Material Symbols Outlined (v2 DNA 아이콘)
+   ⚠️ 폰트 기본 font-size 가 24px 이므로 반드시 명시적으로 축소한다.
+   ============================================================================= */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  vertical-align: -2px;
+}
+.brand-icon.material-symbols-outlined { font-size: 19px; vertical-align: -3px; }
+.btn-icon.material-symbols-outlined { font-size: 16px; }
+.section-title .material-symbols-outlined { font-size: 13px; vertical-align: -1px; }
+.pipeline-badge .material-symbols-outlined { font-size: 14px; vertical-align: -2px; }
+
+/* =============================================================================
+   0-4. JS 주입 글리프 → Material Symbols (CSS ::before 치환)
+   JS 6종 무변경 제약 때문에 "글리프 단독" 요소만 안전하게 치환한다.
+   (혼합 텍스트/프로파일별 아이콘은 JS 동결 → 원형 유지)
+   ============================================================================= */
+/* ✕ 창 닫기 (pane.js: <button ...close-btn>✕</button>) */
+.pane-tool-btn.close-btn { font-size: 0; }
+.pane-tool-btn.close-btn::before {
+  content: 'close';
+  font-family: 'Material Symbols Outlined';
+  font-size: 15px;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+
+/* ＋ 새 세션 (pane.js: <button ...new-sess-btn>＋</button>) */
+.pane-tool-btn.new-sess-btn { font-size: 0; }
+.pane-tool-btn.new-sess-btn::before {
+  content: 'add';
+  font-family: 'Material Symbols Outlined';
+  font-size: 15px;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+
+/* ▶ / ■ / ⚡ 전송 버튼 (pane.js updateSendButtonState 가 innerHTML 을 통째 교체) */
+.pane-send-btn { font-size: 0; }
+.pane-send-btn::before {
+  content: 'send';
+  font-family: 'Material Symbols Outlined';
+  font-size: 17px;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+.pane-send-btn.working-cancel::before { content: 'stop'; }
+.pane-send-btn.working-interrupt::before { content: 'bolt'; }
+
+/* ⟳ / ⏸ 자동스크롤 토글
+   ⚠️ multi.js L126~131 이 클릭 순간 innerHTML 을 '<span class="btn-icon">⟳</span> …'
+      로 통째 덮어쓰므로 정적 교체는 무효 → CSS ::before 로 처리한다. */
+.action-btn.toggle .btn-icon {
+  font-size: 0;                                  /* 기존 ⟳ / ⏸ 글리프만 은닉 */
+  font-family: 'Material Symbols Outlined';
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.action-btn.toggle .btn-icon::before {
+  content: 'autorenew';
+  font-family: 'Material Symbols Outlined';
+  font-size: 16px;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+.action-btn.toggle:not(.active) .btn-icon::before { content: 'pause'; }
+
+/* =============================================================================
+   Base
+   ============================================================================= */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -55,6 +286,7 @@ body.daon-multi-body {
   background-color: var(--bg-core);
   color: var(--text-main);
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
   line-height: 1.5;
@@ -65,10 +297,9 @@ body.daon-multi-body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
-  background: radial-gradient(circle at 10% 20%, rgba(30, 27, 75, 0.35) 0%, transparent 40%),
-              radial-gradient(circle at 90% 80%, rgba(14, 116, 144, 0.2) 0%, transparent 40%),
-              var(--bg-core);
+  background: var(--bg-core);
 }
 
 /* =============================================================================
@@ -78,6 +309,7 @@ body.daon-multi-body {
   height: 52px;
   background: var(--bg-surface);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -100,15 +332,13 @@ body.daon-multi-body {
   gap: 6px;
   font-weight: 700;
   font-size: 15px;
-  letter-spacing: 0.5px;
-  background: linear-gradient(135deg, #a855f7 0%, #06b6d4 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
 }
 
 .brand-icon {
-  font-size: 18px;
-  -webkit-text-fill-color: initial;
+  font-size: 19px;
+  color: var(--text-main);
 }
 
 .brand-sub {
@@ -120,16 +350,36 @@ body.daon-multi-body {
   padding-left: 10px;
 }
 
+/* 클래식 뷰 복귀 (좌측 인라인 링크) */
+.nav-return-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-return-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-main);
+}
+
 .system-status-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--bg-surface-container);
   padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
 }
 
 .status-dot {
@@ -137,7 +387,6 @@ body.daon-multi-body {
   height: 6px;
   border-radius: 50%;
   background: var(--status-working);
-  box-shadow: 0 0 8px var(--status-working);
   animation: pulse-dot 2s infinite;
 }
 
@@ -152,9 +401,9 @@ body.daon-multi-body {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hover-bg);
   padding: 3px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   border: 1px solid var(--border-subtle);
 }
 
@@ -169,26 +418,25 @@ body.daon-multi-body {
   border: 1px solid transparent;
   color: var(--text-muted);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 4px;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .layout-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-bg);
   color: var(--text-main);
 }
 
 .layout-btn.active {
-  background: rgba(99, 102, 241, 0.2);
-  border-color: rgba(99, 102, 241, 0.5);
-  color: #fff;
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+  background: var(--accent-soft);
+  border-color: var(--focus-color);
+  color: var(--focus-color);
 }
 
 /* Action Buttons */
@@ -204,45 +452,62 @@ body.daon-multi-body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 9px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  color: var(--text-muted);
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   border: 1px solid var(--border-subtle);
 }
 
 .action-btn.primary {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.3) 0%, rgba(6, 182, 212, 0.3) 100%);
-  border-color: rgba(168, 85, 247, 0.5);
-  color: #fff;
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
 }
 
 .action-btn.primary:hover {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.5) 0%, rgba(6, 182, 212, 0.5) 100%);
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+  opacity: 0.85;
+}
+
+/* 외부 코딩 워커 버튼 (구 인라인 그라데이션 → 플랫 액센트 테두리) */
+.action-btn.worker-codex-btn {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+}
+.action-btn.worker-codex-btn:hover {
+  background: rgba(56, 189, 248, 0.10);
+}
+.action-btn.worker-claude-btn {
+  border-color: rgba(249, 115, 22, 0.45);
+  color: #f97316;
+}
+.action-btn.worker-claude-btn:hover {
+  background: rgba(249, 115, 22, 0.10);
 }
 
 .action-btn.toggle {
-  background: rgba(0, 0, 0, 0.3);
+  background: transparent;
   color: var(--text-muted);
 }
 
 .action-btn.toggle.active {
-  color: #38bdf8;
-  border-color: rgba(56, 189, 248, 0.4);
+  color: var(--focus-color);
+  border-color: var(--focus-color);
 }
 
 .action-btn.secondary {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--hover-bg);
   color: var(--text-muted);
 }
 
 .action-btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-bg-strong);
   color: var(--text-main);
 }
 
@@ -252,13 +517,13 @@ body.daon-multi-body {
 .multi-main {
   flex: 1;
   min-height: 0; /* ★ CRITICAL: Prevents canvas blowout */
-  padding: 8px;
+  padding: 10px;
   display: flex;
 }
 
 .multi-grid {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -296,22 +561,21 @@ body.daon-multi-body {
   flex-direction: column;
   min-height: 0; /* ★ CRITICAL: Prevents scroll blowout */
   background: var(--bg-surface);
-  backdrop-filter: blur(12px);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-pane);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
   position: relative;
 }
 
 .pane:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--border-active);
 }
 
 .pane.highlight-pulse {
   border-color: var(--accent-default);
-  box-shadow: 0 0 20px var(--accent-default-glow);
+  box-shadow: 0 0 0 2px var(--accent-default-glow);
 }
 
 /* Agent Specific Themes */
@@ -321,7 +585,7 @@ body.daon-multi-body {
 }
 .pane[data-profile^="raon"]:hover,
 .pane[data-profile^="라온"]:hover {
-  box-shadow: 0 4px 24px var(--accent-raon-glow);
+  box-shadow: 0 4px 12px var(--accent-raon-glow);
 }
 
 .pane[data-profile^="bill"],
@@ -330,7 +594,7 @@ body.daon-multi-body {
 }
 .pane[data-profile^="bill"]:hover,
 .pane[data-profile^="빌"]:hover {
-  box-shadow: 0 4px 24px var(--accent-bill-glow);
+  box-shadow: 0 4px 12px var(--accent-bill-glow);
 }
 
 .pane[data-profile^="sherlock"],
@@ -339,7 +603,7 @@ body.daon-multi-body {
 }
 .pane[data-profile^="sherlock"]:hover,
 .pane[data-profile^="셜록"]:hover {
-  box-shadow: 0 4px 24px var(--accent-sherlock-glow);
+  box-shadow: 0 4px 12px var(--accent-sherlock-glow);
 }
 
 .pane[data-profile^="tony"],
@@ -354,7 +618,7 @@ body.daon-multi-body {
 /* Pane Header */
 .pane-header {
   height: 42px;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bg-surface-container-low);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -372,12 +636,13 @@ body.daon-multi-body {
   min-width: 0;
 }
 
+/* pane.js 가 프로파일별 이모지를 주입 (JS 동결 → 크기만 정렬) */
 .agent-icon {
   font-size: 15px;
 }
 
 .profile-select {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   color: var(--text-main);
   font-size: 13px;
@@ -387,11 +652,17 @@ body.daon-multi-body {
   outline: none;
   cursor: pointer;
   max-width: 140px;
+  transition: border-color 0.15s ease;
+}
+
+.profile-select:hover,
+.profile-select:focus {
+  border-color: var(--focus-color);
 }
 
 .profile-select option {
-  background: #0f172a;
-  color: #fff;
+  background: var(--option-bg);
+  color: var(--option-color);
 }
 
 .pane-badge-status {
@@ -401,7 +672,7 @@ body.daon-multi-body {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 10px;
+  border-radius: 9999px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -416,7 +687,6 @@ body.daon-multi-body {
   background: rgba(16, 185, 129, 0.15);
   color: var(--status-working);
   border: 1px solid rgba(16, 185, 129, 0.4);
-  box-shadow: 0 0 10px var(--status-working-glow);
 }
 
 .pane-badge-status.working .status-indicator-dot {
@@ -431,7 +701,6 @@ body.daon-multi-body {
   background: rgba(239, 68, 68, 0.2);
   color: var(--status-blocked);
   border: 1px solid rgba(239, 68, 68, 0.5);
-  box-shadow: 0 0 12px var(--status-blocked-glow);
   animation: blink-blocked 1s infinite alternate;
 }
 
@@ -443,10 +712,10 @@ body.daon-multi-body {
 .model-tag {
   font-size: 10px;
   color: var(--text-dim);
-  font-family: 'Fira Code', monospace;
-  background: rgba(0, 0, 0, 0.3);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-surface-container);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   white-space: nowrap;
   overflow: hidden;
@@ -455,36 +724,36 @@ body.daon-multi-body {
 }
 
 .model-select {
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
   font-size: 11px;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   padding: 3px 6px;
   border-radius: var(--radius-sm);
   outline: none;
   cursor: pointer;
   max-width: 155px;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .model-select:hover,
 .model-select:focus {
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: var(--focus-color);
   color: var(--text-main);
-  background: rgba(30, 41, 59, 0.8);
+  background: var(--bg-surface-container);
 }
 
 .model-select optgroup {
-  background: #0b0f19;
-  color: #38bdf8;
+  background: var(--option-bg);
+  color: var(--accent-codex);
   font-weight: 700;
   font-size: 11px;
 }
 
 .model-select option {
-  background: #0f172a;
-  color: #f1f5f9;
+  background: var(--option-bg);
+  color: var(--option-color);
   font-weight: 400;
 }
 
@@ -501,17 +770,17 @@ body.daon-multi-body {
   color: var(--text-dim);
   width: 26px;
   height: 26px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .pane-tool-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-bg);
   color: var(--text-main);
 }
 
@@ -523,7 +792,7 @@ body.daon-multi-body {
   font-weight: 600;
   width: auto;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -532,18 +801,11 @@ body.daon-multi-body {
 .pane-tool-btn.cancel-btn:hover {
   background: #ef4444;
   color: #fff;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
-}
-
-.pane-tool-btn.new-sess-btn {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-muted);
 }
 
 .pane-tool-btn.new-sess-btn:hover {
-  background: rgba(99, 102, 241, 0.2);
-  color: #a5b4fc;
+  background: var(--hover-bg);
+  color: var(--text-main);
 }
 
 .pane-tool-btn.close-btn:hover {
@@ -566,14 +828,29 @@ body.daon-multi-body {
 }
 
 .pane-body::-webkit-scrollbar {
-  width: 6px;
+  width: 7px;
+  height: 7px;
+}
+.pane-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 .pane-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
 }
 .pane-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.45);
+  background-clip: content-box;
+}
+html.dark .pane-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+}
+html.dark .pane-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
+  background-clip: content-box;
 }
 
 /* Message Styles */
@@ -610,21 +887,22 @@ body.daon-multi-body {
 
 .msg-bubble {
   padding: 10px 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   font-size: 13.5px;
   line-height: 1.6;
   word-break: break-word;
 }
 
+/* v2 .bg-primary 규칙: 사용자 버블은 전경/배경 반전 */
 .msg.user .msg-bubble {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(168, 85, 247, 0.25) 100%);
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  color: #fff;
+  background: var(--primary-bg);
+  border: 1px solid transparent;
+  color: var(--primary-fg);
   border-top-right-radius: 2px;
 }
 
 .msg.assistant .msg-bubble {
-  background: rgba(15, 23, 42, 0.85);
+  background: var(--bg-surface-container);
   border: 1px solid var(--border-subtle);
   color: var(--text-main);
   border-top-left-radius: 2px;
@@ -634,7 +912,7 @@ body.daon-multi-body {
 .tool-card {
   margin: 6px 0;
   border-radius: var(--radius-sm);
-  background: rgba(15, 23, 42, 0.7);
+  background: var(--bg-surface-container-low);
   border: 1px solid var(--border-subtle);
   overflow: hidden;
   font-size: 12px;
@@ -644,7 +922,7 @@ body.daon-multi-body {
 .tool-group-card summary,
 .reasoning-card summary {
   padding: 7px 10px;
-  background: rgba(30, 41, 59, 0.5);
+  background: var(--hover-bg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -664,7 +942,7 @@ body.daon-multi-body {
 
 .tool-group-card summary:hover,
 .reasoning-card summary:hover {
-  background: rgba(51, 65, 85, 0.6);
+  background: var(--hover-bg-strong);
   color: var(--text-main);
 }
 
@@ -681,10 +959,10 @@ body.daon-multi-body {
 }
 
 .tool-group-counter {
-  background: rgba(99, 102, 241, 0.3);
-  color: #a5b4fc;
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  border-radius: 10px;
+  background: var(--counter-bg);
+  color: var(--counter-color);
+  border: 1px solid var(--counter-border);
+  border-radius: 9999px;
   padding: 1px 6px;
   font-size: 10px;
   font-weight: 700;
@@ -706,8 +984,8 @@ body.daon-multi-body {
 .tool-group-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #38bdf8;
+  border: 2px solid var(--spinner-track);
+  border-top-color: var(--accent-codex);
   border-radius: 50%;
   animation: toolSpin 0.7s linear infinite;
   flex-shrink: 0;
@@ -724,7 +1002,7 @@ body.daon-multi-body {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  background: rgba(11, 16, 28, 0.6);
+  background: var(--bg-surface-container-lowest);
 }
 
 .tool-group-item {
@@ -735,12 +1013,12 @@ body.daon-multi-body {
   font-size: 11px;
   color: var(--text-muted);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.02);
+  background: transparent;
   transition: background 0.1s ease;
 }
 
 .tool-group-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover-bg);
 }
 
 .tool-group-item .tgi-icon {
@@ -752,15 +1030,15 @@ body.daon-multi-body {
 
 .tool-group-item .tgi-name {
   flex-shrink: 0;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
-  color: #38bdf8;
+  color: var(--accent-codex);
   font-weight: 500;
 }
 
 .tool-group-item .tgi-desc {
   font-size: 11px;
-  color: var(--text-main, #e2e8f0);
+  color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -770,7 +1048,7 @@ body.daon-multi-body {
 .tool-group-item .tgi-args {
   flex: 1;
   min-width: 0;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
   color: var(--text-dim);
   white-space: nowrap;
@@ -784,11 +1062,11 @@ body.daon-multi-body {
   opacity: 0.7;
 }
 
-/* ── Terminal Live Output Card ── */
+/* ── Terminal Live Output Card (테마 무관 다크 패널) ── */
 .terminal-live-card {
   margin: 6px 0;
   border-radius: var(--radius-sm);
-  background: #030712;
+  background: var(--terminal-bg);
   border: 1px solid rgba(16, 185, 129, 0.25);
   overflow: hidden;
 }
@@ -819,12 +1097,12 @@ body.daon-multi-body {
 }
 
 .terminal-live-indicator.done {
-  color: var(--text-dim);
+  color: #64748b;
   animation: none;
 }
 
 .terminal-cmd {
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   color: #a5f3fc;
   flex: 1;
@@ -835,9 +1113,9 @@ body.daon-multi-body {
 
 .terminal-live-output {
   padding: 8px 10px;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--terminal-text);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-all;
@@ -850,20 +1128,20 @@ body.daon-multi-body {
 
 /* ── Reasoning Card (Thinking) ── */
 .reasoning-card {
-  background: rgba(88, 28, 135, 0.12);
+  background: var(--reasoning-bg);
   border-left: 3px solid var(--accent-raon, #a855f7);
   border-color: rgba(168, 85, 247, 0.25);
   margin-bottom: 8px;
 }
 
 .reasoning-card summary {
-  background: rgba(88, 28, 135, 0.2);
-  color: #d8b4fe;
+  background: var(--reasoning-summary-bg);
+  color: var(--reasoning-summary-color);
 }
 
 .reasoning-card summary:hover {
-  background: rgba(88, 28, 135, 0.35);
-  color: #f3e8ff;
+  background: var(--reasoning-summary-hover-bg);
+  color: var(--reasoning-summary-hover-color);
 }
 
 .reasoning-spinner {
@@ -872,15 +1150,15 @@ body.daon-multi-body {
 
 .reasoning-text {
   padding: 8px 12px;
-  color: #e9d5ff;
-  font-family: 'Fira Code', monospace;
+  color: var(--reasoning-text-color);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px;
   line-height: 1.45;
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
   border-top: 1px solid rgba(168, 85, 247, 0.15);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--reasoning-text-bg);
   margin: 0;
 }
 
@@ -888,32 +1166,23 @@ body.daon-multi-body {
 .inline-approval-card {
   margin: 10px 0;
   border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.95);
+  background: var(--bg-surface-container);
   border: 1px solid rgba(245, 158, 11, 0.55);
   padding: 12px 14px;
-  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.15);
-  animation: approvalPulse 2.5s infinite;
-}
-
-@keyframes approvalPulse {
-  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35); }
-  70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
 }
 
 .inline-approval-card.resolved {
-  animation: none;
   box-shadow: none;
 }
 
 .inline-approval-card.resolved.approved {
   border-color: rgba(16, 185, 129, 0.5);
-  background: rgba(6, 78, 59, 0.25);
+  background: var(--approval-approved-bg);
 }
 
 .inline-approval-card.resolved.rejected {
   border-color: rgba(239, 68, 68, 0.5);
-  background: rgba(136, 19, 55, 0.25);
+  background: var(--approval-rejected-bg);
 }
 
 .inline-approval-card-header {
@@ -930,15 +1199,15 @@ body.daon-multi-body {
 .inline-approval-card-title {
   font-size: 12.5px;
   font-weight: 700;
-  color: #fbbf24;
+  color: #b45309;
 }
 
 .inline-approval-card.resolved.approved .inline-approval-card-title {
-  color: #34d399;
+  color: #059669;
 }
 
 .inline-approval-card.resolved.rejected .inline-approval-card-title {
-  color: #f87171;
+  color: #dc2626;
 }
 
 .inline-approval-card-body {
@@ -951,14 +1220,14 @@ body.daon-multi-body {
 
 .inline-approval-card-body code {
   display: block;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--terminal-bg);
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 11.5px;
   color: #a5f3fc;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--terminal-border);
   margin-top: 4px;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   max-height: 120px;
   overflow-y: auto;
 }
@@ -982,26 +1251,25 @@ body.daon-multi-body {
   font-weight: 600;
   cursor: pointer;
   border: none;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, transform 0.1s ease;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
 .ia-approve-btn {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: #10b981;
   color: #fff;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
 .ia-approve-btn:hover {
+  background: #059669;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.5);
 }
 
 .ia-reject-btn {
   background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  color: #dc2626;
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
@@ -1010,13 +1278,13 @@ body.daon-multi-body {
   transform: translateY(-1px);
 }
 
-/* ── Code Blocks & Syntax ── */
+/* ── Code Blocks & Syntax (테마 무관 다크 패널) ── */
 .md-code-wrapper {
   position: relative;
   margin: 8px 0;
   border-radius: var(--radius-sm);
-  background: #060913;
-  border: 1px solid var(--border-subtle);
+  background: var(--terminal-bg);
+  border: 1px solid var(--terminal-border);
   overflow: hidden;
 }
 
@@ -1026,22 +1294,22 @@ body.daon-multi-body {
   justify-content: space-between;
   padding: 4px 10px;
   background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--terminal-border);
   font-size: 10px;
-  color: var(--text-dim);
-  font-family: 'Fira Code', monospace;
+  color: #94a3b8;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   text-transform: uppercase;
 }
 
 .code-copy-btn {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-muted);
+  color: #94a3b8;
   border-radius: 3px;
   padding: 1px 6px;
   font-size: 10px;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .code-copy-btn:hover {
@@ -1054,7 +1322,7 @@ pre.md-code {
   margin: 0;
   background: transparent;
   border: none;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
   color: #e2e8f0;
@@ -1062,20 +1330,20 @@ pre.md-code {
 }
 
 code.md-inline {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-surface-container-high);
+  border: 1px solid var(--border-subtle);
   padding: 1px 5px;
   border-radius: 3px;
-  font-family: 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
-  color: #38bdf8;
+  color: var(--accent-codex);
 }
 
 blockquote.md-quote {
   border-left: 3px solid rgba(99, 102, 241, 0.5);
   margin: 6px 0;
   padding: 4px 10px;
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--hover-bg);
   color: var(--text-muted);
   font-style: italic;
   font-size: 12.5px;
@@ -1086,7 +1354,7 @@ blockquote.md-quote {
    5. Pane Footer & Input Area
    ============================================================================= */
 .pane-footer {
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--bg-surface-container-low);
   border-top: 1px solid var(--border-subtle);
   padding: 8px 10px;
   display: flex;
@@ -1105,7 +1373,7 @@ blockquote.md-quote {
   flex: 1;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-main);
   padding: 8px 10px;
   font-size: 13px;
@@ -1114,13 +1382,17 @@ blockquote.md-quote {
   min-height: 38px;
   max-height: 120px;
   outline: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
   line-height: 1.4;
 }
 
+.pane-textarea::placeholder {
+  color: var(--text-dim);
+}
+
 .pane-textarea:focus {
-  border-color: rgba(99, 102, 241, 0.5);
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+  border-color: var(--focus-color);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .pane-textarea:disabled {
@@ -1129,56 +1401,49 @@ blockquote.md-quote {
 }
 
 .pane-send-btn {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: #fff;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
   border: none;
   width: 38px;
   height: 38px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.1s ease, background 0.15s ease;
 }
 
 .pane-send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  opacity: 0.88;
 }
 
 .pane-send-btn:disabled {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-surface-container-high);
   color: var(--text-dim);
   cursor: not-allowed;
   transform: none;
-  box-shadow: none;
+  opacity: 0.7;
 }
 
 .pane-send-btn.working-cancel {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+  background: #ef4444 !important;
   color: #fff !important;
   cursor: pointer !important;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.5) !important;
-  font-size: 14px;
 }
 .pane-send-btn.working-cancel:hover {
-  background: #b91c1c !important;
-  box-shadow: 0 0 14px rgba(239, 68, 68, 0.8) !important;
+  background: #dc2626 !important;
 }
 
 .pane-send-btn.working-interrupt {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+  background: #f59e0b !important;
   color: #fff !important;
   cursor: pointer !important;
-  box-shadow: 0 0 10px rgba(245, 158, 11, 0.5) !important;
-  font-size: 14px;
 }
 .pane-send-btn.working-interrupt:hover {
-  background: #b45309 !important;
-  box-shadow: 0 0 14px rgba(245, 158, 11, 0.8) !important;
+  background: #d97706 !important;
 }
 
 /* Quick Dispatch Shortcuts (라온 to 빌/셜록 등) */
@@ -1194,18 +1459,18 @@ blockquote.md-quote {
 }
 
 .dispatch-tag {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-surface-variant);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .dispatch-tag:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+  background: var(--hover-bg-strong);
+  color: var(--text-main);
 }
 
 /* =============================================================================
@@ -1215,6 +1480,7 @@ blockquote.md-quote {
   height: 44px;
   background: var(--bg-surface);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -1236,6 +1502,9 @@ blockquote.md-quote {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .pipeline-tags {
@@ -1248,9 +1517,13 @@ blockquote.md-quote {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.3);
+  border-radius: 9999px;
+  background: var(--bg-surface-variant);
   border: 1px solid var(--border-subtle);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .pipeline-badge.raon { color: var(--accent-raon); border-color: rgba(168, 85, 247, 0.4); }
@@ -1273,17 +1546,17 @@ blockquote.md-quote {
   align-items: center;
   gap: 5px;
   padding: 2px 8px;
-  border-radius: 12px;
+  border-radius: 9999px;
   font-size: 11.5px;
   font-weight: 500;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bg-surface-variant);
   border: 1px solid var(--border-subtle);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease;
 }
 
 .board-agent-chip:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-bg-strong);
 }
 
 /* =============================================================================
@@ -1295,7 +1568,7 @@ blockquote.md-quote {
 }
 .pane[data-profile^="codex"]:hover,
 .pane[data-profile^="코덱스"]:hover {
-  box-shadow: 0 4px 24px var(--accent-codex-glow);
+  box-shadow: 0 4px 12px var(--accent-codex-glow);
 }
 .pane[data-profile^="claude"],
 .pane[data-profile^="클로드"] {
@@ -1303,14 +1576,14 @@ blockquote.md-quote {
 }
 .pane[data-profile^="claude"]:hover,
 .pane[data-profile^="클로드"]:hover {
-  box-shadow: 0 4px 24px var(--accent-claude-glow);
+  box-shadow: 0 4px 12px var(--accent-claude-glow);
 }
 
 .worker-terminal-details {
   margin-top: 10px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--terminal-bg);
+  border: 1px solid var(--terminal-border);
   font-size: 11px;
   overflow: hidden;
   transition: border-color 0.2s;
@@ -1320,10 +1593,10 @@ blockquote.md-quote {
 }
 .worker-terminal-details summary {
   padding: 7px 12px;
-  color: var(--text-dim);
+  color: #94a3b8;
   cursor: pointer;
   user-select: none;
-  font-family: ui-monospace, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1331,41 +1604,35 @@ blockquote.md-quote {
   transition: color 0.15s, background 0.15s;
 }
 .worker-terminal-details summary:hover {
-  color: var(--text-main);
+  color: #e2e8f0;
   background: rgba(255, 255, 255, 0.05);
 }
 .worker-terminal-raw {
   padding: 12px;
   color: #93c5fd;
-  font-family: 'Consolas', 'Fira Code', ui-monospace, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 280px;
   overflow-y: auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: #030712;
+  border-top: 1px solid var(--terminal-border);
+  background: var(--terminal-bg);
 }
 
 .worker-approval-card {
   margin: 12px 0;
   padding: 14px 16px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(15, 23, 42, 0.9) 100%);
+  background: var(--bg-surface-container);
   border: 1px solid rgba(239, 68, 68, 0.45);
-  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.15);
-  animation: pulseApprovalBorder 2.5s infinite;
-}
-@keyframes pulseApprovalBorder {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  box-shadow: var(--shadow-pane);
 }
 .approval-header {
   font-size: 12px;
   font-weight: 700;
-  color: #f87171;
+  color: #dc2626;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1386,7 +1653,7 @@ blockquote.md-quote {
   gap: 10px;
 }
 .btn-approve {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: #10b981;
   color: white;
   border: none;
   padding: 7px 16px;
@@ -1394,16 +1661,15 @@ blockquote.md-quote {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.15s;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+  transition: background 0.15s, transform 0.1s;
 }
 .btn-approve:hover {
+  background: #059669;
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
 }
 .btn-reject {
   background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  color: #dc2626;
   border: 1px solid rgba(239, 68, 68, 0.4);
   padding: 7px 16px;
   border-radius: var(--radius-sm);
@@ -1417,3 +1683,18 @@ blockquote.md-quote {
   transform: translateY(-1px);
 }
 
+/* =============================================================================
+   7. Embed mode (v2 작업장 탭 iframe 전용 — /multi?embed=1)
+   ============================================================================= */
+html.embed-mode .embed-hide { display: none !important; }
+html.embed-mode,
+html.embed-mode body.daon-multi-body,
+html.embed-mode .multi-app-container {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;   /* %vw 로 인한 가로 스크롤·이중 스크롤 제거 */
+}
+html.embed-mode .multi-main { min-height: 0 !important; overflow: hidden !important; }
+html.embed-mode .pane-body { overscroll-behavior: contain; }

@@ -808,3 +808,107 @@ textarea#userInput::placeholder {
   box-shadow: none;
 }
 
+/* ── 🔗 앱 세션 이어받기 바 ─────────────────────────────── */
+.session-link-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(99, 102, 241, 0.08);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.session-label code {
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: middle;
+}
+.session-link-btn {
+  background: rgba(6, 182, 212, 0.15);
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.session-link-btn:hover { background: rgba(6,182,212,0.3); color: #fff; }
+.session-picker {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+}
+.session-picker.hidden { display: none; }
+.session-picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.session-picker-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.session-picker-list {
+  overflow-y: auto;
+  max-height: 160px;
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.session-picker-item {
+  text-align: left;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.session-picker-item:hover { background: var(--bg-card-hover); border-color: var(--border-focus); }
+.session-picker-item.current { border-color: var(--accent-emerald); }
+.session-picker-item .t { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-picker-item .m { font-size: 10px; color: var(--text-secondary); }
+.session-picker-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 11px; }
+.session-picker-manual { display: flex; gap: 6px; padding: 0 8px 8px; }
+.session-picker-manual input {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.session-picker-manual button {
+  background: var(--accent-indigo);
+  border: none;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+

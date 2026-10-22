@@ -119,7 +119,10 @@ class LayaClient:
     # Dynamic fallback keywords for offline heuristic pruning
     FALLBACK_KEYWORDS: Dict[str, List[str]] = {
         "figma": ["figma", "피그마", "figma_token", "디자인 파일", "ui 레이아웃"],
-        "daon-design": ["daon-design", "디자인 토큰", "style card", "css 스타일", "스타일가이드", "디자인 컴포넌트"],
+        "daon-design": ["daon-design", "디자인 토큰", "style card", "color token", "css 스타일", "스타일가이드", "스타일 가이드", "디자인 컴포넌트", "디자인 시스템", "ui component", "design system",
+                        "랜딩", "랜딩페이지", "랜딩 페이지", "랜딩 만들어줘", "사이트 예쁘게", "예쁘게 해줘", "예쁘게", "이쁘게", "홈페이지", "웹사이트", "웹앱", "웹 앱", "대시보드", "디자인 레퍼런스",
+                        "브랜드 느낌", "브랜드", "카페 사이트", "카페 랜딩", "요런 느낌", "무드", "분위기", "디자인해줘", "레이아웃", "landing page", "landing", "website", "web design", "webapp", "dashboard",
+                        "brand", "cafe", "pretty", "beautiful", "aesthetic", "hero section", "web ui"],
         "serena": ["serena", "세레나", "심층 분석", "ast 탐색", "코드베이스 전체 분석", "심볼 탐색"],
         "context7": ["context7", "라이브러리 문서", "api 문서 검색", "3rd-party doc"],
         "stitch": ["stitch", "스티치", "워크플로우 합성", "다단계 파이프라인"],
@@ -425,6 +428,31 @@ class LayaClient:
                 Path(__file__).resolve().parent.parent.parent / "skills",
                 Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "daon-agent-system" / "resources" / "skills",
             ]
+
+            # [2026-10-17] DAON 플러그인 스킬 포함 — 랭커 스냅샷과 같은 후보 풀.
+            # 호스트가 DAON_PLUGIN_SKILL_DIRS를 동기화하지만(server.py 기동 시),
+            # env 누락에 대비해 %LOCALAPPDATA%\Daon\plugins 폴백도 둔다.
+            try:
+                _plug_dirs: list = []
+                for _entry in os.environ.get("DAON_PLUGIN_SKILL_DIRS", "").split(os.pathsep):
+                    _entry = _entry.strip()
+                    if _entry:
+                        _p = Path(_entry)
+                        if _p.is_dir() and _p not in _plug_dirs:
+                            _plug_dirs.append(_p)
+                _lad = os.environ.get("LOCALAPPDATA", "")
+                if _lad:
+                    _proot = Path(_lad) / "Daon" / "plugins"
+                    if _proot.is_dir():
+                        for _child in sorted(_proot.iterdir()):
+                            _s = _child / "skills"
+                            if _s.is_dir() and _s not in _plug_dirs:
+                                _plug_dirs.append(_s)
+                for _pd in _plug_dirs:
+                    if _pd not in skills_dirs:
+                        skills_dirs.append(_pd)
+            except Exception:
+                pass
 
             # Try loading snapshot metadata for faster and richer descriptions if available
             snap_meta = {}

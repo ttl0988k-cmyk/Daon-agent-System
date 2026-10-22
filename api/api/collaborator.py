@@ -100,6 +100,7 @@ def execute_agent_task(
     workspace: Optional[str] = None,
     force_new_session: bool = False,
     model: Optional[str] = None,
+    no_tools: bool = False,
 ) -> Dict[str, Any]:
     """Execute a task synchronously on a colleague agent and return final output.
 
@@ -108,6 +109,10 @@ def execute_agent_task(
     model: optional per-call model override (e.g. boardroom slot model picker).
            When provided, the streaming run uses this model instead of the
            session's stored model.
+
+    no_tools: if True, runs the agent with zero toolsets — no browser, file,
+              terminal, or any other tool. Intended for boardroom/opinion-only
+              slots where the agent should speak without executing work.
     """
     from api.config import STREAMS, STREAMS_LOCK, ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK
     from api.streaming import BroadcastQueue, _run_agent_streaming, cancel_stream
@@ -159,6 +164,7 @@ def execute_agent_task(
     thr = threading.Thread(
         target=_run_agent_streaming,
         args=(sid, instruction, (model or target_session.model), target_session.workspace, stream_id),
+        kwargs={"no_tools": no_tools},
         daemon=True,
         name=f"ColleagueRun-{canonical_profile}",
     )

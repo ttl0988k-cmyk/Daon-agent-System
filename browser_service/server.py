@@ -302,9 +302,36 @@ class BrowserSessionManager:
         if dead:
             self.viewers -= dead
 
+    async def _notify_viewers_closed(self, reason: str = "closed"):
+        """브라우저가 닫혔음을 뷰어들에게 알리고 소켓을 정리한다.
+
+        이 알림이 없으면 프론트 카드가 '연결됨' 상태로 남아 계속 재연결을
+        시도하고, 브라우저를 닫아도 뷰어 카드가 사라지지 않는다.
+        프론트(browser_viewer.js)는 {"t":"closed"} 수신 시 카드를 제거한다.
+        """
+        if not self.viewers:
+            return
+        msg = json.dumps({"t": "closed", "reason": reason})
+        n = len(self.viewers)
+        dead = set()
+        for ws in list(self.viewers):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                pass
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            dead.add(ws)
+        self.viewers -= dead
+        print(f"[BrowserService] 📴 뷰어 {n}개에 종료 알림 전송 (reason={reason})", flush=True)
+
     async def stop(self):
         async with self._lock:
             if not self.is_running:
+                # 이미 닫힌 상태여도 잔여 뷰어는 정리한다 (재연결 폭주 방지)
+                await self._notify_viewers_closed("already_stopped")
                 return
             print("[BrowserService] 🛑 브라우저 인스턴스 종료 및 리소스 반환 중...", flush=True)
             try:
@@ -330,6 +357,7 @@ class BrowserSessionManager:
                 self._ref_store.clear()
                 self.is_running = False
                 print("[BrowserService] ✅ 브라우저 세션 정리 완료", flush=True)
+                await self._notify_viewers_closed("closed")
 
     async def _on_frame(self, frame):
         try:

@@ -68,6 +68,30 @@ V2_FIELD_TO_CAPABILITY = {
     "browser":        ["tool_use", "agentic"],
 }
 
+# ── 미평가(하네스 미실행) 필드 — 0.0 을 '능력 0' 이 아니라 '데이터 없음' 으로 ──
+# LiveBench v2 의 browser 열은 44개 모델 중 7개가 0.0 인데 그 7개가 전부
+# coding 60~87 의 고성능 모델이다(qwen3.8-flash coding=87.4, glm-5.3 82.8 …).
+# 다른 6개 열에는 0.0 이 단 하나도 없다 — 즉 browser 0.0 은 '브라우저 능력 0'
+# 이 아니라 '에이전트 하네스 미실행/도구호출 형식 실패' 다.
+# 이걸 0점으로 반영하면 agentic 축이 mean(long_horizon, browser) 로 반토막난다
+# (2026-10-15 실측: glm-5.3 agentic 0.179 ← long_horizon 35.9, MiniMax-M3 0.062).
+_ZERO_AS_MISSING_FIELDS = {"browser"}
+
+
+def _is_unscored(field: str, score) -> bool:
+    """필드값이 '미평가' 인지 판정한다(= 집계에서 제외해야 하는 값).
+
+    None(값 자체가 없음)은 여기서 다루지 않는다 — 호출부가 별도로 걸러낸다.
+    이 함수는 '값은 있으나 0.0 인데 그 0 이 미평가를 뜻하는 필드' 만 True.
+    """
+    if field not in _ZERO_AS_MISSING_FIELDS or score is None:
+        return False
+    try:
+        return float(score) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
 V1_CATEGORY_TO_CAPABILITY = {
     "Coding":          ["coding", "debugging"],
     "Agentic Coding":  ["coding", "agentic"],
@@ -305,6 +329,8 @@ class LiveBenchSource:
                 caps = V2_FIELD_TO_CAPABILITY.get(field)
                 if not caps:
                     continue
+                if _is_unscored(field, score):
+                    continue
                 for cap in caps:
                     acc.setdefault(cap, []).append(score)
         else:
@@ -358,7 +384,7 @@ class LiveBenchSource:
             v = self._v2.get(name) or {}
             for field, w in axes.items():
                 x = v.get(field)
-                if x is not None:
+                if x is not None and not _is_unscored(field, x):
                     acc += x * w
                     tot_w += w
         else:

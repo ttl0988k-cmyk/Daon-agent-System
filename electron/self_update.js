@@ -315,6 +315,16 @@ function createSelfUpdate(deps = {}) {
                     results.push({ dst: pair[1], ok: false, error: 'source missing' });
                     continue;
                 }
+                // [2026-10-19] 설치본(resources)에서 실행 중이면 buildRoot == destRoot 라
+                // src 와 dst 가 동일 경로가 되고, cpSync 가
+                // EINVAL('src and dest cannot be the same')로 실패한다.
+                // 이미 같은 위치에 있으므로 복사가 불필요할 뿐 — 실패가 아니다.
+                // 이 버그로 api/agents 가 매 재기동마다 'partial failure' 로 기록되고
+                // refreshed:false 가 되어 재기동 로그 전체가 failed 로 낙인찍혔다.
+                if (path.resolve(src) === path.resolve(dst)) {
+                    results.push({ dst: pair[1], ok: true, skipped: 'src==dst (already in place)' });
+                    continue;
+                }
                 fs.cpSync(src, dst, { recursive: true, force: true });
                 results.push({ dst: pair[1], ok: true });
             } catch (e) {

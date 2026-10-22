@@ -210,56 +210,83 @@ def get_external_skills_dirs() -> List[Path]:
     path.  Only directories that actually exist are returned.  Duplicates and
     paths that resolve to the local ``~/.hermes/skills/`` are silently skipped.
     """
-    config_path = get_config_path()
-    if not config_path.exists():
-        return []
+    # [2026-10-17] config 실패가 플러그인 수집을 죽이지 않게 폴스루 구조로 변경.
+    # 종전 early-return [] 들은 DAON_PLUGIN_SKILL_DIRS(env)까지 버렸다.
+    raw_dirs: list = []
     try:
-        parsed = yaml_load(config_path.read_text(encoding="utf-8"))
+        config_path = get_config_path()
+        if config_path.exists():
+            parsed = yaml_load(config_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                skills_cfg = parsed.get("skills")
+                if isinstance(skills_cfg, dict):
+                    raw_dirs = skills_cfg.get("external_dirs") or []
     except Exception:
-        return []
-    if not isinstance(parsed, dict):
-        return []
-
-    skills_cfg = parsed.get("skills")
-    if not isinstance(skills_cfg, dict):
-        return []
-
-    raw_dirs = skills_cfg.get("external_dirs")
-    if not raw_dirs:
-        return []
+        raw_dirs = []
     if isinstance(raw_dirs, str):
         raw_dirs = [raw_dirs]
     if not isinstance(raw_dirs, list):
-        return []
+        raw_dirs = []
 
     local_skills = get_skills_dir().resolve()
     seen: Set[Path] = set()
     result: List[Path] = []
 
+    def _append_dir(p: Path) -> None:
+        try:
+            rp = p.resolve()
+        except Exception:
+            return
+        if rp == local_skills or rp in seen:
+            return
+        if rp.is_dir():
+            seen.add(rp)
+            result.append(rp)
+
+    # ── [2026-10-17] DAON 플러그인 스킬을 config 유무와 무관하게 항상 포함 ──
+    # 종전엔 config.yaml 파싱 실패/미존재 시 여기서 return [] 되어
+    # DAON_PLUGIN_SKILL_DIRS(env) 마저 무시됐다. 플러그인 경로는 config보다
+    # 먼저 수집한다 (config 항목과 중복 시 config 우선 — 아래에서 skip).
+    # DAON host app may expose plugin skill directories without touching the
+    # user's config.yaml.  Append them (deduplicated against config entries).
+    for p in _daon_plugin_skill_dirs():
+        _append_dir(p)
+
+    # env 누락 대비 폴백: %LOCALAPPDATA%\Daon\plugins\*\skills 직접 탐색.
+    # 서버 기동 시 plugin_gateway가 DAON_PLUGIN_SKILL_DIRS를 동기화하지만,
+    # 그 전이나 동기화 실패 시에도 프롬프트 인덱스·랭커 스냅샷에 플러그인
+    # 스킬이 들도록 한다. fail-open.
+    # (env에 플러그인 루트가 이미 있으면 그 하위 skills는 스킵 — 이중 스캔 방지)
+    try:
+        _lad = os.environ.get("LOCALAPPDATA", "")
+        if _lad:
+            _proot = Path(_lad) / "Daon" / "plugins"
+            if _proot.is_dir():
+                for _child in sorted(_proot.iterdir()):
+                    _sdir = _child / "skills"
+                    if _sdir.is_dir():
+                        try:
+                            _spar = _sdir.resolve().parent
+                        except Exception:
+                            _spar = None
+                        if _spar is not None and any(p == _spar for p in result):
+                            continue
+                        _append_dir(_sdir)
+    except Exception:
+        pass
+
+    # config.yaml의 external_dirs (위에서 파싱된 raw_dirs 재사용 — 재파싱 없음)
     for entry in raw_dirs:
         entry = str(entry).strip()
         if not entry:
             continue
         # Expand ~ and environment variables
         expanded = os.path.expanduser(os.path.expandvars(entry))
-        p = Path(expanded).resolve()
-        if p == local_skills:
-            continue
-        if p in seen:
-            continue
+        p = Path(expanded)
         if p.is_dir():
-            seen.add(p)
-            result.append(p)
+            _append_dir(p)
         else:
             logger.debug("External skills dir does not exist, skipping: %s", p)
-
-    # DAON host app may expose plugin skill directories without touching the
-    # user's config.yaml.  Append them (deduplicated against config entries).
-    for p in _daon_plugin_skill_dirs():
-        if p in seen:
-            continue
-        seen.add(p)
-        result.append(p)
 
     return result
 

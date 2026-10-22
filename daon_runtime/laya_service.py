@@ -28,7 +28,13 @@ logging.basicConfig(
 _logger = logging.getLogger("laya_service")
 
 PORT = 8765
-MODEL_ID = "convaiinnovations/laya"
+# [ENGINE-SWAP 2026-10-17] Laya → Jeff v1.2 (Jeff-Qwen3.5-0.8B, revision v1.1).
+# 실측: preselect 19/20·단건 0.2s·VRAM 1665MB(Laya 1623MB 동급).
+# 파일명·laya_service.py 경로·포트(8765)·HTTP API 5종은 그대로 유지한다 —
+# Electron ServerSupervisor가 이 경로로 기동하고 laya_client가 같은 API를 호출하므로,
+# Electron 수정·asar 재패킹·서버 재기동 없이 엔진만 교체된다.
+MODEL_ID = "jeff-v1.2 (Jeff-Qwen3.5-0.8B)"
+JEFF_CHECKPOINT = os.environ.get("JEFF_CHECKPOINT", r"C:\daon\models\jeff-v1.2")
 
 # Global model instance
 _router = None
@@ -38,9 +44,12 @@ _ready = False  # [FIX 2026-10-01] model-loaded flag; False means "booting"
 
 
 def init_laya_model():
-    """Initialize Laya model on GPU (if available) or CPU."""
+    """Initialize Jeff v1.2 decision model on GPU (if available) or CPU.
+
+    함수명은 supervisor 로그·호출부 호환을 위해 유지한다 (내부는 Jeff).
+    """
     global _router, _device, _ready
-    _logger.info("Initializing Laya Decision Model: %s ...", MODEL_ID)
+    _logger.info("Initializing Decision Model: %s (checkpoint=%s) ...", MODEL_ID, JEFF_CHECKPOINT)
     try:
         import torch
         if torch.cuda.is_available():
@@ -54,28 +63,44 @@ def init_laya_model():
         _device = "cpu"
 
     try:
-        import os
-        import glob
-        import laya
+        from jeff.models import load_decision_model
         t0 = time.time()
-        model_path = MODEL_ID
-        cache_pattern = os.path.expanduser(r"~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/*")
-        snapshots = glob.glob(cache_pattern)
-        if snapshots and os.path.isdir(snapshots[0]):
-            model_path = snapshots[0]
-            _logger.info("Using cached local model path: %s", model_path)
-        _router = laya.load(model_path)
-        _logger.info("Laya model loaded successfully in %.2f seconds on %s", time.time() - t0, _device)
+        if not os.path.isdir(JEFF_CHECKPOINT):
+            raise FileNotFoundError(f"Jeff checkpoint missing: {JEFF_CHECKPOINT}")
+        _router = load_decision_model(JEFF_CHECKPOINT)
+        _logger.info("Jeff model loaded successfully in %.2f seconds on %s", time.time() - t0, _device)
     except Exception as e:
-        _logger.error("Failed to load Laya model: %s", e, exc_info=True)
+        _logger.error("Failed to load Jeff model: %s", e, exc_info=True)
         _router = None
     finally:
         _ready = True  # [FIX 2026-10-01] booting -> ok/degraded
 
 
+def _jeff_ask(state: Any, wire: Dict[str, Any]) -> Dict[str, Any]:
+    """단건 Jeff 질의 → Laya answer-obj 호환 dict {choice, probabilities, confidence}.
+
+    _router가 None이면(모델 미로드) 호출부에서 fallback 응답하므로 여기서 예외를 던진다.
+    """
+    from jeff.model import answer as _jeff_answer
+    if _router is None:
+        raise RuntimeError("Jeff model not initialized")
+    probs = _router.predict([{"state": state, "question": wire}])[0]
+    return _jeff_answer(wire, probs)
+
+
+def _jeff_ask_batch(states: List[Any], wire: Dict[str, Any], batch_size: int = 32) -> List[Dict[str, Any]]:
+    """배치 Jeff 질의. 실패 시 호출부가 sequential 폴백하므로 예외를 그대로 던진다."""
+    from jeff.model import answer as _jeff_answer
+    if _router is None:
+        raise RuntimeError("Jeff model not initialized")
+    rows = [{"state": s, "question": wire} for s in states]
+    all_probs = _router.predict(rows, batch_size=batch_size)
+    return [_jeff_answer(wire, p) for p in all_probs]
+
+
 KNOWN_MCP_CRITERIA = {
     "figma": "Figma design frames, component styles, UI layouts, or UI design tokens (피그마 디자인 프레임·컴포넌트 스타일·UI 레이아웃).",
-    "daon-design": "DAON UI design system style cards, color tokens, or UI component styles (디자인 시스템 토큰·스타일 가이드·컴포넌트 디자인).",
+    "daon-design": "Landing page and website UI design, make a site pretty, brand feel, design reference, style card, homepage, web app, dashboard, color palette, layout. (랜딩페이지·사이트 UI 디자인, 예쁘게, 브랜드 느낌, 디자인 레퍼런스, 스타일카드, 홈페이지, 웹앱, 대시보드, 팔레트, 레이아웃.)",
     "serena": "Deep AST repository-wide semantic exploration, code symbols, and architecture analysis (코드베이스 AST 심층 탐색·심볼 분석·아키텍처 구조).",
     "context7": "External 3rd-party library API documentation lookup and references (외부 라이브러리 및 API 공식 문서 검색·도큐먼트 참조).",
     "stitch": "Workflow stitching, multi-agent pipeline synthesis, and tool composition (워크플로우 합성·에이전트 파이프라인 조립).",
@@ -271,22 +296,20 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
-        # Single-forward-pass choice question for ultra-fast evaluation
+        # Single-forward-pass choice question for ultra-fast evaluation (Jeff v1.2)
         criteria = _get_dynamic_mcp_criteria(available_mcps, mcp_descriptions)
 
-        question = {
-            "needed_tool": {
-                "type": "choice",
-                "instructions": "Which external MCP tool is required for this coding prompt?",
-                "criteria": criteria
-            }
+        wire = {
+            "type": "choice",
+            "instructions": "Which external MCP tool is required for this coding prompt?",
+            "criteria": criteria,
         }
 
         needed = []
+        choice = None
+        probs = {}
         try:
-            state = {"prompt": prompt}
-            preds = _router.predict(state, question)
-            ans = preds.get("answers", {}).get("needed_tool", {})
+            ans = _jeff_ask(prompt, wire)
             choice = ans.get("choice")
             probs = ans.get("probabilities", {})
 
@@ -331,22 +354,18 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
-        question = {
-            "intent": {
-                "type": "choice",
-                "instructions": "Classify the user intent for the AI assistant",
-                "criteria": {
-                    "conversation": "General questions, greetings, chat, advice, asking explanations without wanting code or file modifications.",
-                    "coding": "Editing local files, writing code, fixing bugs, running scripts, git commands, building or debugging.",
-                    "worker_task": "Multi-step complex autonomous refactoring, heavy background tasks, repo-wide search requiring a subagent worker.",
-                    "design_ui": "Frontend styling, CSS, UI tokens, Figma design cards, layout adjustments, themes."
-                }
-            }
+        wire = {
+            "type": "choice",
+            "instructions": "Classify the user intent for the AI assistant",
+            "criteria": {
+                "conversation": "General questions, greetings, chat, advice, asking explanations without wanting code or file modifications.",
+                "coding": "Editing local files, writing code, fixing bugs, running scripts, git commands, building or debugging.",
+                "worker_task": "Multi-step complex autonomous refactoring, heavy background tasks, repo-wide search requiring a subagent worker.",
+                "design_ui": "Frontend styling, CSS, UI tokens, Figma design cards, layout adjustments, themes."
+            },
         }
         try:
-            state = {"prompt": prompt}
-            preds = _router.predict(state, question)
-            ans = preds.get("answers", {}).get("intent", {})
+            ans = _jeff_ask(prompt, wire)
             choice = ans.get("choice", "coding")
             probs = ans.get("probabilities", {})
             conf = float(probs.get(choice, 0.5)) if isinstance(probs, dict) else 0.5
@@ -423,11 +442,24 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
         t0 = time.time()
         try:
-            preds = _router.predict(norm_state, norm_questions)
+            # Jeff는 질문별 단건 추론 (wire 포맷은 Laya 스키마와 호환).
+            decisions: Dict[str, Any] = {}
+            for q_key, qd in norm_questions.items():
+                crit = qd.get("criteria", {})
+                if isinstance(crit, dict):
+                    criteria = {str(k): str(v) for k, v in crit.items()}
+                else:
+                    criteria = {str(c): str(c) for c in (crit or ["yes", "no"])}
+                wire = {
+                    "type": "choice",
+                    "instructions": qd.get("instructions") or f"Determine the answer for {q_key}",
+                    "criteria": criteria,
+                }
+                decisions[q_key] = _jeff_ask(norm_state, wire)
             latency_ms = round((time.time() - t0) * 1000, 1)
             self._send_json(200, {
-                "decisions": preds.get("answers", preds),
-                "full_output": preds,
+                "decisions": decisions,
+                "full_output": {"answers": decisions},
                 "latency_ms": latency_ms
             })
         except Exception as e:
@@ -450,70 +482,29 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         t0 = time.time()
         results = []
         probabilities = []
-        question_def = {
+        wire = {
             "type": "choice",
             "instructions": instruction or "Classify this item into one category",
-            "criteria": categories
+            "criteria": categories,
         }
+        keys = list(categories.keys())
 
-        # True Batched Tensor Inference (16x speedup on CUDA)
+        # Jeff 배치 추론 (내부에서 CUDA 배치 처리)
         try:
-            import numpy as np
-            import torch
-            from laya.agent import QTYPES, build_sequence, collate_items, render_options, temp_bucket
-
-            agent = _router
-            agent._check_question("category", question_def)
-            q = agent._to_internal(question_def)
-            max_len = agent.cfg.get("max_len", 512)
-            head_max_len = agent.cfg.get("head_max_len", 192)
-            keys = list(q["crit"].keys())
-            qt = QTYPES[q["t"]]
-            k = len(render_options(q))
-            t_scale = agent.temperature_by_options.get(temp_bucket(qt, k), agent.temperature[qt])
-            use_amp = agent.device.type == "cuda"
-            batch_size = 32
-
-            # Pre-build sequence items
-            item_records = []
-            for item in items:
-                s, m = build_sequence(agent.tok, {"text": str(item)}, q, max_len, head_max_len)
-                item_records.append({"ids": s, "markers": m, "qtype": qt})
-
-            with torch.no_grad():
-                for i in range(0, len(item_records), batch_size):
-                    chunk = item_records[i : i + batch_size]
-                    b = collate_items([chunk], agent.tok.pad_token_id)
-                    with torch.autocast(device_type=agent.device.type, dtype=agent.dtype, enabled=use_amp):
-                        logits, act = agent.model(
-                            b["input_ids"].to(agent.device),
-                            b["attention_mask"].to(agent.device),
-                            b["marker_pos"].to(agent.device),
-                            b["marker_mask"].to(agent.device),
-                            b["qtype"].to(agent.device),
-                        )
-                    logits_np = logits.float().cpu().numpy()[:, :k] / t_scale
-                    p = np.exp(logits_np - np.max(logits_np, axis=-1, keepdims=True))
-                    p = p / np.sum(p, axis=-1, keepdims=True)
-                    for row_idx, choice_idx in enumerate(p.argmax(axis=-1)):
-                        results.append(keys[choice_idx])
-                        probabilities.append({keys[c_idx]: round(float(p[row_idx, c_idx]), 4) for c_idx in range(k)})
-
+            answers = _jeff_ask_batch([str(item) for item in items], wire, batch_size=32)
+            for a in answers:
+                choice_val = a.get("choice")
+                results.append(choice_val)
+                probabilities.append(a.get("probabilities", {}) or {})
         except Exception as e:
-            _logger.warning("True batch classify failed, falling back to sequential predict: %s", e)
+            _logger.warning("Jeff batch classify failed, falling back to sequential: %s", e)
             results = []
             probabilities = []
-            question = {"category": question_def}
             for item in items:
                 try:
-                    pred = _router.predict({"text": str(item)}, question)
-                    ans = pred.get("answers", {}).get("category", {})
-                    choice_val = ans.get("choice") if isinstance(ans, dict) else ans
-                    results.append(choice_val)
-                    if isinstance(ans, dict) and "probabilities" in ans:
-                        probabilities.append(ans["probabilities"])
-                    else:
-                        probabilities.append({})
+                    a = _jeff_ask(str(item), wire)
+                    results.append(a.get("choice"))
+                    probabilities.append(a.get("probabilities", {}) or {})
                 except Exception:
                     results.append(None)
                     probabilities.append({})
@@ -554,7 +545,7 @@ def main():
         PORT = _ap.parse_args().port
     except SystemExit:
         raise
-    print(f"=== DAON Laya Decision Daemon ===", flush=True)
+    print(f"=== DAON Decision Daemon (Jeff v1.2) ===", flush=True)
     # [FIX 2026-10-01] Bind the socket BEFORE loading the model.
     # Old order: load model (30~60s) -> bind. During startup /health was
     # unresponsive, so BOTH parents (Electron ServerSupervisor and

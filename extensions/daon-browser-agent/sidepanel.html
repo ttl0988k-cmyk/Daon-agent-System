@@ -81,6 +81,25 @@
   </div>
 
   <!-- Chat Messages Container -->
+  <!-- 🔗 앱 세션 이어받기 바 -->
+  <div class="session-link-bar" id="sessionLinkBar">
+    <span class="session-label" title="현재 이 패널이 이어받은 대화 세션">💬 <code id="currentSessionLabel">세션 로딩 중...</code></span>
+    <button class="session-link-btn" id="switchSessionBtn" title="앱 채팅 세션 목록에서 이어받기">🔗 앱 세션 이어받기</button>
+  </div>
+  <div class="session-picker hidden" id="sessionPicker">
+    <div class="session-picker-head">
+      <span>📋 최근 대화 (클릭하면 이어받기)</span>
+      <button class="session-picker-close" id="sessionPickerClose" title="닫기">✕</button>
+    </div>
+    <div class="session-picker-list" id="sessionPickerList">
+      <div class="session-picker-empty">불러오는 중...</div>
+    </div>
+    <div class="session-picker-manual">
+      <input id="manualSessionInput" placeholder="세션 ID 직접 입력..." />
+      <button id="manualSessionBtn">연결</button>
+    </div>
+  </div>
+
   <main class="chat-container" id="chatContainer">
     <div class="welcome-card" id="welcomeCard">
       <div class="welcome-icon">✨</div>

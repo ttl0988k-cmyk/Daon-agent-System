@@ -313,15 +313,13 @@ class AgentCompiler:
         에이전트가 내장 브라우저를 우선 사용하도록 유도한다.
         """
         return (
-            "\n\n[BUILT-IN BROWSER]\n"
-            "This app has a built-in shared browser: an in-app tab driven over CDP that the "
-            "user can see. When your subtask requires viewing, scraping, or interacting with "
-            "a web page, use the browser tools (browser_navigate, browser_snapshot, "
-            "browser_click, browser_type, browser_scroll, browser_press, browser_console) — "
-            "they operate this built-in tab. Do NOT launch external browsers, and do NOT use "
-            "curl/wget for pages that need rendering or interaction. Workflow: call "
-            "browser_navigate first; the returned snapshot lists interactive elements as @eN "
-            "refs — use those refs with browser_click/browser_type.\n"
+            "\n\n[WEB & BROWSER INTERACTION POLICY]\n"
+            "For searching, reading documentation, or inspecting GitHub repositories, ALWAYS use "
+            "web_search, web_extract, or terminal (git clone, curl raw.github...) instead of opening "
+            "the browser. Never use browser_navigate on GitHub links. Only use browser tools "
+            "(browser_navigate, browser_click, etc.) when interactive web automation or form-filling is "
+            "strictly required or explicitly requested by the user. When browser interaction is required, "
+            "call browser_navigate first to get @eN element refs for browser_click/browser_type.\n"
         )
 
     @staticmethod

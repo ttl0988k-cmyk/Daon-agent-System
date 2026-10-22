@@ -64,6 +64,7 @@ exports.default = async function afterPack(context) {
         'plugins',
         'daon_runtime',
         'static',
+        'app',
     ];
 
     for (const appDir of appDirs) {

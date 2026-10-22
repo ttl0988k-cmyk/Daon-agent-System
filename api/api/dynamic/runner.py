@@ -465,6 +465,31 @@ def _run_node_with_retries(
                         return cleaned
                     
                     _injected_count = 0
+                    # ── [Lazy-MCP-Guard 2026-10-22] streaming_tools 의 lazy 분기와 동일 규칙 ──
+                    # lazy 모드에서는 개별 mcp_ 스키마를 agent.tools 에 넣지 않는다.
+                    # (레지스트리 등록은 그대로 유지 → call_mcp_tool 라우터로 호출 가능)
+                    _lazy_mcp = __import__("os").getenv("DAON_LAZY_MCP", "1").strip().lower() not in ("0", "false", "no", "off")
+                    if _lazy_mcp:
+                        try:
+                            _router_names = {"call_mcp_tool", "list_mcp_tools", "mcp_manage"}
+                            if hasattr(agent, "tools") and isinstance(agent.tools, list):
+                                _before_guard = len(agent.tools)
+                                agent.tools = [
+                                    _x for _x in agent.tools
+                                    if not (
+                                        _x.get("function", {}).get("name", "").startswith("mcp_")
+                                        and _x.get("function", {}).get("name", "") not in _router_names
+                                    )
+                                ]
+                                print(
+                                    "[Lazy-MCP-Guard][runner] lazy=True dropped individual mcp schemas: %d -> %d"
+                                    % (_before_guard, len(agent.tools)),
+                                    flush=True,
+                                )
+                        except Exception as _e_rg:
+                            print("[Lazy-MCP-Guard][runner] failed: %s" % _e_rg, flush=True)
+                        _mcp_tools = []
+
                     for _t in _mcp_tools:
                         _sid = _t.get('_mcp_server', 'unknown')
                         _oname = _t.get('name', '')

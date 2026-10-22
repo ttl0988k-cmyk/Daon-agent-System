@@ -113,6 +113,15 @@ export class Pane {
       this.pollTimer = setInterval(() => this.checkExternalStream(), 1800);
     });
 
+    // ── 세션 수명 정책 (2026-10-21, 대표님 확정 지시) ──────────────────────
+    // "너(라온) 빼고는 다 새로운 세션으로 작업 시작이야. 너만 빼고."
+    //   · 라온(총괄)만 예외 → 작업장 전용 세션을 계속 유지(오케스트레이션 맥락)
+    //   · 빌·셜록·토니·프라다·다온(응대)·코덱스·클로드 = 전부 새 세션으로 시작
+    this.isOrchestrator = !!(this.profile || '').toLowerCase().match(/raon|라온/);
+    this.isWorker = this.isWorkerProfile(this.profile);
+    // 새 세션 강제에서 제외되는 유일한 프로필 = 라온
+    this.isPersistent = this.isOrchestrator;
+
     this.init();
   }
 
@@ -144,8 +153,11 @@ export class Pane {
       const res = await api.getSessions();
       const sessions = (res && res.sessions) ? res.sessions : [];
       const pLower = (profile || '').toLowerCase();
+      // 🚨 클래식(webui) 세션 재사용 금지 (2026-10-21): 새 pane 이 대표님 메인
+      // 채팅 세션을 집어가면 이후 모든 지시가 그 세션에 섞인다.
       const match = sessions.find(s => 
-        (s.profile || '').toLowerCase() === pLower && !s.archived
+        (s.profile || '').toLowerCase() === pLower && !s.archived &&
+        s.surface !== 'webui'
       );
       return match ? match.session_id : null;
     } catch (_) {
@@ -162,15 +174,18 @@ export class Pane {
       if (this.sessionId) {
         const ok = await this.loadSession(this.sessionId);
         if (!ok) await this.setupNewSession();
+      } else if (this.isOrchestrator) {
+        // 👑 총괄(라온)은 작업장 전용(multi) 세션을 계속 재사용한다.
+        // 대표님 지시(2026-10-21): 라온 세션은 새로 만들 필요 없음 — 맥락 유지.
+        // (findLatestSessionForProfile 은 webui 세션을 제외하므로 메인 대화는 안 물는다)
+        const prev = await this.findLatestSessionForProfile(this.profile);
+        let ok2 = false;
+        if (prev) ok2 = await this.loadSession(prev);
+        if (!ok2) await this.setupNewSession();
       } else {
-        const existingSid = await this.findLatestSessionForProfile(this.profile);
-        let ok = false;
-        if (existingSid) {
-          ok = await this.loadSession(existingSid);
-        }
-        if (!ok) {
-          await this.setupNewSession();
-        }
+        // 🚨 옛 세션 자동 재사용 제거 (2026-10-21): 새 pane 은 항상 새 세션으로
+        // 시작한다. 과거 라온 세션을 물려받으면 그 대화가 이 pane 작업에 섞인다.
+        await this.setupNewSession();
       }
     }
     // Signal that init is fully complete — unblocks attachToStream / checkExternalStream
@@ -281,7 +296,7 @@ export class Pane {
     // 0. Focus / Click sync to Classic active session
     this.el.addEventListener('click', () => {
       if (this.sessionId) {
-        try { localStorage.setItem('daon_active_session_id', this.sessionId); } catch (_) {}
+        /* 세션 엉킴 방지(2026-10-21): 작업장 pane이 클래식 활성세션을 덮어쓰지 않는다 */
       }
     });
 
@@ -422,12 +437,23 @@ export class Pane {
       this.sessionId = s.session_id;
       this.workspace = s.workspace || this.workspace;
 
+      // 🚨 프로필 불일치 fail-closed (2026-10-21): 예전에는 세션 프로필로 pane
+      // 프로필을 조용히 덮어써서, "프라다 창에 라온이 답하는" 세션 엉킴이 생겼다.
+      // pane 은 자기 프로필 세션만 물 수 있다. 불일치면 로드 실패로 처리해
+      // 호출부가 자기 프로필의 새 세션을 만들도록 한다.
       if (s.profile && s.profile !== this.profile) {
-        this.profile = s.profile;
-        this.el.dataset.profile = s.profile;
-        const meta = this.getAgentMeta(this.profile);
-        this.iconEl.textContent = meta.icon;
-        if (this.profileSelect) this.profileSelect.value = this.profile;
+        console.warn(`[Pane ${this.profile}] 프로필 불일치 세션 무시: session=${sessionId} profile=${s.profile}`);
+        this.sessionId = null;
+        return false;
+      }
+
+      // 🚨 클래식(webui) 세션 격리 (2026-10-21): 클래식 싱글 채팅 세션을 작업장
+      // pane 이 직접 물면 두 화면이 같은 대화를 공유해 세션 엉킴이 발생한다.
+      // 따라서 클래식 세션 ID를 넘겨받더라도 작업장 전용 격리 세션을 즉시 새로 생성해 연결한다.
+      if (s.surface === 'webui') {
+        console.log(`[Pane ${this.profile}] 클래식(webui) 세션 감지 → 작업장 전용 격리 세션 자동 생성: ${sessionId}`);
+        await this.setupNewSession();
+        return true;
       }
 
       if (s.model) {
@@ -444,7 +470,7 @@ export class Pane {
       } else {
         console.log(`[Pane ${this.profile}] loadSession skipped DOM reset — active stream ${this.currentStreamId} takes priority`);
       }
-      try { localStorage.setItem('daon_active_session_id', this.sessionId); } catch (_) {}
+      /* 세션 엉킴 방지(2026-10-21): 작업장 pane이 클래식 활성세션을 덮어쓰지 않는다 */
       if (this.onSessionChange) this.onSessionChange(this.id, this.sessionId);
       return true;
     } catch (err) {
@@ -469,7 +495,7 @@ export class Pane {
           </div>
         `;
         this.setStatus('idle');
-        try { localStorage.setItem('daon_active_session_id', this.sessionId); } catch (_) {}
+        /* 세션 엉킴 방지(2026-10-21): 작업장 pane이 클래식 활성세션을 덮어쓰지 않는다 */
         if (this.onSessionChange) this.onSessionChange(this.id, this.sessionId);
       } else {
         throw new Error('Invalid session response');
@@ -963,6 +989,18 @@ export class Pane {
     const text = (forcedText || this.inputEl.value).trim();
     if (!text) return;
 
+    // 🚨 한 작업 = 한 세션 (2026-10-21, 대표님 확정): 직전 작업이 완료된
+    // 상태라면 새 작업은 반드시 새 세션에서 시작한다(맥락 오염·세션 엉킴 차단).
+    // ⚠️ 유일한 예외 = 라온(총괄). "너 빼고는 다 새로운 세션으로 작업 시작이야."
+    // 라온은 오케스트레이션 맥락을 계속 이어가야 하므로 세션을 유지한다.
+    if (!this.isOrchestrator && this._taskFinished && this.sessionId) {
+      try {
+        await this.setupNewSession();
+        this._taskFinished = false;
+        this.appendMessage('assistant', '🆕 새 작업이므로 새 세션에서 시작합니다.');
+      } catch (_) {}
+    }
+
     // Reset input
     if (!forcedText) {
       this.inputEl.value = '';
@@ -1012,7 +1050,7 @@ export class Pane {
 
     // Sync active session for Classic view
     if (this.sessionId) {
-      try { localStorage.setItem('daon_active_session_id', this.sessionId); } catch (_) {}
+      /* 세션 엉킴 방지(2026-10-21): 작업장 pane이 클래식 활성세션을 덮어쓰지 않는다 */
     }
 
     // 2. Inter-agent mention check (e.g. "@빌")
@@ -1033,12 +1071,12 @@ export class Pane {
       }
       let res;
       try {
-        res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel);
+        res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel, this.profile);
       } catch (chatErr) {
-        if (chatErr.message && (chatErr.message.includes('Session not found') || chatErr.message.includes('404'))) {
+        if (chatErr.message && (chatErr.message.includes('Session not found') || chatErr.message.includes('404') || chatErr.message.includes('PROFILE_MISMATCH'))) {
           console.warn(`[Pane ${this.profile}] Session ${this.sessionId} not found on server, auto-recreating session...`);
           await this.setupNewSession();
-          res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel);
+          res = await api.startChat(this.sessionId, backendMessage, this.workspace, this.currentModel, this.profile);
         } else {
           throw chatErr;
         }
@@ -1449,6 +1487,15 @@ export class Pane {
     if (idx !== -1) {
       clean = clean.substring(0, idx).trim();
     }
+    // 실시간 브라우저 환경 컨텍스트가 포함된 경우 순수 사용자 요청만 추출
+    if (clean.includes('[실시간 브라우저 환경 컨텍스트') || clean.includes('[★ 현재 사용자가 직접 보고 있는 활성 브라우저 화면]')) {
+      const userReqMatch = clean.match(/\[사용자 요청\][\s\S]*?(?:"""|```)?\s*([\s\S]+?)\s*(?:"""|```)?$/i);
+      if (userReqMatch && userReqMatch[1] && userReqMatch[1].trim()) {
+        clean = userReqMatch[1].trim();
+      } else {
+        clean = clean.replace(/\[(?:실시간 브라우저 환경 컨텍스트|★ 현재 사용자가 직접 보고 있는 활성 브라우저 화면)[\s\S]*?\[사용자 요청\]\s*/i, '').trim();
+      }
+    }
     return clean;
   }
 
@@ -1528,15 +1575,41 @@ export class Pane {
   }
 
   async checkExternalStream() {
-    if (!this._initDone || this.status === 'working' || !this.sessionId) return;
+    if (!this._initDone || this.status === 'working') return;
     try {
-      const res = await api.getStreamStatus(this.sessionId);
-      if (res && res.active && res.stream_id && res.stream_id !== this.currentStreamId) {
-        if (this._cancelledStreams.has(res.stream_id) || this._attachedStreams.has(res.stream_id)) {
+      // 1) 내 세션의 스트림 우선 확인
+      if (this.sessionId) {
+        const res = await api.getStreamStatus(this.sessionId);
+        if (res && res.active && res.stream_id && res.stream_id !== this.currentStreamId) {
+          if (this._cancelledStreams.has(res.stream_id) || this._attachedStreams.has(res.stream_id)) {
+            return;
+          }
+          console.log(`[Pane ${this.profile}] External stream detected for session ${this.sessionId}: ${res.stream_id}`);
+          this.attachToStream(res.stream_id);
           return;
         }
-        console.log(`[Pane ${this.profile}] External stream detected for session ${this.sessionId}: ${res.stream_id}`);
-        this.attachToStream(res.stream_id);
+      }
+
+      // 2) 🚨 세션 분리 대응 (2026-10-21): 회의실/도구 경로에서 실행되는 에이전트 작업은
+      //    pane 이 만든 빈 세션이 아니라 '다른 세션'에서 돈다. pane 이 자기 sessionId 만
+      //    폴링하면 "API 200은 계속 찍히는데 챗창엔 응답이 없음" 상태가 된다.
+      //    → 같은 프로필의 활성 스트림(클래식 webui 화면 제외)을 찾아 붙는다.
+      const pMe = String(this.profile || '').toLowerCase();
+      const act = await fetch('/api/chat/active').then(r => r.json()).catch(() => null);
+      const streams = (act && act.active_streams) || [];
+      const mine = streams.find(s => {
+        if (!s || !s.stream_id || !s.session_id) return false;
+        if (String(s.profile || '').toLowerCase() !== pMe) return false;
+        if (s.surface === 'webui') return false;
+        if (s.stream_id === this.currentStreamId) return false;
+        if (this._cancelledStreams.has(s.stream_id)) return false;
+        if (this._attachedStreams.has(s.stream_id)) return false;
+        return true;
+      });
+      if (mine) {
+        console.log(`[Pane ${this.profile}] 프로필 활성 스트림 발견 → 세션 동기화 ${mine.session_id} / ${mine.stream_id}`);
+        this.sessionId = mine.session_id;
+        this.attachToStream(mine.stream_id);
       }
     } catch (_) {}
   }
@@ -1579,6 +1652,10 @@ export class Pane {
 
   async handleDone() {
     this._stopReasoning();
+    // 🚨 한 작업 = 한 세션 (2026-10-21 대표님 지시): 작업이 끝나면 표식만 세우고,
+    // 다음 지시가 들어올 때 새 세션으로 갈아탄다. 같은 세션에 여러 작업이
+    // 누적되면 이전 작업 맥락이 다음 작업을 오염시킨다.
+    this._taskFinished = true;
     if (this.currentStreamId) {
       this._attachedStreams.add(this.currentStreamId);
     }

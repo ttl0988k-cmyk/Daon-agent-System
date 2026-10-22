@@ -110,3 +110,8 @@ app.asar.new.bak*
 # Runtime generated data
 skills/**/data/
 api/data/
+
+# Temporary and local backups
+_backup_*/
+*.bak_*
+*.bak_lazymcp

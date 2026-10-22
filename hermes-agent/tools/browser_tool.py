@@ -739,7 +739,7 @@ atexit.register(_stop_browser_cleanup_thread)
 BROWSER_TOOL_SCHEMAS = [
     {
         "name": "browser_navigate",
-        "description": "Navigate to a URL in the browser. Initializes the session and loads the page. Must be called before other browser tools. For simple information retrieval, prefer web_search or web_extract (faster, cheaper). Use browser tools when you need to interact with a page (click, fill forms, dynamic content). Returns a compact page snapshot with interactive elements and ref IDs — no need to call browser_snapshot separately after navigating.",
+        "description": "Navigate to a URL in the built-in browser. NOTE: For GitHub repositories, code repositories, web search, or reading articles/docs, DO NOT use this tool — use web_search, web_extract, or terminal (git clone) instead. Use browser_navigate ONLY when interactive web manipulation (clicks, form submission, dynamic client-side JS) or visual page inspection is explicitly required. Returns a compact page snapshot with interactive elements and ref IDs.",
         "parameters": {
             "type": "object",
             "properties": {

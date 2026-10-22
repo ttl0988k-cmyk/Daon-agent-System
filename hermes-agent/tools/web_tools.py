@@ -80,6 +80,14 @@ def _load_web_config() -> dict:
     except (ImportError, Exception):
         return {}
 
+def _is_ddgs_available() -> bool:
+    try:
+        import duckduckgo_search
+        return True
+    except Exception:
+        return False
+
+
 def _get_backend() -> str:
     """Determine which web backend to use.
 
@@ -104,6 +112,9 @@ def _get_backend() -> str:
         if available:
             return backend
 
+    if _is_ddgs_available():
+        return "duckduckgo"
+
     return "firecrawl"  # default (backward compat)
 
 
@@ -117,6 +128,8 @@ def _is_backend_available(backend: str) -> bool:
         return check_firecrawl_api_key()
     if backend == "tavily":
         return _has_env("TAVILY_API_KEY")
+    if backend in ("duckduckgo", "ddgs", "builtin"):
+        return _is_ddgs_available()
     return False
 
 # ─── Firecrawl Client ────────────────────────────────────────────────────────
@@ -183,23 +196,25 @@ def _firecrawl_backend_help_suffix() -> str:
 
 def _web_requires_env() -> list[str]:
     """Return tool metadata env vars for the currently enabled web backends."""
-    requires = [
-        "EXA_API_KEY",
-        "PARALLEL_API_KEY",
-        "TAVILY_API_KEY",
-        "FIRECRAWL_API_KEY",
-        "FIRECRAWL_API_URL",
-    ]
-    if managed_nous_tools_enabled():
-        requires.extend(
-            [
-                "FIRECRAWL_GATEWAY_URL",
-                "TOOL_GATEWAY_DOMAIN",
-                "TOOL_GATEWAY_SCHEME",
-                "TOOL_GATEWAY_USER_TOKEN",
-            ]
-        )
-    return requires
+    if any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily")):
+        requires = [
+            "EXA_API_KEY",
+            "PARALLEL_API_KEY",
+            "TAVILY_API_KEY",
+            "FIRECRAWL_API_KEY",
+            "FIRECRAWL_API_URL",
+        ]
+        if managed_nous_tools_enabled():
+            requires.extend(
+                [
+                    "FIRECRAWL_GATEWAY_URL",
+                    "TOOL_GATEWAY_DOMAIN",
+                    "TOOL_GATEWAY_SCHEME",
+                    "TOOL_GATEWAY_USER_TOKEN",
+                ]
+            )
+        return requires
+    return []
 
 
 def _get_firecrawl_client():
@@ -1032,6 +1047,133 @@ async def _parallel_extract(urls: List[str]) -> List[Dict[str, Any]]:
     return results
 
 
+def _ddgs_search(query: str, limit: int = 5) -> dict:
+    from tools.interrupt import is_interrupted
+    if is_interrupted():
+        return {"error": "Interrupted", "success": False}
+
+    logger.info("DuckDuckGo search: '%s' (limit=%d)", query, limit)
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+
+        web_results = []
+        with DDGS() as ddgs:
+            for i, r in enumerate(ddgs.text(query, max_results=min(limit, 20))):
+                web_results.append({
+                    "url": r.get("href") or "",
+                    "title": r.get("title") or "",
+                    "description": r.get("body") or "",
+                    "position": i + 1,
+                })
+        return {"success": True, "data": {"web": web_results}}
+    except Exception as e:
+        logger.warning("DuckDuckGo search error: %s", e)
+        return {"success": False, "error": f"DuckDuckGo search error: {e}", "data": {"web": []}}
+
+
+def _httpx_extract_sync(url: str) -> Dict[str, Any]:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    if "github.com" in url:
+        parts = url.replace("https://", "").replace("http://", "").split("/")
+        if len(parts) >= 5 and parts[3] == "blob":
+            raw_url = f"https://raw.githubusercontent.com/{parts[1]}/{parts[2]}/{'/'.join(parts[4:])}"
+            try:
+                r_raw = httpx.get(raw_url, headers=headers, timeout=15.0)
+                if r_raw.status_code == 200:
+                    return {
+                        "url": url,
+                        "title": f"GitHub: {parts[1]}/{parts[2]} ({'/'.join(parts[4:])})",
+                        "content": r_raw.text[:30000],
+                        "raw_content": r_raw.text[:30000],
+                        "metadata": {"sourceURL": url, "title": f"GitHub: {parts[1]}/{parts[2]}"}
+                    }
+            except Exception:
+                pass
+        elif len(parts) >= 3:
+            for branch in ("main", "master", "HEAD"):
+                readme_url = f"https://raw.githubusercontent.com/{parts[1]}/{parts[2]}/{branch}/README.md"
+                try:
+                    r_rm = httpx.get(readme_url, headers=headers, timeout=10.0)
+                    if r_rm.status_code == 200:
+                        return {
+                            "url": url,
+                            "title": f"GitHub Repository: {parts[1]}/{parts[2]} (README)",
+                            "content": r_rm.text[:30000],
+                            "raw_content": r_rm.text[:30000],
+                            "metadata": {"sourceURL": url, "title": f"GitHub: {parts[1]}/{parts[2]}"}
+                        }
+                except Exception:
+                    pass
+
+    try:
+        import bs4
+    except ImportError:
+        bs4 = None
+
+    resp = httpx.get(url, headers=headers, follow_redirects=True, timeout=20.0)
+    resp.raise_for_status()
+    html_text = resp.text
+
+    title = url
+    markdown_content = html_text
+    if bs4:
+        soup = bs4.BeautifulSoup(html_text, "html.parser")
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+        for element in soup(["script", "style", "noscript", "svg"]):
+            element.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        markdown_content = "\n\n".join(lines)
+
+    return {
+        "url": url,
+        "title": title,
+        "content": markdown_content[:30000],
+        "raw_content": markdown_content[:30000],
+        "metadata": {"sourceURL": str(resp.url), "title": title}
+    }
+
+
+async def _httpx_extract_batch(urls: List[str]) -> List[Dict[str, Any]]:
+    from tools.interrupt import is_interrupted
+    results = []
+    for u in urls:
+        if is_interrupted():
+            results.append({"url": u, "error": "Interrupted", "title": ""})
+            continue
+
+        blocked = check_website_access(u)
+        if blocked:
+            results.append({
+                "url": u, "title": "", "content": "",
+                "error": blocked["message"],
+                "blocked_by_policy": {"host": blocked["host"], "rule": blocked["rule"], "source": blocked["source"]},
+            })
+            continue
+
+        try:
+            item = await asyncio.to_thread(_httpx_extract_sync, u)
+            results.append(item)
+        except Exception as e:
+            logger.debug("HTTP extraction failed for %s: %s", u, e)
+            results.append({
+                "url": u,
+                "title": "",
+                "content": "",
+                "raw_content": "",
+                "error": str(e),
+                "metadata": {"sourceURL": u}
+            })
+    return results
+
+
 def web_search_tool(query: str, limit: int = 5) -> str:
     """
     Search the web for information using available search API backend.
@@ -1111,6 +1253,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
                 "include_images": False,
             })
             response_data = _normalize_tavily_search_results(raw)
+            debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
+            result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+
+        if backend in ("duckduckgo", "ddgs", "builtin") or not check_firecrawl_api_key():
+            response_data = _ddgs_search(query, limit)
             debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
             result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
             debug_call_data["final_response_size"] = len(result_json)
@@ -1252,6 +1403,8 @@ async def web_extract_tool(
                     "include_images": False,
                 })
                 results = _normalize_tavily_documents(raw, fallback_url=safe_urls[0] if safe_urls else "")
+            elif backend in ("duckduckgo", "ddgs", "builtin") or not check_firecrawl_api_key():
+                results = await _httpx_extract_batch(safe_urls)
             else:
                 # ── Firecrawl extraction ──
                 # Determine requested formats for Firecrawl v2
@@ -1924,7 +2077,9 @@ def check_web_api_key() -> bool:
     configured = _load_web_config().get("backend", "").lower().strip()
     if configured in ("exa", "parallel", "firecrawl", "tavily"):
         return _is_backend_available(configured)
-    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily"))
+    if configured in ("duckduckgo", "ddgs", "builtin"):
+        return _is_ddgs_available()
+    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily")) or _is_ddgs_available()
 
 
 def check_auxiliary_model() -> bool:

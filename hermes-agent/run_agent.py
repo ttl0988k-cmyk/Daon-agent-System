@@ -2685,12 +2685,16 @@ class AIAgent:
 
         has_future_ack = bool(
             re.search(
-                r"(\b(i['’]ll|i will|let me|i can do that|i can help with that)\b)|"
-                r"(확인(해|하|해\s*볼|해\s*보겠습니다|하겠습니다|중|할게요|해볼게요)|"
-                r"살펴(볼게요|보겠습니다|보죠)|검토(해볼게요|하겠습니다|해보겠습니다)|"
-                r"분석(해볼게요|하겠습니다|해보겠습니다)|조회(해볼게요|하겠습니다|해보겠습니다)|"
-                r"조사(해볼게요|하겠습니다|해보겠습니다)|체크(해볼게요|하겠습니다|해보겠습니다)|"
-                r"진행(해볼게요|하겠습니다|해보겠습니다)|보겠습니다)",
+                r"(\b(i['\u2019]ll|i will|let me|i can do that|i can help with that)\b)|"
+                # Korean intent patterns — must appear at an word boundary (followed by
+                # whitespace / sentence-final punctuation) to avoid matching inside
+                # imperative / advisory sentences like "확인해야 합니다" or "확인하고 실행".
+                # Standalone intent acknowledgements: "확인해 보겠습니다" / "확인하겠습니다" etc.
+                r"(확인해\s+(?:볼게요|보겠습니다|해\s*볼게요|해\s*보겠습니다)|확인하[겠습니다중]|"
+                r"살pa\s+(?:볼게요|보겠습니다|보죠)|검토\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|"
+                r"분석\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|조회\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|"
+                r"조사\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|체크\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|"
+                r"진행\s+(?:해\s*볼게요|하겠습니다|해보겠습니다)|보겠습니다)",
                 assistant_text,
                 re.IGNORECASE,
             )

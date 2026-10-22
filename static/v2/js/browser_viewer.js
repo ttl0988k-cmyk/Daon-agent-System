@@ -617,6 +617,25 @@ export class BrowserViewer {
           if (msg.url) {
             this.updateUrl(msg.url);
           }
+        } else if (msg.t === 'closed') {
+          // 서버가 브라우저 인스턴스를 닫았다 → 뷰어 카드도 함께 정리하고 재연결 금지.
+          // 이 처리가 없으면 카드가 '연결됨' 상태로 남아 계속 재연결을 시도한다.
+          console.log('[BrowserViewer] 📴 서버 브라우저 종료 — 뷰어 카드 정리 (reason=' + (msg.reason || 'closed') + ')');
+          this._suspended = true;
+          clearTimeout(this._reconnectTimer);
+          this._reconnectTimer = null;
+          clearTimeout(this._idleTimer);
+          this._idleTimer = null;
+          if (this.ws) { try { this.ws.close(); } catch (_) {} this.ws = null; }
+          if (this.activeCard) {
+            try { this.activeCard.remove(); } catch (_) {}
+            this.activeCard = null;
+          }
+          this.isOpen = false;
+          this.isTakeover = false;
+          this.isExpanded = false;
+          this.turnCompleted = false;
+          try { this._syncFab(); } catch (_) {}
         }
       } catch (err) {
         console.warn('[BrowserViewer] 프레임 파싱 오류:', err);

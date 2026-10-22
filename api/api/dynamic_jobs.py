@@ -581,6 +581,21 @@ def start_harness_job(body: dict) -> str:
     allowed_providers = body.get('allowedProviders')
     forced_skills = list(body.get('skills') or [])  # 사용자가 명시적으로 지정한 스킬 목록
 
+    # ── 하네스 모델 범위 기본 제한 (대표님 지시 2026-10-17) ──
+    # allowedProviders 미지정 시 '앱에 설정된 모델'(사용자 명시 등록 provider)로
+    # 자동 제한한다. 없으면 env 키만으로 올라온 preset provider(opencode-zen 등)의
+    # 미등록 모델(opus-5-5)이 셀렉터·플래너 후보에 들어 잔액 0 호출 → 전멸한다.
+    # 명시 전달된 allowedProviders는 그대로 존중한다.
+    if allowed_providers is None:
+        try:
+            from api.managers.model_manager import model_manager as _mm
+            _auto = _mm.get_harness_allowed_providers()
+            if _auto:
+                allowed_providers = _auto
+                print(f"[dynamic] auto allowedProviders (user-registered only): {allowed_providers}", flush=True)
+        except Exception as _ap_err:
+            print(f"[dynamic] WARNING: auto allowedProviders failed: {_ap_err}", flush=True)
+
     # ── 세션에서 ON 된 플러그인의 스킬을 forced_skills 에 자동 병합 ──
     # active_plugin_skills 가 반환하는 qualified 스킬 이름("plugin:skill")을
     # CEO planner 의 MANDATORY DIRECTIVE 로 주입한다. 실제 컨텐츠는

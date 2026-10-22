@@ -262,27 +262,63 @@ def get_warning_block(file_path: str) -> str:
         return ''
 
 
+def _normalize_path_key(file_path: str) -> str:
+    """패치 경로 표기 정규화 키.
+
+    같은 파일이 'C:/daon/라온스튜디오/serve.py' 와 '라온스튜디오/serve.py'
+    처럼 여러 표기로 등록되어 287건 중 183건이 중복이었다(2026-10-19 실측).
+    인덱스에서는 정규화 키로 묶어 고유 파일만 노출한다.
+    """
+    try:
+        p = str(file_path or '').replace('/', '\\')
+        low = p.lower()
+        for pre in (
+            'c:\\daon\\daon agent system\\',
+            'c:\\daon\\',
+            'c:\\users\\ttl09\\appdata\\local\\programs\\daon-agent-system\\resources\\',
+            'c:\\users\\ttl09\\',
+        ):
+            if low.startswith(pre):
+                p = p[len(pre):]
+                break
+        return p.lower()
+    except Exception:
+        return str(file_path or '').lower()
+
+
 def get_system_prompt_block() -> str:
-    """시스템 프롬프트에 주입할 패치 레지스트리 요약."""
+    """시스템 프롬프트에 주입할 패치 레지스트리 인덱스 (경로 + 건수만).
+
+    2026-10-19 토큰 최적화: 종전에는 활성 패치 287건의 description/reason/
+    reverts_if를 전부 이어붙여 매 턴 50,167자(~31,354 토큰)를 시스템 프롬프트에
+    실어 보냈다. 세션 누적 input 2,950만 토큰의 최대 단일 원인이었다.
+    상세 내용은 (1) 파일 수정 시 get_warning_block()이 도구 결과에 주입하거나
+    (2) query_patches 도구로 온디맨드 조회하면 되므로 정보 손실은 없다.
+    """
     try:
         patches = query_all_patches(active_only=True)
         if not patches:
             return ''
-        # 파일별로 그룹화
-        by_file: dict[str, list] = {}
+        # 경로 정규화 후 그룹화 — 절대/상대 경로 중복 표기를 하나로 통합
+        counts: dict[str, int] = {}
+        display: dict[str, str] = {}
         for p in patches:
-            by_file.setdefault(p['file_path'], []).append(p)
+            fp = p.get('file_path') or ''
+            if not fp:
+                continue
+            key = _normalize_path_key(fp)
+            counts[key] = counts.get(key, 0) + 1
+            cur = display.get(key)
+            if cur is None or len(fp) < len(cur):
+                display[key] = fp
+        if not counts:
+            return ''
         lines = [
-            "[패치 레지스트리 — load-bearing 코드 대장]",
-            "아래 파일들에는 의도적으로 추가된 코드가 있습니다. 수정/리팩토링 시 보존하세요.",
+            "[패치 레지스트리 — 보존 대상 파일 인덱스]",
+            "아래 파일에는 load-bearing 패치가 있습니다. 수정 전 query_patches(file_path)로 상세를 확인하세요.",
         ]
-        for fp, plist in by_file.items():
-            lines.append(f"\n📄 {fp}:")
-            for p in plist:
-                desc = p['description']
-                if p.get('reverts_if'):
-                    desc += f" → 삭제 시: {p['reverts_if']}"
-                lines.append(f"  • {desc}")
+        for key in sorted(counts):
+            lines.append(f"  • {display[key]} ({counts[key]}건)")
         return '\n'.join(lines)
     except Exception:
         return ''

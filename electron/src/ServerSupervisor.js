@@ -381,7 +381,13 @@ class ServerSupervisor {
 
   startPythonProcess(port) {
     if (this.isQuitting) return null;
-    const env = { ...process.env, BROWSER_CDP_URL: 'ws://127.0.0.1:9222' };
+    // [2026-10-22] BROWSER_CDP_URL(ws://127.0.0.1:9222) 주입 제거.
+    //   이유: 9222 포트를 더 이상 열지 않는다(main.js 참조). 이 env 가 설정되면
+    //   browser_routes 가 'Electron 모드'로 판단해 CDP 실패 시 headless 폴백까지
+    //   거부하므로, 제거해야 8088 스켈레톤(browser_service) 위임 경로가 정상 동작한다.
+    //   상속된 값이 남아있을 수 있어 명시적으로 삭제한다.
+    const env = { ...process.env };
+    delete env.BROWSER_CDP_URL;
     const exePath = this.findServerExe();
 
     try {

@@ -420,6 +420,14 @@ def main():
         except Exception as e:
             print(f"[Whisper] Warmup trigger failed: {e}", flush=True)
 
+        # Pre-warm Supertonic TTS in background so first speak request has 0s load delay
+        try:
+            from api.routes.speak_routes import warmup_supertonic_async
+            warmup_supertonic_async()
+            print("[TTS] Background Supertonic pre-warm started.", flush=True)
+        except Exception as e:
+            print(f"[TTS] Warmup trigger failed: {e}", flush=True)
+
         # Sync DAON_PLUGIN_SKILL_DIRS so Hermes skill tooling sees globally enabled
         # plugin skills right after server restart (idempotent; no-op when unchanged).
         try:

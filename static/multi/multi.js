@@ -194,8 +194,11 @@ class MultiApp {
       activeSess = this.sessions.find(s => s.session_id === activeSid);
     }
 
-    if (activeSess) {
+    if (activeSess && (String(activeSess.profile || '').toLowerCase().includes('raon') || String(activeSess.profile || '').includes('라온'))) {
       // Pane 1: Inherit Classic Active Session!
+      // 🚨 리더 pane 은 라온 세션만 상속한다(2026-10-21). 예전에는 프라다/빌
+      // 세션이 활성이면 작업장 첫 창이 그 에이전트로 복원돼 "작업장 열었더니
+      // 프라다가 라온 자리에 나오는" 세션 엉킴이 발생했다.
       const p1Profile = activeSess.profile || this.findProfileByName(['raon', '라온']) || 'raon';
       await this.createPane(p1Profile, activeSess.session_id, activeSess.model);
 
@@ -383,9 +386,10 @@ class MultiApp {
     }));
     try {
       localStorage.setItem('daon_multi_panes', JSON.stringify(state));
-      if (state.length > 0 && state[0].sessionId) {
-        localStorage.setItem('daon_active_session_id', state[0].sessionId);
-      }
+      /* 세션 엉킴 방지(2026-10-21): pane 상태 저장이 클래식 활성세션
+         (daon_active_session_id)을 덮어쓰지 않는다. 예전에는 pane[0] 세션이
+         전역 활성세션이 되어, 작업장을 다시 열면 첫 창이 엉뚱한 에이전트로
+         복원되는 원인이었다. */
     } catch (_) {}
   }
 
@@ -394,6 +398,13 @@ class MultiApp {
       const res = await api.getActiveStreams();
       const activeList = res.active_streams || [];
       for (const act of activeList) {
+        // 🚨 클래식(webui) 세션의 스트림은 작업장 pane 이 절대 붙지 않는다
+        // (2026-10-21): 서버 /api/chat/active 가 surface 를 함께 내려준다.
+        // 이걸 걸러내지 않으면, 대표님이 클래식 채팅에서 라온에게 말할 때
+        // 그 스트림이 작업장 raon pane 에 attach 되어 pane 세션이 null 로
+        // 풀리고 status='working' 으로 고착되는 엉킴이 발생한다.
+        if (act.surface === 'webui') continue;
+
         // Skip if this stream has been cancelled in any pane
         const isCancelled = Array.from(this.panes.values()).some(p => p._cancelledStreams && p._cancelledStreams.has(act.stream_id));
         if (isCancelled) continue;
