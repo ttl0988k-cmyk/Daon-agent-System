@@ -553,10 +553,17 @@ def _generate_voice_summary(resolved_model: str, resolved_provider: str,
         return f"작업이 완료되었습니다. {len(job_tools)}개의 작업을 처리했습니다."
 
     try:
+        # ── x-opencode-session 헤더 주입 (없으면 opencode가 400 MissingSessionID 반환) ──
+        _speak_headers = {}
+        _bl = (resolved_base_url or "").lower()
+        if "opencode.ai" in _bl or resolved_provider in ("opencode-go", "opencode-zen"):
+            _speak_headers["x-opencode-session"] = "daon-voice-summary"
+            _speak_headers["User-Agent"] = "daon-agent/1.0"
         client = OpenAI(
             api_key=resolved_api_key,
             base_url=resolved_base_url,
             timeout=15.0,
+            **({"default_headers": _speak_headers} if _speak_headers else {}),
         )
         response = client.chat.completions.create(
             model=resolved_model,
