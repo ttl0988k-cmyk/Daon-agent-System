@@ -294,7 +294,6 @@ function createSelfUpdate(deps = {}) {
         ['dist_new/static', 'static'],
         ['dist_new/hermes-agent', 'hermes-agent'],
         ['dist_new/index.html', 'index.html'],
-        ['dist_new/config.yaml', 'config.yaml'],
         ['dist_new/skills', 'skills'],
         ['dist_new/plugins', 'plugins'],
         ['dist_new/daon_runtime', 'daon_runtime'],

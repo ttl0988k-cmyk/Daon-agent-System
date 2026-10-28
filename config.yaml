@@ -139,6 +139,12 @@ memory:
 fallback_models: []
 
 # --- Provider display names (cosmetic only — real model lists in data/custom_providers.json) ---
+# --- Auxiliary tasks (보조 LLM 방어 설정) ---
+auxiliary:
+  steward:
+    provider: minimax
+    model: MiniMax-M3
+
 provider_display:
   openai: "OpenAI"
   openai-codex: "OpenAI Codex"
