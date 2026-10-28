@@ -107,10 +107,11 @@ toolsets:
 
 # --- Context Compression (컨텍스트 자동 압축) ---
 compression:
-  threshold: 0.75                 # 컨텍스트 75% 도달 시 압축 발동 (기존 0.50에서 상향)
+  threshold: 0.065
   enabled: true
   target_ratio: 0.20
-  protect_last_n: 20              # 최근 메시지 20개 보호
+  protect_last_n: 8
+  steward_enabled: false
 
 file_read_max_chars: 25000        # 파일 단일 읽기 최대 글자 수 (도구 출력 폭탄 방어)
 
@@ -130,7 +131,7 @@ self_evolution:
 #   'on'  : 항상 ON   /   'off' : 항상 OFF
 # env DAON_MEMORY_AUTO_EXTRACT 로도 오버라이드 가능(우선순위: env > 이 값).
 memory:
-  auto_extract: "auto"
+  auto_extract: "off"
 
 # --- Fallback models (when model_manager is unavailable) ---
 # OpenRouter 차단: 기존 fallback이 모두 OpenRouter 경유라 대시보드 사용량
