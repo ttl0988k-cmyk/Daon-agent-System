@@ -327,6 +327,28 @@ def _extract_clean_user_message(content: str) -> str:
         clean = "\n".join(filtered).strip()
         if clean:
             return clean
+    if "[라온 총괄기획자의 작업 지시]" in content:
+        clean = content.replace("[라온 총괄기획자의 작업 지시]", "").strip()
+        if "[협업 및 보고 규칙]:" in clean:
+            clean = clean.split("[협업 및 보고 규칙]:", 1)[0].strip()
+        if "[회의실 브리핑]" in clean:
+            clean = clean.replace("[회의실 브리핑]", "").strip()
+            if "안건:" in clean:
+                clean = "안건: " + clean.split("안건:", 1)[1].strip()
+        if clean:
+            return clean
+    if "[회의실 브리핑]" in content:
+        clean = content.replace("[회의실 브리핑]", "").strip()
+        if "안건:" in clean:
+            return "안건: " + clean.split("안건:", 1)[1].strip()
+        if clean:
+            return clean
+    if "[동료 에이전트 작업 완료 보고 도착]" in content:
+        clean = content.replace("[동료 에이전트 작업 완료 보고 도착]", "").strip()
+        if "[오케스트레이터 라온 지침]:" in clean:
+            clean = clean.split("[오케스트레이터 라온 지침]:", 1)[0].strip()
+        if clean:
+            return clean
     return content
 
 
@@ -365,6 +387,13 @@ def _sanitize_messages_for_api(messages):
                     else:
                         new_c.append(part)
                 sanitized['content'] = new_c
+        # 과거 대화 히스토리의 거대한 도구(터미널, 파일 읽기 등) 출력 압축 (토큰 폭증 및 어텐션 마비 방지)
+        elif sanitized.get('role') == 'tool':
+            c = sanitized.get('content')
+            if isinstance(c, str) and len(c) > 1500:
+                head = c[:600]
+                tail = c[-400:]
+                sanitized['content'] = f"{head}\n\n... [과거 턴 도구 실행 결과 중략 (총 {len(c):,}자 중 1,000자 요약 보존)] ...\n\n{tail}"
         if sanitized.get('role'):
             clean.append(sanitized)
     return clean
@@ -1617,19 +1646,23 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   
                   # If pure conversation with high confidence, prune heavy tools so LLM attention is sharp
                   if laya_intent == 'conversation' and laya_conf >= 0.85 and not is_browser_session:
-                      _mcp_exact_tools = {'call_mcp_tool', 'list_mcp_tools'}
+                      # [MCP-ROUTER-PRESERVE 2026-10-22] 개별 mcp_ 스키마는 제거하되
+                      # 라우터(call_mcp_tool/list_mcp_tools/mcp_manage)는 반드시 보존한다.
+                      # lazy 모드에서 개별 스키마가 사라진 뒤로는 라우터가 MCP 접근의
+                      # 유일한 통로이므로, 여기서 함께 지우면 fail-open이 아니라 완전 차단이 된다.
+                      _mcp_keep_router = {'call_mcp_tool', 'list_mcp_tools', 'mcp_manage'}
                       _heavy_prefixes = ('mcp_serena_', 'mcp_stitch_', 'mcp_figma_', 'mcp_daon-design_', 'mcp_')
                       if hasattr(agent, 'tools') and isinstance(agent.tools, list):
                           agent.tools = [
                               t for t in agent.tools
-                              if t.get('function', {}).get('name', '') not in _mcp_exact_tools
-                              and not any(t.get('function', {}).get('name', '').startswith(p) for p in _heavy_prefixes)
+                              if t.get('function', {}).get('name', '') in _mcp_keep_router
+                              or not any(t.get('function', {}).get('name', '').startswith(p) for p in _heavy_prefixes)
                           ]
                       if hasattr(agent, 'valid_tool_names') and isinstance(agent.valid_tool_names, set):
                           agent.valid_tool_names = {
                               n for n in agent.valid_tool_names
-                              if n not in _mcp_exact_tools
-                              and not any(n.startswith(p) for p in _heavy_prefixes)
+                              if n in _mcp_keep_router
+                              or not any(n.startswith(p) for p in _heavy_prefixes)
                           }
                       _logger.info("[Laya-Inline-Consumer] Isolated all MCP tools for pure conversation turn (conf=%.2f)", laya_conf)
                   

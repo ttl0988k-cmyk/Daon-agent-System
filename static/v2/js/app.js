@@ -474,7 +474,18 @@ async function loadSessions() {
       DaonAPI.getSessions().catch(() => []),
       DaonAPI.getActiveStreams().catch(() => ({}))
     ]);
-    if (!sessions || sessions.length === 0) {
+    // 👑 대표님 지침: 메인 대화창(RECENT THREADS)에는 오직 대표님과 라온의 1:1 대화 세션만 표시
+    // 회의실(boardroom), 작업장(workshop/multi), 동료 에이전트 작업 세션은 완전 격리
+    const raonSessions = (sessions || []).filter(s => {
+      if (s.source === 'boardroom' || s.source === 'workshop' || s.source === 'delegate' || s.source === 'subagent' || s.surface === 'multi' || s.surface === 'boardroom') return false;
+      const prof = (s.profile || '').toLowerCase();
+      if (prof && prof !== 'raon' && prof !== '라온' && prof !== 'default') return false;
+      const tit = String(s.title || '');
+      if (tit.startsWith('[라온 총괄기획자의 작업 지시]') || tit.startsWith('[회의실 브리핑]')) return false;
+      return true;
+    });
+
+    if (!raonSessions || raonSessions.length === 0) {
       container.innerHTML = '<div class="px-space-sm text-[12px] text-on-surface-variant/60">진행된 세션이 없습니다.</div>';
       state.selectedSessions.clear();
       updateSelectedSessionsUI();
@@ -488,7 +499,7 @@ async function loadSessions() {
     state.runningSessionIds = runningSessionIds;
 
     // 1. 현재 작업 중인 세션을 목록 맨 위(최상단)로 이동
-    let sortedSessions = [...sessions];
+    let sortedSessions = [...raonSessions];
     if (state.currentSessionId) {
       const activeIdx = sortedSessions.findIndex(s => s.session_id === state.currentSessionId);
       if (activeIdx > 0) {
@@ -720,19 +731,7 @@ async function switchSession(sessionId) {
     if (!sess) return;
     state.currentSessionModel = sess.model;
     const modelId = typeof sess.model === 'string' ? sess.model : (sess.model?.id || 'deepseek-v4.1-flash');
-    const currentModelLabel = document.getElementById('current-model-label');
-    if (currentModelLabel && sess.model) {
-      currentModelLabel.textContent = modelId;
-    }
-    if (cachedProvidersData) {
-      for (const k of Object.keys(cachedProvidersData)) {
-        const found = cachedProvidersData[k]?.models?.find(m => (m.id === modelId || m.label === modelId));
-        if (found) {
-          setReasoningEffort(found.reasoning_effort || '');
-          break;
-        }
-      }
-    }
+    syncModelAndProviderDisplay(modelId);
 
     // Sync agent persona from session
     if (sess.profile) {
@@ -789,21 +788,60 @@ function renderSessionMessages(messages, isAutoSync = false) {
     return;
   }
 
+  // ── 메시지 턴 그룹화: 단일 턴 내 다중 어시스턴트 메시지(도구 호출 전 중간 멘트 등) 병합 ──
+  // 도구 실행 루프 동안 출력된 중간 멘트들은 thought/reasoning 과정으로 모으고,
+  // 최종 답변만 메인 말풍선으로 렌더링하여 작업 완료 후 말풍선이 여러 개로 쪼개지는 파편화 방지
+  let pendingAssistants = [];
+
+  const flushAssistants = () => {
+    if (pendingAssistants.length === 0) return;
+    if (pendingAssistants.length === 1) {
+      const msg = pendingAssistants[0];
+      const reasoning = msg.reasoning_content || msg.thinking || extractThinkBlocks(msg.content);
+      const cleanContent = stripThinkBlocks(msg.content);
+      const actualModel = msg.actual_model || msg.model || state.currentSessionModel || '';
+      const requestedModel = msg.requested_model || '';
+      appendAssistantMessage(cleanContent, msg.timestamp, false, reasoning, false, actualModel, requestedModel);
+    } else {
+      let targetIdx = pendingAssistants.length - 1;
+      while (targetIdx > 0 && !stripThinkBlocks(pendingAssistants[targetIdx].content || '').trim()) {
+        targetIdx--;
+      }
+      const finalMsg = pendingAssistants[targetIdx];
+      const earlierMsgs = pendingAssistants.filter((_, idx) => idx !== targetIdx);
+
+      const reasoningParts = [];
+      earlierMsgs.forEach(m => {
+        const r = m.reasoning_content || m.thinking || extractThinkBlocks(m.content);
+        const c = stripThinkBlocks(m.content || '').trim();
+        if (r) reasoningParts.push(r);
+        if (c) reasoningParts.push(`■ 진행 과정: ${c}`);
+      });
+      const finalR = finalMsg.reasoning_content || finalMsg.thinking || extractThinkBlocks(finalMsg.content);
+      if (finalR) reasoningParts.push(finalR);
+
+      const combinedReasoning = reasoningParts.join('\n\n');
+      const cleanContent = stripThinkBlocks(finalMsg.content || '');
+      const actualModel = finalMsg.actual_model || finalMsg.model || state.currentSessionModel || '';
+      const requestedModel = finalMsg.requested_model || '';
+      appendAssistantMessage(cleanContent, finalMsg.timestamp, false, combinedReasoning, false, actualModel, requestedModel);
+    }
+    pendingAssistants = [];
+  };
+
   messages.forEach(msg => {
     if (!msg || !msg.content) return;
     // 내부 제어/시스템 안내 메시지는 사용자 말풍선으로 노출되지 않도록 필터링
     if (isInternalSystemMessage(msg.content)) return;
 
     if (msg.role === 'user') {
+      flushAssistants();
       appendUserMessage(msg.content, msg.timestamp, false);
     } else if (msg.role === 'assistant') {
-      const reasoning = msg.reasoning_content || msg.thinking || extractThinkBlocks(msg.content);
-      const cleanContent = stripThinkBlocks(msg.content);
-      const actualModel = msg.actual_model || msg.model || state.currentSessionModel || '';
-      const requestedModel = msg.requested_model || '';
-      appendAssistantMessage(cleanContent, msg.timestamp, false, reasoning, false, actualModel, requestedModel);
+      pendingAssistants.push(msg);
     }
   });
+  flushAssistants();
 
   // 사용자가 위로 스크롤해서 이전 대화를 읽고 있는 중이라면 절대로 화면을 아래로 내리지 않음!
   if (!state.userScrolledUp && !isAutoSync) {
@@ -4858,6 +4896,31 @@ function initAttachments() {
 
 let cachedProvidersData = null;
 
+function syncModelAndProviderDisplay(modelId) {
+  if (!modelId) return;
+  const currentModelLabel = document.getElementById('current-model-label');
+  const currentProviderLabel = document.getElementById('current-provider-label');
+  if (currentModelLabel) currentModelLabel.textContent = modelId;
+
+  if (cachedProvidersData) {
+    const target = String(modelId).toLowerCase();
+    for (const [pKey, p] of Object.entries(cachedProvidersData)) {
+      const match = (p?.models || []).find(m => {
+        const mid = (typeof m === 'string' ? m : (m?.id || m?.label || '')).toLowerCase();
+        return mid === target;
+      });
+      if (match) {
+        if (currentProviderLabel) {
+          currentProviderLabel.textContent = `PROVIDER: ${p.label || pKey}`;
+        }
+        const meffort = (typeof match === 'object' && match.reasoning_effort) || '';
+        if (typeof setReasoningEffort === 'function') setReasoningEffort(meffort);
+        return;
+      }
+    }
+  }
+}
+
 async function initProviderDrawer() {
   const toggleBtn = document.getElementById('provider-drawer-toggle');
   const content = document.getElementById('provider-drawer-content');
@@ -5007,17 +5070,9 @@ async function initProviderDrawer() {
       if (selectedProviderKey) renderProviderModels(selectedProviderKey);
     };
 
-    // 초기 활성 모델의 reasoning_effort 반영
+    // 초기 활성 모델 및 프로바이더 라벨 정확히 반영
     const initialModelId = state.currentSessionModel || 'deepseek-v4.1-flash';
-    let initialEffort = '';
-    for (const key of providerKeys) {
-      const match = cachedProvidersData[key]?.models?.find(mod => (mod.id === initialModelId || mod.label === initialModelId));
-      if (match) {
-        initialEffort = match.reasoning_effort || '';
-        break;
-      }
-    }
-    setReasoningEffort(initialEffort);
+    syncModelAndProviderDisplay(initialModelId);
 
   } catch (err) {
     console.warn('Failed to initialize provider drawer:', err);

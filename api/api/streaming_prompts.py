@@ -201,13 +201,17 @@ def compose_system_message(
             ) if browser_context else (
                 "[WEB & BROWSER INTERACTION POLICY — CRITICAL]\n"
                 "1. [GitHub & Source Code Repositories — 절대 브라우저 사용 금지]:\n"
-                "   - GitHub 저장소(github.com/...), 커밋, 파일 또는 소스코드 링크를 받았을 때 browser_navigate 등 브라우저 창을 절대로 먼저 열지 마세요!\n"
+                "   - GitHub 저장소(github.com/...), 커밋, 파일 또는 소스코드 링크를 받았을 때 브라우저 창을 절대로 먼저 열지 마세요!\n"
                 "   - 코드나 저장소를 분석/확인할 때는 반드시 터미널(git clone, curl raw.githubusercontent.com, gh CLI)이나 'web_extract' 도구를 사용하세요.\n"
                 "2. [일반 검색 및 문서 조회 — 경량 도구 최우선]:\n"
-                "   - 웹 검색이나 정보 조회가 필요할 때는 화면을 가리는 브라우저(browser_navigate) 대신 빠른 'web_search'와 'web_extract' 도구를 항상 최우선으로 사용하세요.\n"
-                "3. [내장 브라우저 (browser_*) 사용 제한]:\n"
-                "   - 브라우저 도구(browser_navigate, browser_click 등)는 오직 (a) 사용자가 명시적으로 '브라우저로 열어봐/화면 보여줘'라고 요구했거나, (b) 로그인, 폼 작성, 복잡한 동적 SPA 조작 등 실제 브라우저 인터랙션이 불가피한 경우, (c) 로컬 개발 서버(예: localhost:3000) 테스트 시에만 사용하세요.\n"
-                "   - 브라우저 인터랙션 시 Workflow: call browser_navigate first; the returned snapshot lists interactive elements as @eN refs — use those refs with browser_click/browser_type.\n\n"
+                "   - 단순 웹 검색이나 문서/정보 조회가 필요할 때는 화면을 가리는 브라우저 대신 빠른 'web_search'와 'web_extract' 도구를 항상 최우선으로 사용하세요.\n"
+                "3. [브라우저 사용 기본 원칙 — 에고라이트 브라우저(ego-browser) 최우선]:\n"
+                "   - 웹 브라우저 조작, 사이트 탐색, 폼 작성, 로그인 세션 활용, 웹앱 테스트/QA 등 모든 브라우징 작업은 기본적으로 '에고라이트 브라우저(ego-browser)' 스킬을 확인하고 사용하세요.\n"
+                "   - 터미널을 통해 `ego-browser skill` 가이드를 확인하거나 `ego-browser nodejs -e \"...\"`로 제어합니다.\n"
+                "4. [스켈레톤 브라우저 (browser_* 도구) — 스켈레톤 명시 요구 시에만 사용]:\n"
+                "   - 내장 스켈레톤 브라우저 도구(browser_navigate, browser_snapshot, browser_click 등 8088 백엔드 뷰어)는 절대로 기본으로 띄우지 마세요!\n"
+                "   - 오직 사용자가 명시적으로 \"스켈레톤으로 띄워\", \"스켈레톤 브라우저로 열어줘\", \"스켈레톤으로 실행해\"와 같이 '스켈레톤'을 콕 집어 요구했을 때만 사용하세요.\n"
+                "   - 사용자가 단순히 \"브라우저 열어봐\", \"웹사이트 확인해줘\", \"네이버 검색해줘\" 등 일반 브라우저를 요청할 때는 스켈레톤을 띄우지 말고 'ego-browser' 스킬을 사용하세요.\n\n"
             )
         ) +
         "[MEMORY POLICY]\n"
@@ -230,7 +234,7 @@ def compose_system_message(
     try:
         from api.profiles import get_profile_persona, get_active_profile_name
         _eff_persona_profile = profile_name or get_active_profile_name()
-        _persona_prompt = get_profile_persona(_eff_persona_profile)
+        _persona_prompt = get_profile_persona(_eff_persona_profile, include_soul=False)  # Hermes run_agent already loads SOUL.md
         if _persona_prompt:
             base_msg = f"{_persona_prompt}\n\n" + base_msg
     except Exception as _p_err:
@@ -372,16 +376,36 @@ def compose_system_message(
                 f"3. [실시간 화면 최우선 원칙]: 이전 대화 기록이나 과거 작업 요약(Active Task)에 어떤 내용이 있든 관계없이, [실시간 브라우저 환경 컨텍스트]와 사용자 요청 직전에 명시된 【현재 활성 탭】의 URL과 화면이 지금 사용자가 보고 있는 실제 최신 화면입니다. 사용자가 탭을 전환했거나 새 사이트로 이동한 경우 이전 작업을 즉시 중단하고 현재 활성 탭을 기준으로 응답하세요.\n"
             )
         else:
-            base_msg += (
-                f"\n\n[MCP INJECTION ACTIVE]\n"
-                f"You have been dynamically injected with {injected_mcp_count} MCP tools from the WebUI.\n"
-                f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
-                f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
-                f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
-                f"They are fully registered in your environment; just call them directly!\n"
-                f"IMPORTANT: For ANY browser/web-page work, use the dedicated browser tools "
-                f"(browser_navigate, browser_snapshot, browser_click, etc.) instead of mcp_playwright_* "
-                f"tools — the internal browser shares the app window and is always available.\n"
-            )
+            try:
+                import os as _os_mcp_prompt
+                _mcp_lazy_on = _os_mcp_prompt.getenv("DAON_LAZY_MCP", "1").strip().lower() not in (
+                    "0", "false", "no", "off")
+            except Exception:
+                _mcp_lazy_on = True
+            if _mcp_lazy_on:
+                base_msg += (
+                    f"\n\n[MCP ON-DEMAND ACTIVE]\n"
+                    f"{injected_mcp_count} MCP tools are registered behind an on-demand router.\n"
+                    f"- 개별 mcp_* 도구 스키마는 컨텍스트 절약을 위해 이번 요청에 전송되지 않습니다.\n"
+                    f"- MCP 도구가 필요하면 먼저 `list_mcp_tools`로 확인하고(서버를 이미 알면 바로 호출 가능),\n"
+                    f"  `call_mcp_tool(server_name='...', tool_name='...', arguments={{...}})` 로 호출하세요.\n"
+                    f"- 존재하지 않는 mcp_* 이름을 추측해 직접 호출하지 마세요. 반드시 라우터를 거쳐야 합니다.\n"
+                    f"- 내장 browser_* 도구(스켈레톤 브라우저)는 사용자가 '스켈레톤으로 띄워'라고 명시할 때만 사용합니다.\n"
+                    f"IMPORTANT: For general browser/web-page work, use the 'ego-browser' skill (Ego Lite Browser) by default. "
+                    f"The skeleton browser tools (browser_navigate, browser_snapshot, browser_click, etc.) must ONLY be used "
+                    f"when the user explicitly asks for '스켈레톤' (e.g. '스켈레톤으로 띄워'). Do NOT pop up the skeleton browser for ordinary browser requests.\n"
+                )
+            else:
+                base_msg += (
+                    f"\n\n[MCP INJECTION ACTIVE]\n"
+                    f"You have been dynamically injected with {injected_mcp_count} MCP tools from the WebUI.\n"
+                    f"These tools are prefixed with `mcp_` (e.g. `mcp_filesystem_...`, `mcp_github_...`).\n"
+                    f"CRITICAL: You MUST call these tools natively as standard function calls.\n"
+                    f"DO NOT try to execute them via HTTP API (e.g. /api/mcp/invoke) or Python scripts.\n"
+                    f"They are fully registered in your environment; just call them directly!\n"
+                    f"IMPORTANT: For general browser/web-page work, use the 'ego-browser' skill (Ego Lite Browser) by default. "
+                    f"The skeleton browser tools (browser_navigate, browser_snapshot, browser_click, etc.) must ONLY be used "
+                    f"when the user explicitly asks for '스켈레톤' (e.g. '스켈레톤으로 띄워'). Do NOT pop up the skeleton browser for ordinary browser requests.\n"
+                )
 
     return base_msg, injected_fact_ids

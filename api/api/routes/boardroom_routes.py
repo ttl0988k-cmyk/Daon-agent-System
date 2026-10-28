@@ -142,7 +142,7 @@ def _run_agent_slot(emit, slot, label, agent_key, prompt, model=None, sink=None,
         # _looks_like_intermediate_ack → Continue-now nudge → tool execution).
         res = execute_agent_task(
             agent_key, prompt, timeout=SLOT_TIMEOUT, force_new_session=True,
-            model=(model or None), no_tools=True,
+            model=(model or None), no_tools=True, source="boardroom",
         )
         ok = bool(res.get("ok"))
         text = (res.get("output") if ok else (res.get("error") or "작업 미완료")) or ""
@@ -307,7 +307,7 @@ def _moderate(agenda: str, round_no: int, replies: dict, emit=None) -> dict:
         from api.collaborator import execute_agent_task
         res = execute_agent_task(
             "raon", prompt, timeout=SUMMARY_TIMEOUT, force_new_session=True,
-            no_tools=True,   # 취합은 판단만 — 도구 호출로 지연/오염되지 않게
+            no_tools=True, source="boardroom",   # 취합은 판단만 — 도구 호출로 지연/오염되지 않게
         )
         ok = bool(res.get("ok"))
         raw = (res.get("output") if ok else "") or ""

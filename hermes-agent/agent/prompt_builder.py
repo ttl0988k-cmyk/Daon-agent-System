@@ -692,15 +692,26 @@ def build_skills_system_prompt(
                     else:
                         index_lines.append(f"    - {name}")
 
-        result = (
-            "## Skills\n"
-            "Scan below. If relevant, load with skill_view(name) and follow it. "
-            "Patch broken skills with skill_manage(action='patch').\n"
-            "\n"
-            "<available_skills>\n"
-            + "\n".join(index_lines) + "\n"
-            "</available_skills>"
-        )
+        # [ON-DEMAND-SKILLS 2026-10-29] Laya / Skill Ranker(8766) handles retrieval on-demand.
+        # Avoid dumping 380+ skill names (12.8KB / 4.2K tokens) every turn unless explicitly forced.
+        _dump_all = os.getenv("HERMES_DUMP_ALL_SKILLS", "").strip().lower() in ("1", "true", "yes")
+        if _dump_all:
+            result = (
+                "## Skills\n"
+                "Scan below. If relevant, load with skill_view(name) and follow it. "
+                "Patch broken skills with skill_manage(action='patch').\n"
+                "\n"
+                "<available_skills>\n"
+                + "\n".join(index_lines) + "\n"
+                "</available_skills>"
+            )
+        else:
+            result = (
+                "## Skills\n"
+                "Skills are dynamically recommended on-demand based on context. "
+                "When a relevant skill is recommended or needed, load it with skill_view(name) and follow it. "
+                "Patch broken skills with skill_manage(action='patch').\n"
+            )
 
     # ── Store in LRU cache ────────────────────────────────────────────
     with _SKILLS_PROMPT_CACHE_LOCK:

@@ -92,7 +92,7 @@ def hermes_home_for(profile_name: str = None) -> Path:
     return _DEFAULT_HERMES_HOME
 
 
-def get_profile_persona(profile_name: str = None) -> str:
+def get_profile_persona(profile_name: str = None, include_soul: bool = True) -> str:
     """지정 프로파일의 SOUL.md 및 AGENTS.md를 로드하여 시스템 프롬프트용 텍스트로 결합합니다."""
     home = hermes_home_for(profile_name)
     soul_file = home / 'SOUL.md'
@@ -100,7 +100,7 @@ def get_profile_persona(profile_name: str = None) -> str:
 
     parts = []
     eff_name = profile_name or home.name
-    if soul_file.exists():
+    if include_soul and soul_file.exists():
         try:
             soul_text = soul_file.read_text(encoding='utf-8').strip()
             if soul_text:

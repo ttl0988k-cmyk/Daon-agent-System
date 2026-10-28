@@ -1459,11 +1459,15 @@ class AIAgent:
             short_uuid = uuid.uuid4().hex[:6]
             self.session_id = f"{timestamp_str}_{short_uuid}"
         
-        # Session logs go into ~/.hermes/sessions/ alongside gateway sessions
-        hermes_home = get_hermes_home()
-        self.logs_dir = hermes_home / "sessions"
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+        if getattr(self, "persist_session", True):
+            # Session logs go into ~/.hermes/sessions/ alongside gateway sessions
+            hermes_home = get_hermes_home()
+            self.logs_dir = hermes_home / "sessions"
+            self.logs_dir.mkdir(parents=True, exist_ok=True)
+            self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+        else:
+            self.logs_dir = None
+            self.session_log_file = None
         
         # Track conversation messages for session logging
         self._session_messages: List[Dict[str, Any]] = []
@@ -3598,6 +3602,9 @@ class AIAgent:
         REASONING_SCRATCHPAD tags are converted to <think> blocks for consistency.
         Overwritten after each turn so it always reflects the latest state.
         """
+        if not getattr(self, "persist_session", True) or not getattr(self, "session_log_file", None):
+            return
+
         messages = messages or self._session_messages
         if not messages:
             return
@@ -5225,6 +5232,98 @@ class AIAgent:
                 "promptId": str(uuid.uuid4()),
             }
         if self.tools:
+            # ── [LAZY-MCP-FINAL-GUARD 2026-10-22] ──────────────────────────
+            # 어떤 경로로 agent.tools 가 만들어졌든(enabled_toolsets=None 인
+            # 자동 훅/서브에이전트/다이나믹 러너 포함), lazy 라우터가 켜져
+            # 있으면 payload 직전에 개별 mcp_{server}_{tool} 스키마를 제거하고
+            # 라우터(call_mcp_tool/list_mcp_tools)만 남긴다.
+            # registry 에는 그대로 등록돼 있으므로 call_mcp_tool 로 100% 호출 가능.
+            try:
+                import os as _os_lz
+                _lz_on = _os_lz.getenv("DAON_LAZY_MCP", "1").strip().lower() not in (
+                    "0", "false", "no", "off")
+                if _lz_on and isinstance(self.tools, list):
+                    _KEEP = {"call_mcp_tool", "list_mcp_tools", "mcp_manage"}
+                    _before_n = len(self.tools)
+                    _kept = []
+                    _dropped = 0
+                    for _t in self.tools:
+                        _nm = ""
+                        if isinstance(_t, dict):
+                            _nm = (_t.get("function") or {}).get("name", "") or ""
+                        if _nm.startswith("mcp_") and _nm not in _KEEP:
+                            _dropped += 1
+                            continue
+                        _kept.append(_t)
+                    if _dropped:
+                        self.tools = _kept
+                    _router_n = sum(
+                        1 for _x in self.tools
+                        if isinstance(_x, dict)
+                        and ((_x.get("function") or {}).get("name", "")
+                             in ("call_mcp_tool", "list_mcp_tools"))
+                    )
+                    logger.info(
+                        "[LAZY-MCP-FINAL-GUARD] lazy=%s before=%d after=%d "
+                        "dropped_individual=%d router_kept=%d",
+                        _lz_on, _before_n, len(self.tools), _dropped, _router_n,
+                    )
+
+                    # ── [BUILTIN-TOOL-ON-DEMAND 2026-10-29] ───────────────────────
+                    # 57개 내장 툴(67,055자 / 21K 토큰) 중 특정 상황에만 쓰이는 무거운 도구군을
+                    # 프롬프트 맥락에 따라 동적으로 필터링하여 매 턴 약 30,000자(9.5K 토큰)를 추가 절감.
+                    _tools_on_demand = _os_lz.getenv("DAON_ON_DEMAND_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
+                    if _tools_on_demand and isinstance(self.tools, list):
+                        _recent_text = ""
+                        if hasattr(self, "messages") and isinstance(self.messages, list):
+                            for _m in reversed(self.messages[-4:]):
+                                if isinstance(_m, dict) and _m.get("role") == "user":
+                                    _recent_text += " " + str(_m.get("content") or "")
+                        _recent_lower = _recent_text.lower()
+
+                        _has_browser = any(k in _recent_lower for k in ("browser", "브라우저", "웹", "크롬", "chrome", "url", "http", "웹페이지", "사이트"))
+                        _has_plugin = any(k in _recent_lower for k in ("plugin", "플러그인", "secret", "시크릿"))
+                        _has_media = any(k in _recent_lower for k in ("image", "video", "영상", "비디오", "이미지", "그림", "사진", "frame"))
+                        _has_cron = any(k in _recent_lower for k in ("cron", "스케줄", "예약", "매일", "주기적", "알람"))
+                        _has_session_search = any(k in _recent_lower for k in ("session_search", "과거 대화", "이전 대화", "지난 세션", "기억 찾아"))
+                        _has_subagent = any(k in _recent_lower for k in ("delegate_task", "서브에이전트", "subagent", "하위 에이전트"))
+                        _has_boardroom = any(k in _recent_lower for k in ("boardroom", "회의실", "회의", "소집", "workshop"))
+
+                        _pruned_tools = []
+                        _dropped_builtin = 0
+                        for _t in self.tools:
+                            _nm = (_t.get("function") or {}).get("name", "") if isinstance(_t, dict) else ""
+                            if _nm.startswith("browser_") and not _has_browser:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm.startswith("plugin_") and not _has_plugin:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm in ("generate_image", "generate_video", "video_generate", "video_extract_frames") and not _has_media:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm == "cronjob" and not _has_cron:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm == "session_search" and not _has_session_search:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm == "delegate_task" and not _has_subagent:
+                                _dropped_builtin += 1
+                                continue
+                            if _nm in ("convene_boardroom", "open_workshop") and not _has_boardroom:
+                                _dropped_builtin += 1
+                                continue
+                            _pruned_tools.append(_t)
+
+                        if _dropped_builtin:
+                            logger.info(
+                                "[BUILTIN-TOOL-ON-DEMAND] pruned %d unused heavy tools, remaining: %d",
+                                _dropped_builtin, len(_pruned_tools),
+                            )
+                            self.tools = _pruned_tools
+            except Exception as _lz_e:  # fail-open: 절대 전송을 막지 않는다
+                logger.warning("LAZY-MCP-FINAL-GUARD failed: %s", _lz_e)
             # Final safety net: some providers (MiniMax, Qwen) reject tool
             # definitions with missing/empty parameters schemas (HTTP 400
             # "function parameters is empty"). Normalize right before send.
@@ -5859,7 +5958,10 @@ class AIAgent:
                 old_session_id = self.session_id
                 self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
                 # Update session_log_file to point to the new session's JSON file
-                self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+                if self.logs_dir:
+                    self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+                else:
+                    self.session_log_file = None
                 self._session_db.create_session(
                     session_id=self.session_id,
                     source=self.platform or os.environ.get("HERMES_SESSION_SOURCE", "cli"),

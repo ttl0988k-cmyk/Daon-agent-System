@@ -25,3 +25,4 @@
 *.ico binary
 *.zip binary
 *.tar.gz binary
+graphify-out/graph.json merge=graphify

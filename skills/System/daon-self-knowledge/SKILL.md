@@ -104,6 +104,7 @@ start "" "%~dp0DAON Agent System.exe"
    (`request_server_update` — 일반 소스는 rebuild=false, 번들 변경 시에만 rebuild=true)로만 요청한다.
    `PyInstaller` / `electron-builder` / `npm run build`는 `terminal` 코드 가드로 차단된다.
    electron-builder와 포터블 zip은 릴리스 담당자 수동 전용이다 (2-B절)
+9. **브라우저 사용 기본 정책**: 일반 브라우저 작업은 **에고라이트 브라우저(`ego-browser`) 스킬을 기본으로 사용**한다. 내장 스켈레톤 브라우저(`browser_*`, 8088 서비스)는 사용자가 명시적으로 **"스켈레톤으로 띄워" / "스켈레톤 브라우저"**라고 요청했을 때만 사용한다.
 
 ## 6. 자기 수정 불변식 (갭 E)
 

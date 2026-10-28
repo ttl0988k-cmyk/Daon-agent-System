@@ -64,9 +64,9 @@ def find_or_create_agent_session(profile_name: str, workspace: Optional[str] = N
     canonical = normalize_agent_profile(profile_name)
     eff_workspace = workspace or get_last_workspace()
 
-    # 1. Search existing non-archived sessions for matching profile
+    # 1. Search existing non-archived sessions for matching profile (include_internal=True to find workshop sessions)
     try:
-        for s_info in all_sessions():
+        for s_info in all_sessions(include_internal=True, profile=canonical):
             p = (s_info.get("profile") or "").lower()
             if p == canonical.lower() and not s_info.get("archived"):
                 try:
@@ -81,14 +81,15 @@ def find_or_create_agent_session(profile_name: str, workspace: Optional[str] = N
     except Exception as e:
         _logger.warning("Error searching existing sessions: %s", e)
 
-    # 2. Create new session for this agent profile
-    s = new_session(workspace=eff_workspace, profile=canonical)
-    if parent_session_id:
-        s.parent_session_id = parent_session_id
-        try:
-            s.save()
-        except Exception:
-            pass
+    # 2. Create new session for this agent profile (tagged as workshop/multi so it doesn't leak into main chat UI)
+    is_orchestrator = canonical.lower() in ("raon", "라온")
+    s = new_session(
+        workspace=eff_workspace,
+        profile=canonical,
+        surface="webui" if is_orchestrator else "multi",
+        source="webui" if is_orchestrator else "workshop",
+        parent_session_id=parent_session_id,
+    )
     return s
 
 
@@ -101,6 +102,7 @@ def execute_agent_task(
     force_new_session: bool = False,
     model: Optional[str] = None,
     no_tools: bool = False,
+    source: str = "delegate",
 ) -> Dict[str, Any]:
     """Execute a task synchronously on a colleague agent and return final output.
 
@@ -113,24 +115,25 @@ def execute_agent_task(
     no_tools: if True, runs the agent with zero toolsets — no browser, file,
               terminal, or any other tool. Intended for boardroom/opinion-only
               slots where the agent should speak without executing work.
+
+    source: session source attribution ('boardroom', 'delegate', 'workshop')
     """
     from api.config import STREAMS, STREAMS_LOCK, ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK
     from api.streaming import BroadcastQueue, _run_agent_streaming, cancel_stream
 
     canonical_profile = normalize_agent_profile(agent_name)
     if force_new_session:
-        # Boardroom/meeting isolation: use a fresh session so these turns do
-        # not land in the agent's regular thread (esp. raon, whose most-recent
-        # session is the live chat the user is typing in).
+        # Boardroom/meeting isolation: use a fresh session tagged as boardroom
+        # so these turns do not land in the agent's regular thread and are hidden from main UI.
         from api.models import new_session as _new_session
         from api.workspace import get_last_workspace as _get_last_ws
-        target_session = _new_session(workspace=(workspace or _get_last_ws()), profile=canonical_profile)
-        if parent_session_id:
-            try:
-                target_session.parent_session_id = parent_session_id
-                target_session.save()
-            except Exception:
-                pass
+        target_session = _new_session(
+            workspace=(workspace or _get_last_ws()),
+            profile=canonical_profile,
+            surface="boardroom" if source == "boardroom" else "multi",
+            source=source,
+            parent_session_id=parent_session_id,
+        )
     else:
         target_session = find_or_create_agent_session(
             profile_name=canonical_profile,

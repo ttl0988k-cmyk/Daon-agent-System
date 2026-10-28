@@ -1,0 +1,28 @@
+name: ego-browser
+label: 에고라이트 브라우저 (Ego Lite Browser)
+category: Browser
+version: '2.1.0'
+description: 웹 브라우저를 다룰 때 기본(Default)으로 사용하는 에고라이트(ego-browser) 브라우저 자동화 스킬. 웹사이트 열기/탐색, 로그인 세션 활용, 폼 입력, 버튼 클릭, 스크린샷 캡처, 데이터 추출, 웹 QA/테스트를 수행한다. 스켈레톤 브라우저는 사용자가 '스켈레톤으로 띄워'라고 명시할 때만 사용하고, 일반적인 모든 브라우저 사용은 에고라이트 브라우저를 사용한다.
+priority: high
+capabilities:
+- browser_automation
+- web_browsing
+- form_filling
+- web_testing
+knowledge:
+- references
+trigger:
+- 브라우저
+- 브라우저로
+- 브라우저 열어
+- 웹 브라우저
+- 웹서핑
+- 웹 탐색
+- 웹 자동화
+- 사이트 열기
+- 에고
+- 에고라이트
+- 에고브라우저
+- ego
+- ego-browser
+- egolite

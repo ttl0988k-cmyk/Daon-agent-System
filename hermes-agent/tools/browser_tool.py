@@ -739,7 +739,7 @@ atexit.register(_stop_browser_cleanup_thread)
 BROWSER_TOOL_SCHEMAS = [
     {
         "name": "browser_navigate",
-        "description": "Navigate to a URL in the built-in browser. NOTE: For GitHub repositories, code repositories, web search, or reading articles/docs, DO NOT use this tool — use web_search, web_extract, or terminal (git clone) instead. Use browser_navigate ONLY when interactive web manipulation (clicks, form submission, dynamic client-side JS) or visual page inspection is explicitly required. Returns a compact page snapshot with interactive elements and ref IDs.",
+        "description": "Navigate to a URL using the built-in SKELETON browser (8088 browser_service). CRITICAL: Do NOT use this tool for general browser requests — general browser work MUST use the 'ego-browser' skill (Ego Lite Browser). Use browser_navigate ONLY when the user explicitly asks to open/run with the skeleton browser (e.g. '스켈레톤으로 띄워', '스켈레톤 브라우저'). Returns a compact page snapshot with interactive elements and ref IDs.",
         "parameters": {
             "type": "object",
             "properties": {

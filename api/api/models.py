@@ -8,6 +8,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class Session:
                  tool_calls=None, pinned: bool=False, archived: bool=False,
                  project_id: str=None, profile=None,
                  input_tokens: int=0, output_tokens: int=0, estimated_cost=None,
-                 surface: str=None,
+                 surface: str=None, source: str=None, parent_session_id: str=None,
                  **kwargs):
         self.session_id = session_id or uuid.uuid4().hex[:12]
         self.title = title
@@ -173,8 +174,10 @@ class Session:
         self.input_tokens = input_tokens or 0
         self.output_tokens = output_tokens or 0
         self.estimated_cost = estimated_cost
-        # 실행 표면: None|'webui'|'chrome_extension' — 도구 목록 분기에 사용
+        # 실행 표면: None|'webui'|'chrome_extension'|'multi'|'boardroom' — 도구 목록 및 뷰 분기에 사용
         self.surface = surface
+        self.source = source or kwargs.get('source')
+        self.parent_session_id = parent_session_id or kwargs.get('parent_session_id')
 
     @property
     def path(self):
@@ -220,8 +223,10 @@ class Session:
             'input_tokens': self.input_tokens,
             'output_tokens': self.output_tokens,
             'estimated_cost': self.estimated_cost,
-            # 실행 표면 추가 — UI가 세션별 표면(webui|chrome_extension)을 표시/판별할 수 있게 한다
+            # 실행 표면 추가 — UI가 세션별 표면(webui|chrome_extension|multi|boardroom)을 표시/판별할 수 있게 한다
             'surface': self.surface,
+            'source': getattr(self, 'source', None),
+            'parent_session_id': getattr(self, 'parent_session_id', None),
         }
 
     def to_response(self, include_messages: bool = True, include_tool_calls: bool = True) -> dict:
@@ -253,7 +258,7 @@ def get_session(sid):
         return s
     raise KeyError(sid)
 
-def new_session(workspace=None, model=None, persist=True, profile=None, surface=None):
+def new_session(workspace=None, model=None, persist=True, profile=None, surface=None, source=None, parent_session_id=None):
     # Use _cfg.DEFAULT_MODEL (not the import-time snapshot) so save_settings() changes take effect
     try:
         from api.profiles import get_active_profile_name
@@ -263,7 +268,14 @@ def new_session(workspace=None, model=None, persist=True, profile=None, surface=
         _profile = profile or 'raon'
     if not _profile or _profile == 'default':
         _profile = 'raon'
-    s = Session(workspace=workspace or get_last_workspace(), model=model or _cfg.DEFAULT_MODEL, profile=_profile, surface=surface)
+    s = Session(
+        workspace=workspace or get_last_workspace(),
+        model=model or _cfg.DEFAULT_MODEL,
+        profile=_profile,
+        surface=surface,
+        source=source,
+        parent_session_id=parent_session_id,
+    )
     with LOCK:
         SESSIONS[s.session_id] = s
         SESSIONS.move_to_end(s.session_id)
@@ -274,7 +286,51 @@ def new_session(workspace=None, model=None, persist=True, profile=None, surface=
         s.save()
     return s
 
-def all_sessions():
+def all_sessions(include_internal: bool = False, webui_only: bool = False, profile: Optional[str] = None):
+    """Retrieve indexed sessions.
+    - include_internal=False: excludes internal, subagent, boardroom, and workshop sessions.
+    - webui_only=True: returns only Raon (orchestrator/main chat) sessions for the primary chat UI.
+    - profile: filter by specific agent profile if provided.
+    """
+    _excluded_sources = ('subagent', 'delegate', 'child', 'boardroom', 'internal', 'workshop', 'multi')
+
+    def _filter_items(items):
+        res = []
+        for s in items:
+            if not isinstance(s, dict):
+                continue
+            if not include_internal:
+                if s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0:
+                    continue
+                if s.get('parent_session_id'):
+                    continue
+                src = s.get('source')
+                if src in _excluded_sources:
+                    continue
+                surf = s.get('surface')
+                if surf in ('boardroom', 'multi'):
+                    continue
+                tit = str(s.get('title') or '')
+                if tit.startswith('[라온 총괄기획자의 작업 지시]') or tit.startswith('[회의실 브리핑]'):
+                    continue
+
+            # Default profile to raon if empty or default
+            p = s.get('profile') or 'raon'
+            if p == 'default':
+                p = 'raon'
+            s['profile'] = p
+
+            if profile:
+                if p.lower() != str(profile).strip().lower():
+                    continue
+            elif webui_only:
+                # 메인 대화창(Classic UI)은 오직 '라온(대표님 1:1 대화)' 세션만 표시
+                if p.lower() not in ('raon', '라온'):
+                    continue
+
+            res.append(s)
+        return res
+
     # 1. Primary: read from SESSION_INDEX_FILE for O(1) instant response
     if SESSION_INDEX_FILE.exists():
         try:
@@ -285,17 +341,8 @@ def all_sessions():
                 with LOCK:
                     for s in SESSIONS.values():
                         index_map[s.session_id] = s.compact()
-                result = sorted(index_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
-                result = [
-                    s for s in result
-                    if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
-                    and not s.get('parent_session_id')
-                    and s.get('source') not in ('subagent', 'delegate', 'child')
-                ]
-                for s in result:
-                    if not s.get('profile') or s.get('profile') == 'default':
-                        s['profile'] = 'raon'
-                return result
+                sorted_entries = sorted(index_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                return _filter_items(sorted_entries)
         except Exception:
             _logger.warning("Failed to read session index, falling back to SQLite", exc_info=True)
 
@@ -310,8 +357,6 @@ def all_sessions():
                     SELECT id, title, model, message_count, started_at, updated_at,
                            input_tokens, output_tokens, source
                     FROM sessions
-                    WHERE (source IS NULL OR source = 'webui')
-                      AND (parent_session_id IS NULL OR parent_session_id = '')
                     ORDER BY COALESCE(updated_at, started_at) DESC
                 """)
                 out_map = {}
@@ -333,21 +378,16 @@ def all_sessions():
                         'output_tokens': row['output_tokens'] or 0,
                         'estimated_cost': None,
                         'surface': 'webui',
+                        'source': row['source'],
                     }
                 with LOCK:
                     for s in SESSIONS.values():
                         out_map[s.session_id] = s.compact()
-                result = sorted(out_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
-                result = [
-                    s for s in result
-                    if not (s.get('title', 'Untitled') == 'Untitled' and s.get('message_count', 0) == 0)
-                ]
-                for s in result:
-                    if not s.get('profile') or s.get('profile') == 'default':
-                        s['profile'] = 'raon'
+                sorted_entries = sorted(out_map.values(), key=lambda s: (s.get('pinned', False), s.get('updated_at', 0)), reverse=True)
+                result = _filter_items(sorted_entries)
                 # Re-generate index file so future calls are O(1)
                 try:
-                    SESSION_INDEX_FILE.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+                    SESSION_INDEX_FILE.write_text(json.dumps(sorted_entries, ensure_ascii=False, indent=2), encoding='utf-8')
                 except Exception:
                     pass
                 return result
@@ -357,14 +397,42 @@ def all_sessions():
     # 3. Minimal in-memory fallback (never scans entire filesystem)
     with LOCK:
         result = [s.compact() for s in SESSIONS.values()]
-    for s in result:
-        if not s.get('profile'):
-            s['profile'] = 'default'
-    return result
+    return _filter_items(result)
+
+
+def _clean_internal_prompt_for_title(text: str) -> str:
+    """내부 협업 프롬프트 래퍼([라온 총괄기획자의 작업 지시], [회의실 브리핑] 등)를 벗겨내고 본문 핵심만 반환."""
+    t = str(text or '').strip()
+    if not t:
+        return ''
+    if "[안건]:" in t or "안건:" in t:
+        parts = t.split("안건:", 1) if "안건:" in t else t.split("[안건]:", 1)
+        sub = parts[1].strip().splitlines()[0].strip()
+        if sub:
+            return sub
+    if "[라온 총괄기획자의 작업 지시]" in t:
+        t = t.replace("[라온 총괄기획자의 작업 지시]", "").strip()
+        if "[협업 및 보고 규칙]:" in t:
+            t = t.split("[협업 및 보고 규칙]:", 1)[0].strip()
+        if "[회의실 브리핑]" in t:
+            t = t.replace("[회의실 브리핑]", "").strip()
+        for line in t.splitlines():
+            l = line.strip()
+            if l and not l.startswith("[") and not l.startswith("-"):
+                return l
+        return t.splitlines()[0].strip() if t else ""
+    if "[회의실 브리핑]" in t:
+        t = t.replace("[회의실 브리핑]", "").strip()
+        for line in t.splitlines():
+            l = line.strip()
+            if l and not l.startswith("["):
+                return l
+        return t.splitlines()[0].strip() if t else ""
+    return t
 
 
 def title_from(messages, fallback: str='Untitled'):
-    """Derive a session title from the first user message."""
+    """Derive a session title from the first user message, stripping internal wrappers."""
     for m in messages:
         if m.get('role') == 'user':
             c = m.get('content', '')
@@ -372,7 +440,8 @@ def title_from(messages, fallback: str='Untitled'):
                 c = ' '.join(p.get('text', '') for p in c if isinstance(p, dict) and p.get('type') == 'text')
             text = str(c).strip()
             if text:
-                return text[:64]
+                cleaned = _clean_internal_prompt_for_title(text)
+                return (cleaned or text)[:64]
     return fallback
 
 
@@ -634,9 +703,10 @@ def _save_session_to_db(session: Session) -> None:
                     id, source, model, started_at, updated_at,
                     message_count, title, input_tokens, output_tokens
                 )
-                VALUES (?, 'webui', ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 _sql_scalar(session.session_id, 'session_id'),
+                _sql_scalar(getattr(session, 'source', None) or 'webui', 'source'),
                 _sql_scalar(session.model, 'model'),
                 _sql_scalar(session.created_at, 'created_at'),
                 _sql_scalar(session.updated_at, 'updated_at'),

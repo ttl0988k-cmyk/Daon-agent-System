@@ -56,7 +56,7 @@
 | `9090` | 메인 서버 (채팅 API/SSE + v2 UI 서빙) |
 | `8088` | 브라우저 서비스 (CDP 제어 + WS 스트림 + 스크린샷) |
 
-> ⚠️ **개발 시 3곳 동기화 필수** — `소스(static/, browser_service/)` ↔ `설치본 resources/` ↔ `설치본 resources/dist_new/` (재기동 시 dist_new에서 덮어씀). 프론트 수정 후엔 `app.js` import 버전 꼬리표(`?v=YYYYMMDD_이름`) 범프.
+> 💡 **빌드 및 설치본 동기화**: 원클릭 빌드(`build_all.cmd` / `npm run build:all`) 시 `after-pack.js`가 설치본 `resources/` 및 `dist_new/` 미러까지 100% 자동 동기화합니다. 개발 중 소스 수정본을 설치본에 즉시 반영하려면 `npm run sync:installed`를 사용합니다.
 
 ---
 

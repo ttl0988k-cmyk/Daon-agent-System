@@ -2601,30 +2601,38 @@ def _is_connection_error(exc: Exception) -> bool:
 
 
 def _try_payment_fallback(
-
     failed_provider: str,
-
     task: str = None,
-
     reason: str = "payment error",
-
 ) -> Tuple[Optional[Any], Optional[str], str]:
+    """Safe fallback to the user's main chat model when an auxiliary provider fails.
 
-    """Try alternative providers after a payment/credit or connection error.
-
-
-
-    [DISABLED] Cross-provider fallback disabled by user request to protect credits.
-
+    Safe fallback: does NOT rotate through arbitrary paid third-party APIs
+    (credit protection preserved), but DOES safely fall back to the user's
+    configured main chat model so that critical functions like memory flush
+    and context compression never drop out even if MiniMax expires.
     """
+    main_provider = _read_main_provider()
+    main_model = _read_main_model()
 
-    logger.warning(
+    if not main_provider or failed_provider == main_provider:
+        logger.warning(
+            "Auxiliary %s: %s on main provider %s. No further fallback.",
+            task or "call", reason, failed_provider,
+        )
+        return None, None, ""
 
-        "Auxiliary %s: %s on %s. Cross-provider fallback is DISABLED by user request.",
-
-        task or "call", reason, failed_provider,
-
-    )
+    try:
+        client, resolved = resolve_provider_client(main_provider, main_model)
+        if client is not None:
+            model = resolved or main_model
+            logger.info(
+                "Auxiliary %s: %s on %s -> safely falling back to main provider %s (%s)",
+                task or "call", reason, failed_provider, main_provider, model,
+            )
+            return client, model, main_provider
+    except Exception as exc:
+        logger.warning("Auxiliary %s fallback to main provider failed: %s", task or "call", exc)
 
     return None, None, ""
 
@@ -5360,22 +5368,17 @@ def call_llm(
 
         # the auto-detection chain.
 
-        should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err)
-
-        # Only try alternative providers when the user didn't explicitly
-
-        # configure this task's provider.  Explicit provider = hard constraint;
-
-        # auto (the default) = best-effort fallback chain.  (#7559)
+        status_code = getattr(first_err, "status_code", None)
+        is_auth_or_billing = _is_payment_error(first_err) or status_code in (400, 401, 402, 403, 404, 429)
+        should_fallback = is_auth_or_billing or _is_connection_error(first_err)
 
         is_auto = resolved_provider in ("auto", "", None)
+        main_prov = _read_main_provider()
+        can_fallback_to_main = bool(main_prov and resolved_provider != main_prov)
 
-        if should_fallback and is_auto:
-
-            reason = "payment error" if _is_payment_error(first_err) else "connection error"
-
-            logger.info("Auxiliary %s: %s on %s (%s), trying fallback",
-
+        if should_fallback and (is_auto or can_fallback_to_main):
+            reason = "auth/billing error" if is_auth_or_billing else "connection error"
+            logger.info("Auxiliary %s: %s on %s (%s), trying safe fallback to main model",
                         task or "call", reason, resolved_provider, first_err)
 
             fb_client, fb_model, fb_label = _try_payment_fallback(

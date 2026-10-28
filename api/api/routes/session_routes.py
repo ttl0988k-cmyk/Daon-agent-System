@@ -87,8 +87,23 @@ def handle_get_session(handler, parsed) -> bool:
 
 
 def handle_get_sessions(handler, parsed) -> bool:
-    """GET /api/sessions — return all sessions (WebUI + optional CLI)."""
-    webui_sessions = all_sessions()
+    """GET /api/sessions — return sessions. Defaults to Raon-only for main chat UI."""
+    qs = parse_qs(parsed.query) if getattr(parsed, 'query', None) else {}
+    include_all = qs.get('include_all', ['0'])[0] in ('1', 'true')
+    target_profile = qs.get('profile', [None])[0]
+    surface = qs.get('surface', [None])[0]
+
+    if include_all:
+        webui_sessions = all_sessions(include_internal=True, profile=target_profile)
+    elif target_profile:
+        webui_sessions = all_sessions(include_internal=True, profile=target_profile)
+    elif surface == 'multi':
+        webui_sessions = all_sessions(include_internal=True)
+        webui_sessions = [s for s in webui_sessions if s.get('surface') == 'multi' or s.get('source') == 'workshop']
+    else:
+        # 기본 대화창(Classic UI): 오직 '라온(대표님 1:1 대화)' 세션만 표시
+        webui_sessions = all_sessions(webui_only=True)
+
     settings = load_settings()
     if settings.get('show_cli_sessions'):
         cli = get_cli_sessions()

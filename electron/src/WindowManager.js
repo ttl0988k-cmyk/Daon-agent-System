@@ -5,6 +5,23 @@
  */
 const { BrowserWindow, screen, session, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+// ── [2026-10-27] 작업표시줄 '파일 쪼가리(흰 종이)' 아이콘 수정 ──
+// BrowserWindow 에 icon 이 없으면 Windows 가 창 아이콘을 exe 기본 리소스로
+// 떨어뜨리고, AppUserModelID 불일치 시 작업표시줄이 흰 종이를 그린다.
+// electron/build/icon.ico (앱 공식 로고, 9사이즈) 를 명시 지정한다.
+const ICON_CANDIDATES = [
+  path.join(__dirname, '..', 'build', 'icon.ico'),
+  path.join(__dirname, '..', '..', 'build', 'icon.ico'),
+  path.join(__dirname, '..', '..', '..', 'build', 'icon.ico'),
+];
+function resolveWindowIcon() {
+  for (const p of ICON_CANDIDATES) {
+    try { if (fs.existsSync(p)) return p; } catch (_) { }
+  }
+  return undefined;
+}
 
 class WindowManager {
   /**
@@ -35,6 +52,7 @@ class WindowManager {
       center: true,
       alwaysOnTop: true,
       skipTaskbar: false,
+      icon: resolveWindowIcon(),
       backgroundColor: '#0a0a0f',
       show: false,
       webPreferences: {
@@ -67,6 +85,7 @@ class WindowManager {
     this.mainWindow = new BrowserWindow({
       width: Math.floor(width * 0.8),
       height: Math.floor(height * 0.8),
+      icon: resolveWindowIcon(),
       show: false, // will show after splash closes
       webPreferences: {
         preload: path.join(__dirname, '..', 'preload.js'),

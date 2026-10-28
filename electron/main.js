@@ -16,6 +16,17 @@ if (net.setDefaultAutoSelectFamily) {
   net.setDefaultAutoSelectFamily(false);
 }
 
+// ── [2026-10-27] Windows AppUserModelID 고정 ──
+// 미설정 시 작업표시줄이 실행 창을 '별개 앱'으로 취급해 고정 아이콘과
+// 매칭에 실패하고 기본 문서(흰 종이) 아이콘을 그린다. package.json appId 와 일치.
+try {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.daon.agentsystem');
+  }
+} catch (e) {
+  console.warn('[Electron] setAppUserModelId failed:', e && e.message);
+}
+
 // ── CDP 9222 포트 제거 (2026-10-22) ──
 // 9222(remote-debugging-port)는 구 구조에서 '앱 내부 브라우저(WebContentsView) +
 // demo recording + Playwright toolset'이 공유하던 포트였다.

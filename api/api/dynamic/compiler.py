@@ -305,21 +305,14 @@ class AgentCompiler:
 
     @staticmethod
     def _get_browser_note() -> str:
-        """내장(공유) 브라우저 사용 규칙.
-
-        Dynamic Harness 노드는 별도 headless Chromium 창을 띄우지 않고,
-        앱 내장 브라우저 탭(Electron WebContentsView)을 CDP 브리지 경유로
-        공유한다. browser_* 도구가 스키마에 노출되는 경우 이 규칙이
-        에이전트가 내장 브라우저를 우선 사용하도록 유도한다.
-        """
+        """브라우저 사용 규칙 (에고라이트 기본, 스켈레톤 명시 요구 시에만 사용)."""
         return (
             "\n\n[WEB & BROWSER INTERACTION POLICY]\n"
             "For searching, reading documentation, or inspecting GitHub repositories, ALWAYS use "
             "web_search, web_extract, or terminal (git clone, curl raw.github...) instead of opening "
-            "the browser. Never use browser_navigate on GitHub links. Only use browser tools "
-            "(browser_navigate, browser_click, etc.) when interactive web automation or form-filling is "
-            "strictly required or explicitly requested by the user. When browser interaction is required, "
-            "call browser_navigate first to get @eN element refs for browser_click/browser_type.\n"
+            "the browser. Never use browser tools on GitHub links.\n"
+            "- General browser automation and web interaction: ALWAYS use the 'ego-browser' skill (Ego Lite Browser) by default via terminal.\n"
+            "- Skeleton browser tools (browser_navigate, browser_click, etc.): ONLY use when the user explicitly requests '스켈레톤' (e.g. '스켈레톤으로 띄워'). Do NOT pop up the skeleton browser for general browser tasks.\n"
         )
 
     @staticmethod

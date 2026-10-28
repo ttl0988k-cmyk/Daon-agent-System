@@ -556,6 +556,7 @@ class LayaClient:
         "브라우저": "browser", "테스트": "test", "검증": "verify", "배포": "deploy",
         "디자인": "design", "이미지": "image", "데이터": "data", "보안": "security",
         "깃": "git", "도커": "docker", "모바일": "mobile", "메모리": "memory",
+        "에고": "ego", "에고라이트": "ego", "에고브라우저": "ego", "웹브라우저": "browser",
     }
 
     def match_skill(self, prompt: str) -> Optional[Dict[str, Any]]:
@@ -606,6 +607,21 @@ class LayaClient:
                     "source": "synonym_name",
                     "latency_ms": round((time.time() - t0) * 1000, 1),
                 }
+
+        # 1-C. Default Browser Task Match (에고라이트 우선, 스켈레톤 명시 시 제외)
+        _is_skeleton_request = ("스켈레톤" in p_lower) or ("skeleton" in p_lower)
+        _browser_keywords = ("브라우저", "browser", "웹브라우저", "에고", "ego", "에고라이트", "egolite", "에고브라우저", "웹서핑")
+        _is_browser_request = any(kw in p_lower for kw in _browser_keywords)
+        if _is_browser_request and not _is_skeleton_request and "ego-browser" in skills_by_name:
+            sobj = skills_by_name["ego-browser"]
+            snippet = self._read_skill_snippet(sobj["path"])
+            return {
+                "skill": "ego-browser",
+                "category": sobj["category"],
+                "snippet": snippet,
+                "source": "default_browser_ego",
+                "latency_ms": round((time.time() - t0) * 1000, 1),
+            }
 
         # 2. First-Class 8766 Semantic Ranker Query (~40-70ms)
         ranker_res = []

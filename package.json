@@ -109,7 +109,8 @@
         "from": "daon_runtime",
         "to": "daon_runtime"
       }
-    ]
+    ],
+    "icon": "electron/build/icon.ico"
   },
   "keywords": [],
   "author": "",

@@ -2100,6 +2100,20 @@ def _run_daily() -> None:
                     conn.close()
                 except Exception:
                     pass
+
+        # 4) Hermes 세션 로그 자동 정리: 3일 이상 지난 세션 로그 삭제 (I/O 병목 및 파일 폭주 영구 방지)
+        try:
+            _hermes_sessions_dir = Path.home() / '.hermes' / 'profiles' / 'raon' / 'sessions'
+            if _hermes_sessions_dir.exists():
+                _cutoff = time.time() - 3 * 86400
+                for _p in _hermes_sessions_dir.glob('session_*.json'):
+                    try:
+                        if _p.stat().st_mtime < _cutoff:
+                            _p.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     except Exception:
         pass
 

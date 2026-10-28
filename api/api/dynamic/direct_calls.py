@@ -254,6 +254,7 @@ def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferre
                     enabled_toolsets=[],  # Prevent meta-agents from bypassing delegation
                     quiet_mode=True,
                     max_tokens=max_tokens,
+                    persist_session=False,
                 )
                 res = agent.run_conversation(
                     user_message=prompt,

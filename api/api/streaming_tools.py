@@ -116,8 +116,16 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
         # 이제 등록 전체를 후보로 넘기고, 고른 standby 서버는 여기서 깨운 뒤
         # 아래 기존 루프가 그대로 등록한다 (enabled 변경·config 저장 없음 → 재기동 시 standby 복귀).
         # 깨우기 실패분은 후보에서 제외(fail-open). playwright는 8088 스켈레톤을 쓰므로 후보 제외.
-        # [임베딩 이관 2026-10-17] Laya prune보다 SkillRanker /rank_mcps를 먼저 시도.
-        # 실측: 동일 20케이스 TOP1 18/20·TOP3 19/20 (Laya 4/20). 랭커 무확신/실패 시 Laya 폴백.
+        # [JEFF-FIRST 2026-10-22] 판정 순서를 Jeff(8765) → 랭커(8766) 폴백으로 교체.
+        # 근거(동일 12개 관련질의 + 16개 잡담 실측):
+        #   Jeff   : 관련 10/12 · 잡담 오탐 0/16 (0%)  · 0.313s
+        #   랭커0.03: 관련 10/12 · 잡담 오탐 1/16 (6%)  · 0.045s
+        #   랭커0.02: 관련 12/12 · 잡담 오탐 7/16 (44%) · 0.045s
+        # 종전 주석의 "랭커 18/20 vs Laya 4/20"은 Jeff 교체 前 구형 ModernBERT 측정값이라
+        # 현 엔진 성능을 반영하지 못한다. 속도차 0.27s는 체감 불가 → 정확도·오탐 우선.
+        # Jeff가 빈 배열을 주면 '관련 없음'으로 확정하고 랭커에 재질의하지 않는다
+        # (재질의하면 잡담 오탐 44%가 다시 유입됨). Jeff 서비스 장애 시에만
+        # laya_client.prune_mcp 내부 휴리스틱 폴백이 동작한다.
         _preselected_all = None
         if user_prompt:
             try:
@@ -126,30 +134,31 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                     s.get('server_id') for s in (mcp_manager.list_servers() or [])
                     if s.get('server_id') and s.get('server_id') != 'playwright'
                 ]
-                _ranker_hit = False
-                try:
-                    import json as _js, urllib.request as _url
-                    _rq = _url.Request(
-                        'http://127.0.0.1:8766/rank_mcps',
-                        data=_js.dumps({'prompt': user_prompt, 'top_n': 3}).encode('utf-8'),
-                        headers={'Content-Type': 'application/json'})
-                    _rr = _url.urlopen(_rq, timeout=5)
-                    _rd = _js.loads(_rr.read().decode('utf-8') or '{}')
-                    if _rd.get('confident') and _rd.get('mcps'):
-                        _ranked = [m.get('name') for m in _rd['mcps'] if m.get('name')]
-                        # 등록된 서버만 (카탈로그 기준이라 미등록 ID가 섞일 수 있음)
-                        _ranked = [s for s in _ranked if s in _all_registered]
-                        if _ranked:
-                            _preselected_all = _ranked
-                            _ranker_hit = True
-                            _logger.info("[MCP-Preselect] ranker hit: %s (margin=%s)",
-                                         _ranked, _rd.get('margin'))
-                except Exception as _e_rank:
-                    _logger.debug("ranker preselect bypassed: %s", _e_rank)
-                if not _ranker_hit:
-                    _mcp_descs_all = get_mcp_desc_map(_all_registered) or None
-                    _preselected_all = _laya_prune_client.prune_mcp(
-                        user_prompt, _all_registered, mcp_descriptions=_mcp_descs_all)
+                _mcp_descs_all = get_mcp_desc_map(_all_registered) or None
+                _preselected_all = _laya_prune_client.prune_mcp(
+                    user_prompt, _all_registered, mcp_descriptions=_mcp_descs_all)
+                _logger.info("[Jeff-MCP-Preselect] prompt=%.60s needed=%s", user_prompt, _preselected_all)
+                # Jeff 서비스가 죽어 있으면(is_healthy False) 랭커로 2차 시도
+                if not _preselected_all and not _laya_prune_client.is_healthy():
+                    _ranker_hit = False
+                    try:
+                        import json as _js, urllib.request as _url
+                        _rq = _url.Request(
+                            'http://127.0.0.1:8766/rank_mcps',
+                            data=_js.dumps({'prompt': user_prompt, 'top_n': 3}).encode('utf-8'),
+                            headers={'Content-Type': 'application/json'})
+                        _rr = _url.urlopen(_rq, timeout=5)
+                        _rd = _js.loads(_rr.read().decode('utf-8') or '{}')
+                        if _rd.get('confident') and _rd.get('mcps'):
+                            _ranked = [m.get('name') for m in _rd['mcps'] if m.get('name')]
+                            _ranked = [s for s in _ranked if s in _all_registered]
+                            if _ranked:
+                                _preselected_all = _ranked
+                                _ranker_hit = True
+                                _logger.info("[Jeff-MCP-Preselect] jeff-down ranker fallback: %s (margin=%s)",
+                                             _ranked, _rd.get('margin'))
+                    except Exception as _e_rank:
+                        _logger.debug("ranker fallback bypassed: %s", _e_rank)
                 if _preselected_all:
                     _already_on = {
                         sid for sid, c in mcp_manager._connections.items()
@@ -277,10 +286,10 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                 try:
                     _needed = None
                     if _preselected_all is not None:
-                        # [2026-10-17] 위에서 등록 전체로 이미 선별 → Laya 재호출 없이 재사용
+                        # [2026-10-22 JEFF-FIRST] 위에서 Jeff가 등록 전체로 이미 선별 → 재호출 없이 재사용
                         _wanted = set(_preselected_all)
                         _needed = [sid for sid, _ in _summary_servers if sid in _wanted]
-                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=%s (registry-wide, reused)", user_prompt, _needed)
+                        _logger.info("[MCP-Show] jeff-reuse needed=%s (registry-wide)", _needed)
                     else:
                         from api.laya_client import laya_client as _laya_prune_client, get_mcp_desc_map
                         _all_sids = [sid for sid, _ in _summary_servers]
@@ -291,10 +300,10 @@ def inject_mcp_tools(agent: Any, cancel_event: threading.Event, session_id: str,
                     if _needed:
                         _needed_set = set(_needed)
                         _summary_servers = [(sid, tl) for sid, tl in _summary_servers if sid in _needed_set]
-                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=%s", user_prompt, _needed)
+                        _logger.info("[MCP-Show] needed=%s", _needed)
                     else:
                         _summary_servers = []
-                        _logger.info("[Laya-MCP-Preselect] prompt=%.60s needed=[] (pure coding/conversation)", user_prompt)
+                        _logger.info("[MCP-Show] needed=[] (relevant-none)")
                 except Exception as _e_prune:
                     _logger.debug("Laya MCP preselect bypassed: %s", _e_prune)
             summary_lines = []

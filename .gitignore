@@ -115,3 +115,8 @@ api/data/
 _backup_*/
 *.bak_*
 *.bak_lazymcp
+
+# Graphify cache & analysis output
+graphify-out/
+api/graphify-out/
+_ego_sync_backup_*/
