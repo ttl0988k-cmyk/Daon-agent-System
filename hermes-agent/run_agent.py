@@ -3658,7 +3658,7 @@ class AIAgent:
                 try:
                     existing = json.loads(self.session_log_file.read_text(encoding="utf-8"))
                     existing_count = existing.get("message_count", len(existing.get("messages", [])))
-                    if existing_count > len(cleaned):
+                    if existing_count > len(cleaned) and not getattr(self, "_allow_compact_save", False):
                         logging.debug(
                             "Skipping session log overwrite: existing has %d messages, current has %d",
                             existing_count, len(cleaned),
@@ -3686,6 +3686,7 @@ class AIAgent:
                 indent=2,
                 default=str,
             )
+            self._allow_compact_save = False
 
         except Exception as e:
             if self.verbose_logging:
@@ -6034,36 +6035,44 @@ class AIAgent:
 
         if self._session_db:
             try:
-                # Propagate title to the new session with auto-numbering
-                old_title = self._session_db.get_session_title(self.session_id)
-                # Trigger memory extraction on the old session before it rotates.
+                # Trigger memory extraction on the session before compression
                 self.commit_memory_session(messages)
-                self._session_db.end_session(self.session_id, "compression")
-                old_session_id = self.session_id
-                self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-                # Update session_log_file to point to the new session's JSON file
-                if self.logs_dir:
-                    self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+                _rotate_session = getattr(self, "rotate_session_on_compression", False)
+                if _rotate_session:
+                    old_title = self._session_db.get_session_title(self.session_id)
+                    self._session_db.end_session(self.session_id, "compression")
+                    old_session_id = self.session_id
+                    self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+                    if self.logs_dir:
+                        self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
+                    else:
+                        self.session_log_file = None
+                    self._session_db.create_session(
+                        session_id=self.session_id,
+                        source=self.platform or os.environ.get("HERMES_SESSION_SOURCE", "cli"),
+                        model=self.model,
+                        parent_session_id=old_session_id,
+                    )
+                    if old_title:
+                        try:
+                            new_title = self._session_db.get_next_title_in_lineage(old_title)
+                            self._session_db.set_session_title(self.session_id, new_title)
+                        except (ValueError, Exception) as e:
+                            logger.debug("Could not propagate title on compression: %s", e)
+                    self._session_db.update_system_prompt(self.session_id, new_system_prompt)
+                    self._last_flushed_db_idx = 0
                 else:
-                    self.session_log_file = None
-                self._session_db.create_session(
-                    session_id=self.session_id,
-                    source=self.platform or os.environ.get("HERMES_SESSION_SOURCE", "cli"),
-                    model=self.model,
-                    parent_session_id=old_session_id,
-                )
-                # Auto-number the title for the continuation session
-                if old_title:
-                    try:
-                        new_title = self._session_db.get_next_title_in_lineage(old_title)
-                        self._session_db.set_session_title(self.session_id, new_title)
-                    except (ValueError, Exception) as e:
-                        logger.debug("Could not propagate title on compression: %s", e)
-                self._session_db.update_system_prompt(self.session_id, new_system_prompt)
-                # Reset flush cursor — new session starts with no messages written
-                self._last_flushed_db_idx = 0
+                    # In-Place Compaction (Antigravity mode):
+                    # Keep same session_id so the active session never branches or splits in UI!
+                    self._session_db.update_system_prompt(self.session_id, new_system_prompt)
+                    self._last_flushed_db_idx = len(compressed)
             except Exception as e:
-                logger.warning("Session DB compression split failed — new session will NOT be indexed: %s", e)
+                logger.warning("Session DB compression in-place update failed: %s", e)
+
+        # Allow session log overwrite with compacted messages in-place
+        self._session_messages = compressed
+        self._allow_compact_save = True
+        self._save_session_log(compressed)
 
         # Warn on repeated compressions (quality degrades with each pass)
         _cc = self.context_compressor.compression_count

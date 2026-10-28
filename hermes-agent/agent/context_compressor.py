@@ -843,7 +843,11 @@ class ContextCompressor(ContextEngine):
             "only output the structured summary. "
             "Do NOT include any preamble, greeting, or prefix. "
             "Write the summary in the same language the user was using in the "
-            "conversation — do not translate or switch to English."
+            "conversation — do not translate or switch to English.\n"
+            "CRITICAL VALUE PRESERVATION RULE: Exact file paths, MD5/SHA hashes, byte counts, "
+            "port numbers (e.g. 9090, 8765, 8766), error codes/messages, exact variable names, "
+            "and numerical parameters MUST be preserved verbatim in 'Completed Actions' and 'Critical Context'. "
+            "NEVER generalize or omit exact hashes, paths, or numbers into vague descriptions."
         )
 
         # Shared structured template (used by both paths).

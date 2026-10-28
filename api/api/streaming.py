@@ -2010,7 +2010,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               # agent에서 직접 읽는다 (NameError 방지).
               _compress_action = getattr(getattr(agent, 'context_compressor', None), '_last_action', None) or 'compact'
               put('compressed', {
-                  'message': 'Context auto-compressed to continue the conversation',
+                  'message': '대화 맥락이 최적화되어 현재 세션에서 연속으로 이어집니다.',
                   'old_session_id': _old_sid,
                   'new_session_id': _new_sid,
                   'action': _compress_action,
