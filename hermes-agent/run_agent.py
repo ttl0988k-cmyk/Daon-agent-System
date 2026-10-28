@@ -5269,9 +5269,11 @@ class AIAgent:
                         _lz_on, _before_n, len(self.tools), _dropped, _router_n,
                     )
 
-                    # ── [BUILTIN-TOOL-ON-DEMAND 2026-10-29] ───────────────────────
-                    # 57개 내장 툴(67,055자 / 21K 토큰) 중 특정 상황에만 쓰이는 무거운 도구군을
-                    # 프롬프트 맥락에 따라 동적으로 필터링하여 매 턴 약 30,000자(9.5K 토큰)를 추가 절감.
+                    # ── [BUILTIN-TOOL-ON-DEMAND v3 2026-10-29] ───────────────────
+                    # 1. 중복 도구 영구 제거: dispatch_worker(-504tok) -> delegate_to_worker, delegate_task(-602tok) -> delegate_to_agent
+                    # 2. 페이슈(Feishu) 미사용 도구 5종 온디맨드화 (-1,000tok)
+                    # 3. 플러그인 세분화: create(-539tok)/import(-200tok)/remove(-90tok)는 생성/관리 명시 시에만 로드
+                    # 4. 비핵심 도구 온디맨드화: cronjob(-500tok), session_search(-396tok), skill_manage(-394tok), tts, browser, media
                     _tools_on_demand = _os_lz.getenv("DAON_ON_DEMAND_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
                     if _tools_on_demand and isinstance(self.tools, list):
                         _recent_text = ""
@@ -5283,42 +5285,87 @@ class AIAgent:
 
                         _has_browser = any(k in _recent_lower for k in ("browser", "브라우저", "웹", "크롬", "chrome", "url", "http", "웹페이지", "사이트"))
                         _has_plugin = any(k in _recent_lower for k in ("plugin", "플러그인", "secret", "시크릿"))
-                        _has_media = any(k in _recent_lower for k in ("image", "video", "영상", "비디오", "이미지", "그림", "사진", "frame"))
+                        _has_plugin_create = any(k in _recent_lower for k in ("plugin_create", "플러그인 생성", "플러그인 제작", "플러그인 개발", "create plugin", "플러그인 만들어"))
+                        _has_plugin_admin = any(k in _recent_lower for k in ("plugin_import", "plugin_remove", "플러그인 설치", "플러그인 삭제", "install plugin"))
+                        _has_media = any(k in _recent_lower for k in ("image", "video", "영상", "비디오", "이미지", "그림", "사진", "frame", "vision"))
                         _has_cron = any(k in _recent_lower for k in ("cron", "스케줄", "예약", "매일", "주기적", "알람"))
-                        _has_session_search = any(k in _recent_lower for k in ("session_search", "과거 대화", "이전 대화", "지난 세션", "기억 찾아"))
-                        _has_subagent = any(k in _recent_lower for k in ("delegate_task", "서브에이전트", "subagent", "하위 에이전트"))
+                        _has_session_search = any(k in _recent_lower for k in ("session_search", "과거 대화", "이전 대화", "지난 세션", "지난 대화", "기억 찾아", "예전 기록"))
+                        _has_skill_manage = any(k in _recent_lower for k in ("skill_manage", "스킬 생성", "스킬 수정", "스킬 패치", "패치 등록", "patch", "create skill", "스킬 저장"))
                         _has_boardroom = any(k in _recent_lower for k in ("boardroom", "회의실", "회의", "소집", "workshop"))
+                        _has_feishu = any(k in _recent_lower for k in ("feishu", "페이슈", "lark", "라크"))
+                        _has_tts = any(k in _recent_lower for k in ("tts", "음성", "읽어줘", "목소리", "말해줘", "text_to_speech"))
 
                         _pruned_tools = []
                         _dropped_builtin = 0
                         for _t in self.tools:
                             _nm = (_t.get("function") or {}).get("name", "") if isinstance(_t, dict) else ""
+
+                            # [중복 제거 A] dispatch_worker -> delegate_to_worker (206 tok)로 완전 대체
+                            if _nm == "dispatch_worker":
+                                _dropped_builtin += 1
+                                continue
+                            # [중복 제거 B] delegate_task -> delegate_to_agent (204 tok) 및 dynamic_harness로 완전 대체
+                            if _nm == "delegate_task":
+                                _dropped_builtin += 1
+                                continue
+
+                            # [페이슈 도구 5개]
+                            if _nm.startswith("feishu_") and not _has_feishu:
+                                _dropped_builtin += 1
+                                continue
+
+                            # [브라우저 도구 13개]
                             if _nm.startswith("browser_") and not _has_browser:
                                 _dropped_builtin += 1
                                 continue
-                            if _nm.startswith("plugin_") and not _has_plugin:
+
+                            # [플러그인 도구 세분화]
+                            if _nm == "plugin_create" and not _has_plugin_create:
                                 _dropped_builtin += 1
                                 continue
-                            if _nm in ("generate_image", "generate_video", "video_generate", "video_extract_frames") and not _has_media:
+                            if _nm in ("plugin_import", "plugin_remove") and not _has_plugin_admin:
                                 _dropped_builtin += 1
                                 continue
+                            if _nm in ("plugin_list", "plugin_toggle", "plugin_set_secret") and not _has_plugin:
+                                _dropped_builtin += 1
+                                continue
+
+                            # [미디어 도구 5개]
+                            if _nm in ("generate_image", "generate_video", "video_generate", "video_extract_frames", "vision_analyze") and not _has_media:
+                                _dropped_builtin += 1
+                                continue
+
+                            # [음성 TTS 도구]
+                            if _nm == "text_to_speech" and not _has_tts:
+                                _dropped_builtin += 1
+                                continue
+
+                            # [크론잡 / 세션 검색 / 스킬 관리]
                             if _nm == "cronjob" and not _has_cron:
                                 _dropped_builtin += 1
                                 continue
                             if _nm == "session_search" and not _has_session_search:
                                 _dropped_builtin += 1
                                 continue
-                            if _nm == "delegate_task" and not _has_subagent:
+                            if _nm == "skill_manage" and not _has_skill_manage:
                                 _dropped_builtin += 1
                                 continue
+
+                            # [회의실 도구]
                             if _nm in ("convene_boardroom", "open_workshop") and not _has_boardroom:
                                 _dropped_builtin += 1
                                 continue
+
+                            # [워커 보조 도구]
+                            if _nm in ("worker_gateway", "worker_job", "worker_status") and not any(k in _recent_lower for k in ("worker_gateway", "worker_job", "worker_status", "게이트웨이")):
+                                _dropped_builtin += 1
+                                continue
+
                             _pruned_tools.append(_t)
 
                         if _dropped_builtin:
                             logger.info(
-                                "[BUILTIN-TOOL-ON-DEMAND] pruned %d unused heavy tools, remaining: %d",
+                                "[BUILTIN-TOOL-ON-DEMAND v3] pruned %d unused/duplicate tools, remaining: %d",
                                 _dropped_builtin, len(_pruned_tools),
                             )
                             self.tools = _pruned_tools
