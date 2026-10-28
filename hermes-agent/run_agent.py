@@ -115,6 +115,38 @@ from utils import atomic_json_write, env_var_enabled
 
 
 
+# ── [TOOL-SCHEMA-COMPACT 2026-10-29] ─────────────────────────────────────────
+# 툴/파라미터의 장황한 설명을 140자/60자로 압축하여 스키마 오버헤드를 대폭 절감.
+# 함수 이름, 타입, required, enum, properties 키 구조는 100% 완벽히 보존.
+_TOOL_COMPACT_ON = os.getenv("DAON_TOOL_COMPACT", "1").strip().lower() not in ("0", "false", "no", "off")
+_TOOL_DESC_MAX = int(os.getenv("DAON_TOOL_DESC_MAX", "140"))
+_TOOL_PARAM_DESC_MAX = int(os.getenv("DAON_TOOL_PARAM_DESC_MAX", "60"))
+
+def _compact_tool_schemas(tools: list, dmax: int = _TOOL_DESC_MAX, pmax: int = _TOOL_PARAM_DESC_MAX) -> list:
+    """도구 스키마 설명(description) 압축: 툴 설명 dmax(기본 140자), 파라미터 설명 pmax(기본 60자) 제한."""
+    if not tools or not isinstance(tools, list):
+        return tools
+    import copy
+    out = copy.deepcopy(tools)
+    for t in out:
+        f = t.get("function") if isinstance(t, dict) and "function" in t else t
+        if not isinstance(f, dict):
+            continue
+        d = f.get("description")
+        if isinstance(d, str) and len(d) > dmax:
+            f["description"] = d[:dmax].rstrip() + "…"
+        params = f.get("parameters") or {}
+        if isinstance(params, dict):
+            props = params.get("properties") or {}
+            if isinstance(props, dict):
+                for k, v in props.items():
+                    if isinstance(v, dict):
+                        vd = v.get("description")
+                        if isinstance(vd, str) and len(vd) > pmax:
+                            v["description"] = vd[:pmax].rstrip() + "…"
+    return out
+
+
 class _SafeWriter:
     """Transparent stdio wrapper that catches OSError/ValueError from broken pipes.
 
@@ -5369,6 +5401,11 @@ class AIAgent:
                                 _dropped_builtin, len(_pruned_tools),
                             )
                             self.tools = _pruned_tools
+
+                    # ── [TOOL-SCHEMA-COMPACT 2026-10-29] ──────────────────────────
+                    # 남은 툴들의 장황한 설명을 140자/60자로 압축하여 최종 전송 스키마 크기를 6.5K 토큰으로 안착
+                    if _TOOL_COMPACT_ON and isinstance(self.tools, list):
+                        self.tools = _compact_tool_schemas(self.tools)
             except Exception as _lz_e:  # fail-open: 절대 전송을 막지 않는다
                 logger.warning("LAZY-MCP-FINAL-GUARD failed: %s", _lz_e)
             # Final safety net: some providers (MiniMax, Qwen) reject tool
