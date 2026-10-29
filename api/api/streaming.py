@@ -1916,6 +1916,18 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   'type': 'lock_timeout',
               })
               return
+          # Heartbeat watchdog for run_conversation:
+          # 외부 압축 LLM 호출(MiniMax 등)이나 긴 TTFT 대기 중(30초 초과 시)
+          # 프론트엔드의 30초 idle 타이머가 스트림을 강제 취소하지 않도록
+          # 10초마다 주기적으로 전용 heartbeat SSE 이벤트를 발행한다.
+          _conv_done = threading.Event()
+          def _conv_heartbeat_worker():
+              while not _conv_done.wait(timeout=10.0):
+                  if not cancel_event.is_set():
+                      put('heartbeat', {})
+          _hb_thread = threading.Thread(target=_conv_heartbeat_worker, daemon=True)
+          _hb_thread.start()
+
           try:
               result = agent.run_conversation(
                   user_message=user_message_payload,
@@ -1925,6 +1937,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   persist_user_message=msg_text,
               )
           finally:
+              _conv_done.set()
               # cancel_stream()이 취소 시 세션 락을 강제 해제한 경우,
               # 여기서 또 release()하면 RuntimeError가 발생하므로 무시한다.
               try:

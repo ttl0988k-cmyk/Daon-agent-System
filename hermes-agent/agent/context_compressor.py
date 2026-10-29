@@ -440,18 +440,44 @@ class ContextCompressor(ContextEngine):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _message_text(msg: Dict[str, Any], limit: int = 4000) -> str:
-        """Steward 입력용 단일 메시지 텍스트 추출 (str/list content 모두 허용)."""
-        content = (msg or {}).get("content", "")
+    def _strip_image_data(content: Any) -> str:
+        """Strip raw base64 image data from content for text summarization.
+
+        Replaces large data URLs with concise placeholders like '[Image attachment]'
+        so the summarizer LLM is not bogged down with hundreds of thousands of base64
+        characters, while preserving the user's textual context.
+        """
         if isinstance(content, list):
-            parts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(str(block.get("text", "")))
-                elif isinstance(block, str):
-                    parts.append(block)
-            content = "\n".join(parts)
-        text = str(content or "")
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    itype = item.get("type")
+                    if itype == "text":
+                        t = item.get("text", "")
+                        if isinstance(t, str) and "data:image/" in t:
+                            t = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[Image attachment]', t)
+                        text_parts.append(str(t))
+                    elif itype == "image_url":
+                        text_parts.append("[Image attachment]")
+                    else:
+                        text_parts.append(f"[{itype}]")
+                elif isinstance(item, str):
+                    t = item
+                    if "data:image/" in t:
+                        t = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[Image attachment]', t)
+                    text_parts.append(t)
+            return "\n".join(text_parts)
+        elif isinstance(content, str):
+            if "data:image/" in content:
+                return re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[Image attachment]', content)
+            return content
+        return str(content or "")
+
+    @classmethod
+    def _message_text(cls, msg: Dict[str, Any], limit: int = 4000) -> str:
+        """Steward 입력용 단일 메시지 텍스트 추출 (str/list content 모두 허용, base64 제외)."""
+        content = (msg or {}).get("content", "")
+        text = cls._strip_image_data(content)
         if len(text) > limit:
             text = text[:limit] + "...[truncated]"
         return text
@@ -762,7 +788,8 @@ class ContextCompressor(ContextEngine):
         parts = []
         for msg in turns:
             role = msg.get("role", "unknown")
-            content = msg.get("content") or ""
+            raw_content = msg.get("content") or ""
+            content = self._strip_image_data(raw_content)
 
             # Tool results: keep enough content for the summarizer
             if role == "tool":

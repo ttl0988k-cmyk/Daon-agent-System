@@ -59,6 +59,9 @@ def build_user_payload(
     if not attachments:
         return user_message_payload
 
+    # 중복 파일 전송 방어 (동일 파일이 여러 번 유입되어 base64가 폭증하는 현상 방지)
+    attachments = list(dict.fromkeys(attachments))
+
     multimodal_content = [{"type": "text", "text": workspace_ctx + msg_text}]
     has_images = False
 

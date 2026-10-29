@@ -1089,9 +1089,18 @@ def estimate_tokens_rough(text: str) -> int:
     return (len(text) + 3) // 4
 
 
+def _estimate_msg_chars(msg: Any) -> int:
+    """Estimate character count for a message, treating base64 images as standard vision tokens (~4000 chars / ~1000 tokens)."""
+    s = str(msg)
+    if "data:image/" in s:
+        # Replace base64 payloads (which can be 100K-500K chars) with ~4000 chars (approx 1000 tokens, typical vision model image budget)
+        s = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', 'X' * 4000, s)
+    return len(s)
+
+
 def estimate_messages_tokens_rough(messages: List[Dict[str, Any]]) -> int:
     """Rough token estimate for a message list (pre-flight only)."""
-    total_chars = sum(len(str(msg)) for msg in messages)
+    total_chars = sum(_estimate_msg_chars(msg) for msg in messages)
     return (total_chars + 3) // 4
 
 
@@ -1112,7 +1121,7 @@ def estimate_request_tokens_rough(
     if system_prompt:
         total_chars += len(system_prompt)
     if messages:
-        total_chars += sum(len(str(msg)) for msg in messages)
+        total_chars += sum(_estimate_msg_chars(msg) for msg in messages)
     if tools:
         total_chars += len(str(tools))
     return (total_chars + 3) // 4
