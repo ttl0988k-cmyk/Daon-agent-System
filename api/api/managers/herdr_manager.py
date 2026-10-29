@@ -44,9 +44,9 @@ HERDR_SOCK_DEFAULT = (
 _BOARDROOM_WORKER_ROOT = Path(r"C:\daon\_worker_runs")
 _BOARDROOM_CODEX_HOME_ROOT = _BOARDROOM_WORKER_ROOT / "_codex_homes"
 
-# 슬롯 미지정 시 기본값 (§2.1): 07=코덱스/뮤즈, 08=클로드/deepseek
+# 슬롯 미지정 시 기본값 (§2.1): 07=코덱스/딥시크, 08=클로드/딥시크
 _BOARDROOM_DEFAULTS = {
-    "worker-codex": ("opencode-go", "muse-spark-1.3-contributor"),
+    "worker-codex": ("opencode-go", "deepseek-v4.1-flash"),
     "worker-claude": ("opencode-go", "deepseek-v4.1-flash"),
 }
 
@@ -54,10 +54,12 @@ _BOARDROOM_DEFAULTS = {
 _BOARDROOM_SPECS = {
     "opencode-go": {
         "label": "OpenCode Go",
-        "base_url": "https://opencode.ai/zen/go/v1",
-        "anthropic_base_url": "https://opencode.ai/zen/go",
-        "env_key": "DAON_HARNESS_OPENCODE_GO_KEY",
-        "codex_model": "muse-spark-1.3-contributor",
+        # [2026-10-30 대표님 지시] OpenCode 공식 문서(Harnesses > Codex/Claude Code > Go) 값 그대로.
+        #   Codex: base_url + /responses. Claude: /v1/messages를 CLI가 붙이므로 여기엔 /v1 금지.
+        "base_url": "https://opencode.ai/inference/go/openai/v1",
+        "anthropic_base_url": "https://opencode.ai/inference/go/anthropic",
+        "env_key": "OPENCODE_API_KEY",
+        "codex_model": "deepseek-v4.1-flash",
         "claude_model": "deepseek-v4.1-flash",
         "context_window": 128000,
         "headers": {"x-opencode-session": "daon-harness-worker"},
@@ -737,9 +739,10 @@ class HerdrManager:
     ) -> str:
         """클로드 pane 주입 명령. Anthropic 네이티브 직결(I-5/I-6).
 
-        harness-worker build_env 직접 경로와 동일 배선:
-        ANTHROPIC_BASE_URL=네이티브, AUTH_TOKEN 제거, CUSTOM_HEADERS 세션 헤더,
-        SMALL_FAST도 실모델(haiku는 업스트림 404).
+        OpenCode 공식 문서(Harnesses > Claude Code > Go) 배선:
+        ANTHROPIC_BASE_URL=네이티브, ANTHROPIC_AUTH_TOKEN 사용(API_KEY 금지),
+        CUSTOM_HEADERS 세션 헤더, SMALL_FAST도 실모델(haiku는 업스트림 404).
+        공식 직결 경로에는 문서에 없는 모델창 강제 플래그를 넣지 않는다.
 
         ★ [2026-10-18] ANTHROPIC_API_KEY는 명령줄 평문 금지. pane run 문자열이
         scrollback에 남는다(실측). 슬롯 스크립트 파일로 쓰고 dot-source만 pane에
@@ -762,13 +765,9 @@ class HerdrManager:
             r"Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue",
             f"$env:ANTHROPIC_MODEL={self._boardroom_ps_quote(model_id)}",
             f"$env:ANTHROPIC_SMALL_FAST_MODEL={self._boardroom_ps_quote(model_id)}",
-            # ★ [2026-10-18] raw string이라 소스 1개 = 전달값 1개(Env:\)가 정표기.
-            #   일반 리터럴 "Env:\\"도 전달값은 1개로 같지만, 소스에서 2개로 보여
-            #   오표기로 오독된 전례가 있어 raw로 고정한다. 절대 1중 백슬래시
-            #   일반 리터럴("Env:\A...")로 바꾸지 말 것 — SyntaxWarning 발생.
-            r"Remove-Item Env:\ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue",
-            "$env:CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT="
-            + self._boardroom_ps_quote("1"),
+            # [2026-10-30 대표님 지시] 공식 문서: AUTH_TOKEN 사용, API_KEY 주입 금지.
+            #   키는 명령줄이 아니라 슬롯 스크립트(pane_env.ps1)에만 기록한다.
+            f"$env:ANTHROPIC_AUTH_TOKEN={self._boardroom_ps_quote(api_key)}",
         ]
         if custom_headers:
             lines.append(
