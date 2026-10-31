@@ -485,6 +485,46 @@ def active_plugin_skills(session_id: str) -> tuple[list[str], list[str]]:
             qualified.append(s["qualified"])
             try:
                 content = Path(s["path"]).read_text(encoding="utf-8")
+                # Detect reference examples in skill dir
+                s_dir = Path(s["path"]).parent
+                ex_list = []
+                for ex_candidate in [s_dir / "examples", s_dir / "assets" / "examples"]:
+                    if ex_candidate.exists():
+                        for ef in ex_candidate.rglob("*"):
+                            if ef.is_file() and not ef.name.startswith("."):
+                                ex_list.append(str(ef.relative_to(s_dir)))
+                if ex_list:
+                    primary_snippet = ""
+                    try:
+                        sorted_ex = sorted(
+                            ex_list,
+                            key=lambda x: (
+                                0 if "toaster" in x.lower() else (
+                                    1 if any(k in x.lower() for k in ["claw", "demo", "sample", "main", "figure"]) else (
+                                        2 if x.endswith((".html", ".py", ".js", ".ts")) else 3
+                                    )
+                                ),
+                                x
+                            )
+                        )
+                        primary_path = s_dir / sorted_ex[0]
+                        try:
+                            from tools.skills_tool import _extract_focused_example_snippet
+                            snippet_res = _extract_focused_example_snippet(primary_path, skill_md_text=content, max_chars=4096)
+                            primary_code = snippet_res["code"]
+                        except Exception:
+                            raw_p = primary_path.read_text(encoding="utf-8")
+                            primary_code = raw_p[:4096] + "\n... [Truncated] ..." if len(raw_p) > 4096 else raw_p
+                        primary_snippet = f"\n\n### Primary Reference Example (`{sorted_ex[0]}`):\n```\n{primary_code}\n```\n"
+                    except Exception:
+                        pass
+
+                    content = (
+                        f"<!-- [MANDATORY SKILL GUIDANCE]: This skill contains {len(ex_list)} reference example(s): {', '.join(ex_list[:5])}. "
+                        "You MUST inspect and emulate these reference examples BEFORE writing code! -->\n\n"
+                        + content
+                        + primary_snippet
+                    )
             except Exception as exc:
                 _logger.warning("Failed to read plugin skill %s: %s", s["path"], exc)
                 content = ""

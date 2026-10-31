@@ -51,7 +51,6 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("qwen/qwen3.5-plus-02-15",         ""),
     ("qwen/qwen3.5-35b-a3b",            ""),
     ("stepfun/step-3.5-flash",          ""),
-    ("minimax/minimax-m2.7",            ""),
     ("z-ai/glm-5.1",                    ""),
     ("z-ai/glm-5v-turbo",               ""),
     ("z-ai/glm-5-turbo",                ""),
@@ -97,7 +96,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "qwen/qwen3.5-plus-02-15",
         "qwen/qwen3.5-35b-a3b",
         "stepfun/step-3.5-flash",
-        "minimax/minimax-m2.7",
         "z-ai/glm-5.1",
         "z-ai/glm-5v-turbo",
         "z-ai/glm-5-turbo",
@@ -185,12 +183,14 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "kimi-k2-0905-preview",
     ],
     "minimax": [
-        "MiniMax-M2.7",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3",
         "MiniMax-M2.1",
         "MiniMax-M2",
     ],
     "minimax-cn": [
-        "MiniMax-M2.7",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3",
         "MiniMax-M2.1",
         "MiniMax-M2",
     ],
@@ -245,7 +245,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-3.1-pro",
         "gemini-3-pro",
         "gemini-3-flash",
-        "minimax-m2.7",
         "minimax-m2.1",
         "glm-5",
         "glm-4.7",
@@ -261,7 +260,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "glm-5",
         "mimo-v2-pro",
         "mimo-v2-omni",
-        "minimax-m2.7",
     ],
     "ai-gateway": [
         "anthropic/claude-opus-4.6",
@@ -2104,7 +2102,7 @@ def validate_requested_model(
         except Exception:
             catalog_models = []
         if catalog_models:
-            # Case-insensitive lookup (catalog uses mixed case like MiniMax-M2.7)
+            # Case-insensitive lookup (catalog uses mixed case like MiniMax-M3.1-Flash)
             catalog_lower = {m.lower(): m for m in catalog_models}
             if requested_for_lookup.lower() in catalog_lower:
                 return {

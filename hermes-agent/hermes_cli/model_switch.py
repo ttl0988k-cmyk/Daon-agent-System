@@ -187,7 +187,7 @@ def _load_direct_aliases() -> dict[str, DirectAlias]:
             provider: custom
             base_url: "https://ollama.com/v1"
           minimax:
-            model: "minimax-m2.7"
+            model: "minimax-m3.1-flash"
             provider: custom
             base_url: "https://ollama.com/v1"
     """
@@ -733,7 +733,7 @@ def switch_model(
     # https://opencode.ai/zen/go/v1/messages instead of .../v1/v1/messages).
     # Mirrors the same logic in hermes_cli.runtime_provider.resolve_runtime_provider;
     # without it, /model switches into an anthropic_messages-routed OpenCode
-    # model (e.g. `/model minimax-m2.7` on opencode-go, `/model claude-sonnet-4-6`
+    # model (e.g. `/model minimax-m3.1-flash` on opencode-go, `/model claude-sonnet-4-6`
     # on opencode-zen) hit a double /v1 and returned OpenCode's website 404 page.
     if (
         api_mode == "anthropic_messages"
@@ -1106,7 +1106,7 @@ def list_authenticated_providers(
     # Each ``custom_providers`` entry represents one model under a named
     # provider. Entries sharing the same provider name are grouped into a
     # single picker row so that e.g. four Ollama Cloud entries
-    # (qwen3-coder, glm-5.1, kimi-k2, minimax-m2.7) appear as one
+    # (qwen3-coder, glm-5.1, kimi-k2, minimax-m3.1-flash) appear as one
     # "Ollama Cloud" row with four models inside instead of four
     # duplicate "Ollama Cloud" rows. Entries with distinct provider names
     # still produce separate rows (e.g. Ollama Cloud vs Moonshot).

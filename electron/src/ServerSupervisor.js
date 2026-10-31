@@ -388,6 +388,50 @@ class ServerSupervisor {
     //   상속된 값이 남아있을 수 있어 명시적으로 삭제한다.
     const env = { ...process.env };
     delete env.BROWSER_CDP_URL;
+
+    // [2026-10-31] Inject environment from ~/.hermes/.env and profiles/raon/.env
+    // Ensures all API keys (MINIMAX_API_KEY, NVIDIA_API_KEY, DEEPSEEK_API_KEY, etc.)
+    // are passed to the spawned server.exe process even if Electron launched with clean env.
+    try {
+      const os = require('os');
+      const userHome = os.homedir();
+      const userProfile = process.env.USERPROFILE || userHome;
+      const envCandidates = [
+        path.join(userHome, '.hermes', '.env'),
+        path.join(userProfile, '.hermes', '.env'),
+        path.join(userHome, '.hermes', 'profiles', 'raon', '.env'),
+        path.join(userProfile, '.hermes', 'profiles', 'raon', '.env'),
+      ];
+      const seenPaths = new Set();
+      for (const envFile of envCandidates) {
+        if (!envFile || seenPaths.has(envFile)) continue;
+        seenPaths.add(envFile);
+        if (fs.existsSync(envFile)) {
+          const raw = fs.readFileSync(envFile, 'utf8');
+          let injectedCount = 0;
+          for (const line of raw.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx > 0) {
+              const k = trimmed.substring(0, eqIdx).trim();
+              let v = trimmed.substring(eqIdx + 1).trim();
+              if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+                v = v.slice(1, -1);
+              }
+              if (k) {
+                env[k] = v;
+                injectedCount++;
+              }
+            }
+          }
+          this.mlog(`[ServerSupervisor] Injected ${injectedCount} env vars from ${envFile}`);
+        }
+      }
+    } catch (envErr) {
+      this.merr(`[ServerSupervisor] Failed injecting .env into server env: ${envErr.message}`);
+    }
+
     const exePath = this.findServerExe();
 
     try {

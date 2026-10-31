@@ -4173,6 +4173,18 @@ class AIAgent:
             # Fallback to hardcoded identity
             prompt_parts = [DEFAULT_AGENT_IDENTITY]
 
+        # Ensure mandatory craftsmanship & verification checklist is ALWAYS active,
+        # even when SOUL.md replaces DEFAULT_AGENT_IDENTITY.
+        prompt_parts.append(
+            "\n# MANDATORY SELF-REFLECTION CHECKLIST\n"
+            "Before declaring a task complete, verify:\n"
+            "1. Have all requirements of the user's task and the active skill been fully met in deep detail?\n"
+            "2. Did you inspect reference examples (examples/ or assets/examples/) before writing code?\n"
+            "3. Are all mechanical/architectural parts and APIs fully implemented rather than simplified?\n"
+            "4. Have appropriate tests, visual inspections (via vision_analyze or screenshots), or runtime verifications been executed to confirm quality?\n"
+            "5. Was the solution implemented in the cleanest and most optimal manner?\n"
+        )
+
         # Tool-aware behavioral guidance: only inject when the tools are loaded
         tool_guidance = []
         if "memory" in self.valid_tool_names:
@@ -4955,7 +4967,7 @@ class AIAgent:
     def _anthropic_preserve_dots(self) -> bool:
         """True when using an anthropic-compatible endpoint that preserves dots in model names.
         Alibaba/DashScope keeps dots (e.g. qwen3.5-plus).
-        MiniMax keeps dots (e.g. MiniMax-M2.7).
+        MiniMax keeps dots (e.g. MiniMax-M3.1-Flash).
         OpenCode Go/Zen keeps dots for non-Claude models (e.g. minimax-m2.5-free).
         ZAI/Zhipu keeps dots (e.g. glm-4.7, glm-5.1).
         AWS Bedrock uses dotted inference-profile IDs
@@ -5321,9 +5333,9 @@ class AIAgent:
                         _has_plugin_create = any(k in _recent_lower for k in ("plugin_create", "플러그인 생성", "플러그인 제작", "플러그인 개발", "create plugin", "플러그인 만들어"))
                         _has_plugin_admin = any(k in _recent_lower for k in ("plugin_import", "plugin_remove", "플러그인 설치", "플러그인 삭제", "install plugin"))
                         _has_media = any(k in _recent_lower for k in ("image", "video", "영상", "비디오", "이미지", "그림", "사진", "frame", "vision"))
-                        _has_cron = any(k in _recent_lower for k in ("cron", "스케줄", "예약", "매일", "주기적", "알람"))
-                        _has_session_search = any(k in _recent_lower for k in ("session_search", "과거 대화", "이전 대화", "지난 세션", "지난 대화", "기억 찾아", "예전 기록"))
-                        _has_skill_manage = any(k in _recent_lower for k in ("skill_manage", "스킬 생성", "스킬 수정", "스킬 패치", "패치 등록", "patch", "create skill", "스킬 저장"))
+                        _has_cron = any(k in _recent_lower for k in ("cron", "스케줄", "예약", "매일", "주기적", "알람", "schedule", "cronjob"))
+                        _has_session_search = any(k in _recent_lower for k in ("session_search", "과거 대화", "이전 대화", "지난 세션", "지난 대화", "기억 찾아", "예전 기록", "세션", "대화 기록", "기억", "session"))
+                        _has_skill_manage = any(k in _recent_lower for k in ("skill_manage", "스킬 생성", "스킬 수정", "스킬 패치", "패치 등록", "patch", "create skill", "스킬 저장", "스킬", "skill"))
                         _has_boardroom = any(k in _recent_lower for k in ("boardroom", "회의실", "회의", "소집", "workshop"))
                         _has_feishu = any(k in _recent_lower for k in ("feishu", "페이슈", "lark", "라크"))
                         _has_tts = any(k in _recent_lower for k in ("tts", "음성", "읽어줘", "목소리", "말해줘", "text_to_speech"))
@@ -5364,7 +5376,7 @@ class AIAgent:
                                 continue
 
                             # [미디어 도구 5개]
-                            if _nm in ("generate_image", "generate_video", "video_generate", "video_extract_frames", "vision_analyze") and not _has_media:
+                            if _nm in ("generate_image", "generate_video", "video_generate", "video_extract_frames") and not _has_media:
                                 _dropped_builtin += 1
                                 continue
 

@@ -570,7 +570,9 @@ async def vision_analyze_tool(
             "task": "vision",
             "messages": messages,
             "temperature": vision_temperature,
-            "max_tokens": 2000,
+            # [2026-10-31] 2000은 추론형 모델(M3.1-Flash)이 reasoning에 전량 소진해
+            # content="" 로 돌아오는 사례 실측(finish=length). 6000으로 상향.
+            "max_tokens": 6000,
             "timeout": vision_timeout,
         }
         if model:

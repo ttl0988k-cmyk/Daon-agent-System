@@ -148,10 +148,11 @@ function renderMarkdown(content) {
   if (!content) return '';
   let text = escapeHtml(stripThinkBlocks(content));
 
-  // Fenced code blocks ```lang ... ```
+  // Fenced code blocks ```lang ... ``` — stashed so later passes cannot corrupt them
+  const _codeStash = [];
   text = text.replace(/```([a-zA-Z0-9_\-\.]*)\n([\s\S]*?)```/g, (match, lang, code) => {
     const language = lang || 'code';
-    return `
+    _codeStash.push(`
       <div class="rounded-[10px] bg-surface border border-black/10 overflow-hidden my-3">
         <div class="flex items-center justify-between px-space-md py-space-xs border-b border-black/10 bg-surface-container-low">
           <span class="font-code text-code text-[12px] text-on-surface-variant font-mono">${escapeHtml(language)}</span>
@@ -161,8 +162,49 @@ function renderMarkdown(content) {
           </button>
         </div>
         <pre class="p-space-md font-code text-code text-[12px] text-on-surface overflow-x-auto leading-relaxed"><code>${code}</code></pre>
-      </div>`;
+      </div>`);
+    return `\u0000CODE${_codeStash.length - 1}\u0000`;
   });
+
+  // GitHub-flavored pipe tables — rendered before the inline/paragraph passes.
+  // A table only starts when a |…| row is followed by a |---|---| delimiter row,
+  // so ordinary prose containing pipes is left untouched.
+  const _tblStash = [];
+  {
+    const _lines = text.split('\n');
+    const _out = [];
+    const _isRow = (s) => /^\s*\|.*\|\s*$/.test(s);
+    const _isDelim = (s) => /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/.test(s);
+    const _cut = (r) => r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    for (let i = 0; i < _lines.length; i++) {
+      if (_isRow(_lines[i]) && i + 1 < _lines.length && _isDelim(_lines[i + 1])) {
+        const _heads = _cut(_lines[i]);
+        const _aligns = _cut(_lines[i + 1]).map((c) => {
+          const L = c.startsWith(':');
+          const R = c.endsWith(':');
+          return L && R ? 'text-center' : R ? 'text-right' : L ? 'text-left' : '';
+        });
+        let k = i + 2;
+        let _body = '';
+        for (; k < _lines.length; k++) {
+          if (!_isRow(_lines[k])) break;
+          const _cells = _cut(_lines[k]);
+          if (!_cells.length || _cells.every((c) => !c)) break;
+          _body += '<tr>' + _cells.map((c, j) => `<td class="border border-black/15 px-3 py-1.5 align-top ${_aligns[j] || ''}">${c}</td>`).join('') + '</tr>';
+        }
+        const _th = _heads.map((h, j) => `<th class="border border-black/15 bg-surface-container px-3 py-1.5 font-semibold ${_aligns[j] || ''}">${h}</th>`).join('');
+        _tblStash.push(
+          `<div class="overflow-x-auto my-3"><table class="w-full border-collapse text-[13px] leading-relaxed">` +
+          `<thead><tr>${_th}</tr></thead><tbody>${_body}</tbody></table></div>`
+        );
+        _out.push(`\n\n\u0000TBL${_tblStash.length - 1}\u0000\n\n`);
+        i = k - 1;
+        continue;
+      }
+      _out.push(_lines[i]);
+    }
+    text = _out.join('\n');
+  }
 
   // Inline code `code`
   text = text.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-surface-container font-code text-[12px] text-on-surface">$1</code>');
@@ -184,7 +226,19 @@ function renderMarkdown(content) {
   // Paragraphs
   text = text.replace(/\n\n+/g, '</p><p class="mb-3">');
 
-  return `<p class="mb-2 leading-relaxed">${text}</p>`;
+  // Restore stashed tables — drop the <p> wrapper a block-level table does not need
+  text = text.replace(/<p class="mb-3">\u0000TBL(\d+)\u0000<\/p>/g, (m, n) => _tblStash[+n]);
+  text = text.replace(/\u0000TBL(\d+)\u0000/g, (m, n) => _tblStash[+n]);
+  // Restore stashed code blocks
+  text = text.replace(/\u0000CODE(\d+)\u0000/g, (m, n) => _codeStash[+n]);
+
+  const _html = `<p class="mb-2 leading-relaxed">${text}</p>`;
+  // A table is a block element: strip the <p> that the paragraph pass wrapped it in
+  return _html
+    .replace(/<p class="(?:mb-2 leading-relaxed|mb-3)">(?=<div class="overflow-x-auto)/g, '')
+    .replace(/(<\/table><\/div>)<\/p>/g, '$1')
+    .replace(/<p class="mb-2 leading-relaxed"><\/p>/g, '')
+    .replace(/<p class="mb-3"><\/p>/g, '');
 }
 
 function formatTime(timestamp) {
@@ -3678,6 +3732,20 @@ function setBoardroomWorkerModelState(slot, payload = {}) {
     else row.removeAttribute('aria-describedby');
   }
 }
+
+// ★ [2026-10-30 대표님 지적] 회의실 모델 상태 자동 갱신.
+//   서버를 재기동해 워커가 정상(ready)이 되어도, 이미 열려 있던 회의실 탭은
+//   진입 시점에 한 번만 /api/workers를 읽고 끝이라 옛 '실행 실패' 배지를
+//   계속 들고 있었다(클로드 워커 에러 잔존 오탐). 회의실 탭이 화면에 보이는
+//   동안 12초 주기로 재조회해 서버 상태와 DOM을 자동 동기화한다.
+setInterval(() => {
+  try {
+    const panel = document.getElementById('tab-agent-boardroom');
+    if (!panel) return;
+    const visible = getComputedStyle(panel).display !== 'none';
+    if (visible) refreshBoardroomWorkerModelStates();
+  } catch (_) {}
+}, 12000);
 
 let _boardroomWorkerModelRefresh = null;
 let _boardroomWorkerModelRefreshAgain = false;

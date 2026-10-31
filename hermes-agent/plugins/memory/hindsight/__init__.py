@@ -43,7 +43,7 @@ _PROVIDER_DEFAULT_MODELS = {
     "gemini": "gemini-2.5-flash",
     "groq": "openai/gpt-oss-120b",
     "openrouter": "qwen/qwen3.5-9b",
-    "minimax": "MiniMax-M2.7",
+    "minimax": "MiniMax-M3.1-Flash",
     "ollama": "gemma3:12b",
     "lmstudio": "local-model",
     "openai_compatible": "your-model-name",

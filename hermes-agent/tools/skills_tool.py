@@ -837,6 +837,153 @@ def _serve_plugin_skill(
     )
 
 
+def _extract_focused_example_snippet(
+    file_path: Path,
+    skill_md_text: str = "",
+    max_chars: int = 4096,
+) -> dict:
+    """Extract representative code windows focusing on key APIs rather than boilerplate."""
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return {"code": f"[Failed to read {file_path.name}: {exc}]", "total_chars": 0, "truncated": False}
+
+    lines = text.splitlines()
+    total_lines = len(lines)
+    raw_len = len(text)
+
+    if raw_len <= max_chars:
+        return {"code": text, "total_chars": raw_len, "truncated": False}
+
+    # Core high-priority domain APIs
+    core_apis = [
+        "rrUV(", "extrude(", "byDepth(", "porthole(", "xrMount(", "clipTo(", "hullInk("
+    ]
+
+    # Check if any core APIs exist in this file
+    target_apis = [api for api in core_apis if any(api in line for line in lines)]
+
+    # If no core APIs exist in this file, fallback to function tokens from SKILL.md or common constructs
+    if not target_apis:
+        if skill_md_text:
+            import re
+            md_tokens = re.findall(r'`([a-zA-Z][a-zA-Z0-9_]{2,30})\(?`?', skill_md_text)
+            stopwords = {
+                "const", "return", "function", "import", "export", "true", "false",
+                "null", "undefined", "class", "this", "self", "async", "await", "none",
+                "shape", "rectuv", "elluv", "arcuv", "loft", "castshadow", "line", "fill", "text"
+            }
+            for tok in md_tokens:
+                if tok.lower() not in stopwords and f"{tok}(" not in target_apis:
+                    target_apis.append(f"{tok}(")
+        if not target_apis:
+            target_apis = ["def ", "class ", "async def ", "function "]
+
+    line_matches = []
+    for idx, line in enumerate(lines):
+        for api in target_apis:
+            if api in line:
+                line_matches.append((idx, api.rstrip("(")))
+
+    if not line_matches:
+        fall_content = text
+        if "<body" in fall_content:
+            body_start = fall_content.find("<body")
+            fall_content = fall_content[body_start:]
+        snippet = fall_content[:max_chars]
+        return {
+            "code": snippet + f"\n... [TRUNCATED - total {raw_len} chars. Call skill_view(name, file_path='{file_path.name}') for full code] ...",
+            "total_chars": raw_len,
+            "truncated": True
+        }
+
+    all_file_apis = set(api for _, api in line_matches)
+
+    # Candidate windows (-4 to +10 lines around match)
+    candidate_windows = []
+    for idx, api in line_matches:
+        w_start = max(0, idx - 4)
+        w_end = min(total_lines, idx + 10)
+        candidate_windows.append([w_start, w_end, {api}])
+
+    # Merge overlapping windows (within 2 lines)
+    candidate_windows.sort(key=lambda x: x[0])
+    merged = []
+    for start, end, apis in candidate_windows:
+        if not merged:
+            merged.append([start, end, set(apis)])
+        else:
+            prev = merged[-1]
+            if start <= prev[1] + 2:
+                prev[1] = max(prev[1], end)
+                prev[2].update(apis)
+            else:
+                merged.append([start, end, set(apis)])
+
+    for w in merged:
+        if w[1] - w[0] > 32:
+            w[1] = w[0] + 32
+
+    # Greedy set cover: prioritize windows covering the most uncovered APIs
+    uncovered = set(all_file_apis)
+    selected = []
+    total_chars = 0
+
+    while uncovered and merged:
+        best_idx = -1
+        best_count = 0
+        for i, w in enumerate(merged):
+            new_cov = len(w[2] & uncovered)
+            if new_cov > best_count:
+                best_count = new_cov
+                best_idx = i
+
+        if best_idx == -1 or best_count == 0:
+            break
+
+        w = merged.pop(best_idx)
+        w_lines = lines[w[0]:w[1]]
+        header = f"// ── [Excerpt Lines {w[0]+1}-{w[1]} | Focus: {', '.join(sorted(w[2]))}] ──\n"
+        w_text = header + "\n".join(w_lines) + "\n"
+
+        if total_chars + len(w_text) <= max_chars:
+            selected.append((w[0], w[1], w[2], w_text))
+            total_chars += len(w_text)
+            uncovered -= w[2]
+        else:
+            rem = max_chars - total_chars
+            if rem > 250:
+                trunc = header + "\n".join(w_lines)[:rem - 50] + "\n... [trimmed] ...\n"
+                selected.append((w[0], w[1], w[2], trunc))
+                total_chars += len(trunc)
+                uncovered -= w[2]
+            break
+
+    # If space remains, add remaining merged windows with most APIs
+    while merged and total_chars < max_chars - 300:
+        merged.sort(key=lambda w: len(w[2]), reverse=True)
+        w = merged.pop(0)
+        w_lines = lines[w[0]:w[1]]
+        header = f"// ── [Excerpt Lines {w[0]+1}-{w[1]} | Focus: {', '.join(sorted(w[2]))}] ──\n"
+        w_text = header + "\n".join(w_lines) + "\n"
+        if total_chars + len(w_text) <= max_chars:
+            selected.append((w[0], w[1], w[2], w_text))
+            total_chars += len(w_text)
+        else:
+            break
+
+    selected.sort(key=lambda x: x[0])
+    final_snippet = "\n/* ... [code omitted] ... */\n\n".join(s[3] for s in selected)
+    notice = f"\n/* Total file size: {raw_len} chars. Full file available via skill_view(name, file_path='...') */"
+    final_snippet += notice
+
+    return {
+        "code": final_snippet,
+        "total_chars": raw_len,
+        "truncated": True
+    }
+
+
 def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
     """
     View the content of a skill or a specific file within a skill directory.
@@ -1224,6 +1371,45 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                         [str(f.relative_to(skill_dir)) for f in scripts_dir.glob(ext)]
                     )
 
+            # examples/ & assets/examples/ — reference implementations
+            example_files = []
+            example_snippets = {}
+            for ex_dir in [skill_dir / "examples", skill_dir / "assets" / "examples"]:
+                if ex_dir.exists():
+                    for f in ex_dir.rglob("*"):
+                        if f.is_file() and not f.name.startswith("."):
+                            example_files.append(str(f.relative_to(skill_dir)))
+
+            if example_files:
+                MAX_PER_EX = 4096
+                MAX_TOTAL_EX = 12288
+                tot_ex_len = 0
+                sorted_exs = sorted(
+                    example_files,
+                    key=lambda x: (
+                        0 if "toaster" in x.lower() else (
+                            1 if any(k in x.lower() for k in ["claw", "demo", "sample", "figure", "main"]) else (
+                                2 if x.endswith((".html", ".py", ".js", ".ts", ".sh", ".json")) else 3
+                            )
+                        ),
+                        x
+                    )
+                )
+                for ex_rel in sorted_exs:
+                    ex_path = skill_dir / ex_rel
+                    ex_info = _extract_focused_example_snippet(
+                        ex_path, skill_md_text=content, max_chars=MAX_PER_EX
+                    )
+                    snippet_text = ex_info["code"]
+                    example_snippets[ex_rel] = {
+                        "code": snippet_text,
+                        "total_chars": ex_info["total_chars"],
+                        "truncated": ex_info["truncated"]
+                    }
+                    tot_ex_len += len(snippet_text)
+                    if tot_ex_len >= MAX_TOTAL_EX or len(example_snippets) >= 3:
+                        break
+
         # Read tags/related_skills with backward compat:
         # Check metadata.hermes.* first (agentskills.io convention), fall back to top-level
         hermes_meta = {}
@@ -1246,6 +1432,8 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
             linked_files["assets"] = asset_files
         if script_files:
             linked_files["scripts"] = script_files
+        if example_files:
+            linked_files["examples"] = example_files
 
         try:
             rel_path = str(skill_md.relative_to(SKILLS_DIR))
@@ -1321,19 +1509,44 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     exc_info=True,
                 )
 
+        # Embed representative reference example code into content and result dict
+        rendered_content = content
+        if example_snippets:
+            rendered_content += (
+                "\n\n---\n## 🌟 Reference Examples (Representative Code Snippets Auto-Loaded)\n"
+                "> **MANDATORY REFERENCE:** The following code snippet(s) demonstrate the exact API patterns, "
+                "depth ordering, component hierarchy, and rendering conventions required by this skill.\n"
+                "> You MUST emulate these real-world patterns instead of inventing simplified stubs!\n"
+            )
+            for ex_file, ex_info in example_snippets.items():
+                ext = Path(ex_file).suffix.lstrip(".") or "text"
+                rendered_content += (
+                    f"\n### 📄 Example File: `{ex_file}` ({ex_info['total_chars']} chars"
+                    + (", truncated" if ex_info["truncated"] else "")
+                    + f")\n```{ext}\n{ex_info['code']}\n```\n"
+                )
+
         result = {
             "success": True,
             "name": skill_name,
             "description": frontmatter.get("description", ""),
             "tags": tags,
             "related_skills": related_skills,
-            "content": content,
+            "content": rendered_content,
+            "examples": {k: v["code"] for k, v in example_snippets.items()} if example_snippets else None,
             "path": rel_path,
             "skill_dir": str(skill_dir) if skill_dir else None,
             "linked_files": linked_files if linked_files else None,
-            "usage_hint": "To view linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'"
-            if linked_files
-            else None,
+            "usage_hint": (
+                f"MANDATORY: This skill provides {len(example_files)} reference example(s) ({', '.join(example_files[:4])}). "
+                f"{len(example_snippets)} representative example code snippet(s) have been AUTO-LOADED directly into 'content' and 'examples' above. "
+                "Per skill guidelines, you MUST inspect and adhere to these patterns and APIs before writing code! "
+                if example_files else ""
+            ) + (
+                "To view full linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'"
+                if linked_files
+                else ""
+            ),
             "required_environment_variables": required_env_vars,
             "required_commands": [],
             "missing_required_environment_variables": remaining_missing_required_envs,

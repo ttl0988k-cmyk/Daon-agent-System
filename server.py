@@ -84,17 +84,25 @@ import tempfile
 try:
     import dotenv
     from pathlib import Path
-    _hermes_env = Path.home() / '.hermes' / '.env'
-    if _hermes_env.exists():
-        dotenv.load_dotenv(_hermes_env, override=True)
-    _proj_env = Path(__file__).resolve().parent / '.env'
-    if _proj_env.exists():
-        dotenv.load_dotenv(_proj_env, override=False)
-    _parent_env = Path(__file__).resolve().parent.parent / '.env'
-    if _parent_env.exists():
-        dotenv.load_dotenv(_parent_env, override=False)
-except Exception:
-    pass
+    _env_candidates = [
+        Path.home() / '.hermes' / '.env',
+        Path(os.environ.get('USERPROFILE', '')) / '.hermes' / '.env' if os.environ.get('USERPROFILE') else None,
+        Path.home() / '.hermes' / 'profiles' / 'raon' / '.env',
+        Path(os.environ.get('USERPROFILE', '')) / '.hermes' / 'profiles' / 'raon' / '.env' if os.environ.get('USERPROFILE') else None,
+        Path(__file__).resolve().parent / '.env',
+        Path(__file__).resolve().parent.parent / '.env',
+    ]
+    _loaded_env_paths = set()
+    for _env_p in _env_candidates:
+        if _env_p and _env_p.exists() and _env_p.resolve() not in _loaded_env_paths:
+            try:
+                dotenv.load_dotenv(_env_p, override=True)
+                _loaded_env_paths.add(_env_p.resolve())
+                print(f"[ENV] Loaded environment from: {_env_p}", flush=True)
+            except Exception as _load_err:
+                print(f"[ENV] WARNING: Failed to load {_env_p}: {_load_err}", flush=True)
+except Exception as _env_init_err:
+    print(f"[ENV] WARNING: dotenv initialization failed: {_env_init_err}", flush=True)
 
 try:
     import openai

@@ -11,7 +11,7 @@ Different LLM providers expect model identifiers in different formats:
 - **OpenCode Zen** preserves dots for GPT/GLM/Gemini/Kimi/MiniMax-style
   model IDs, but Claude still uses hyphenated native names like
   ``claude-sonnet-4-6``.
-- **OpenCode Go** preserves dots in model names: ``minimax-m2.7``.
+- **OpenCode Go** preserves dots in model names: ``minimax-m3.1-flash``.
 - **DeepSeek** only accepts two model identifiers:
   ``deepseek-chat`` and ``deepseek-reasoner``.
 - **Custom** and remaining providers pass the name through as-is.

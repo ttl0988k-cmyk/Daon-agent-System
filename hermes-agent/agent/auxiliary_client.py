@@ -364,9 +364,9 @@ _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
 
     "kimi-coding-cn": "kimi-k2-turbo-preview",
 
-    "minimax": "MiniMax-M2.7",
+    "minimax": "MiniMax-M3.1-Flash",
 
-    "minimax-cn": "MiniMax-M2.7",
+    "minimax-cn": "MiniMax-M3.1-Flash",
 
     "anthropic": "claude-haiku-4-5-20251001",
 

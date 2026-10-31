@@ -95,6 +95,7 @@ toolsets:
     - "dynamic_harness"
     - "file"
     - "image_gen"
+    - "vision"
     - "video_gen"
     - "memory"
     - "plugin"
@@ -107,7 +108,7 @@ toolsets:
 
 # --- Context Compression (컨텍스트 자동 압축) ---
 compression:
-  threshold: 0.065
+  threshold: 0.10
   enabled: true
   target_ratio: 0.20
   protect_last_n: 8
@@ -143,7 +144,10 @@ fallback_models: []
 auxiliary:
   steward:
     provider: minimax
-    model: MiniMax-M3
+    model: MiniMax-M3.1-Flash
+  vision:
+    provider: minimax
+    model: MiniMax-M3.1-Flash
 
 provider_display:
   openai: "OpenAI"

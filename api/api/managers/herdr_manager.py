@@ -101,7 +101,9 @@ _BOARDROOM_KNOWN_MODELS = {
     "z-ai/glm-5.3-flash": ("openrouter", "z-ai/glm-5.3-flash"),
     "deepseek/deepseek-v4.1-flash": ("openrouter", "deepseek/deepseek-v4.1-flash"),
     "minimax-m3": ("minimax", "MiniMax-M3"),
-    "minimax-m2.7": ("minimax", "MiniMax-M2.7"),
+    # [2026-10-31] MiniMax-M2.7 서비스 종료 → M3.1-Flash로 매핑(하위호환 키 유지)
+    "minimax-m2.7": ("minimax", "MiniMax-M3.1-Flash"),
+    "minimax-m3.1-flash": ("minimax", "MiniMax-M3.1-Flash"),
     "minimax-m3.1-flash-preview": ("minimax", "MiniMax-M3.1-Flash-Preview"),
 }
 
@@ -224,7 +226,7 @@ class HerdrManager:
         슬롯의 실사용 모델은 resolved_model/슬롯 config.toml이 진실이며,
         이 함수는 초기 표시용 기본값만 돌려준다.
         """
-        return "muse-spark-1.3-contributor (OpenCode Go)"
+        return "deepseek-v4.1-flash (OpenCode Go)"
 
     def _detect_current_claude_model(self) -> str:
         """Return the default model for Claude worker (Anthropic native direct)."""
@@ -289,18 +291,43 @@ class HerdrManager:
                     if pane_id:
                         return pane_id
 
-        # Fallback to configured pane_id in local worker state
+        # Fallback to configured pane_id in local worker state.
+        # ★ [2026-10-30] 종류 검증 없는 pane 반환 금지.
+        #   codex 슬롯이 claude pane을 잡으면 상태/응답이 Claude 화면으로 오염된다.
         with self._state_lock:
             w = self._workers.get(norm_key)
-            if w and w.get("pane_id"):
-                return w["pane_id"]
+            fallback_pane = (w or {}).get("pane_id") or ""
+        if fallback_pane:
+            pane_kind = self._pane_agent_kind(fallback_pane)
+            if pane_kind in ("", target_kind):
+                return fallback_pane
 
-        # ★ [2026-10-18] 하드코딩 폴백("w1:p1"/"w1:p3") 금지. herdr 재시작 시
-        #   번호가 바뀌면 stale 참조가 된다. live pane 목록에서 동적 해석하고,
-        #   pane이 하나도 없으면 빈 문자열(호출자가 pane 부재로 처리).
-        live_panes = self._live_pane_ids()
-        if live_panes:
-            return live_panes[0]
+        # 미배정 슬롯은 빈 문자열. 첫 live pane 무단 반환 금지.
+        return ""
+
+    def _pane_agent_kind(self, pane_id: str) -> str:
+        """pane_id에 실제로 붙어 있는 agent 종류(claude/codex)를 반환.
+
+        빈 pane이거나 판별 불가면 빈 문자열. 같은 pane을 다른 종류의
+        워커가 재사용하지 않도록 fallback 경로에서 반드시 검증한다.
+        """
+        if not pane_id:
+            return ""
+        res = self._run_cmd(["pane", "list"], timeout=5)
+        if not (res.get("ok") and res.get("json")):
+            return ""
+        for p in (res["json"].get("result", {}) or {}).get("panes", []) or []:
+            if p.get("pane_id") != pane_id:
+                continue
+            blob = " ".join(
+                str(p.get(k) or "")
+                for k in ("agent", "terminal_title_stripped", "terminal_title")
+            ).lower()
+            if "claude" in blob:
+                return "claude"
+            if "codex" in blob:
+                return "codex"
+            return ""
         return ""
 
     def _live_pane_ids(self) -> Optional[List[str]]:
@@ -328,7 +355,22 @@ class HerdrManager:
         (set_worker_model 순서 결함 수정 — stale pane에 pane run 금지).
         """
         with self._state_lock:
-            stored_pane = (self._workers.get(worker_key) or {}).get("pane_id") or ""
+            self_w = self._workers.get(worker_key) or {}
+            stored_pane = self_w.get("pane_id") or ""
+            worker_kind = self_w.get("kind") or ("claude" if "claude" in worker_key else "codex")
+            if stored_pane:
+                # ★ [2026-10-30] 다른 워커가 이미 점유한 pane은 재사용 금지.
+                for other_key, other_w in self._workers.items():
+                    if other_key != worker_key and ((other_w or {}).get("pane_id") or "") == stored_pane:
+                        stored_pane = ""
+                        break
+                # ★ [2026-10-30] pane에 붙은 agent 종류가 다르면 재바인딩.
+                if stored_pane:
+                    pane_kind = self._pane_agent_kind(stored_pane)
+                    if pane_kind and pane_kind != worker_kind:
+                        stored_pane = ""
+                if not stored_pane and self_w.get("pane_id"):
+                    self_w["pane_id"] = ""
         live_panes = self._live_pane_ids()
         if stored_pane and stored_pane in live_panes:
             alive, _diag = self._probe_agent_alive(stored_pane)
@@ -625,6 +667,10 @@ class HerdrManager:
         lines = [
             'approval_policy = "never"',
             'sandbox_mode = "danger-full-access"',
+            # ★ [2026-10-30] 재기동마다 Codex 업데이트 안내(1/2/3 선택)가
+            #   뜨면 agent가 blocked로 고정되어 프롬프트가 거부된다(실측).
+            #   공식 config 키로 시작 시 업데이트 확인을 끈다.
+            "check_for_update_on_startup = false",
             "",
             f'model = "{model_id}"',
             f'model_provider = "{prov}"',
@@ -808,6 +854,42 @@ class HerdrManager:
                 worker["model_running"] = "failed"
             worker["model_error"] = reason
             worker["updated_at"] = time.time()
+
+    def _clear_stale_transport_error(self, worker_key: str) -> None:
+        """pane 소실/재생성으로 남은 전송계층 실패 흔적만 청소한다.
+
+        ★ [2026-10-30] 기존 agent에 재접속하는 경로(chk["ok"])는 start 성공
+        분기를 타지 않아, 과거 pane_not_found/pane_env_inject_failed가
+        model_error에 영구 잔존해 회의실이 계속 에러로 보였다(실측).
+        모델 자체 오류(예: auth/HTTP)는 건드리지 않는다.
+        """
+        stale_keys = (
+            "pane_not_found",
+            "pane_env_inject_failed",
+            "no_live_pane",
+            "no_free_pane",
+        )
+        with self._state_lock:
+            worker = self._workers.get(worker_key)
+            if worker is None:
+                return
+            err = str(worker.get("model_error") or "")
+            if not err or not any(k in err for k in stale_keys):
+                return
+            worker["model_error"] = None
+            worker["model_saved"] = True
+            if worker.get("model_running") == "failed":
+                rederived = self._rederive_model_running(
+                    worker_key, worker.get("raw_terminal") or ""
+                )
+                if rederived:
+                    worker["model_running"] = rederived
+            worker["updated_at"] = time.time()
+            resolved = worker.get("resolved_model") or ""
+            provider = worker.get("provider") or ""
+        self._record_boardroom_worker_status(
+            worker_key, "ready", resolved, provider, None
+        )
 
     def _abort_model_switch(self, worker_key: str, reason: str) -> Dict[str, Any]:
         """모델 스위칭 중단: failed 확정 + 상태 재동기화 + 변경 이벤트 송출."""
@@ -1058,8 +1140,15 @@ class HerdrManager:
                         except Exception:
                             pass
 
-            # Read terminal snapshot
-            read_res = self._run_cmd(["agent", "read", target, "--lines", "60"], timeout=5)
+            # ★ [2026-10-30] 캡처 범위 보강. 60줄 + 기본 source(recent)로는
+            #   Claude가 [MSG to=raon] 보고 블록을 길게 붙일 때 앞부분(핵심 응답)이
+            #   잘려 인박스 본문에 결과 토큰이 누락됐다(실측: inbox 285에서
+            #   CLAUDE-OK 누락, 실제 pane에는 존재). recent-unwrapped는 화면에서
+            #   접힌 라인을 논리 줄 단위로 펴서 반환하므로 같은 줄 수로 더 많이 담긴다.
+            read_res = self._run_cmd(
+                ["agent", "read", target, "--source", "recent-unwrapped", "--lines", "120"],
+                timeout=5,
+            )
             if read_res["ok"]:
                 raw = read_res["stdout"]
                 worker["raw_terminal"] = raw
@@ -1121,9 +1210,31 @@ class HerdrManager:
         target = self._resolve_target(worker_key)
 
         # Check if agent already exists
-        chk = self._run_cmd(["agent", "get", target], timeout=5)
+        # ★ [2026-10-30] 미배정 슬롯은 target이 빈 문자열일 수 있으므로
+        #   빈 target으로 agent get을 호출하지 않는다(오진/즉사 방지).
+        chk = (
+            self._run_cmd(["agent", "get", target], timeout=5)
+            if target
+            else {"ok": False, "code": -1, "stdout": "", "stderr": "no_target", "json": None}
+        )
         if chk["ok"]:
-            return self.sync_worker_state(worker_key)
+            # ★ [2026-10-30] agent get 성공만 믿고 즉시 반환하면, 워크스페이스
+            #   재생성으로 pane_id가 바뀐 경우 stale pane을 그대로 돌려준다.
+            #   그 pane으로 pane run 하면 pane_env_inject_failed(pane_not_found)
+            #   로 즉사한다(실측: Claude w4:p2). 반드시 live 검증 후 반환한다.
+            _synced = self.sync_worker_state(worker_key)
+            _synced_pane = (_synced or {}).get("pane_id") or ""
+            if _synced_pane:
+                _live_chk = self._live_pane_ids()
+                if _live_chk is None or _synced_pane in _live_chk:
+                    self._clear_stale_transport_error(worker_key)
+                    return _synced
+                with self._state_lock:
+                    _w0 = self._workers.get(worker_key)
+                    if _w0 is not None:
+                        _w0["pane_id"] = ""
+            else:
+                return _synced
 
         # Determine target pane without conflicting with other agents
         panes_res = self._run_cmd(["pane", "list"], timeout=5)
@@ -1158,6 +1269,30 @@ class HerdrManager:
             # Need to split a pane to create a new one
             panes_now = self._live_pane_ids()
             split_from = panes_now[-1] if panes_now else ""
+            if not split_from:
+                # ★ [2026-10-30] Herdr 서버/앱 재기동 후 workspace가 비면
+                #   pane이 0개가 되어 워커가 no_live_pane으로 영구 실패했다(실측).
+                #   빈 상태에서는 workspace를 새로 만들어 pane을 자가 복구한다.
+                create_res = self._run_cmd(
+                    [
+                        "workspace",
+                        "create",
+                        "--cwd",
+                        cwd,
+                        "--label",
+                        "DAON Workers",
+                        "--no-focus",
+                    ],
+                    timeout=15,
+                )
+                if not create_res.get("ok"):
+                    _logger.warning(
+                        "[HerdrManager] workspace auto-create failed: %s",
+                        (create_res.get("stderr") or create_res.get("stdout") or "")[-300:],
+                    )
+                time.sleep(0.8)
+                panes_now = self._live_pane_ids() or []
+                split_from = panes_now[-1] if panes_now else ""
             if not split_from:
                 # ★ [2026-10-18] pane이 하나도 없으면 하드코딩 분기 금지.
                 #   존재하지 않는 pane split은 실패하므로 빈 pane 그대로 보고한다.
@@ -1197,6 +1332,9 @@ class HerdrManager:
         start_res: Dict[str, Any] = {
             "ok": False, "code": -1, "stdout": "", "stderr": "start_not_attempted", "json": None,
         }
+        # ★ [2026-10-30] 성공 기동 확정 플래그. 이전 실패(pane_not_found 등)가
+        #   메모리/디스크에 남아 회의실이 계속 에러로 표시되는 문제 방지.
+        start_confirmed = False
         # 회의실 슬롯의 유효 (provider, model): 저장값 → 없으면 §2.1 기본값
         eff_prov, eff_model = self._boardroom_effective_pair(worker_key)
         eff_api_key = self._boardroom_api_key(eff_prov)
@@ -1223,11 +1361,10 @@ class HerdrManager:
                 )
             time.sleep(0.5)
 
-            # ★ [2026-10-18] --settings apiKeyHelper 필수. 없으면 Claude Code가
-            #   "Detected a custom API key" 프롬프트에서 무한 대기한다(실측).
-            claude_settings = str(
-                self._slot_codex_home(worker_key, eff_prov) / "claude_settings.json"
-            )
+            # ★ [2026-10-30] 공식 문서대로 ANTHROPIC_AUTH_TOKEN 단독 인증.
+            #   --settings apiKeyHelper를 함께 주면 Claude Code가
+            #   "Both ANTHROPIC_AUTH_TOKEN and apiKeyHelper set" 경고를 내고
+            #   인증이 실패할 수 있다(실측). settings 파일은 주입하지 않는다.
             start_res = self._run_cmd([
                 "agent", "start", herdr_agent_name,
                 "--kind", kind,
@@ -1235,7 +1372,6 @@ class HerdrManager:
                 "--timeout", "35000",
                 "--",
                 "--model", eff_model,
-                "--settings", claude_settings,
                 "--dangerously-skip-permissions",
                 "--permission-mode", "bypassPermissions"
             ], timeout=40)
@@ -1305,6 +1441,35 @@ class HerdrManager:
                     f"agent_start_probe_failed:{diag}",
                     drop_running=False,
                 )
+            else:
+                # env 주입까지 성공해야 모델 트랜잭션 성공으로 확정한다.
+                start_confirmed = bool(env_inject.get("ok"))
+
+        # ★ [2026-10-30] 기동 성공 시 이전 실패 흔적 청소.
+        #   pane 이 바뀌지 않은 채 재기동하면 sync_worker_state()의 stale 무효화
+        #   분기(old_pane != pane_id)를 타지 않아 model_error="pane_not_found",
+        #   model_running="failed"가 영구 잔존했다(회의실 계속 에러 표시 실측).
+        #   실제 기동·probe·env 주입이 모두 성공한 경우에만 지운다.
+        if start_confirmed:
+            with self._state_lock:
+                w_ok = self._workers.get(worker_key)
+                if w_ok is not None:
+                    w_ok["model_error"] = None
+                    w_ok["model_saved"] = True
+                    live_running = self._rederive_model_running(
+                        worker_key, w_ok.get("raw_terminal") or ""
+                    )
+                    if not live_running:
+                        label = _BOARDROOM_SPECS.get(eff_prov, {}).get(
+                            "label", eff_prov
+                        )
+                        live_running = f"{eff_model} ({label})" if eff_model else ""
+                    if live_running:
+                        w_ok["model_running"] = live_running
+            self._record_boardroom_worker_status(
+                worker_key, "ready", eff_model, eff_prov, None
+            )
+
         st = self.sync_worker_state(worker_key)
         if st.get("blocked_info") and st["blocked_info"].get("type") != "oauth_login":
             _logger.info(f"[HerdrManager] Auto-approving startup prompt for {worker_key} ({st['blocked_info'].get('type')})")
@@ -1314,6 +1479,106 @@ class HerdrManager:
 
         self._broadcast({"event": "worker_started", "worker": st})
         return st
+
+    # [2026-10-31] 빈 지시문 템플릿 판정용.
+    #   워커가 [MSG] 블록을 만들지 않으면 화면의 '입력 에코'(우리가 넣은 시스템
+    #   지침 양식)가 마지막 [MSG] 블록으로 잡혀 빈 양식이 인박스에 저장된다.
+    #   실측: 응답은 정상("• PONG")인데 인박스에는 placeholder만 들어갔다.
+    _REPORT_PLACEHOLDER_LABELS = (
+        "수행 내역 및 수정한 파일",
+        "실행/검증 결과",
+        "다음 단계 제안",
+    )
+
+    def _is_empty_report_template(self, block: str) -> bool:
+        """[MSG] 블록이 placeholder만 있는 빈 양식인지 판정한다."""
+        if not block:
+            return True
+        real = 0
+        for ln in str(block).splitlines():
+            s = ln.strip().lstrip("•-*·").strip()
+            if not s:
+                continue
+            if s.startswith("[MSG to=") or s in ("[/MSG]", "[MSG]"):
+                continue
+            # [2026-10-31] 구분선/장식줄(---, ***, ___)은 실질 내용이 아니다.
+            #   입력 에코 양식이 '---'만으로 real 카운트를 올려 빈 양식 판정을
+            #   통과하던 버그 차단(실측: result에 빈 양식이 그대로 반환됨).
+            if re.fullmatch(r"[-=_*~·•#\s]{3,}", s):
+                continue
+            # bold/백틱 장식은 벗겨서 판정한다.
+            core = s.strip("*_`").strip()
+            # [2026-10-31] '**워커 (Codex):**' 같은 역할 헤더도 내용이 아니다.
+            if re.fullmatch(r"(?:워커|Worker)\s*\([^)]*\)\s*[:：]?", core, re.IGNORECASE):
+                continue
+            matched = False
+            for ph in self._REPORT_PLACEHOLDER_LABELS:
+                if core.startswith(ph):
+                    # '(필요시)' 같은 괄호 주석은 실질 내용이 아니다.
+                    tail = re.sub(r"\([^)]*\)", "", core[len(ph):])
+                    tail = tail.strip(" :：=-·•")
+                    matched = True
+                    if tail:
+                        real += 1
+                    break
+            if not matched and core:
+                real += 1
+        return real == 0
+
+    def _strip_empty_report_blocks(self, text: str) -> str:
+        """텍스트에서 '빈 양식' [MSG] 블록만 제거한다(실제 보고는 보존)."""
+        out = str(text or "")
+        tail = "[/MSG]"
+        pos = 0
+        for _ in range(50):
+            i = out.find("[MSG", pos)
+            if i < 0:
+                break
+            j = out.find(tail, i)
+            if j < 0:
+                # 닫히지 않은 잔여 블록 — 빈 양식이면 이후 전부 폐기
+                if self._is_empty_report_template(out[i:]):
+                    out = out[:i]
+                break
+            block = out[i:j + len(tail)]
+            if self._is_empty_report_template(block):
+                out = out[:i] + out[j + len(tail):]
+                pos = i
+            else:
+                pos = j + len(tail)
+        return out.strip()
+
+    def _extract_latest_report_block(self, screen_text: str, fallback: str) -> str:
+        """화면 텍스트에서 마지막 [MSG to=...] ... [/MSG] 블록을 온전히 잘라낸다.
+
+        ★ [2026-10-30] turns 파싱은 화면 재그리기 단위로 응답을 여러 조각으로
+        쪼갠다. 그래서 마지막 assistant turn 하나만 쓰면 보고 본문이 꼬리만
+        남는다(실측: 1,719자 응답 중 208자만 인박스 저장). MSG 블록이 화면에
+        남아 있으면 그 블록을 통째로 우선 사용하고, 없을 때만 fallback을 쓴다.
+        """
+        txt = str(screen_text or "")
+        idx = txt.rfind("[MSG to=raon")
+        if idx < 0:
+            idx = txt.rfind("[MSG to=")
+        if idx >= 0:
+            seg = txt[idx:]
+            end = seg.find("[/MSG]")
+            if end >= 0:
+                seg = seg[:end + len("[/MSG]")]
+            seg = seg.strip()
+            # [2026-10-31] 빈 양식(placeholder만)은 보고가 아니다 → fallback 사용.
+            #   입력 에코의 시스템 지침 양식을 실제 보고로 오인하던 버그 차단.
+            if (not self._is_empty_report_template(seg)
+                    and len(seg) > len(fallback or "")):
+                return seg
+        # [2026-10-31] fallback에도 입력 에코(빈 양식)가 섞여 있으면 걷어낸다.
+        #   실제 보고 블록은 보존하고 placeholder 양식만 제거한다.
+        fb = str(fallback or "")
+        if "[MSG" in fb:
+            cleaned = self._strip_empty_report_blocks(fb)
+            if cleaned and cleaned != fb:
+                return cleaned
+        return fb
 
     def _dispatch_worker_report_to_raon(
         self,
@@ -1452,12 +1717,29 @@ class HerdrManager:
             else:
                 prompt_res = self._run_cmd(["agent", "prompt", target, worker_prompt, "--wait", "--timeout", "180000"], timeout=200)
                 if not prompt_res.get("ok"):
+                    err_text = (prompt_res.get("stderr") or prompt_res.get("stdout") or "")[-300:]
+                    # ★ [2026-10-30] Herdr 0.9.3은 Codex가 idle/interactive_ready인데도
+                    #   경고(모델 메타데이터) 표시를 blocked로 오판해 agent_blocked를
+                    #   돌려주지만, 프롬프트는 실제로 전달되어 응답이 생성된다(실측).
+                    #   agent 상태가 idle+ready면 오탐으로 보고 실패를 남기지 않는다.
+                    false_block = False
+                    if "agent_blocked" in err_text:
+                        ag_res = self._run_cmd(["agent", "get", target], timeout=5)
+                        ag_json = ag_res.get("json") or {}
+                        ag = ((ag_json.get("result") or {}).get("agent") or {})
+                        if (
+                            str(ag.get("agent_status") or "").lower() == "idle"
+                            and bool(ag.get("interactive_ready"))
+                        ):
+                            false_block = True
                     with self._state_lock:
                         worker_err = self._workers.get(worker_key)
                         if worker_err is not None:
-                            worker_err["model_error"] = (
-                                f"prompt_failed:{(prompt_res.get('stderr') or prompt_res.get('stdout') or '')[-300:]}"
-                            )
+                            if false_block:
+                                worker_err["model_error"] = None
+                                worker_err["model_running"] = "ok"
+                            else:
+                                worker_err["model_error"] = f"prompt_failed:{err_text}"
 
             final_st = self.sync_worker_state(worker_key)
             self._broadcast({"event": "worker_done", "worker": final_st})
@@ -1472,6 +1754,9 @@ class HerdrManager:
                         break
             if not clean_text:
                 clean_text = final_st.get("clean_response", "")
+            clean_text = self._extract_latest_report_block(
+                final_st.get("clean_response", ""), clean_text
+            )
 
             if not is_oauth_code:
                 self._dispatch_worker_report_to_raon(
@@ -1605,6 +1890,9 @@ class HerdrManager:
                     break
         if not clean_text:
             clean_text = final_st.get("clean_response", "")
+        clean_text = self._extract_latest_report_block(
+            final_st.get("clean_response", ""), clean_text
+        )
 
         # Dispatch report to Raon's inbox for persistent tracking (no duplicate wake-up since Raon is synchronously awaiting)
         self._dispatch_worker_report_to_raon(
@@ -1798,11 +2086,7 @@ class HerdrManager:
                 )
             time.sleep(0.5)
 
-            # ★ [2026-10-18] --settings apiKeyHelper 필수 (start_worker와 동일).
-            claude_settings = str(
-                self._slot_codex_home(name, prov_key or "opencode-go")
-                / "claude_settings.json"
-            )
+            # ★ [2026-10-30] 공식 문서대로 AUTH_TOKEN 단독. apiKeyHelper 미사용.
             switch_res = self._run_cmd([
                 "agent", "start", start_name,
                 "--kind", kind,
@@ -1810,7 +2094,6 @@ class HerdrManager:
                 "--timeout", "35000",
                 "--",
                 "--model", target_model_id,
-                "--settings", claude_settings,
                 "--dangerously-skip-permissions"
             ], timeout=40)
             if not switch_res.get("ok"):

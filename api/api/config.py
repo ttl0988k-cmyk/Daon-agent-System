@@ -167,24 +167,26 @@ cfg = _cfg_cache
 # Load profile/user environment from ~/.hermes/.env and project root .env
 import dotenv
 from pathlib import Path
-_hermes_env = Path.home() / '.hermes' / '.env'
-if _hermes_env.exists():
-    try:
-        dotenv.load_dotenv(_hermes_env, override=True)
-    except Exception:
-        pass
-_proj_env = Path(__file__).resolve().parents[2] / '.env'
-if _proj_env.exists():
-    try:
-        dotenv.load_dotenv(_proj_env, override=False)
-    except Exception:
-        pass
-_parent_env = Path(__file__).resolve().parents[3] / '.env'
-if _parent_env.exists():
-    try:
-        dotenv.load_dotenv(_parent_env, override=False)
-    except Exception:
-        pass
+try:
+    _env_candidates = [
+        Path.home() / '.hermes' / '.env',
+        Path(os.environ.get('USERPROFILE', '')) / '.hermes' / '.env' if os.environ.get('USERPROFILE') else None,
+        Path.home() / '.hermes' / 'profiles' / 'raon' / '.env',
+        Path(os.environ.get('USERPROFILE', '')) / '.hermes' / 'profiles' / 'raon' / '.env' if os.environ.get('USERPROFILE') else None,
+        Path(__file__).resolve().parents[2] / '.env',
+        Path(__file__).resolve().parents[3] / '.env',
+    ]
+    _loaded_env_paths = set()
+    for _env_p in _env_candidates:
+        if _env_p and _env_p.exists() and _env_p.resolve() not in _loaded_env_paths:
+            try:
+                dotenv.load_dotenv(_env_p, override=True)
+                _loaded_env_paths.add(_env_p.resolve())
+                print(f"[ENV] Loaded environment from: {_env_p}", flush=True)
+            except Exception as _load_err:
+                print(f"[ENV] WARNING: Failed to load {_env_p}: {_load_err}", flush=True)
+except Exception as _env_init_err:
+    print(f"[ENV] WARNING: dotenv initialization failed: {_env_init_err}", flush=True)
 def _load_config_value(key_path, env_var=None, default=None):
     """Look up a value from config.yaml (via dot-separated key_path),
     then from an environment variable, then fall back to `default`."""
@@ -449,7 +451,7 @@ MIME_MAP = _load_mime_map(_DEFAULT_MIME_MAP)
 # =============================================================================
 _DEFAULT_TOOLSETS = _load_config_value('toolsets.default', None, [
     'browser', 'clarify', 'code_execution', 'cronjob', 'delegation',
-    'dynamic_harness', 'file', 'image_gen', 'memory', 'session_search',
+    'dynamic_harness', 'file', 'image_gen', 'vision', 'memory', 'session_search',
     'skills', 'terminal', 'todo', 'web', 'webhook',
 ])
 CLI_TOOLSETS = _DEFAULT_TOOLSETS  # simple fallback
