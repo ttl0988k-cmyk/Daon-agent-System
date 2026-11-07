@@ -198,20 +198,45 @@ def run_delegated_pipeline(
     """
     templates = get_all_specialist_templates()
     
-    # 1. Select templates to run
+    # 1. 3개 전문 조 (Trio Matrix: 1조 설계 -> 2조 구현 -> 3조 검증) 엄격 확정
     selected_templates = []
-    if specialist_ids:
+    if specialist_ids and len(specialist_ids) >= 3:
         for sid in specialist_ids:
             if sid in templates:
                 selected_templates.append(templates[sid])
     else:
-        # Auto-match from task
-        matched = select_specialists_for_task(task_prompt, top_k=2)
-        # Always ensure a reviewer is present
-        reviewer = templates.get("security-audit") or templates.get("code-review")
-        selected_templates = matched
-        if reviewer and reviewer not in selected_templates:
-            selected_templates.append(reviewer)
+        # [1조: 설계/아키텍트] 요구사항 분해 및 구조/파일 수정 전략 수립
+        architect_tmpl = templates.get("architect") or templates.get("tech-lead") or templates.get("task-decomposer") or {
+            "id": "architect",
+            "display_name": "소프트웨어 아키텍트 (1조)",
+            "category": "planner",
+            "system_prompt": "You are a software architect. Design system boundaries, define API contracts, and create execution plans.",
+            "success_criteria": ["모듈 경계 명확", "기술 선정 근거", "트레이드오프 문서화"]
+        }
+
+        # [2조: 전문 구현 개발자] 105개 카탈로그 중 작업 내용에 가장 정확히 일치하는 전문 개발자 1인 선발
+        domain_candidates = [t for t in select_specialists_for_task(task_prompt, top_k=6) if t.get("category") in ("developer", "specialist", "debugger", "designer")]
+        coder_tmpl = domain_candidates[0] if domain_candidates else (templates.get("fullstack") or templates.get("python-backend"))
+        if not coder_tmpl:
+            coder_tmpl = {
+                "id": "senior-developer",
+                "display_name": "시니어 핵심 개발자 (2조)",
+                "category": "developer",
+                "system_prompt": "You are the core lead developer. Implement precise, clean, production-grade code according to the architect's design.",
+                "success_criteria": ["문법 오류 없는 완전한 코드", "엣지케이스 처리", "프로덕션 품질"]
+            }
+
+        # [3조: 품질 및 보안 검증관] 구현된 코드와 설계의 결함, 보안 취약점, 엣지케이스 정밀 검증
+        reviewer_tmpl = templates.get("security-audit") or templates.get("code-review") or {
+            "id": "security-audit",
+            "display_name": "품질 및 보안 검증관 (3조)",
+            "category": "reviewer",
+            "system_prompt": "You are a strict security and code quality auditor. Review the architecture and implementation for bugs, syntax errors, and vulnerabilities.",
+            "success_criteria": ["문법/타입 에러 0건", "보안 취약점 검증 통과", "요구사항 부합성 확인"]
+        }
+
+        # 진짜 3개 조 확정: 1조 설계 -> 2조 구현 -> 3조 검증
+        selected_templates = [architect_tmpl, coder_tmpl, reviewer_tmpl]
             
     if event_callback:
         event_callback("pipeline_start", "raon_ceo", {
