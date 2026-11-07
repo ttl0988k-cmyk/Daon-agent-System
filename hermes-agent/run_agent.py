@@ -8349,10 +8349,11 @@ class AIAgent:
                             _ra_raw = _resp_headers.get("retry-after") or _resp_headers.get("Retry-After")
                             if _ra_raw:
                                 try:
-                                    _retry_after = min(int(_ra_raw), 120)  # Cap at 2 minutes
+                                    _max_ra = 10 if getattr(self, '_delegate_depth', 0) > 0 else 30
+                                    _retry_after = min(int(_ra_raw), _max_ra)
                                 except (TypeError, ValueError):
                                     pass
-                    wait_time = _retry_after if _retry_after else jittered_backoff(retry_count, base_delay=2.0, max_delay=60.0)
+                    wait_time = _retry_after if _retry_after else jittered_backoff(retry_count, base_delay=1.0, max_delay=15.0)
                     if is_rate_limited:
                         self._emit_status(f"⏱️ Rate limited. Waiting {wait_time:.1f}s (attempt {retry_count + 1}/{max_retries})...")
                     else:

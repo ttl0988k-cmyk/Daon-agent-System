@@ -945,7 +945,9 @@ def delegate_task(
 
         with ThreadPoolExecutor(max_workers=max_children) as executor:
             futures = {}
-            for i, t, child in children:
+            for step_i, (i, t, child) in enumerate(children):
+                if step_i > 0:
+                    time.sleep(1.0)  # Stagger subagent start by 1.0s to prevent concurrent 429 burst on OpenCode gateway
                 future = executor.submit(
                     _run_single_child,
                     task_index=i,
