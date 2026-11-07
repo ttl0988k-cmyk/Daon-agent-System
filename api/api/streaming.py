@@ -1977,6 +1977,53 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               put('cancel', {'message': 'Cancelled before agent run'})
               return
 
+          # ── [RUFLO MULTI-SPECIALIST SUBAGENT HOOK] ───────────────────────────────────
+          # 사용자가 복합 개발/기획/검증 작업을 요구했거나 @에이전트 멘션이 포함된 경우,
+          # 105개 전문 에이전트 카탈로그를 활용하는 서브에이전트 파이프라인을 가동한다.
+          _is_explicit_mention = any(m in msg_text for m in ["@architect", "@developer", "@coder", "@reviewer", "@qa", "@designer", "@specialist", "@팀", "@하네스"])
+          _is_complex_coding = (laya_intent in ('coding', 'worker_task') and len(msg_text.strip()) > 25 and any(k in msg_text for k in ["구현", "만들어", "작성", "수정", "리팩토링", "검증", "설계", "버그", "개발", "하네스"]))
+
+          if (_is_explicit_mention or _is_complex_coding) and not planning_mode and not no_tools:
+              _logger.info("[Streaming] Delegating to Ruflo 105-Specialist Role Pipeline for session %s", session_id)
+              try:
+                  from api.dynamic.role_pipeline import run_delegated_pipeline
+                  put('token', {'text': f"\n\n🎯 **[하네스 서브에이전트 팀 가동]** 105개 전문 에이전트 카탈로그에서 최적 전문가 선발 중...\n"})
+                  
+                  def _pipeline_event_cb(evt_type, agent_name, payload):
+                      if evt_type == "pipeline_start":
+                          specs = ", ".join(payload.get("specialists", []))
+                          put('token', {'text': f"  📋 **선발된 전문 에이전트**: `{specs}`\n\n"})
+                      elif evt_type == "role_start":
+                          title = payload.get("title", agent_name)
+                          put('token', {'text': f"  ⏳ **[{title}]** 작업 분석 및 실행 중...\n"})
+                      elif evt_type == "role_done":
+                          title = payload.get("title", agent_name)
+                          elapsed = payload.get("elapsed_sec", 0)
+                          out_snippet = payload.get("output", "")[:200].replace("\n", " ")
+                          put('token', {'text': f"  ✅ **[{title}]** 완료 ({elapsed}초) — `{out_snippet}...`\n\n"})
+                      elif evt_type == "role_error":
+                          title = payload.get("title", agent_name)
+                          put('token', {'text': f"  ⚠️ **[{title}]** 오류 발생: {payload.get('error')}\n\n"})
+
+                  pipeline_res = run_delegated_pipeline(
+                      task_prompt=msg_text,
+                      context=f"Session: {session_id}\nWorkspace: {workspace}",
+                      preferred_model=model if ("deepseek" in str(model).lower() or "minimax" in str(model).lower()) else "deepseek-v4.1-flash",
+                      event_callback=_pipeline_event_cb
+                  )
+                  
+                  final_rep = pipeline_res.get("final_output", "")
+                  if final_rep:
+                      put('token', {'text': f"\n---\n### 👑 라온 CEO 최종 종합 보고\n\n{final_rep}\n"})
+                      s.messages.append({'role': 'assistant', 'content': f"[하네스 서브에이전트 협업 완료]\n\n{final_rep}"})
+                      s.save()
+                      put('done', {'session': s.to_response(), 'usage': {'input_tokens': 1500, 'output_tokens': 2000}})
+                      _clear_thread_env()
+                      return
+              except Exception as e_pipe:
+                  _logger.warning("[Streaming] Role pipeline bypassed: %s", e_pipe)
+                  put('token', {'text': f"\n*(서브에이전트 파이프라인 폴백: 라온 직접 모드로 전환합니다)*\n\n"})
+
           print(f"[webui-debug] Starting run_conversation for session={session_id} msg_len={len(msg_text)}", flush=True)
           # Use timeout-based lock to avoid infinite blocking after cancel.
           # #27 fix: 타임아웃을 15s → 25s로 증가. cancel_stream의 cleanup 지연(3s) +
