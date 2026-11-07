@@ -12,6 +12,7 @@ Provides:
 import random
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -125,9 +126,28 @@ def _build_node_context(
         query += f"\n[CRITICAL DIRECTIVE] Your Current Workspace Directory is: '{_dir_label}'. ALL FILE OPERATIONS MUST be done inside this directory. NEVER use relative paths. ALWAYS use absolute paths starting with '{_dir_label}'.\n\n"
     if sandbox_note:
         query += sandbox_note
+    # [GATE] 이 노드가 실제로 파일을 쓰는 디렉터리를 node에 기록한다.
+    #   node는 호출자가 넘긴 dict이므로 참조로 전달되어, 이후 실행 단계의
+    #   결정론적 게이트(_deterministic_gate)가 산출물 경로를 해석할 때 쓰인다.
+    try:
+        if effective_dir:
+            node["_effective_dir"] = str(effective_dir)
+    except Exception:
+        pass
     query += f"Your specific subtask is: {node['subtask']}\n"
     if context_data:
         query += f"Here is the dependency input data you must utilize:\n{context_data}\n"
+    # ══ [GATE] 반환 계약(capa_2 'entrega') ══
+    # 노드는 반드시 산출물/판정/증거 3종을 명시해 반환한다.
+    # 단, 이 보고는 게이트의 '입력'일 뿐 '판정'이 아니다 — 판정은 파일 실물로만 내려진다.
+    query += (
+        "\n\n[RETURN CONTRACT — 필수] 최종 응답 끝에 아래 3가지를 반드시 명시하라.\n"
+        "1) ARTIFACTS: 생성/수정한 파일의 절대 경로 (한 줄에 하나, 없으면 'NONE')\n"
+        "2) VERDICT: PASS | FAIL | PARTIAL\n"
+        "3) EVIDENCE: 그 판정의 근거 (측정값·명령 출력·검사 결과 요약)\n"
+        "주의: 파일을 만들었다고 썼다면 반드시 실제로 저장되어 있어야 한다. "
+        "존재하지 않는 경로를 보고하면 게이트에서 차단된다.\n"
+    )
     query += "\nPlease work on this subtask and output your final result clearly."
     return query, node_parents
 
@@ -147,6 +167,8 @@ def _persist_node_result(
     state_manager: HermesStateManager,
     generation: int,
     mission_tracker: dict,
+    artifacts: list | None = None,
+    gate_result: dict | None = None,
 ) -> None:
     """Persist node execution result into results dict and state_manager."""
     if success:
@@ -162,6 +184,9 @@ def _persist_node_result(
             "model_used": model_configs[0]["model"] if model_configs else "",
             "duration_seconds": time.time() - node_start_time,
             "attempts": attempts_count,
+            # [GATE] 산출물 경로와 게이트 판정을 결과에 남긴다 — 사후 검증/감사 근거.
+            "artifacts": artifacts or [],
+            "gate": gate_result,
         }
         state_manager.add(
             key=node["output"],
@@ -189,6 +214,9 @@ def _persist_node_result(
             "parents": node_parents,
             "model_used": model_configs[0]["model"] if model_configs else "",
             "duration_seconds": time.time() - node_start_time,
+            # [GATE] 실패해도 산출물/게이트 증거는 남긴다 — 재시도 판단 근거.
+            "artifacts": artifacts or [],
+            "gate": gate_result,
         }
         state_manager.add(
             key=node["output"],
@@ -210,6 +238,203 @@ def _persist_node_result(
         )
     if mission_tracker and "add_node_metrics" in mission_tracker and metrics_entry:
         mission_tracker["add_node_metrics"](agent_name, metrics_entry)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# [GATE] capa_3 + capa_5 — 결정론적 코드노드 & 증거 기반 게이트
+#   카파시 그래프 프롬프트 원칙: "증거로만 게이트를 연다"
+#   ① 결정론적 체크(존재/크기/문법) → ② 노드 보고 → ③ 모델 점수
+#   모델이 "SCORE: 95"라고 써도, 파일이 없으면 게이트는 열리지 않는다.
+# ══════════════════════════════════════════════════════════════════════
+_CHECKS_LOCK = threading.Lock()
+_CHECKS_MD_MAX_EVIDENCE = 200
+
+
+class GateFailedException(RuntimeError):
+    """결정론적 게이트 실패 — '이 노드만 고쳐 다시' 대상(capa_6).
+
+    ReviewFailedException(리뷰 점수 미달)과 달리 재시도 가치가 있다:
+    파일을 안 썼거나 문법이 깨진 것이므로, 같은 노드를 다시 실행하면 고칠 수 있다.
+    따라서 _run_node_with_retries의 즉시중단(break) 조건에 포함하지 않는다.
+    """
+
+
+def _append_checks_md(work_dir: str, node_name: str, checks: list[dict]) -> None:
+    """checks.md에 '노드|요구사항|판정|증거' 한 줄씩 append.
+
+    여러 노드가 병렬로 실행되므로 프로세스 내 락으로 직렬화한다.
+    기록 실패가 노드 실행을 막아서는 안 되므로 예외는 삼킨다.
+    """
+    if not work_dir or not checks:
+        return
+    try:
+        path = Path(work_dir) / "checks.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _CHECKS_LOCK:
+            need_header = not path.exists()
+            with path.open("a", encoding="utf-8", newline="\n") as fh:
+                if need_header:
+                    fh.write("# checks.md — 증거 기반 게이트 기록\n")
+                    fh.write("# 노드|요구사항|판정|증거\n")
+                for c in checks:
+                    req = str(c.get("req", "")).replace("|", "/").replace("\n", " ")
+                    verdict = str(c.get("verdict", "")).replace("|", "/").replace("\n", " ")
+                    ev = str(c.get("evidence", "")).replace("|", "/").replace("\n", " ")
+                    fh.write(f"{node_name}|{req}|{verdict}|{ev[:_CHECKS_MD_MAX_EVIDENCE]}\n")
+    except Exception as exc:  # noqa: BLE001 - 로깅만 하고 계속
+        _log.debug("[gate] checks.md 기록 실패(%s): %s", work_dir, exc)
+
+
+def _check_syntax(path: Path) -> dict | None:
+    """확장자별 결정론적 문법 검사.
+
+    정답이 하나인 검사는 모델에게 묻지 않고 코드로 수행한다(capa_3).
+    검사 대상이 아닌 확장자는 None을 반환한다.
+    """
+    suffix = path.suffix.lower()
+    req = f"syntax:{path.name}"
+    try:
+        if suffix == ".py":
+            import ast as _ast
+            src = path.read_text(encoding="utf-8", errors="replace")
+            if not src.strip():
+                return {"req": req, "verdict": "FAIL", "evidence": "빈 파일"}
+            try:
+                _ast.parse(src, filename=str(path))
+            except SyntaxError as se:
+                return {"req": req, "verdict": "FAIL", "evidence": f"SyntaxError line {se.lineno}: {se.msg}"}
+            return {"req": req, "verdict": "PASS", "evidence": "ast.parse ok"}
+        if suffix == ".json":
+            import json as _json
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            try:
+                _json.loads(raw)
+            except Exception as je:  # noqa: BLE001
+                return {"req": req, "verdict": "FAIL", "evidence": f"JSON 오류: {je}"}
+            return {"req": req, "verdict": "PASS", "evidence": "json.loads ok"}
+        if suffix == ".csv":
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            lines = [ln for ln in raw.splitlines() if ln.strip()]
+            if len(lines) < 2:
+                return {"req": req, "verdict": "FAIL", "evidence": "헤더+데이터 행 부족"}
+            return {"req": req, "verdict": "PASS", "evidence": f"{len(lines)} rows"}
+        if suffix in (".md", ".txt", ".html", ".htm", ".js", ".mjs",
+                      ".ts", ".tsx", ".css", ".yaml", ".yml", ".svg"):
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            if not raw.strip():
+                return {"req": req, "verdict": "FAIL", "evidence": "내용이 공백뿐"}
+            return None
+    except Exception as exc:  # noqa: BLE001
+        return {"req": req, "verdict": "SKIP", "evidence": f"검사 불가: {exc}"}
+    return None
+
+
+def _resolve_artifact(raw: str, work_dirs: list[str]) -> Path | None:
+    """산출물 경로 후보를 실제 파일로 해석한다(절대 → 워크스페이스 → cwd)."""
+    p = str(raw or "").strip().strip('"\'`').rstrip(".,;)")
+    if not p:
+        return None
+    pp = Path(p)
+    if pp.is_absolute():
+        return pp if pp.exists() else None
+    candidates: list[Path] = []
+    for wd in (work_dirs or []):
+        if wd:
+            candidates.append(Path(wd) / p)
+    candidates.append(Path.cwd() / p)
+    for cand in candidates:
+        try:
+            if cand.exists():
+                return cand
+        except OSError:
+            continue
+    return None
+
+
+def _deterministic_gate(artifacts: list[str], work_dirs: list[str]) -> dict:
+    """capa_3(코드노드) + capa_5(게이트): 파일 시스템 실물로만 판정한다.
+
+    Returns:
+        {
+          "applicable": bool,   # 산출물을 하나도 안 쓴 노드는 게이트 비대상
+          "passed": bool,
+          "checks": [{"req","verdict","evidence"}],
+          "blockers": [str],
+          "resolved": [절대경로...],
+        }
+
+    설계 의도:
+      - 파일을 '썼다'고 보고하지 않은 노드(분석·기획)는 applicable=False로
+        통과시킨다. 게이트가 정상 작업을 막지 않게 하기 위함.
+      - 파일을 썼다면 그 파일은 실존하고 0바이트가 아니어야 하며,
+        .py/.json 등은 문법이 유효해야 한다. 여기서 FAIL이면
+        모델이 몇 점을 주든 게이트는 닫힌 상태로 유지된다.
+    """
+    artifacts = [a for a in (artifacts or []) if str(a or "").strip()]
+    checks: list[dict] = []
+    blockers: list[str] = []
+    resolved: list[str] = []
+    seen: set[str] = set()
+
+    for raw in artifacts:
+        key = str(raw).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        target = _resolve_artifact(key, work_dirs)
+        if target is None:
+            # 절대경로인데 없다 = '존재하지 않는 파일을 썼다'고 보고한 것 → FAIL
+            # 상대경로인데 못 찾았다 = 워크스페이스 기준을 우리가 모르는 것 → SKIP
+            #   (경로 해석 실패를 FAIL로 처리하면 정상 노드를 막는다)
+            if Path(key).is_absolute():
+                checks.append({"req": f"exists:{key}", "verdict": "FAIL", "evidence": "파일 없음"})
+                blockers.append(f"{key}: 파일이 존재하지 않음")
+            else:
+                checks.append({"req": f"exists:{key}", "verdict": "SKIP", "evidence": "상대경로 해석 불가"})
+            continue
+
+        resolved.append(str(target))
+        checks.append({"req": f"exists:{key}", "verdict": "PASS", "evidence": str(target)})
+
+        if target.is_dir():
+            try:
+                entry_count = len(list(target.iterdir()))
+            except OSError:
+                entry_count = -1
+            if entry_count == 0:
+                checks.append({"req": f"nonempty:{key}", "verdict": "FAIL", "evidence": "빈 디렉터리"})
+                blockers.append(f"{key}: 빈 디렉터리")
+            else:
+                checks.append({"req": f"nonempty:{key}", "verdict": "PASS", "evidence": f"{entry_count} entries"})
+            continue
+
+        try:
+            size = target.stat().st_size
+        except OSError as oe:
+            checks.append({"req": f"nonempty:{key}", "verdict": "FAIL", "evidence": f"stat 실패: {oe}"})
+            blockers.append(f"{key}: 크기 확인 실패")
+            continue
+
+        if size <= 0:
+            checks.append({"req": f"nonempty:{key}", "verdict": "FAIL", "evidence": "0 bytes"})
+            blockers.append(f"{key}: 0바이트")
+            continue
+        checks.append({"req": f"nonempty:{key}", "verdict": "PASS", "evidence": f"{size} bytes"})
+
+        syntax = _check_syntax(target)
+        if syntax:
+            checks.append(syntax)
+            if syntax.get("verdict") == "FAIL":
+                blockers.append(f"{key}: {syntax.get('evidence')}")
+
+    return {
+        "applicable": bool(artifacts),
+        "passed": not blockers,
+        "checks": checks,
+        "blockers": blockers,
+        "resolved": resolved,
+    }
 
 
 def _extract_review_score(content: str, limits: dict) -> int:
@@ -271,12 +496,17 @@ def _run_node_with_retries(
     agent_class,
     log_callback=None,
     run_id: str = None,
+    run_dir: str = None,
 ) -> dict:
     """Execute a DAG node across a fallback model chain with per-attempt retry logic."""
     max_retries = limits["node"]["max_retries"]
     success, last_err, assistant_content = False, None, ""
     metrics_entry, attempts_count = None, 0
     node_start_time = time.time()
+    # [GATE] 이 노드가 실제로 건드린 파일 경로를 수집한다(결정론적 게이트 입력).
+    #   시도(attempt) 간 누적되므로 '한 번이라도 쓴 파일'이 전부 검증 대상이 된다.
+    _node_artifacts: list[str] = []
+    _gate_result: dict | None = None
 
     for cfg in model_configs:
         model_name = cfg["model"]
@@ -346,7 +576,7 @@ def _run_node_with_retries(
                 # 따라서 경로는 args가 제공되는 tool.started 시점에 캡처해 보관했다가,
                 # 디스크에 파일이 실제로 쓰인 tool.completed 시점에 [FILE_EDIT] 로그로 발행한다.
                 # 프론트엔드(harness.js)가 이 로그를 파싱해 파일 트리/에디터를 갱신한다.
-                def _make_file_edit_cb(_agent_name):
+                def _make_file_edit_cb(_agent_name, _sink=None):
                     # 에이전트별로 독립된 pending 맵 (단일 에이전트는 도구를 순차 실행하므로
                     # started→completed 순서가 보장됨). 도구명으로 경로를 보관한다.
                     _pending_paths = {}
@@ -375,12 +605,20 @@ def _run_node_with_retries(
                             if not _p and isinstance(preview, str):
                                 # preview 예: "write: path/to/file" 또는 경로 자체
                                 _p = preview.split(':', 1)[-1].strip() if ':' in preview else preview.strip()
-                            if _p and log_callback:
-                                log_callback(_agent_name, f"[FILE_EDIT]{_p}", "running")
+                            if _p:
+                                # [GATE] 결정론적 게이트가 나중에 실물을 검증할 경로를 축적한다.
+                                #   모델의 자기 보고가 아니라 '실제 tool.completed가 난 경로'만 담긴다.
+                                if _sink is not None:
+                                    try:
+                                        _sink.append(_p)
+                                    except Exception:
+                                        pass
+                                if log_callback:
+                                    log_callback(_agent_name, f"[FILE_EDIT]{_p}", "running")
                         except Exception:
                             pass
                     return _file_edit_cb
-                agent.tool_progress_callback = _make_file_edit_cb(agent_name)
+                agent.tool_progress_callback = _make_file_edit_cb(agent_name, _node_artifacts)
 
                 # === 미디어 생성 도구 registry 등록 (Dynamic Hermes nodes) ===
                 # compiler가 모든 노드에 'media-generation' toolset을 부여하므로,
@@ -633,8 +871,23 @@ def _run_node_with_retries(
                     except Exception as _nudge_e:
                         _log.debug("[DiscoveryBoard] nudge injection skipped for '%s': %s", agent_name, _nudge_e)
 
+                # ══ [GATE] capa_6 — '이 노드만 고쳐 다시' ══
+                # 재시도 시 직전 실패 사유를 프롬프트에 되먹인다.
+                # 이게 없으면 같은 실수를 그대로 반복하고 재시도가 무의미해진다.
+                _retry_query = agent_query
+                if attempts_count > 1 and last_err is not None:
+                    _prev_reason = str(last_err)[:1200]
+                    _retry_query = (
+                        agent_query
+                        + "\n\n[RETRY FEEDBACK — 직전 시도 실패]\n"
+                        + _prev_reason
+                        + "\n\n위 실패 사유를 반드시 해결한 뒤 다시 제출하라. "
+                          "특히 ARTIFACTS에 적은 경로에 파일이 실제로 저장되어 있어야 한다.\n"
+                    )
+                    _log.info("[GATE] node '%s' retry with feedback (attempt %d).", agent_name, attempts_count)
+
                 res = agent.run_conversation(
-                    user_message=agent_query,
+                    user_message=_retry_query,
                     system_message=_sys_prompt,
                     stream_callback=stream_cb
                 )
@@ -661,6 +914,41 @@ def _run_node_with_retries(
                     log_callback(f"{agent_name} ({model_name})", "\n", "done")
                 if not assistant_content.strip():
                     raise RuntimeError("Agent returned empty assistant content.")
+
+                # ══ [GATE] capa_5 — "증거로만 게이트를 연다" ══
+                # 판정 순서 고정: ① 결정론(파일 실물) → ② 노드 보고 → ③ 모델 점수
+                # ①이 FAIL이면 ③의 점수와 무관하게 게이트는 닫힌 채로 남는다.
+                # (기존 코드는 ③만 있어서, 모델이 자기 글에 "SCORE: 95"라고 쓰면 통과했다)
+                _gate_dirs = [d for d in (node.get("_effective_dir"), run_dir) if d]
+                _gate_result = _deterministic_gate(_node_artifacts, _gate_dirs)
+                if _gate_result.get("applicable"):
+                    _log.info(
+                        "[GATE] node '%s' deterministic=%s checks=%d blockers=%d",
+                        agent_name,
+                        "PASS" if _gate_result.get("passed") else "FAIL",
+                        len(_gate_result.get("checks") or []),
+                        len(_gate_result.get("blockers") or []),
+                    )
+                    for _bl in (_gate_result.get("blockers") or []):
+                        _log.info("[GATE] node '%s' blocker: %s", agent_name, _bl)
+                    if log_callback:
+                        try:
+                            _summary = "PASS" if _gate_result.get("passed") else "FAIL"
+                            log_callback(agent_name, f"[GATE] 결정론 검증: {_summary} "
+                                         f"(checks={len(_gate_result.get('checks') or [])}, "
+                                         f"blockers={len(_gate_result.get('blockers') or [])})", "running")
+                        except Exception:
+                            pass
+                    _append_checks_md(
+                        (node.get("_effective_dir") or run_dir or ""),
+                        agent_name,
+                        _gate_result.get("checks") or [],
+                    )
+                    if not _gate_result.get("passed"):
+                        raise GateFailedException(
+                            "[GATE] 결정론적 검증 실패 — 모델 자기보고와 무관하게 차단.\n"
+                            + "\n".join(f"- {_b}" for _b in (_gate_result.get("blockers") or []))
+                        )
 
                 # [NEW] Semantic QA Feedback Loop with Scoring System
                 role_str = str(node.get("role", "")).lower()
@@ -730,6 +1018,8 @@ def _run_node_with_retries(
         state_manager,
         generation,
         mission_tracker,
+        _node_artifacts,
+        _gate_result,
     )
     return results[agent_name]
 
@@ -926,6 +1216,7 @@ class ParallelRunner:
                     AIAgent,
                     log_callback,
                     run_id,
+                    run_dir,
                 )
             finally:
                 if clear_current_delegation:
