@@ -388,6 +388,121 @@ html.dark #new-agent-modal > div {
 div[data-slot].slot-excluded{opacity:.42;filter:grayscale(.55);}
 .slot-status-badge{white-space:nowrap;}
 </style>
+<style id="harness-agent-card-style">
+  /* ── Dynamic Harness Visual Agent Card Styles ── */
+  .harness-agent-card {
+    margin: 8px 0;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-left: 4px solid rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    background: #ffffff;
+    overflow: hidden;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  }
+  .dark .harness-agent-card {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+    border-left-color: rgba(255, 255, 255, 0.2);
+  }
+  .harness-agent-card.status-running {
+    border-left-color: #10b981 !important;
+  }
+  .harness-agent-card.status-done {
+    border-left-color: #3b82f6 !important;
+  }
+  .harness-agent-card.status-error {
+    border-left-color: #ef4444 !important;
+  }
+  .harness-agent-card.subteam {
+    margin-left: 18px;
+    border-left-style: dashed;
+    border-left-color: #f59e0b !important;
+  }
+  .harness-agent-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  }
+  .dark .harness-agent-card-header {
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+  }
+  .harness-agent-card-header .agent-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .harness-agent-card-header .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #9ca3af;
+    flex-shrink: 0;
+  }
+  .harness-agent-card.status-running .status-dot {
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+    animation: harness-dot-pulse 1.2s ease-in-out infinite;
+  }
+  .harness-agent-card.status-done .status-dot {
+    background: #3b82f6;
+  }
+  .harness-agent-card.status-error .status-dot {
+    background: #ef4444;
+    box-shadow: 0 0 6px #ef4444;
+  }
+  @keyframes harness-dot-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+  .harness-agent-card-header .toggle-icon {
+    font-size: 10px;
+    color: #6b7280;
+    transition: transform 0.15s ease;
+  }
+  .harness-agent-card.collapsed .toggle-icon {
+    transform: rotate(-90deg);
+  }
+  .harness-agent-card.collapsed .harness-agent-card-body {
+    display: none;
+  }
+  .harness-agent-card-body {
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(0, 0, 0, 0.015);
+    max-height: 280px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .dark .harness-agent-card-body {
+    background: rgba(0, 0, 0, 0.25);
+  }
+  .card-log-line {
+    margin: 1px 0;
+    word-break: break-word;
+  }
+  .card-log-line.log-error { color: #ef4444; }
+  .card-log-line.log-success { color: #10b981; }
+  .card-log-line.log-warning { color: #f59e0b; }
+  .harness-delegation-banner {
+    margin: 6px 0 10px 0;
+    padding: 8px 12px;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.08);
+  }
+</style>
 </head><body class="bg-surface-container-lowest font-body-md text-on-surface antialiased"><div id="sidebar-backdrop" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden transition-opacity"></div><aside id="app-sidebar" class="fixed left-0 top-0 h-full w-[280px] sm:w-[270px] bg-surface border-r border-black/10 z-40 flex flex-col justify-between select-none transition-transform duration-300 -translate-x-full md:translate-x-0"><div class="flex flex-col flex-1 min-h-0"><div class="p-space-lg flex flex-col gap-space-md border-b border-black/10"><div class="flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-5 h-5 bg-primary flex items-center justify-center rounded-[2px]"><span class="text-[10px] font-mono text-on-primary font-bold">D</span></div><span class="font-headline-sm text-headline-sm text-on-surface">Daon Agent</span></div><div class="flex items-center gap-1.5"><div class="flex items-center text-on-surface-variant font-label-sm text-label-sm px-space-xs py-[2px] bg-surface-variant/40 rounded">v2.5</div><button id="sidebar-close-btn" class="md:hidden p-1 rounded hover:bg-black/5 text-on-surface-variant flex items-center justify-center cursor-pointer" type="button" title="사이드바 닫기"><span class="material-symbols-outlined text-[18px]">close</span></button></div></div><button class="w-full h-9 flex items-center justify-between px-space-md bg-surface-container-lowest border border-black/10 rounded-[10px] text-on-surface font-label-md text-label-md hover:bg-black/[0.03] transition-colors nav-tab-btn new-session-btn" data-action="new-session" data-tab-target="chat-session" type="button"><span class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[16px] text-on-surface-variant">edit_square</span>New session</span><span class="font-code text-code text-[11px] text-on-surface-variant">⌘N</span></button></div><div class="flex-1 overflow-y-auto px-space-md py-space-md space-y-space-lg"><nav class="flex flex-col gap-space-lg"><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Core Workspaces</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] transition-colors truncate bg-black/[0.06] text-on-surface font-medium cursor-pointer" data-tab-target="chat-session"><span class="material-symbols-outlined text-[16px]">chat</span><span class="truncate">Agent 채팅 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="material-symbols-outlined text-[16px]">bolt</span><span class="truncate">Dynamic Harness 세션</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-boardroom"><span class="material-symbols-outlined text-[16px]">groups</span><span class="truncate">정적 에이전트 회의실 (라온 사회자 + 7 에이전트)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="px-space-sm font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider mb-space-xs">Extensions &amp; Skills</div><div class="flex flex-col gap-[2px]"><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="plugin-mcp"><span class="material-symbols-outlined text-[16px]">extension</span><span class="truncate">플러그인 &amp; MCP 스토어</span></a><a class="sidebar-item h-[34px] flex items-center gap-2 px-space-sm rounded-[10px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="agent-skills"><span class="material-symbols-outlined text-[16px]">psychology</span><span class="truncate">에이전트 스킬 (Skills)</span></a></div></div><div class="flex flex-col gap-space-xs"><div class="flex items-center justify-between px-space-sm mb-space-xs"><label class="flex items-center gap-1.5 cursor-pointer select-none" title="전체 선택/해제"><input type="checkbox" id="sessions-select-all" class="w-3.5 h-3.5 cursor-pointer accent-red-600"><span class="font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider">Recent Threads</span></label><button id="delete-selected-sessions-btn" title="선택한 세션 삭제" class="text-[11px] font-label-sm text-on-surface-variant/70 hover:text-red-600 flex items-center gap-0.5 transition-colors cursor-pointer opacity-40 pointer-events-none" type="button"><span class="material-symbols-outlined text-[13px]">delete</span><span id="delete-selected-label">선택 삭제</span></button></div><div class="flex flex-col gap-[2px]" id="recent-threads-list"><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Architectural Scaffolding Schema</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="dynamic-harness"><span class="truncate">Autonomous Refactor Pipeline</span></a><a class="h-[32px] flex items-center px-space-sm rounded-[8px] font-body-sm text-body-sm text-on-surface-variant hover:bg-black/[0.04] hover:text-on-surface transition-colors truncate cursor-pointer" data-tab-target="chat-session"><span class="truncate">Vector Index Hybrid Tuning</span></a></div></div></nav></div></div><!-- Provider & Model Selection Slide Drawer -->
 
 <div class="px-space-md py-2 border-t border-black/10 bg-surface flex flex-col gap-1.5" id="provider-drawer-container">

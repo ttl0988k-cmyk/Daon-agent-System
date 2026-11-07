@@ -98,7 +98,7 @@ def execute_specialist_node(
     task_prompt: str,
     context: str = "",
     previous_steps: Optional[List[Dict[str, Any]]] = None,
-    preferred_model: Optional[str] = "deepseek-chat",
+    preferred_model: Optional[str] = "deepseek-v4.1-flash",
     event_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
     """
@@ -185,7 +185,7 @@ def run_delegated_pipeline(
     task_prompt: str,
     context: str = "",
     specialist_ids: Optional[List[str]] = None,
-    preferred_model: Optional[str] = "deepseek-chat",
+    preferred_model: Optional[str] = "deepseek-v4.1-flash",
     event_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
     """

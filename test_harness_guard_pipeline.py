@@ -77,3 +77,4 @@ if __name__ == "__main__":
     test_105_specialists()
     test_live_workers_scan()
     print("\n=== ALL HARNESS PIPELINE TESTS PASSED (100%) ===")
+
