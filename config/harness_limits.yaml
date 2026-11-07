@@ -1,0 +1,42 @@
+# Daon Agent System - Harness Cost & Loop Guardrails
+# Prevents token explosion (140k context spikes) and uncontrolled recursion
+
+node:
+  max_retries: 2
+  max_wall_time_seconds: 600
+
+plan:
+  max_attempts: 3
+  max_tokens: 16384
+
+mission:
+  max_total_wall_time_seconds: 3600
+  max_total_tokens: 1000000
+  max_recovery_attempts: 2
+  max_acceptance_retries: 1
+
+scoring:
+  pass_threshold: 80
+  max_score: 100
+
+delegation:
+  max_depth: 2
+  max_children_per_spawn: 4
+  max_total_spawns: 6
+
+turn_budget:
+  max_result_size_chars: 25000
+  max_turn_budget_chars: 60000
+  max_preview_chars: 1500
+
+cost_guard:
+  max_tokens_per_turn: 32000
+  enforce_sliding_window: true
+
+discovery:
+  enabled: true
+  max_publish_per_agent: 5
+  max_total: 40
+  digest_max_items: 8
+  max_summary_chars: 400
+  max_evidence_chars: 600

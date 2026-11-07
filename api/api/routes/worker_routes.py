@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import time
 from typing import Any, Dict
@@ -24,6 +25,54 @@ from api.helpers import bad, j, j_ok
 from api.managers.herdr_manager import herdr_manager
 
 _logger = logging.getLogger(__name__)
+
+
+def scan_live_workers() -> list[dict]:
+    """Scans OS processes for live Claude Code, Codex, and Herdr instances."""
+    import psutil
+    workers = []
+    seen_pids = set()
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time', 'cpu_percent']):
+        try:
+            name = (proc.info['name'] or '').lower()
+            if any(k in name for k in ['claude', 'codex', 'herdr']):
+                pid = proc.info['pid']
+                if pid in seen_pids:
+                    continue
+                seen_pids.add(pid)
+                cmdline = " ".join(proc.info['cmdline'] or [])
+                kind = "claude" if "claude" in name else ("codex" if "codex" in name else "herdr")
+                
+                # Determine working directory or target project if found in cmdline
+                target_dir = ""
+                for arg in proc.info['cmdline'] or []:
+                    if os.path.exists(arg) and os.path.isdir(arg):
+                        target_dir = arg
+                        break
+                        
+                uptime_sec = int(time.time() - proc.info['create_time'])
+                workers.append({
+                    "pid": pid,
+                    "name": proc.info['name'],
+                    "kind": kind,
+                    "status": "running",
+                    "uptime_sec": uptime_sec,
+                    "target_dir": target_dir or "d:\\daon\\voice-studio-nocturnal",
+                    "cmdline_summary": cmdline[:120]
+                })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return workers
+
+
+def handle_get_live_workers(handler, parsed) -> bool:
+    """GET /api/workers/live - Real-time active OS workers scan."""
+    try:
+        workers = scan_live_workers()
+        return j_ok(handler, workers=workers)
+    except Exception as e:
+        _logger.error(f"[worker_routes] Live worker scan error: {e}")
+        return bad(handler, str(e), status=500)
 
 
 def handle_get_workers(handler, parsed) -> bool:

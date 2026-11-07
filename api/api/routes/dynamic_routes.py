@@ -77,6 +77,22 @@ def handle_get_dynamic_status(handler, parsed) -> bool:
         aid = entry.get("agent_id", "")
         if aid:
             agent_cards[aid] = {"status": entry.get("content", ""), "log_status": entry.get("status", "running")}
+
+    # Integrate external live workers (Claude Code, Codex, Herdr) into agent_cards
+    try:
+        from api.routes.worker_routes import scan_live_workers
+        live_workers = scan_live_workers()
+        if live_workers:
+            resp['external_workers'] = live_workers
+            for w in live_workers[:3]:
+                w_label = f"외부워커·{w['kind'].upper()} (PID {w['pid']})"
+                agent_cards[w_label] = {
+                    "status": f"활성 상태 · 가동시간 {w['uptime_sec']}s · {w['target_dir']}",
+                    "log_status": "running"
+                }
+    except Exception as e:
+        logger.debug(f"External worker scan skipped: {e}")
+
     if agent_cards:
         resp['agent_cards'] = agent_cards
 

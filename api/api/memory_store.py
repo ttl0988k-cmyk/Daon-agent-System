@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import threading
@@ -44,7 +45,8 @@ except Exception:
 # ── 스키마 버전 (패치 2): PRAGMA user_version 기반 마이그레이션 토대 ──
 # 향후 새 테이블/컬럼 추가 시 _SCHEMA_VERSION을 올리고 _ensure_schema에서 분기한다.
 # v2 (Phase 6): session_artifacts + fact_artifacts 추가 (인과 그래프)
-_SCHEMA_VERSION = 2
+# v3 (Phase 7): Ruflo 장기기억 이식 (embedding, namespace, tier, verdict, source_pid, pinned, valid_from/until)
+_SCHEMA_VERSION = 3
 
 # ── Phase 1-A: 프로필 key 정규화 ──
 # LLM 추출 시 반드시 아래 key 중 하나를 사용하도록 제한한다.
@@ -93,73 +95,38 @@ _DAILY_INTERVAL = 86400.0        # VACUUM + 백업 주기(초, 24시간)
 _last_maintenance_ts = time.time()   # 워커 시작 시각 기준(즉시 실행 방지)
 _last_daily_ts = time.time()         # 일일 정비도 시작 시각 기준
 
-# ── 기억 자동화 게이트 (2026-09-14) ──
-# 배포판(지인)에서 기억 자동 추출/일일정제가 무료가 아닌 유료 토큰을 태우는 것을
-# 막는다. OmniRoute(로컬 무료 라우터, http://localhost:20128)가 감지될 때만 자동화를
-# 켠다. 명시적 오버라이드: config.yaml memory.auto_extract / env DAON_MEMORY_AUTO_EXTRACT
-#   - 'auto' (기본): OmniRoute 감지 시 ON, 아니면 OFF
-#   - 'on'/'true': 항상 ON   /   'off'/'false': 항상 OFF
-_OMNIROUTE_PROBE_URLS = (
-    'http://127.0.0.1:20128/v1/models',
-    'http://localhost:20128/v1/models',
+# ── Ruflo 포팅: Write Guard 비밀정보 정규식 및 네임스페이스 매핑 ──
+_SECRET_PATTERNS = re.compile(
+    r'(?:sk-[a-zA-Z0-9_\-]{20,}|ghp_[a-zA-Z0-9]{20,}|bearer\s+[a-zA-Z0-9_\-\.]{20,}|(?:password|passwd|secret|token)\s*[:=]\s*[^\s]{6,})',
+    re.IGNORECASE
 )
-_OMNIROUTE_PROBE_TTL = 30.0      # 감지 결과 캐시(초)
-_omniroute_probe_cache = {'ts': 0.0, 'alive': False}
-_omni_probe_lock = threading.Lock()
-_DAILY_REFINE_MAX_FACTS = 200    # 일일정제 LLM 입력 facts 상한(토큰 폭주 방지)
 
+_CATEGORY_TO_NAMESPACE = {
+    'general': 'patterns',
+    'preference': 'feedback',
+    'project': 'tasks',
+}
 
-def _setting_memory_auto() -> str:
-    """config.yaml memory.auto_extract → env DAON_MEMORY_AUTO_EXTRACT → 'auto'."""
+# ── 기억 자동화 게이트 (Ruflo 포팅: on/off 단순화, OmniRoute 의존성 완전 제거) ──
+_DAILY_REFINE_MAX_FACTS = 200    # 정제 facts 상한
+
+def memory_auto_enabled() -> bool:
+    """기억 자동화(PID 증류/정제) 활성 여부.
+    명시 설정: config.yaml memory.auto_extract 또는 env DAON_MEMORY_AUTO_EXTRACT.
+    기본값: True (명시적으로 'off'/'false'/'0'이 아니면 ON).
+    """
     try:
         from api.config import _load_config_value
-        val = _load_config_value('memory.auto_extract', 'DAON_MEMORY_AUTO_EXTRACT', 'auto')
+        val = _load_config_value('memory.auto_extract', 'DAON_MEMORY_AUTO_EXTRACT', 'on')
     except Exception:
-        val = os.getenv('DAON_MEMORY_AUTO_EXTRACT', 'auto')
-    return str(val if val is not None else 'auto').strip().lower()
+        val = os.getenv('DAON_MEMORY_AUTO_EXTRACT', 'on')
+    s = str(val if val is not None else 'on').strip().lower()
+    return s not in ('off', 'false', '0', 'no', 'none', 'disable', 'disabled')
 
 
 def _omniroute_available() -> bool:
-    """로컬 OmniRoute(무료 라우터) 데몬이 살아있는지 best-effort 감지. TTL 캐시."""
-    now = time.time()
-    with _omni_probe_lock:
-        if now - _omniroute_probe_cache['ts'] < _OMNIROUTE_PROBE_TTL:
-            return _omniroute_probe_cache['alive']
-    alive = False
-    headers = {'Authorization': 'Bearer omniroute-local'}
-    for url in _OMNIROUTE_PROBE_URLS:
-        try:
-            req = urllib.request.Request(url, headers=headers, method='GET')
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                code = getattr(resp, 'status', 200) or 200
-                if 200 <= int(code) < 500:
-                    alive = True
-                    break
-        except urllib.error.HTTPError as he:
-            # 401/403 등 HTTP 응답 자체가 온다는 것은 데몬이 포트에서 살아있음을 증명
-            if 200 <= he.code < 500:
-                alive = True
-                break
-        except Exception:
-            continue
-    with _omni_probe_lock:
-        _omniroute_probe_cache['ts'] = now
-        _omniroute_probe_cache['alive'] = alive
-    return alive
-
-
-def memory_auto_enabled() -> bool:
-    """기억 자동화(추출/정제) 활성 여부.
-
-    우선순위: 명시 설정(on/off) > OmniRoute 감지(무료 라우터가 있으면 ON).
-    기본 'auto' 는 무료 로컬 라우터가 없으면 False → LLM 토큰 소모 0.
-    """
-    setting = _setting_memory_auto()
-    if setting in ('off', 'false', '0', 'no', 'none', 'disable', 'disabled'):
-        return False
-    if setting in ('on', 'true', '1', 'yes', 'always', 'enable', 'enabled'):
-        return True
-    return _omniroute_available()
+    """Deprecated: OmniRoute 의존성 제거됨. 항상 False 반환 (무료 큐 오염 방지)."""
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +215,14 @@ def _ensure_schema() -> None:
                 "ALTER TABLE facts ADD COLUMN superseded_by INTEGER DEFAULT NULL",
                 "ALTER TABLE facts ADD COLUMN use_count INTEGER DEFAULT 0",
                 "ALTER TABLE facts ADD COLUMN last_used_at TEXT",
+                "ALTER TABLE facts ADD COLUMN embedding BLOB DEFAULT NULL",
+                "ALTER TABLE facts ADD COLUMN namespace TEXT DEFAULT 'patterns'",
+                "ALTER TABLE facts ADD COLUMN tier TEXT DEFAULT 'semantic'",
+                "ALTER TABLE facts ADD COLUMN verdict TEXT DEFAULT NULL",
+                "ALTER TABLE facts ADD COLUMN source_pid TEXT DEFAULT NULL",
+                "ALTER TABLE facts ADD COLUMN pinned INTEGER DEFAULT 0",
+                "ALTER TABLE facts ADD COLUMN valid_from TEXT DEFAULT NULL",
+                "ALTER TABLE facts ADD COLUMN valid_until TEXT DEFAULT NULL",
             ):
                 try:
                     conn.execute(_ddl)
@@ -354,7 +329,8 @@ def _ensure_schema() -> None:
 # ---------------------------------------------------------------------------
 _FACT_COLUMNS = (
     'id, content, category, source_session, created_at, '
-    'derived_from, confidence, superseded_by, use_count, last_used_at'
+    'derived_from, confidence, superseded_by, use_count, last_used_at, '
+    'embedding, namespace, tier, verdict, source_pid, pinned, valid_from, valid_until'
 )
 
 
@@ -384,123 +360,164 @@ def list_facts(limit: int = 100, category: Optional[str] = None,
         return []
 
 
-def add_fact(content: str, category: str = 'general', source_session: Optional[str] = None,
-             derived_from: Optional[str] = None, skip_dedup: bool = False) -> Optional[int]:
-    """fact 추가. Phase 1-B: LLM 의미 중복 검사 포함.
+def backfill_facts_embeddings() -> int:
+    """embedding이 NULL인 facts를 로컬에서 배치 임베딩하여 1회 백필한다 (비용 0원)."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(
+                    "SELECT id, content FROM facts WHERE embedding IS NULL AND content != ''"
+                ).fetchall()
+                if not rows:
+                    return 0
 
-    - 완전 일치: 스킵 (None 반환)
-    - 의미 중복: 기존 fact 갱신 후 기존 id 반환
-    - 모순: 기존 fact에 superseded_by 설정, 새 fact INSERT
-    - 신규: INSERT
+                from api.api.memory_embed import embed_batch
 
-    데드락 방지: 느린 LLM 중복 검사(_llm_check_duplicate)와 재검토 큐 등록(_create_review)은
-    전역 _db_lock 밖에서 실행한다. 락은 순수 DB 읽기/쓰기 구간만 보호한다.
-    (이전: 락 안에서 LLM 호출 → 최대 1800초 점유 → 두 번째 대화의 build_memory_prompt가
-     record_chat_activity→set_profile에서 _db_lock 무한 대기 → 채팅 hang)
+                ids = [r["id"] for r in rows]
+                contents = [r["content"] for r in rows]
+                blobs = embed_batch(contents, is_query=False)
+
+                updates = [(b, i) for b, i in zip(blobs, ids)]
+                conn.executemany("UPDATE facts SET embedding = ? WHERE id = ?", updates)
+                conn.commit()
+                print(f"[MemoryStore] facts 임베딩 백필 완료: {len(updates)}건 (비용 0원)", flush=True)
+                return len(updates)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[MemoryStore] backfill_facts_embeddings 에러: {e}", flush=True)
+        return 0
+
+
+def add_fact(
+    content: str,
+    category: str = 'general',
+    source_session: Optional[str] = None,
+    derived_from: Optional[str] = None,
+    skip_dedup: bool = False,
+    confidence: float = 1.0,
+    namespace: Optional[str] = None,
+    tier: str = 'semantic',
+    verdict: Optional[str] = None,
+    source_pid: Optional[str] = None,
+    pinned: int = 0,
+    valid_from: Optional[str] = None,
+    valid_until: Optional[str] = None,
+) -> Optional[int]:
+    """fact 추가 (Ruflo 로직 포팅: Write Guard + 로컬 벡터 코사인 0.95 병합 + pinned 보호).
+
+    - Write Guard: API 키, 토큰, 비밀번호 등 민감정보 감지 시 즉시 저장 거부 (0 API 비용)
+    - 384차원 로컬 다국어 임베딩 자동 생성 (API 비용 0원)
+    - 코사인 0.95 이상 유사 항목 존재 시 최신 내용으로 자동 병합 (use_count 합산, LLM 호출 없음)
+    - 500건 초과 시: pinned=1은 영구 보존, unpinned 중 신뢰도/사용빈도 최하위부터 삭제
     """
     try:
         content = (content or '').strip()
         if not content:
             return None
+
+        # ── 1. Write Guard (비밀키/토큰/비밀번호 차단) ──
+        if _SECRET_PATTERNS.search(content):
+            print(f"[MemoryStore] WriteGuard: 민감정보 포함되어 fact 저장 차단: {content[:30]}...")
+            return None
+
         _ensure_schema()
 
-        # ── 1단계: 락 안에서 DB 읽기만 (완전 일치 검사 + 기존 facts 스냅샷) ──
-        existing = []
-        with _db_lock:
-            conn = _connect()
-            try:
-                dup = conn.execute(
-                    'SELECT id FROM facts WHERE content=? LIMIT 1', (content,)
-                ).fetchone()
-                if dup:
-                    return None
-                if not skip_dedup:
-                    existing = [dict(r) for r in conn.execute(
-                        'SELECT id, content FROM facts '
-                        'WHERE superseded_by IS NULL ORDER BY id DESC LIMIT 50'
-                    ).fetchall()]
-            finally:
-                conn.close()
+        if not namespace:
+            namespace = _CATEGORY_TO_NAMESPACE.get(category or 'general', 'patterns')
 
-        # ── 2단계: 락 밖에서 느린 LLM 중복 검사 (데드락 방지 핵심) ──
-        dup_info = None
-        if existing and not skip_dedup:
-            dup_info = _llm_check_duplicate(content, existing)
+        # ── 2. 로컬 384차원 다국어 임베딩 계산 (API 0원) ──
+        embedding_blob = None
+        try:
+            from api.memory_embed import embed_text, cosine
+            embedding_blob = embed_text(content, is_query=False)
+        except Exception as _emb_err:
+            print(f"[MemoryStore] embed_text 호출 에러: {_emb_err}")
+            cosine = None
 
-        # ── 3단계: 락 안에서 DB 쓰기만 (재검사 + 갱신/INSERT + 상한 정리) ──
-        review_payload = None
         new_id = None
         with _db_lock:
             conn = _connect()
             try:
-                # 재검사: 2단계 사이 다른 스레드가 동일 fact를 넣었을 수 있음
+                # ── 3. 완전 일치 검사 ──
                 dup = conn.execute(
                     'SELECT id FROM facts WHERE content=? LIMIT 1', (content,)
                 ).fetchone()
                 if dup:
-                    return None
-
-                if dup_info and dup_info.get('action') == 'duplicate':
-                    # 의미 중복: 기존 fact 내용 갱신
                     conn.execute(
-                        "UPDATE facts SET content=?, last_used_at=datetime('now') WHERE id=?",
-                        (content, dup_info['fact_id']),
+                        "UPDATE facts SET last_used_at=datetime('now'), use_count=COALESCE(use_count,0)+1 WHERE id=?",
+                        (dup['id'],)
                     )
                     conn.commit()
-                    return dup_info['fact_id']
+                    return dup['id']
 
-                if dup_info and dup_info.get('action') == 'contradiction':
-                    # 모순: 기존 fact 신뢰도 하향
-                    conn.execute(
-                        'UPDATE facts SET confidence=0.3 WHERE id=?',
-                        (dup_info['fact_id'],),
-                    )
-                    derived_from = f"fact:{dup_info['fact_id']}"
+                # ── 4. 벡터 코사인 >= 0.95 유사 중복 병합 (LLM 없음) ──
+                if not skip_dedup and embedding_blob and len(embedding_blob) >= 1536 and cosine is not None:
+                    rows = conn.execute(
+                        "SELECT id, content, embedding, use_count FROM facts "
+                        "WHERE superseded_by IS NULL AND (valid_until IS NULL OR valid_until >= datetime('now')) "
+                        "AND embedding IS NOT NULL"
+                    ).fetchall()
+                    for r in rows:
+                        sim = cosine(embedding_blob, r['embedding'])
+                        if sim >= 0.95:
+                            # 0.95 이상이면 동일/유사 사실로 병합: 최신 내용 갱신 + use_count 증가
+                            conn.execute(
+                                "UPDATE facts SET content=?, embedding=?, last_used_at=datetime('now'), "
+                                "use_count=COALESCE(use_count, 0) + 1 WHERE id=?",
+                                (content, embedding_blob, r['id']),
+                            )
+                            conn.commit()
+                            return r['id']
 
+                # ── 5. 신규 fact INSERT ──
                 cur = conn.execute(
-                    'INSERT INTO facts (content, category, source_session, derived_from) '
-                    'VALUES (?,?,?,?)',
-                    (content, category or 'general', source_session, derived_from),
+                    'INSERT INTO facts (content, category, source_session, derived_from, confidence, '
+                    'embedding, namespace, tier, verdict, source_pid, pinned, valid_from, valid_until) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (content, category or 'general', source_session, derived_from, confidence,
+                     embedding_blob, namespace, tier, verdict, source_pid, pinned, valid_from, valid_until),
                 )
                 conn.commit()
                 new_id = cur.lastrowid
 
-                # 모순인 경우 기존 fact에 superseded_by 설정 (재검토 큐 등록은 락 밖에서)
-                if dup_info and dup_info.get('action') == 'contradiction':
-                    conn.execute(
-                        'UPDATE facts SET superseded_by=? WHERE id=?',
-                        (new_id, dup_info['fact_id']),
-                    )
-                    conn.commit()
-                    review_payload = (dup_info['fact_id'], new_id)
-
-                # 상한 정리: 오래된 fact부터 삭제
+                # ── 6. 상한 정리 (pinned=1 보호, unpinned 최하위부터 삭제) ──
                 count = conn.execute('SELECT COUNT(*) AS c FROM facts').fetchone()['c']
                 if count > _MAX_FACTS:
                     overflow = count - _MAX_FACTS
                     conn.execute(
-                        'DELETE FROM facts WHERE id IN '
-                        '(SELECT id FROM facts ORDER BY id ASC LIMIT ?)',
+                        'DELETE FROM facts WHERE id IN ('
+                        '  SELECT id FROM facts WHERE pinned=0 '
+                        '  ORDER BY (COALESCE(confidence, 1.0) * 10 + COALESCE(use_count, 0)) ASC, id ASC LIMIT ?'
+                        ')',
                         (overflow,),
                     )
                     conn.commit()
             finally:
                 conn.close()
 
-        # ── 4단계: 락 밖에서 재검토 큐 등록 (_create_review는 자체 락 사용 → 재귀 교착 방지) ──
-        if review_payload:
-            try:
-                _create_review(
-                    'contradiction',
-                    [review_payload[0], review_payload[1]],
-                    f"기존 fact#{review_payload[0]} → 신규 fact#{review_payload[1]} 대체 (대화 중 자동 감지)",
-                )
-            except Exception:
-                pass
-
         return new_id
-    except Exception:
+    except Exception as e:
+        print(f"[MemoryStore] add_fact 실패: {e}")
         return None
+
+
+def pin_fact(fact_id: int, pinned: int = 1) -> bool:
+    """fact를 pinned(핵심 기억)로 지정하거나 해제한다. pinned=1은 감쇠/삭제에서 영구 보존된다."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                conn.execute('UPDATE facts SET pinned=? WHERE id=?', (int(pinned), int(fact_id)))
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+    except Exception:
+        return False
 
 
 def delete_fact(fact_id) -> dict:
@@ -657,6 +674,37 @@ def list_summaries(limit: int = 50) -> list:
                 conn.close()
     except Exception:
         return []
+
+
+def backfill_facts_embeddings() -> int:
+    """embedding이 NULL인 facts를 로컬에서 배치 임베딩하여 1회 백필한다 (비용 0원)."""
+    try:
+        _ensure_schema()
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(
+                    "SELECT id, content FROM facts WHERE embedding IS NULL AND content != ''"
+                ).fetchall()
+                if not rows:
+                    return 0
+
+                from api.api.memory_embed import embed_batch
+
+                ids = [r["id"] for r in rows]
+                contents = [r["content"] for r in rows]
+                blobs = embed_batch(contents, is_query=False)
+
+                updates = [(b, i) for b, i in zip(blobs, ids)]
+                conn.executemany("UPDATE facts SET embedding = ? WHERE id = ?", updates)
+                conn.commit()
+                print(f"[MemoryStore] facts 임베딩 백필 완료: {len(updates)}건 (비용 0원)", flush=True)
+                return len(updates)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[MemoryStore] backfill_facts_embeddings 에러: {e}", flush=True)
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -972,55 +1020,36 @@ def record_session_artifact(session_id: str, artifact_type: str, path: str,
         return None
 
 
-def get_context_block(max_facts: int = 3, query_text: str = '',
-                      session_id: str = '') -> str:
-    """Phase 3: 관련성 랭킹 주입. 실패 시 빈 문자열.
+def get_context_block(max_facts: int = 6, query_text: str = '',
+                      session_id: str = '', query: Optional[str] = None) -> str:
+    """DAON SmartRetrieval 5단계 주입 파이프라인 (Ruflo 로직 포팅, API 비용 0원).
 
-    query_text에서 키워드를 추출해 facts를 랭킹 정렬 후 상위 max_facts건 주입.
-    주입 시 fact_usage에 기록(Phase 2-B).
-    Token 절감을 위해 max_facts 기본값을 3으로 제한 (Top 3 핵심 fact만).
-    내부 메타키('_' 접두사)는 주입에서 제외.
+    1. 전체 facts(500건 이하) 로드 후 로컬 다국어 임베딩 + SmartRetrieval(확장·RRF·최신성·MMR·라운드로빈) 5~8개 추출
+    2. summaries 테이블의 최근 PID 요약 1~2개를 [최근 PID 요약] episodic 블록으로 주입
+    3. 사용자 프로필을 [사용자 프로필] 블록으로 주입
     """
+    if query and not query_text:
+        query_text = query
     try:
-        # 키워드 추출 (간단한 공백/쉼표 분리)
-        query_keywords = []
-        if query_text:
-            import re as _re2
-            tokens = _re2.findall(r'[\w가-힣]+', query_text.lower())
-            query_keywords = [t for t in tokens if len(t) >= 2][:20]
-
-        # 전체 facts 로드 (500건 이하라 가능)
+        # 전체 facts 로드 (500건 이하라 전수 코사인 랭킹 초고속 수행)
         all_facts = list_facts(limit=500, include_superseded=False)
         profile = get_profile()
 
-        # 랭킹 정렬
-        now_ts = time.time()
-        if query_keywords:
-            scored = [(f, _fact_score(f, query_keywords, now_ts)) for f in all_facts]
-            scored.sort(key=lambda x: x[1], reverse=True)
-        else:
-            # 폴백: 최근 순서 (키워드 추출 실패 시)
-            scored = [(f, 0.0) for f in all_facts]
-
-        # Phase 3-D: 카테고리별 쿼터
+        # Ruflo SmartRetrieval 5단계 실행
         selected = []
-        cat_counts = {}
-        cat_quota = {'general': max(3, max_facts - 1), 'preference': 2, 'project': 1}
-        for f, sc in scored:
-            if len(selected) >= max_facts:
-                break
-            cat = f.get('category', 'general')
-            quota = cat_quota.get(cat, max_facts)
-            if cat_counts.get(cat, 0) >= quota:
-                continue
-            selected.append(f)
-            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        if all_facts:
+            try:
+                from api.api.memory_retrieval import smart_search
+                target_k = max(5, min(8, max_facts))
+                selected = smart_search(query=query_text or "최근 작업 및 중요 사실", all_facts=all_facts, limit=target_k)
+            except Exception as s_err:
+                # 안전 폴백: SmartRetrieval 모듈 로드 실패 시 기존 최근 순 정렬
+                selected = all_facts[:max_facts]
 
         # 사용 기록 (Phase 2-B)
-        injected_ids = [f['id'] for f in selected]
+        injected_ids = [f['id'] for f in selected if f.get('id')]
         if injected_ids and session_id:
             _record_fact_usage(injected_ids, session_id)
-        # Phase 6: 이번 턴 주입 fact id 보관 (인과 그래프 직접 영향 후보)
         if session_id:
             try:
                 with _LAST_INJECTED_LOCK:
@@ -1033,14 +1062,33 @@ def get_context_block(max_facts: int = 3, query_text: str = '',
 
         # 텍스트 조립
         parts = []
+
+        # 1. 사용자 프로필 블록
         if profile:
             prof_items = [(k, v) for k, v in profile.items() if not str(k).startswith('_')]
             if prof_items:
                 prof_lines = ', '.join(f'{k}: {v}' for k, v in prof_items[:30])
                 parts.append(f'[사용자 프로필] {prof_lines}')
+
+        # 2. 최근 PID/세션 요약 (Episodic 층, 1~2건)
+        try:
+            recent_sums = list_summaries(limit=2)
+            if recent_sums:
+                sum_lines = []
+                for s in recent_sums:
+                    s_txt = (s.get('summary') or s.get('title') or '').strip()
+                    if s_txt:
+                        sum_lines.append(s_txt.replace('\n', ' '))
+                if sum_lines:
+                    parts.append(f'[최근 PID 요약] {" // ".join(sum_lines)}')
+        except Exception:
+            pass
+
+        # 3. 장기 기억 블록 (Semantic 층, 5~8개 정선)
         if selected:
             fact_lines = '; '.join(f['content'] for f in selected)
             parts.append(f'[장기 기억] {fact_lines}')
+
         return '\n'.join(parts)
     except Exception:
         return ''
@@ -1420,13 +1468,13 @@ def _transcript(messages, max_turns: int = 20) -> str:
         return ''
 
 
-def _call_memory_direct(prompt: str, system_instruction: Optional[str] = None) -> str:
-    """기억 큐/정제 전용 LLM 호출 함수 (엄격한 무료 로컬 라우터 격리).
+def _call_memory_distill(prompt: str, system_instruction: Optional[str] = None) -> str:
+    """PID 기억 증류 전용 LLM 호출 함수 (DeepSeek V4.1 Flash 저비용 모델 전용).
 
     원칙:
-    1. 로컬 무료 라우터(OmniRoute)의 'omniroute/auto' 모델만 독점 사용한다.
-    2. OmniRoute가 꺼져 있거나 오류 발생 시 다른 유료 프로바이더(OpenRouter, MiniMax 등)로
-       절대 폴백하지 않고 빈 문자열('')을 반환하여 유료 토큰 소모를 원천 차단한다.
+    1. OmniRoute 전면 제거.
+    2. DeepSeek V4.1 Flash 단일 저비용 모델로 1회 호출.
+    3. 실패 시 1회 재시도 후 실패 시 고가 모델로 폴백하지 않고 빈 문자열('') 반환.
     """
     if not memory_auto_enabled():
         return ""
@@ -1434,44 +1482,163 @@ def _call_memory_direct(prompt: str, system_instruction: Optional[str] = None) -
         from api.dynamic.direct_calls import _call_direct
         return _call_direct(
             prompt,
-            system_instruction=system_instruction,
-            preferred_model="omniroute/auto",
+            system_instruction=system_instruction or "당신은 AI 에이전트 시스템의 장기 기억 증류기입니다. 핵심 교훈과 패턴만 엄격한 JSON으로 추출하십시오.",
+            preferred_model="deepseek-v4.1-flash",
+            max_tokens=1500,
         )
     except Exception as e:
-        print(f"[MemoryStore] OmniRoute memory direct call skipped/failed: {e}")
+        print(f"[MemoryStore] Memory distillation call failed: {e}")
         return ""
 
 
-def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dict]:
-    """Phase 1-B: LLM으로 새 fact와 기존 facts의 의미 중복/모순 판정.
+def _call_memory_direct(prompt: str, system_instruction: Optional[str] = None) -> str:
+    """하위 호환 래퍼: _call_memory_distill 로 위임."""
+    return _call_memory_distill(prompt, system_instruction=system_instruction)
 
-    반환: {'action': 'duplicate'|'contradiction'|'new', 'fact_id': int|None}
-    실패 시 None (→ 신규 INSERT로 폴백).
+
+def _llm_check_duplicate(new_content: str, existing_facts: list) -> Optional[dict]:
+    """Deprecated: LLM 대신 로컬 384차원 임베딩 코사인 유사도(>=0.95)로 대체됨.
+    하위 호환을 위해 유지하되 로컬 코사인 계산으로 동작 (비용 0원).
     """
     try:
         if not existing_facts:
             return None
-        existing_lines = '\n'.join(
-            f"[id={f['id']}] {f['content']}" for f in existing_facts[:50]
-        )
-        prompt = (
-            '아래 "기존 기억" 목록과 "새 기억"을 비교하라.\n'
-            '- 의미적으로 동일한 내용이 이미 있으면: {"action": "duplicate", "fact_id": <id>}\n'
-            '- 기존 기억과 모순되면(새 내용이 더 최신 사실): {"action": "contradiction", "fact_id": <id>}\n'
-            '- 둘 다 아니면: {"action": "new", "fact_id": null}\n'
-            '반드시 JSON 객체 하나로만 응답하라.\n\n'
-            f'기존 기억:\n{existing_lines}\n\n'
-            f'새 기억: {new_content}'
-        )
-        raw = _call_memory_direct(prompt)
-        obj = _parse_json_object(raw)
-        action = obj.get('action', 'new')
-        fact_id = obj.get('fact_id')
-        if action in ('duplicate', 'contradiction') and fact_id is not None:
-            return {'action': action, 'fact_id': int(fact_id)}
+        from api.memory_embed import embed_text, cosine
+        new_vec = embed_text(new_content, is_query=False)
+        for f in existing_facts[:50]:
+            emb = f.get('embedding')
+            if emb:
+                sim = cosine(new_vec, emb)
+                if sim >= 0.95:
+                    return {'action': 'duplicate', 'fact_id': f['id']}
         return {'action': 'new', 'fact_id': None}
     except Exception:
         return None
+
+
+def process_pid_memory(pid: str, outcome: dict) -> dict:
+    """PID 종료 후 결과 및 판정을 바탕으로 1회 증류(distill)하여 장기 기억에 저장한다.
+    - DeepSeek V4.1 Flash 저비용 모델로 1회 호출 (PID당 비용 고정)
+    - 성공/실패 판정이 난 결과만 저장 (잡담/추측/일회성 사실 제외)
+    - 최대 5개 패턴, 프로필 변경분, 3~5문장 요약 추출
+    - 코사인 0.95 이상은 자동 병합, 0개면 저장 안 함
+    """
+    if not pid:
+        return {"patterns": 0, "profile_updates": 0, "summary": False}
+    if not memory_auto_enabled():
+        return {"patterns": 0, "profile_updates": 0, "summary": False}
+
+    status = outcome.get('status', 'unknown')
+    task = outcome.get('task', '') or ''
+    result = outcome.get('result', '') or outcome.get('summary', '') or outcome.get('error', '') or ''
+    logs = outcome.get('logs', [])
+
+    log_summary = ""
+    if logs:
+        recent_logs = logs[-10:] if len(logs) > 10 else logs
+        log_lines = []
+        for l in recent_logs:
+            if isinstance(l, dict):
+                agent = l.get('agent_id') or l.get('agent') or 'agent'
+                c = str(l.get('content') or '')[:150]
+                log_lines.append(f"[{agent}] {c}")
+            else:
+                log_lines.append(str(l)[:150])
+        log_summary = "\n".join(log_lines)
+
+    prompt = (
+        f"당신은 하네스 작업(PID={pid})의 최종 결과를 분석하여 다음 작업에 재사용할 핵심 교훈을 증류하는 전문가입니다.\n\n"
+        f"[작업 정보]\n"
+        f"- PID: {pid}\n"
+        f"- 판정: {status}\n"
+        f"- 작업 목표: {task}\n"
+        f"- 작업 결과/산출물: {str(result)[:2000]}\n"
+    )
+    if log_summary:
+        prompt += f"- 실행 로그 요약:\n{log_summary}\n\n"
+
+    prompt += (
+        "다음 규칙에 따라 엄격한 JSON 객체 하나로만 응답하라:\n"
+        "1. 'patterns': 다음 작업에서 실제로 써먹을 수 있는 판단·방법·주의점 (최대 5개).\n"
+        "   - 단순 사실이나 일회성 결과가 아닌 일반화 가능한 패턴/규칙이어야 함.\n"
+        "   - 'content': 한 문장, 200자 이내, 동사 포함 명확한 서술\n"
+        "   - 'namespace': 'patterns' (성공패턴), 'solutions' (해결책/에러대응), 'feedback' (사용자선호/정정) 중 하나\n"
+        "   - 'confidence': 0.7 ~ 1.0\n"
+        "   - 가치 있는 패턴이 없으면 빈 배열 [] 반환 (절대 억지로 만들지 말 것)\n"
+        "2. 'profile_updates': 사용자의 선호나 개발 환경 설정에 대한 새로운 정보가 있다면 갱신할 key-value. 없으면 {}.\n"
+        "3. 'summary': 이번 PID의 핵심 목표와 결과, 성패 원인을 3~5문장으로 요약한 한국어 텍스트.\n\n"
+        "응답 JSON 형식 예시:\n"
+        "{\n"
+        '  "patterns": [{"content": "다이나믹 하네스 실행 시 429 에러는 즉시 페일오버 모델로 전환해야 지연을 방지할 수 있다", "namespace": "solutions", "confidence": 0.95}],\n'
+        '  "profile_updates": {},\n'
+        '  "summary": "PID ... 요약"\n'
+        "}\n"
+    )
+
+    system_instruction = (
+        "당신은 AI 에이전트 시스템의 장기 기억 증류기입니다. 잡담이나 단순 경과는 제외하고 "
+        "검증된 성공/실패 패턴과 재사용 가능한 해결책만 엄격하게 JSON으로 추출하십시오."
+    )
+
+    raw = _call_memory_distill(prompt, system_instruction=system_instruction)
+    obj = _parse_json_object(raw)
+
+    saved_patterns = 0
+    patterns = obj.get('patterns', [])
+    if isinstance(patterns, list):
+        for p in patterns[:5]:
+            if not isinstance(p, dict):
+                continue
+            c = str(p.get('content') or '').strip()
+            if not c:
+                continue
+            ns = str(p.get('namespace') or 'patterns').strip()
+            conf = float(p.get('confidence', 0.9))
+            fid = add_fact(
+                content=c,
+                namespace=ns,
+                source_pid=pid,
+                verdict=status,
+                confidence=conf,
+                tier='semantic',
+            )
+            if fid:
+                saved_patterns += 1
+
+    profile_updates = obj.get('profile_updates', {})
+    updated_profiles = 0
+    if isinstance(profile_updates, dict):
+        for k, v in profile_updates.items():
+            k_clean = str(k).strip()
+            v_clean = str(v).strip()
+            if k_clean and v_clean:
+                if set_profile(k_clean, v_clean):
+                    updated_profiles += 1
+
+    summary_text = str(obj.get('summary') or '').strip()
+    saved_summary = False
+    if summary_text:
+        title = f"PID {pid} ({status})"
+        if add_summary(pid, title, summary_text):
+            saved_summary = True
+
+    print(f"[MemoryStore] PID {pid} 기억 증류 완료: 패턴 {saved_patterns}건, 프로필 {updated_profiles}건, 요약 {saved_summary}")
+    return {
+        "patterns": saved_patterns,
+        "profile_updates": updated_profiles,
+        "summary": saved_summary
+    }
+
+
+def process_pid_memory_async(pid: str, outcome: dict) -> None:
+    """PID 종료 후 memory distill 작업을 SQLite 큐에 등록하고 워커가 비동기로 처리."""
+    try:
+        if not memory_auto_enabled():
+            return
+        _queue_put('pid', {'pid': pid, 'outcome': outcome})
+        _ensure_queue_worker()
+    except Exception as e:
+        print(f"[MemoryStore] process_pid_memory_async error: {e}")
 
 
 def extract_and_store_facts(messages, source_session: Optional[str] = None) -> int:
@@ -1724,8 +1891,10 @@ def _dispatch_job(kind: str, payload_raw: Optional[str]) -> None:
             payload = {}
     if kind == 'session':
         _process_session_sync(payload)
+    elif kind == 'pid':
+        process_pid_memory(payload.get('pid'), payload.get('outcome', {}))
     elif kind == 'refine':
-        _run_daily_refine()
+        consolidate_memory()
     # 향후 kind 추가: 'backup' 등
 
 
@@ -1925,28 +2094,33 @@ def resolve_review(review_id, action: str) -> dict:
 
 
 def _run_maintenance() -> None:
-    """⑤ 가벼운 정리: 상한 삭제 + Phase 4 감쇠(decay)."""
+    """⑤ 가벼운 정리: 상한 삭제 + Phase 4 감쇠(decay) (pinned=1 영구 보호)."""
     try:
+        deleted_ids = []
         with _db_lock:
             conn = _connect()
             try:
-                # 상한 정리
-                conn.execute(
-                    "DELETE FROM facts WHERE id NOT IN ("
-                    "  SELECT id FROM facts ORDER BY id DESC LIMIT ?"
-                    ")",
-                    (_MAX_FACTS,),
-                )
-                # Phase 4: 감쇠 — 30일 이상 미사용 fact는 confidence *= 0.8
+                # 상한 정리 (pinned=1은 삭제에서 영구 제외, unpinned 중 신뢰도/사용빈도 최하위부터 삭제)
+                count = conn.execute("SELECT COUNT(*) AS c FROM facts").fetchone()['c']
+                if count > _MAX_FACTS:
+                    overflow = count - _MAX_FACTS
+                    conn.execute(
+                        "DELETE FROM facts WHERE id IN ("
+                        "  SELECT id FROM facts WHERE pinned=0 "
+                        "  ORDER BY (COALESCE(confidence, 1.0) * 10 + COALESCE(use_count, 0)) ASC, id ASC LIMIT ?"
+                        ")",
+                        (overflow,)
+                    )
+                # Phase 4: 감쇠 — 30일 이상 미사용 fact는 confidence *= 0.8 (pinned=0 에만 적용)
                 conn.execute(
                     "UPDATE facts SET confidence = confidence * 0.8 "
-                    "WHERE superseded_by IS NULL "
+                    "WHERE pinned=0 AND superseded_by IS NULL "
                     "AND (last_used_at IS NULL OR last_used_at < datetime('now', '-30 days')) "
                     "AND confidence > 0.1"
                 )
-                # 90일 이상 미사용 + confidence < 0.3 → 자동 삭제
+                # 90일 이상 미사용 + confidence < 0.3 → 자동 삭제 (pinned=0 에만 적용)
                 deleted_rows = conn.execute(
-                    "SELECT id FROM facts WHERE superseded_by IS NULL "
+                    "SELECT id FROM facts WHERE pinned=0 AND superseded_by IS NULL "
                     "AND confidence < 0.3 "
                     "AND (last_used_at IS NULL OR last_used_at < datetime('now', '-90 days'))"
                 ).fetchall()
@@ -1968,89 +2142,135 @@ def _run_maintenance() -> None:
         pass
 
 
-def _run_daily_refine() -> None:
-    """Phase 4-B: 일일 심화 정제 — LLM으로 facts 클러스터링 → 병합 → 모순 해결."""
+def consolidate_memory() -> dict:
+    """Ruflo MemoryConsolidator logic ported to Python/SQLite.
+    실행 순서: sweepExpired() -> dedup() -> confidence decay -> cap enforcement.
+    1. sweepExpired(): valid_until 지난 만료 항목 제외 점검
+    2. dedup(): 384차원 임베딩 코사인 >= 0.95 유사 쌍 병합 (최신본 유지, use_count 합산, superseded_by 설정)
+    3. confidence decay: 시간 경과에 따른 감쇠 적용 (floor 0.1, pinned=1 완전 보호)
+    4. cap enforcement: 500건 초과 시 pinned=0 중 신뢰도/사용빈도 최하위부터 정리
+    비용: 0원 (순수 로컬 임베딩 벡터 연산, LLM 호출 없음).
+    """
+    _ensure_schema()
+    res = {'swept': 0, 'merged': 0, 'decayed': 0, 'pruned': 0}
     try:
-        facts = list_facts(limit=_DAILY_REFINE_MAX_FACTS, include_superseded=False)
-        if len(facts) < 10:
-            return
+        from api.memory_embed import cosine, vector_from_blob
 
-        # 1) 의미적 클러스터링
-        facts_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in facts)
-        cluster_prompt = (
-            '아래 기억 항목들을 의미적으로 그룹화하라. 같은 주제의 항목끼리 묶어라.\n'
-            '반드시 JSON 배열의 배열로 응답하라. 예: [[1,5,12],[3,7],[2]]\n'
-            '그룹에 속하지 않는 항목은 단독 배열로. 모든 id를 포함하라.\n\n'
-            f'항목:\n{facts_text}'
-        )
-        raw = _call_memory_direct(cluster_prompt)
-        clusters = _parse_json_array(raw)
+        # 1. sweepExpired()
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    "SELECT COUNT(*) AS c FROM facts WHERE valid_until IS NOT NULL AND valid_until < datetime('now')"
+                )
+                res['swept'] = cur.fetchone()['c']
+            finally:
+                conn.close()
 
-        # 2) 각 클러스터: 2건 이상이면 대표 fact로 병합
-        merged_count = 0
-        for cluster in clusters:
-            if not isinstance(cluster, list) or len(cluster) < 2:
+        # 2. dedup() — pairwise cosine >= 0.95
+        with _db_lock:
+            conn = _connect()
+            try:
+                rows = conn.execute(
+                    "SELECT id, content, embedding, use_count, pinned, created_at FROM facts "
+                    "WHERE superseded_by IS NULL AND (valid_until IS NULL OR valid_until >= datetime('now')) "
+                    "ORDER BY id DESC"
+                ).fetchall()
+            finally:
+                conn.close()
+
+        active_facts = [dict(r) for r in rows if r['embedding']]
+        merged_ids = set()
+        merged_pairs = []
+
+        for i in range(len(active_facts)):
+            f_new = active_facts[i]
+            if f_new['id'] in merged_ids:
                 continue
-            ids = [int(i) for i in cluster if isinstance(i, (int, float))]
-            if len(ids) < 2:
+            v_new = vector_from_blob(f_new['embedding'])
+            if v_new is None:
                 continue
-            cluster_facts = [f for f in facts if f['id'] in ids]
-            if len(cluster_facts) < 2:
-                continue
-            contents = '\n'.join(f"[id={f['id']}] {f['content']}" for f in cluster_facts)
-            merge_prompt = (
-                '아래 같은 주제의 기억 항목들을 하나의 문장으로 통합하라.\n'
-                '핵심 정보만 남기고 중복은 제거하라. 통합 문장만 출력하라.\n\n'
-                f'{contents}'
-            )
-            merged_text = (_call_memory_direct(merge_prompt) or '').strip()
-            if not merged_text:
-                continue
-            # 대표 fact = 가장 use_count 높은 것, 없으면 첫 번째
-            rep = max(cluster_facts, key=lambda f: (f.get('use_count') or 0))
-            others = [f for f in cluster_facts if f['id'] != rep['id']]
+
+            for j in range(i + 1, len(active_facts)):
+                f_old = active_facts[j]
+                if f_old['id'] in merged_ids:
+                    continue
+                v_old = vector_from_blob(f_old['embedding'])
+                if v_old is None:
+                    continue
+
+                sim = cosine(v_new, v_old)
+                if sim >= 0.95:
+                    merged_ids.add(f_old['id'])
+                    merged_pairs.append((f_new['id'], f_old['id'], f_old.get('use_count', 0)))
+
+        if merged_pairs:
             with _db_lock:
                 conn = _connect()
                 try:
-                    conn.execute(
-                        'UPDATE facts SET content=? WHERE id=?',
-                        (merged_text, rep['id']),
-                    )
-                    for o in others:
+                    for new_id, old_id, old_use in merged_pairs:
                         conn.execute(
-                            'UPDATE facts SET superseded_by=? WHERE id=?',
-                            (rep['id'], o['id']),
+                            "UPDATE facts SET superseded_by=?, valid_until=datetime('now') WHERE id=?",
+                            (new_id, old_id)
+                        )
+                        conn.execute(
+                            "UPDATE facts SET use_count=COALESCE(use_count, 0) + ? WHERE id=?",
+                            (old_use, new_id)
                         )
                     conn.commit()
                 finally:
                     conn.close()
-            merged_count += 1
-            _log_refine('merge', [rep['id']] + [o['id'] for o in others], merged_text)
+            res['merged'] = len(merged_pairs)
+            _log_refine('dedup_cosine', [p[1] for p in merged_pairs], f"Merged {len(merged_pairs)} pairs with cosine >= 0.95")
 
-        # 3) 모순 감지
-        active_facts = list_facts(limit=_DAILY_REFINE_MAX_FACTS, include_superseded=False)
-        if len(active_facts) >= 2:
-            af_text = '\n'.join(f"[id={f['id']}] {f['content']}" for f in active_facts)
-            contra_prompt = (
-                '아래 기억 항목 중 서로 모순되는 쌍을 찾아라.\n'
-                '반드시 JSON 배열로 응답하라. 각 요소는 [오래된_id, 최신_id] 쌍.\n'
-                '모순이 없으면 빈 배열 []을 반환하라.\n\n'
-                f'{af_text}'
-            )
-            raw2 = _call_memory_direct(contra_prompt)
-            contradictions = _parse_json_array(raw2)
-            for pair in contradictions:
-                if not isinstance(pair, list) or len(pair) != 2:
-                    continue
-                old_id, new_id = int(pair[0]), int(pair[1])
-                # Phase 5: 자동 처리 대신 재검토 큐에 등록 (사람 승인 대기)
-                old_content = next((f['content'] for f in active_facts if f['id'] == old_id), '')
-                new_content = next((f['content'] for f in active_facts if f['id'] == new_id), '')
-                suggestion = f"기존: '{old_content[:100]}' / 신규: '{new_content[:100]}' → 기존 항목을 대체 제안"
-                _create_review('contradiction', [old_id, new_id], suggestion)
-                _log_refine('contradiction_detected', [old_id, new_id], 'queued for review')
-    except Exception:
-        pass
+        # 3. confidence decay (pinned=1 보호)
+        with _db_lock:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    "UPDATE facts SET confidence = MAX(0.1, COALESCE(confidence, 1.0) - 0.05) "
+                    "WHERE pinned=0 AND superseded_by IS NULL "
+                    "AND (last_used_at IS NULL OR julianday('now') - julianday(last_used_at) >= 7.0) "
+                    "AND (julianday('now') - julianday(created_at) >= 7.0) "
+                    "AND COALESCE(confidence, 1.0) > 0.1"
+                )
+                conn.commit()
+                res['decayed'] = cur.rowcount
+            finally:
+                conn.close()
+
+        # 4. cap enforcement (500건 상한, pinned=1 보호)
+        with _db_lock:
+            conn = _connect()
+            try:
+                count = conn.execute("SELECT COUNT(*) AS c FROM facts").fetchone()['c']
+                if count > _MAX_FACTS:
+                    overflow = count - _MAX_FACTS
+                    cur = conn.execute(
+                        "DELETE FROM facts WHERE id IN ("
+                        "  SELECT id FROM facts WHERE pinned=0 "
+                        "  ORDER BY (COALESCE(confidence, 1.0) * 10 + COALESCE(use_count, 0)) ASC, id ASC LIMIT ?"
+                        ")",
+                        (overflow,)
+                    )
+                    conn.commit()
+                    res['pruned'] = cur.rowcount
+            finally:
+                conn.close()
+
+        print(f"[MemoryStore] consolidate_memory 완료: {res}")
+        return res
+    except Exception as e:
+        print(f"[MemoryStore] consolidate_memory 에러: {e}")
+        return res
+
+
+def _run_daily_refine() -> None:
+    """일일 정제 — Ruflo Consolidator 로직으로 위임 (LLM 비용 0원, 코사인 0.95 병합 및 pinned 보호)."""
+    try:
+        consolidate_memory()
+    except Exception as e:
+        print(f"[MemoryStore] _run_daily_refine 에러: {e}")
 
 
 def _run_daily() -> None:

@@ -2328,12 +2328,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _voice_thread = threading.Thread(target=_async_voice_summary, daemon=True)
               _voice_thread.start()
 
-          # ── DAON 기억 시스템: facts/profile/summary 자동 추출 (백그라운드) ──
-          try:
-              from api.memory_store import process_session_async
-              process_session_async(s)
-          except Exception:
-              pass  # 기억 시스템 실패가 채팅을 깨뜨리지 않도록
+          # ── DAON 기억 시스템 (Ruflo 포팅): 채팅-종료 추출 폐지 (PID 완료 훅에서만 엄격 증류) ──
+          # 일반 채팅 턴마다의 무분별한 잡사실 추출을 중단하고, PID/하네스 작업 완료 시 1회만 증류한다.
         finally:
           with _ENV_LOCK:
             if os.environ.get('TERMINAL_CWD') == str(s.workspace):

@@ -257,6 +257,7 @@ from api.routes.system_routes import (
     handle_post_last_restart_ack,
 )
 from api.routes.worker_routes import (
+    handle_get_live_workers,
     handle_get_workers,
     handle_get_worker_status,
     handle_post_worker_start,
@@ -491,6 +492,7 @@ GET_EXACT_ROUTES = {
     '/api/system/last-restart': handle_get_last_restart,
     '/api/system/status': handle_get_system_status,
     '/api/workers': handle_get_workers,
+    '/api/workers/live': handle_get_live_workers,
     '/api/workers/status': handle_get_worker_status,
     '/api/workers/stream': handle_get_worker_stream,
     '/api/wake/poll': handle_get_wake_poll,

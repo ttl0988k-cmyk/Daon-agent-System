@@ -3107,8 +3107,107 @@ function initHarnessControls() {
   }
 }
 
+// ── Dynamic Harness Visual Agent Cards & Delegation Banner ────────────────────
+state.harnessAgentCards = state.harnessAgentCards || {};
+
+function getHarnessConsoleContainer() {
+  return document.getElementById('harnessConsole') || document.getElementById('harness-telemetry-terminal');
+}
+
+function getOrCreateAgentCard(agentId) {
+  let cardEl = state.harnessAgentCards[agentId];
+  if (cardEl && cardEl.isConnected) return cardEl;
+  const consoleEl = getHarnessConsoleContainer();
+  if (!consoleEl) return null;
+
+  // Welcome placeholder cleanup
+  const welcome = consoleEl.querySelector('.harness-welcome');
+  if (welcome) welcome.remove();
+
+  cardEl = document.createElement('div');
+  const isSubteam = agentId.startsWith('서브팀·') || agentId.startsWith('subteam');
+  cardEl.className = 'harness-agent-card status-running' + (isSubteam ? ' subteam' : '');
+  cardEl.id = `agent-card-${agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+  const subteamBadge = isSubteam ? '<span class="subteam-badge">🤝 </span>' : '';
+  cardEl.innerHTML = `
+    <div class="harness-agent-card-header" onclick="this.closest('.harness-agent-card').classList.toggle('collapsed')">
+      <span class="agent-label">
+        <span class="status-dot"></span>
+        ${subteamBadge}<strong>${escapeHtml(agentId)}</strong>
+      </span>
+      <span class="toggle-icon">▼</span>
+    </div>
+    <div class="harness-agent-card-body font-code text-[12px]"></div>
+  `;
+  consoleEl.appendChild(cardEl);
+  state.harnessAgentCards[agentId] = cardEl;
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+  return cardEl;
+}
+
+function updateCardStatus(agentId, status) {
+  const cardEl = state.harnessAgentCards[agentId] || getOrCreateAgentCard(agentId);
+  if (!cardEl) return;
+  cardEl.classList.remove('status-running', 'status-done', 'status-error');
+  const cls = (status === 'done' || status === 'completed') ? 'status-done'
+    : (status === 'error' || status === 'failed') ? 'status-error' : 'status-running';
+  cardEl.classList.add(cls);
+}
+
+function appendCardLog(agentId, line, type = 'info') {
+  const cardEl = getOrCreateAgentCard(agentId);
+  if (!cardEl) return;
+  const bodyEl = cardEl.querySelector('.harness-agent-card-body');
+  if (!bodyEl || line === undefined || line === null || line === '') return;
+
+  const lineEl = document.createElement('div');
+  lineEl.className = 'card-log-line' + (type === 'error' ? ' log-error'
+    : type === 'success' ? ' log-success'
+      : type === 'warning' ? ' log-warning' : '');
+  lineEl.textContent = line;
+  bodyEl.appendChild(lineEl);
+
+  while (bodyEl.children.length > 200) {
+    bodyEl.removeChild(bodyEl.firstChild);
+  }
+  bodyEl.scrollTop = bodyEl.scrollHeight;
+  const consoleEl = getHarnessConsoleContainer();
+  if (consoleEl) consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function renderDelegationBanner(tree) {
+  const consoleEl = getHarnessConsoleContainer();
+  if (!consoleEl) return;
+  let bannerEl = document.getElementById('harnessDelegationBanner');
+  const nodes = Array.isArray(tree) ? tree : [];
+  if (nodes.length === 0) {
+    if (bannerEl) bannerEl.remove();
+    return;
+  }
+  if (!bannerEl) {
+    bannerEl = document.createElement('div');
+    bannerEl.id = 'harnessDelegationBanner';
+    bannerEl.className = 'harness-delegation-banner mb-2 p-2 border border-amber-500/50 bg-amber-500/10 rounded-[8px] flex items-center justify-between text-[12px] text-on-surface';
+    consoleEl.insertBefore(bannerEl, consoleEl.firstChild);
+  }
+  const reasons = nodes
+    .map(n => (n && n.spawn_reason) || '')
+    .filter((r, idx, arr) => r && arr.indexOf(r) === idx);
+  bannerEl.innerHTML = `
+    <div class="flex items-center gap-2">
+      <span class="font-bold text-amber-600">🤝 활성 위임 하위팀:</span>
+      <span class="opacity-80">${nodes.length}개 서브 노드 실행 중</span>
+    </div>
+    <div class="flex items-center gap-1">
+      ${reasons.map(r => `<span class="px-1.5 py-0.5 bg-black/10 rounded text-[11px]">${escapeHtml(r)}</span>`).join('')}
+    </div>
+  `;
+}
+
 function startHarnessPolling(runId) {
   if (state.harnessPollInterval) clearInterval(state.harnessPollInterval);
+  state.harnessAgentCards = {};
 
   let cursor = 0;
   state.harnessPollInterval = setInterval(async () => {
@@ -3116,11 +3215,33 @@ function startHarnessPolling(runId) {
       const data = await DaonAPI.getDynamicStatus(runId, cursor);
       if (data.logs && data.logs.length > 0) {
         data.logs.forEach(log => {
-          const author = log.agent_id || log.author || 'System';
+          const author = log.agent_id || log.author || '';
           const text = log.content || log.message || (typeof log === 'string' ? log : JSON.stringify(log));
-          appendTelemetryLog(`[${author}] ${text}`);
+          const type = log.type || (text.includes('[ERROR]') ? 'error' : (text.includes('[SUCCESS]') || text.includes('완료') ? 'success' : 'info'));
+          
+          if (author && author !== 'System' && author !== 'Harness') {
+            appendCardLog(author, text, type);
+            if (type === 'success' || text.includes('완료')) updateCardStatus(author, 'done');
+            else if (type === 'error') updateCardStatus(author, 'error');
+            else updateCardStatus(author, 'running');
+          } else {
+            appendTelemetryLog(`[${author || 'Harness'}] ${text}`);
+          }
         });
         cursor = data.next_cursor || (cursor + data.logs.length);
+      }
+
+      // Sync backend agent_cards status
+      if (data.agent_cards && Object.keys(data.agent_cards).length > 0) {
+        Object.entries(data.agent_cards).forEach(([agentId, card]) => {
+          getOrCreateAgentCard(agentId);
+          updateCardStatus(agentId, card.log_status || 'running');
+        });
+      }
+
+      // Render active delegation tree banner
+      if (data.delegation_tree) {
+        renderDelegationBanner(data.delegation_tree);
       }
 
       // ── 상태별 UI 처리 (실연동) ──
@@ -3152,7 +3273,18 @@ function startHarnessPolling(runId) {
         const ok = (data.status === 'done' || data.status === 'completed');
         appendTelemetryLog(`[Harness] 실행 종료 — 상태: ${String(data.status).toUpperCase()}`
                            + (data.error ? ` / ${data.error}` : ''));
-        if (data.result) appendTelemetryLog(`[Harness] 결과: ${String(data.result).slice(0, 500)}`);
+        if (data.result) {
+          appendTelemetryLog(`[Harness] 결과: ${String(data.result).slice(0, 500)}`);
+          // Render result output card
+          const consoleEl = getHarnessConsoleContainer();
+          if (consoleEl) {
+            const resCard = document.createElement('div');
+            resCard.className = 'harness-result-output mt-3 p-3 bg-emerald-500/10 border border-emerald-500/40 rounded-[8px] text-[13px]';
+            resCard.innerHTML = `<div class="font-bold text-emerald-600 mb-1">🎯 최종 하네스 완결 보고</div><div class="whitespace-pre-wrap leading-relaxed">${escapeHtml(data.result)}</div>`;
+            consoleEl.appendChild(resCard);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+          }
+        }
         updateHarnessSteps(4, true);
         setHarnessLoopStatus(ok ? '완료' : `종료(${data.status})`, ok ? 'emerald' : 'rose');
       }

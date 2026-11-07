@@ -84,6 +84,12 @@ def _call_minimax_direct(prompt: str, system_instruction: Optional[str] = None, 
                     last_error = RuntimeError(f"MiniMax API HTTP Error {e.code} for model {model}: {err_msg}")
                     if e.code == 429 and _is_quota_exhausted(err_msg):
                         raise last_error  # 사용량 소진 — 남은 모델/재시도 모두 중단(크레딧 보호)
+                    if _is_capacity_429(err_msg):
+                        _log.info(
+                            "MiniMax Model %s hit 429 capacity ('%s') — fast failover to next model.",
+                            model, err_msg[:100]
+                        )
+                        break
                     if attempt < max_retries - 1:
                         sleep_sec = (2 ** attempt) * 3 + random.uniform(0.5, 2.0)
                         _log.info(
@@ -163,6 +169,12 @@ def _call_deepseek_direct(prompt: str, system_instruction: Optional[str] = None,
                     last_error = RuntimeError(f"DeepSeek API HTTP Error {e.code} for model {model}: {err_msg}")
                     if e.code == 429 and _is_quota_exhausted(err_msg):
                         raise last_error  # 사용량 소진 — 남은 모델/재시도 모두 중단(크레딧 보호)
+                    if _is_capacity_429(err_msg):
+                        _log.info(
+                            "DeepSeek Model %s hit 429 cell capacity ('%s') — fast failover to next model.",
+                            model, err_msg[:100]
+                        )
+                        break
                     if attempt < max_retries - 1:
                         sleep_sec = (2 ** attempt) * 3 + random.uniform(0.5, 2.0)
                         _log.info(
@@ -223,6 +235,22 @@ def _is_permanent_provider_error(e: Exception) -> bool:
     return False
 
 
+_CAPACITY_429_MARKERS = (
+    "the cell is at capacity", "cell is at capacity", "prefill_cap_refused",
+    "model_capacity_exhausted", "server is overloaded", "overloaded",
+    "capacity_exhausted", "capacity exceeded", "resource_exhausted",
+    "too many requests", "rate limit", "rate_limit", "traffic is too high"
+)
+
+
+def _is_capacity_429(msg: str) -> bool:
+    """429/503 오류 중 서버 부하/용량 부족/셀 한도 초과류를 판정한다.
+    이 경우 15~30초간 backoff 대기하지 않고 0.1초 내 다음 체인 모델로 즉시 고속 페일오버한다.
+    """
+    low = (str(msg) or "").lower()
+    return any(marker in low for marker in _CAPACITY_429_MARKERS)
+
+
 def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferred_model: Optional[str] = None, stream_callback=None, max_tokens: Optional[int] = 16384) -> str:
     """Wrapper that dynamically routes meta-agents (Planner/Merger) using AIAgent with robust fallback retry logic."""
     agent_path = str(Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent")
@@ -275,6 +303,13 @@ def _call_direct(prompt: str, system_instruction: Optional[str] = None, preferre
                     raise RuntimeError(
                         f"Permanent provider error for '{model_name}' (provider={provider}): {e}"
                     )
+                # 429 셀 한도/부하 초과는 backoff 대기 없이 즉시 다음 체인 모델로 페일오버
+                if _is_capacity_429(str(e)):
+                    _log.info(
+                        "Capacity 429 hit for '%s' (provider=%s) — fast failover to next model without backoff delay: %s",
+                        model_name, provider, e
+                    )
+                    break
                 _log.info(
                     "Direct call failed with '%s' (Attempt %d/%d): %s",
                     model_name, attempt + 1, max_retries, e

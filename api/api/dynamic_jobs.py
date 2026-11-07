@@ -393,6 +393,18 @@ def set_job_done(run_id: str, result: str):
             job_copy = dict(_DYNAMIC_JOBS[run_id])
     if job_copy:
         _job_store.save_job(run_id, job_copy)
+        # ── Ruflo 장기 기억 포팅: PID 성공 결과 증류 후 패턴/요약 저장 (비동기) ──
+        try:
+            from api.memory_store import process_pid_memory_async
+            process_pid_memory_async(run_id, {
+                'status': 'success',
+                'task': job_copy.get('task', ''),
+                'result': result,
+                'summary': str(result)[:2000],
+                'logs': job_copy.get('logs', []),
+            })
+        except Exception as _mem_err:
+            print(f"[DynamicJobs] Memory distillation hook failed: {_mem_err}")
 
 
 def set_job_error(run_id: str, error: str):
@@ -405,6 +417,19 @@ def set_job_error(run_id: str, error: str):
             job_copy = dict(_DYNAMIC_JOBS[run_id])
     if job_copy:
         _job_store.save_job(run_id, job_copy)
+        # ── Ruflo 장기 기억 포팅: PID 실패 결과 증류 후 해결책/패턴 저장 (비동기) ──
+        try:
+            from api.memory_store import process_pid_memory_async
+            process_pid_memory_async(run_id, {
+                'status': 'failure',
+                'task': job_copy.get('task', ''),
+                'error': error,
+                'result': error,
+                'summary': f"PID 실패: {error}",
+                'logs': job_copy.get('logs', []),
+            })
+        except Exception as _mem_err:
+            print(f"[DynamicJobs] Memory distillation hook failed: {_mem_err}")
 
 
 def push_harness_started(session_id: str, run_id: str, task: str = '') -> None:

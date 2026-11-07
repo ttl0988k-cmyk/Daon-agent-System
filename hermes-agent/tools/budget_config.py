@@ -8,15 +8,15 @@ from dataclasses import dataclass, field
 from typing import Dict
 
 # Tools whose thresholds must never be overridden.
-# read_file=inf prevents infinite persist->read->persist loops.
+# read_file was previously float("inf"), causing massive 140k token explosions on large files.
+# Capped at 30,000 chars (~7.5k tokens) to prevent context blowout while retaining readability.
 PINNED_THRESHOLDS: Dict[str, float] = {
-    "read_file": float("inf"),
+    "read_file": 30_000,
 }
 
-# Defaults matching the current hardcoded values in tool_result_storage.py.
-# Kept here as the single source of truth; tool_result_storage.py imports these.
-DEFAULT_RESULT_SIZE_CHARS: int = 100_000
-DEFAULT_TURN_BUDGET_CHARS: int = 200_000
+# Defaults tuned for Daon Agent System (prevents 140k token spikes per turn)
+DEFAULT_RESULT_SIZE_CHARS: int = 25_000
+DEFAULT_TURN_BUDGET_CHARS: int = 60_000
 DEFAULT_PREVIEW_SIZE_CHARS: int = 1_500
 
 

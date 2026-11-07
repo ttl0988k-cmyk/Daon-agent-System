@@ -55,6 +55,7 @@ FILE_PAIRS = [
     ('server.py', 'dist_new/server.py'),
     ('tts_server.py', 'dist_new/tts_server.py'),
     ('daon_runtime/laya_service.py', 'dist_new/daon_runtime/laya_service.py'),
+    ('data/memory_synonyms.json', 'dist_new/data/memory_synonyms.json'),
 ]
 
 ok, fail = [], []
