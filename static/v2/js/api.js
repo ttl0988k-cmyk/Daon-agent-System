@@ -174,7 +174,7 @@ export const DaonAPI = {
   },
 
   connectSSE(streamId, callbacks = {}) {
-    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone, onHarnessDone, onHarnessStarted, onSecretRequest } = callbacks;
+    const { onToken, onReasoning, onStep, onToolCall, onToolResult, onDone, onError, onCompressed, onBoardroomSlot, onBoardroomReply, onBoardroomDone, onHarnessDone, onHarnessStarted, onSecretRequest, onSubagentEvent } = callbacks;
     const url = `${this.baseUrl}/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`;
     const es = new EventSource(url);
 
@@ -319,6 +319,16 @@ export const DaonAPI = {
       try { detail = JSON.parse(e.data); } catch { detail = {}; }
       try { onSecretRequest?.(detail); } catch (_) {}
       try { window.dispatchEvent(new CustomEvent('daon:secret-request', { detail })); } catch (_) {}
+    });
+
+    // ── Subagent / Harness live streaming events ────────────────────────
+    es.addEventListener('subagent_event', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        callbacks.onSubagentEvent?.(data);
+      } catch {
+        callbacks.onSubagentEvent?.({ raw: e.data });
+      }
     });
 
     es.addEventListener('done', (e) => {

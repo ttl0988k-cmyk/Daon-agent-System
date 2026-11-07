@@ -1609,6 +1609,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               reasoning_config=_reasoning_config,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)
+          agent._stream_put = put
 
           # Immediately persist compacted messages to the WebUI session whenever
           # _compress_context completes so user cancellation never loses compaction.

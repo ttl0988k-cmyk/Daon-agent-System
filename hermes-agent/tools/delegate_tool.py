@@ -599,16 +599,81 @@ def _run_single_child(
     _heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
     _heartbeat_thread.start()
 
+    stream_put = _kwargs.get('stream_put')
+    if not stream_put and parent_agent:
+        stream_put = getattr(parent_agent, '_stream_put', None)
+    if not stream_put:
+        try:
+            from api.streaming import get_current_thread_put
+            stream_put = get_current_thread_put()
+        except Exception:
+            try:
+                from api.api.streaming import get_current_thread_put
+                stream_put = get_current_thread_put()
+            except Exception:
+                stream_put = None
+
+    def _emit(evt_type, data):
+        if stream_put:
+            try:
+                import time as _time_mod
+                payload = {
+                    'type': evt_type,
+                    'timestamp': _time_mod.strftime("%H:%M:%S"),
+                    **data
+                }
+                stream_put('subagent_event', payload)
+            except Exception as _e:
+                logger.debug("Failed to emit subagent_event: %s", _e)
+
     parent_stream_cb = getattr(parent_agent, 'stream_delta_callback', None)
     if parent_stream_cb:
         parent_stream_cb(f"\n> ⏳ **[하위 {task_index + 1}조 시작]** {goal[:60]}...\n")
 
-    # Wire child's progress callback to stream tool actions live to parent chat
+    _emit('step_start', {
+        'task_index': task_index,
+        'step': task_index + 1,
+        'title': f'하위 {task_index + 1}조',
+        'goal': goal[:120]
+    })
+
+    # Wire child's progress callback to stream tool actions live to parent chat and WebUI feed
     orig_cb = getattr(child, 'tool_progress_callback', None)
     def _live_child_tool_cb(event_type, tool_name=None, preview=None, args=None, **kw):
         if orig_cb:
             try: orig_cb(event_type, tool_name, preview, args, **kw)
             except Exception: pass
+        if stream_put:
+            if event_type == "tool.started":
+                _preview_str = str(preview or '')
+                if not _preview_str and isinstance(args, dict):
+                    _preview_str = str(args.get('command') or args.get('path') or '')
+                _emit('tool_call', {
+                    'task_index': task_index,
+                    'step': task_index + 1,
+                    'title': f'하위 {task_index + 1}조',
+                    'tool': tool_name,
+                    'preview': _preview_str[:120]
+                })
+            elif event_type == "tool.completed":
+                is_err = kw.get('is_error', False)
+                dur = kw.get('duration', 0)
+                _emit('tool_done', {
+                    'task_index': task_index,
+                    'step': task_index + 1,
+                    'title': f'하위 {task_index + 1}조',
+                    'tool': tool_name,
+                    'is_error': is_err,
+                    'duration': round(dur, 2) if dur else 0.1
+                })
+            elif event_type == "tool.output":
+                _emit('terminal', {
+                    'task_index': task_index,
+                    'step': task_index + 1,
+                    'title': f'하위 {task_index + 1}조',
+                    'tool': tool_name,
+                    'text': str(preview or '')[:140]
+                })
         if parent_stream_cb:
             if event_type == "tool.started":
                 parent_stream_cb(f"> 🔧 [하위 {task_index + 1}조] 도구 실행: `{tool_name}` {str(preview or '')[:60]}\n")
@@ -617,6 +682,17 @@ def _run_single_child(
                 parent_stream_cb(f"> {'⚠️' if is_err else '✔️'} [하위 {task_index + 1}조] `{tool_name}` 실행 {'오류' if is_err else '완료'}\n")
 
     child.tool_progress_callback = _live_child_tool_cb
+
+    def _child_stream_delta(delta):
+        if delta and stream_put:
+            _emit('thought', {
+                'task_index': task_index,
+                'step': task_index + 1,
+                'title': f'하위 {task_index + 1}조',
+                'text': str(delta)
+            })
+    child.stream_delta_callback = _child_stream_delta
+    child.reasoning_callback = _child_stream_delta
 
     try:
         if child_progress_cb:
@@ -639,6 +715,13 @@ def _run_single_child(
             parent_stream_cb(f"> ✅ **[하위 {task_index + 1}조 완료]** 소요시간: {duration}초\n\n")
 
         summary = result.get("final_response") or ""
+        _emit('step_done', {
+            'task_index': task_index,
+            'step': task_index + 1,
+            'title': f'하위 {task_index + 1}조',
+            'duration': duration,
+            'summary': summary[:150]
+        })
         completed = result.get("completed", False)
         interrupted = result.get("interrupted", False)
         api_calls = result.get("api_calls", 0)
@@ -833,6 +916,19 @@ def delegate_task(
             )
         })
 
+    # Resolve active SSE stream put pipe
+    stream_put = getattr(parent_agent, '_stream_put', None)
+    if not stream_put:
+        try:
+            from api.streaming import get_current_thread_put
+            stream_put = get_current_thread_put()
+        except Exception:
+            try:
+                from api.api.streaming import get_current_thread_put
+                stream_put = get_current_thread_put()
+            except Exception:
+                stream_put = None
+
     # Load config
     cfg = _load_config()
     default_max_iter = cfg.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -867,8 +963,10 @@ def delegate_task(
 
     # ── [DAON 105-SPECIALIST HARNESS INTERCEPTOR] ─────────────────────────────
     # delegate_task가 호출되었을 때, 105개 전문 카탈로그 기반의 3개 조(설계->구현->검증)
-    # 파이프라인으로 직결하여 deepseek-v4.1-flash 모델로 전문 협업을 수행한다.
-    if goal and isinstance(goal, str) and goal.strip():
+    # 파이프라인으로 직결하여 전문 협업을 수행한다.
+    # 단, toolsets가 명시적으로 지정된 경우(예: ["file", "terminal"])는 실제 로컬 도구를
+    # 사용해야 하므로 일반 하위 워커 에이전트(_run_single_child)로 실행한다.
+    if goal and isinstance(goal, str) and goal.strip() and not toolsets:
         try:
             import sys
             from pathlib import Path
@@ -884,6 +982,42 @@ def delegate_task(
             print(f"[DelegateTask] Intercepted: Routing to 105-Specialist 3-Team Pipeline (inheriting parent model: {parent_model})...", flush=True)
 
             def _live_pipe_cb(evt_type, agent_name, payload):
+                if stream_put:
+                    try:
+                        import time as _t
+                        t_now = _t.strftime("%H:%M:%S")
+                        if evt_type == "pipeline_start":
+                            stream_put('subagent_event', {
+                                'type': 'start',
+                                'specialists': payload.get("specialists", []),
+                                'total': payload.get("total_agents", 3),
+                                'timestamp': t_now
+                            })
+                        elif evt_type == "role_start":
+                            stream_put('subagent_event', {
+                                'type': 'step_start',
+                                'title': payload.get("title", agent_name),
+                                'goal': '전문 분석 및 실행 중...',
+                                'timestamp': t_now
+                            })
+                        elif evt_type == "role_done":
+                            stream_put('subagent_event', {
+                                'type': 'step_done',
+                                'title': payload.get("title", agent_name),
+                                'elapsed': payload.get("elapsed_sec", 0),
+                                'output': payload.get("output", "")[:140],
+                                'timestamp': t_now
+                            })
+                        elif evt_type == "role_error":
+                            stream_put('subagent_event', {
+                                'type': 'step_error',
+                                'title': payload.get("title", agent_name),
+                                'error': payload.get("error", ""),
+                                'timestamp': t_now
+                            })
+                    except Exception as _e_emit:
+                        logger.debug("Pipe live emit failed: %s", _e_emit)
+
                 stream_cb = getattr(parent_agent, 'stream_delta_callback', None)
                 if not stream_cb:
                     return
@@ -908,6 +1042,17 @@ def delegate_task(
                 preferred_model=parent_model,
                 event_callback=_live_pipe_cb
             )
+            if stream_put:
+                try:
+                    import time as _t
+                    stream_put('subagent_event', {
+                        'type': 'done',
+                        'timestamp': _t.strftime("%H:%M:%S"),
+                        'total_duration': pipe_res.get("total_elapsed_sec", 0)
+                    })
+                except Exception:
+                    pass
+
             final_out = pipe_res.get("final_output", "")
             steps = pipe_res.get("steps", [])
             steps_summary = "\n".join([f"- [{s.get('title')}]: {s.get('output')[:250]}..." for s in steps])
@@ -978,7 +1123,7 @@ def delegate_task(
     if n_tasks == 1:
         # Single task -- run directly (no thread pool overhead)
         _i, _t, child = children[0]
-        result = _run_single_child(0, _t["goal"], child, parent_agent)
+        result = _run_single_child(0, _t["goal"], child, parent_agent, stream_put=stream_put)
         results.append(result)
     else:
         # Batch -- run in parallel with per-task progress lines
@@ -996,6 +1141,7 @@ def delegate_task(
                     goal=t["goal"],
                     child=child,
                     parent_agent=parent_agent,
+                    stream_put=stream_put,
                 )
                 futures[future] = i
 
@@ -1095,6 +1241,17 @@ def delegate_task(
                 pass
 
     total_duration = round(time.monotonic() - overall_start, 2)
+    if stream_put:
+        try:
+            import time as _t
+            stream_put('subagent_event', {
+                'type': 'done',
+                'timestamp': _t.strftime("%H:%M:%S"),
+                'total_tasks': n_tasks,
+                'total_duration': total_duration
+            })
+        except Exception:
+            pass
 
     return json.dumps({
         "results": results,

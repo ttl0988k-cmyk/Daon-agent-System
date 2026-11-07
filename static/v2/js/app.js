@@ -1414,30 +1414,42 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       // ── [위임 도구 시각화] delegate_task / delegate_team 호출 시 하네스 서브팀 협업 카드 표시 ──
       if (name.includes('delegate')) {
         const curModelName = state.currentSessionModel ? (typeof formatModelName === 'function' ? formatModelName(state.currentSessionModel) : state.currentSessionModel) : '공유 하네스';
-        setStatus(`🤝 [하네스 서브팀 3개 조 협업 중 — ${curModelName}] 1조 설계 ➔ 2조 구현 ➔ 3조 검증...`, 'sync');
-        const subteamCard = document.createElement('div');
-        subteamCard.className = 'subteam-harness-card my-2.5 p-3 bg-amber-500/10 border border-amber-500/40 rounded-[10px] text-[12.5px] transition-all shadow-sm animate-pulse';
-        subteamCard.innerHTML = `
-          <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-500/20">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] subteam-status-dot"></span>
-              <span class="font-bold text-amber-700 dark:text-amber-400 subteam-title">🤝 하네스 서브에이전트 실시간 가동 중</span>
-              <span class="text-on-surface-variant text-[11px]">(${escapeHtml(curModelName)} 공유 하네스)</span>
+        setStatus(`🤝 [하네스 서브팀 협업 중 — ${curModelName}] 1조 설계 ➔ 2조 구현 ➔ 3조 검증...`, 'sync');
+        let subteamCard = contentEl.querySelector('.subteam-harness-card');
+        if (!subteamCard) {
+          subteamCard = document.createElement('div');
+          subteamCard.className = 'subteam-harness-card my-2.5 p-3.5 bg-amber-500/10 border border-amber-500/40 rounded-[12px] text-[12.5px] transition-all shadow-sm';
+          subteamCard.innerHTML = `
+            <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-amber-500/20">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] subteam-status-dot animate-pulse"></span>
+                <span class="font-bold text-amber-700 dark:text-amber-400 subteam-title">🤝 하네스 서브에이전트 실시간 가동 중</span>
+                <span class="text-on-surface-variant text-[11px] font-mono">(${escapeHtml(curModelName)} 공유 하네스)</span>
+              </div>
+              <div class="flex items-center gap-1.5 text-[11.5px] font-medium subteam-stages">
+                <span class="px-2 py-0.5 bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded font-semibold subteam-badge-1 transition-all">1조 설계</span>
+                <span class="text-on-surface-variant">➔</span>
+                <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 rounded font-semibold subteam-badge-2 transition-all">2조 구현</span>
+                <span class="text-on-surface-variant">➔</span>
+                <span class="px-2 py-0.5 bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded font-semibold subteam-badge-3 transition-all">3조 검증</span>
+              </div>
             </div>
-            <div class="flex items-center gap-1.5 text-[11.5px] font-medium">
-              <span class="px-2 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 rounded font-semibold subteam-badge-1">1조 설계</span>
-              <span class="text-on-surface-variant">➔</span>
-              <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded font-semibold subteam-badge-2">2조 구현</span>
-              <span class="text-on-surface-variant">➔</span>
-              <span class="px-2 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded font-semibold subteam-badge-3">3조 검증</span>
+            <div class="subteam-feed-header mt-2 text-[11.5px] text-on-surface-variant flex items-center justify-between font-mono">
+              <div class="flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-[13px] text-amber-600 animate-spin subteam-feed-spinner">sync</span>
+                <span class="subteam-feed-title font-medium">하위 에이전트 실시간 작업 피드:</span>
+              </div>
+              <span class="text-[10.5px] opacity-75 subteam-elapsed-text font-mono">실시간 스트리밍</span>
             </div>
-          </div>
-          <div class="subteam-feed-header mt-2 text-[11.5px] text-on-surface-variant flex items-center gap-1.5 font-mono">
-            <span class="material-symbols-outlined text-[13px] text-amber-600 animate-spin">sync</span>
-            <span>하위 에이전트 작업 로그 및 실행 결과가 아래에 실시간 스트리밍됩니다:</span>
-          </div>
-        `;
-        contentEl.appendChild(subteamCard);
+            <div class="subteam-live-feed mt-2 p-2.5 bg-neutral-900/95 text-neutral-200 dark:bg-black/70 rounded-lg font-mono text-[11.5px] leading-relaxed max-h-[220px] overflow-y-auto space-y-1.5 shadow-inner border border-amber-500/25">
+              <div class="text-amber-400 font-semibold flex items-center gap-1.5">
+                <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>서브에이전트 팀 가동 및 작업 스트리밍 대기 중...</span>
+              </div>
+            </div>
+          `;
+          contentEl.appendChild(subteamCard);
+        }
         if (typeof scrollChatToBottom === 'function') scrollChatToBottom();
         return;
       }
@@ -1496,10 +1508,127 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
           if (title) title.textContent = '🤝 하네스 서브에이전트 협업 완결';
           const header = card.querySelector('.subteam-feed-header');
           if (header) {
-            header.innerHTML = '<span class="material-symbols-outlined text-[13px] text-emerald-600">check_circle</span> <span class="text-emerald-700 dark:text-emerald-400 font-semibold">모든 하위 에이전트 단계 완료 — 라온 CEO 최종 취합 완결</span>';
+            header.innerHTML = '<div class="flex items-center gap-1.5"><span class="material-symbols-outlined text-[13px] text-emerald-600">check_circle</span> <span class="text-emerald-700 dark:text-emerald-400 font-semibold">모든 하위 에이전트 단계 완료 — 라온 CEO 최종 취합 완결</span></div>';
           }
         }
       } catch (_) {}
+    },
+    onSubagentEvent(evt) {
+      if (!evt) return;
+      let subteamCard = contentEl.querySelector('.subteam-harness-card');
+      if (!subteamCard) {
+        const curModelName = state.currentSessionModel ? (typeof formatModelName === 'function' ? formatModelName(state.currentSessionModel) : state.currentSessionModel) : '공유 하네스';
+        subteamCard = document.createElement('div');
+        subteamCard.className = 'subteam-harness-card my-2.5 p-3.5 bg-amber-500/10 border border-amber-500/40 rounded-[12px] text-[12.5px] transition-all shadow-sm';
+        subteamCard.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-amber-500/20">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] subteam-status-dot animate-pulse"></span>
+              <span class="font-bold text-amber-700 dark:text-amber-400 subteam-title">🤝 하네스 서브에이전트 실시간 가동 중</span>
+              <span class="text-on-surface-variant text-[11px] font-mono">(${escapeHtml(curModelName)} 공유 하네스)</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[11.5px] font-medium subteam-stages">
+              <span class="px-2 py-0.5 bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded font-semibold subteam-badge-1 transition-all">1조 설계</span>
+              <span class="text-on-surface-variant">➔</span>
+              <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 rounded font-semibold subteam-badge-2 transition-all">2조 구현</span>
+              <span class="text-on-surface-variant">➔</span>
+              <span class="px-2 py-0.5 bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded font-semibold subteam-badge-3 transition-all">3조 검증</span>
+            </div>
+          </div>
+          <div class="subteam-feed-header mt-2 text-[11.5px] text-on-surface-variant flex items-center justify-between font-mono">
+            <div class="flex items-center gap-1.5">
+              <span class="material-symbols-outlined text-[13px] text-amber-600 animate-spin subteam-feed-spinner">sync</span>
+              <span class="subteam-feed-title font-medium">하위 에이전트 실시간 작업 피드:</span>
+            </div>
+            <span class="text-[10.5px] opacity-75 subteam-elapsed-text font-mono">실시간 스트리밍</span>
+          </div>
+          <div class="subteam-live-feed mt-2 p-2.5 bg-neutral-900/95 text-neutral-200 dark:bg-black/70 rounded-lg font-mono text-[11.5px] leading-relaxed max-h-[220px] overflow-y-auto space-y-1.5 shadow-inner border border-amber-500/25"></div>
+        `;
+        contentEl.appendChild(subteamCard);
+      }
+
+      const feedEl = subteamCard.querySelector('.subteam-live-feed');
+      if (!feedEl) return;
+
+      const type = evt.type || '';
+      const timeStr = evt.timestamp || new Date().toTimeString().split(' ')[0];
+
+      // Remove the initial placeholder if present
+      const placeholder = feedEl.querySelector('.text-amber-400');
+      if (placeholder && placeholder.textContent.includes('대기 중')) {
+        placeholder.remove();
+      }
+
+      // Highlight active badge if step/task_index is given
+      const stepIdx = evt.step || (evt.task_index !== undefined ? evt.task_index + 1 : null);
+      if (stepIdx) {
+        for (let b = 1; b <= 3; b++) {
+          const badge = subteamCard.querySelector(`.subteam-badge-${b}`);
+          if (badge) {
+            if (b === stepIdx) {
+              badge.classList.add('ring-2', 'ring-amber-400', 'font-bold', 'scale-105');
+              badge.style.opacity = '1';
+            } else if (b < stepIdx) {
+              badge.classList.remove('ring-2', 'ring-amber-400', 'scale-105');
+              badge.classList.add('bg-emerald-500/30', 'text-emerald-600', 'dark:text-emerald-400');
+              badge.style.opacity = '0.9';
+            } else {
+              badge.classList.remove('ring-2', 'ring-amber-400', 'scale-105');
+              badge.style.opacity = '0.5';
+            }
+          }
+        }
+      }
+
+      const row = document.createElement('div');
+      row.className = 'feed-item text-[11px] leading-tight flex items-start gap-1.5 break-all';
+
+      if (type === 'start') {
+        const specs = Array.isArray(evt.specialists) ? evt.specialists.join(', ') : (evt.specialists || '');
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-blue-300 font-bold">📋 선발 전문팀:</span> <span class="text-neutral-200">${escapeHtml(specs)}</span>`;
+      } else if (type === 'step_start') {
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-cyan-400 font-bold">⏳ [${escapeHtml(evt.title || `하위 ${stepIdx}조`)}]</span> <span class="text-neutral-300">${escapeHtml(evt.goal || '작업 시작...')}</span>`;
+      } else if (type === 'tool_call') {
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-amber-300 font-semibold">🔧 도구:</span> <span class="text-yellow-200 font-bold">${escapeHtml(evt.tool || '')}</span> <span class="text-neutral-300 font-mono text-[10.5px]">${escapeHtml(evt.preview || '')}</span>`;
+      } else if (type === 'tool_done') {
+        const isErr = evt.is_error;
+        const dur = evt.duration ? `${evt.duration}초` : '';
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="${isErr ? 'text-red-400' : 'text-emerald-400'} font-semibold">${isErr ? '⚠️ 실패' : '✔️ 완료'} (${dur})</span> <span class="text-neutral-400 font-mono text-[10.5px]">${escapeHtml(evt.tool || '')}</span>`;
+      } else if (type === 'thought') {
+        let thoughtRow = feedEl.querySelector('.active-thought-row');
+        if (!thoughtRow) {
+          thoughtRow = document.createElement('div');
+          thoughtRow.className = 'active-thought-row text-[10.5px] text-neutral-400 italic flex items-center gap-1';
+          feedEl.appendChild(thoughtRow);
+        }
+        thoughtRow.innerHTML = `<span class="text-purple-400">💭</span> <span>${escapeHtml((evt.text || '').trim().slice(0, 100))}</span>`;
+        feedEl.scrollTop = feedEl.scrollHeight;
+        return;
+      } else if (type === 'terminal') {
+        row.innerHTML = `<span class="text-neutral-500 font-mono text-[10px]">&gt;</span> <span class="text-neutral-300 font-mono text-[10px]">${escapeHtml((evt.text || '').trim().slice(0, 140))}</span>`;
+      } else if (type === 'step_done') {
+        const elapsed = evt.elapsed || evt.duration || 0;
+        const snippet = (evt.output || evt.summary || '').replace(/[\r\n]+/g, ' ').slice(0, 140);
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-emerald-400 font-bold">✅ [${escapeHtml(evt.title || `하위 ${stepIdx}조`)}] 완료 (${elapsed}초)</span> <span class="text-neutral-300">— ${escapeHtml(snippet)}...</span>`;
+      } else if (type === 'step_error') {
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-red-400 font-bold">⚠️ [${escapeHtml(evt.title || '')}] 오류:</span> <span class="text-red-300">${escapeHtml(evt.error || '')}</span>`;
+      } else if (type === 'done') {
+        row.innerHTML = `<span class="text-emerald-400 font-bold">[${timeStr}] 🎉 모든 하위 에이전트 협업 완료 — 종합 보고서 작성 중</span>`;
+        const spinner = subteamCard.querySelector('.subteam-feed-spinner');
+        if (spinner) {
+          spinner.classList.remove('animate-spin');
+          spinner.textContent = 'check_circle';
+          spinner.classList.add('text-emerald-500');
+        }
+        const dot = subteamCard.querySelector('.subteam-status-dot');
+        if (dot) dot.classList.remove('animate-pulse');
+      } else {
+        row.innerHTML = `<span class="text-amber-400 font-semibold">[${timeStr}]</span> <span class="text-neutral-300">${escapeHtml(evt.text || JSON.stringify(evt))}</span>`;
+      }
+
+      feedEl.appendChild(row);
+      feedEl.scrollTop = feedEl.scrollHeight;
+      if (typeof scrollChatToBottom === 'function') scrollChatToBottom(false);
     },
     onHarnessStarted(data) {
       lastToolMark = fullResponse.length;
