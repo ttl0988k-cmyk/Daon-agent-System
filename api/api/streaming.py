@@ -1978,13 +1978,23 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               return
 
           # ── [RUFLO MULTI-SPECIALIST SUBAGENT HOOK] ───────────────────────────────────
-          # 사용자가 복합 개발/기획/검증 작업을 요구했거나 @에이전트 멘션이 포함된 경우,
-          # 105개 전문 에이전트 카탈로그를 활용하는 서브에이전트 파이프라인을 가동한다.
-          _is_explicit_mention = any(m in msg_text for m in ["@architect", "@developer", "@coder", "@reviewer", "@qa", "@designer", "@specialist", "@팀", "@하네스"])
-          _is_complex_coding = (laya_intent in ('coding', 'worker_task') and len(msg_text.strip()) > 25 and any(k in msg_text for k in ["구현", "만들어", "작성", "수정", "리팩토링", "검증", "설계", "버그", "개발", "하네스"]))
+          # Laya 데몬 실행 여부와 완전 무관하게, 순수 로컬 인텐트 분석으로 105개 전문 에이전트 서브팀을 자율 스폰한다.
+          _m_lower = msg_text.lower().strip()
+          _is_explicit_mention = any(m in _m_lower for m in [
+              "@architect", "@developer", "@coder", "@reviewer", "@qa", "@designer",
+              "@specialist", "@팀", "@하네스", "@전문가", "@개발자", "@설계자", "@검증관"
+          ])
 
-          if (_is_explicit_mention or _is_complex_coding) and not planning_mode and not no_tools:
-              _logger.info("[Streaming] Delegating to Ruflo 105-Specialist Role Pipeline for session %s", session_id)
+          # 순수 로컬 복합 작업 감지 (Laya 데몬 오프라인 시에도 100% 발동)
+          _code_verbs = ["구현", "만들어", "작성", "개발", "추가", "수정", "고쳐", "리팩토링", "설계", "검증", "테스트", "최적화", "빌드", "에러", "버그", "해결"]
+          _code_nouns = ["코드", "컴포넌트", "함수", "클래스", "api", "ui", "react", "vue", "python", "c#", "docker", "css", "db", "스키마", "서버", "웹", "앱", "기능", "로직", "누수"]
+          
+          has_verb = any(v in _m_lower for v in _code_verbs)
+          has_noun = any(n in _m_lower for n in _code_nouns)
+          _is_autonomous_task = (len(_m_lower) >= 15 and has_verb and has_noun)
+
+          if (_is_explicit_mention or _is_autonomous_task) and not planning_mode and not no_tools:
+              _logger.info("[Streaming] Autonomous trigger: Delegating to Ruflo 105-Specialist Role Pipeline (session %s)", session_id)
               try:
                   from api.dynamic.role_pipeline import run_delegated_pipeline
                   put('token', {'text': f"\n\n🎯 **[하네스 서브에이전트 팀 가동]** 105개 전문 에이전트 카탈로그에서 최적 전문가 선발 중...\n"})
