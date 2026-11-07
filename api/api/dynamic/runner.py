@@ -285,6 +285,51 @@ def _append_checks_md(work_dir: str, node_name: str, checks: list[dict]) -> None
         _log.debug("[gate] checks.md 기록 실패(%s): %s", work_dir, exc)
 
 
+def _extract_artifacts_from_text(content: str) -> list[str]:
+    """노드 응답의 `ARTIFACTS:` 절에서 경로를 파싱한다.
+
+    왜 필요한가 (capa_5 구멍 메움):
+      tool_progress_callback은 write_file/patch만 잡는다. 모델이 `touch`,
+      `echo > file`, `python -c open(...).write()` 같은 **terminal 도구**로
+      파일을 만들면 수집기에 아무것도 안 들어와 게이트가 '비대상'으로 통과시켰다.
+      반환 계약으로 ARTIFACTS를 강제했으므로, 여기서 텍스트를 파싱해 합집합으로
+      검증하면 도구 종류와 무관하게 실물 확인이 가능하다.
+
+    부수 효과(의도된 것): 모델이 ARTIFACTS에 **존재하지 않는 경로를 허위 보고**하면
+    그것이 그대로 검증 대상이 되어 FAIL로 잡힌다. 이것이 게이트의 목적이다.
+    """
+    if not content:
+        return []
+    found: list[str] = []
+
+    # ARTIFACTS / ARTIFACT / 산출물 라벨 이후 블록만 대상으로 한다.
+    #   마크다운 불릿(-, *, •)과 번호((1), 1.))를 모두 허용한다.
+    block = ""
+    m = re.search(r"(?im)^\s*(?:[-*•]|\d+[.)])?\s*(?:ARTIFACTS?|산출물)\s*\**\s*[:：]\s*(.*)$", content)
+    if m:
+        tail = content[m.end():]
+        # 다음 라벨(VERDICT/EVIDENCE) 전까지만
+        stop = re.search(r"(?im)^\s*(?:[-*•]|\d+[.)])?\s*(?:VERDICT|EVIDENCE|판정|증거)\s*\**\s*[:：]", tail)
+        block = tail[:stop.start()] if stop else tail[:2000]
+        if m.group(1).strip():
+            block = m.group(1).strip() + "\n" + block
+    if not block:
+        return []
+
+    if re.search(r"(?i)\bNONE\b|없음|해당\s*없", block) and not re.search(r"[A-Za-z]:[\\/]|/[A-Za-z0-9._-]+\.", block):
+        return []
+
+    for raw in re.findall(r"[A-Za-z]:[\\/][^\s,'\"`;)\]}\r\n]+", block):
+        p = raw.rstrip(".,;:")
+        if p and p not in found:
+            found.append(p)
+    for raw in re.findall(r"(?<![\w:])/(?:[\w.\-가-힣]+/)*[\w.\-가-힣]+\.[A-Za-z0-9]{1,8}\b", block):
+        p = raw.rstrip(".,;:")
+        if p and p not in found:
+            found.append(p)
+    return found
+
+
 def _check_syntax(path: Path) -> dict | None:
     """확장자별 결정론적 문법 검사.
 
@@ -919,8 +964,26 @@ def _run_node_with_retries(
                 # 판정 순서 고정: ① 결정론(파일 실물) → ② 노드 보고 → ③ 모델 점수
                 # ①이 FAIL이면 ③의 점수와 무관하게 게이트는 닫힌 채로 남는다.
                 # (기존 코드는 ③만 있어서, 모델이 자기 글에 "SCORE: 95"라고 쓰면 통과했다)
+                #
+                # 검증 대상 = (도구가 실제로 쓴 경로) ∪ (응답의 ARTIFACTS 주장 경로)
+                #   write_file/patch만 보면 terminal(touch·echo>)로 만든 파일을 놓친다.
+                #   텍스트까지 합쳐야 '도구 종류 무관' + '허위 보고 검출'이 동시에 성립한다.
+                _text_artifacts = _extract_artifacts_from_text(assistant_content)
+                _norm_seen: set[str] = set()
+                _gate_artifacts: list[str] = []
+                for _cand in list(_node_artifacts) + list(_text_artifacts):
+                    try:
+                        _key = str(_cand).replace("\\", "/").rstrip("/").lower()
+                    except Exception:
+                        _key = str(_cand)
+                    if _key and _key not in _norm_seen:
+                        _norm_seen.add(_key)
+                        _gate_artifacts.append(str(_cand))
+                if _text_artifacts:
+                    _node_artifacts = _gate_artifacts
+
                 _gate_dirs = [d for d in (node.get("_effective_dir"), run_dir) if d]
-                _gate_result = _deterministic_gate(_node_artifacts, _gate_dirs)
+                _gate_result = _deterministic_gate(_gate_artifacts, _gate_dirs)
                 if _gate_result.get("applicable"):
                     _log.info(
                         "[GATE] node '%s' deterministic=%s checks=%d blockers=%d",
