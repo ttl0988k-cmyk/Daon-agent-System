@@ -103,7 +103,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'torch', 'torchaudio', 'torchvision', 'triton', 'tensorboard',
+        'polars', '_polars_runtime_32', '_polars_runtime_64', '_polars_runtime_compat',
+        'scipy', 'sklearn', 'scikit-learn',
+        'pandas', 'pyarrow', 'sympy', 'matplotlib',
+        'IPython', 'jupyter', 'notebook', 'pytest',
+    ],
     noarchive=False,
     optimize=0,
 )

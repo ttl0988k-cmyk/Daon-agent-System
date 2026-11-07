@@ -10,6 +10,26 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+function fileMd5(filePath) {
+    const hash = crypto.createHash('md5');
+    hash.update(fs.readFileSync(filePath));
+    return hash.digest('hex');
+}
+
+function copyFileVerified(src, dst) {
+    const srcHash = fileMd5(src);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        fs.copyFileSync(src, dst);
+        const dstHash = fileMd5(dst);
+        if (srcHash === dstHash) {
+            return srcHash;
+        }
+        console.warn('[afterPack] MD5 mismatch on copy attempt ' + attempt + ' for ' + dst + ' (' + srcHash + ' vs ' + dstHash + '), retrying...');
+    }
+    throw new Error('MD5 verification failed after 3 attempts copying ' + src + ' -> ' + dst);
+}
 
 exports.default = async function afterPack(context) {
     if (context.electronPlatformName !== 'win32') {
@@ -40,6 +60,16 @@ exports.default = async function afterPack(context) {
         path.join(localPrograms, productName),         // 레거시(공백)
     ];
     const srcRes = path.join(context.appOutDir, 'resources');
+    const distServerExe = path.join(context.outDir || path.dirname(context.appOutDir), 'server.exe');
+    const unpackedServerExe = path.join(srcRes, 'server.exe');
+    if (fs.existsSync(distServerExe) && fs.existsSync(unpackedServerExe)) {
+        const dHash = fileMd5(distServerExe);
+        const uHash = fileMd5(unpackedServerExe);
+        if (dHash !== uHash) {
+            console.warn('[afterPack] win-unpacked/resources/server.exe MD5 mismatch (' + uHash + ' vs ' + dHash + '), repairing from dist/server.exe...');
+            copyFileVerified(distServerExe, unpackedServerExe);
+        }
+    }
 
     // 1) 개별 핵심 파일
     const filesToSync = [
@@ -71,19 +101,31 @@ exports.default = async function afterPack(context) {
         const targetRes = path.join(appDir, 'resources');
         if (!fs.existsSync(targetRes)) { continue; }
 
-        // 개별 파일 동기화
+        // 개별 파일 동기화 (MD5 검증 포함)
         for (const fname of filesToSync) {
             const src = path.join(srcRes, fname);
             if (!fs.existsSync(src)) { continue; }
             try {
                 const dst = path.join(targetRes, fname);
                 fs.mkdirSync(path.dirname(dst), { recursive: true });
-                fs.copyFileSync(src, dst);
-                console.log('[afterPack] Auto-synced file ' + fname + ' -> ' + targetRes);
+                const h = copyFileVerified(src, dst);
+                console.log('[afterPack] Auto-synced file ' + fname + ' (md5=' + h.slice(0, 8) + ') -> ' + targetRes);
             } catch (e) {
                 console.warn('[afterPack] Auto-sync failed for file ' + fname +
                     ' @ ' + appDir + ':', e && e.message);
             }
+        }
+
+        // 오래된 _MEI* 임시 압축해제 폴더 정리
+        for (const rtBase of [path.join(appDir, 'daon_runtime'), path.join(targetRes, 'daon_runtime')]) {
+            if (!fs.existsSync(rtBase)) { continue; }
+            try {
+                for (const entry of fs.readdirSync(rtBase)) {
+                    if (entry.startsWith('_MEI')) {
+                        fs.rmSync(path.join(rtBase, entry), { recursive: true, force: true });
+                    }
+                }
+            } catch (_) {}
         }
 
         // 디렉터리 동기화 (재귀)
