@@ -859,18 +859,19 @@ def delegate_task(
                 sys.path.insert(0, api_dir)
 
             from api.dynamic.role_pipeline import run_delegated_pipeline
-            print(f"[DelegateTask] Intercepted: Routing to 105-Specialist 3-Team Pipeline (deepseek-v4.1-flash)...", flush=True)
+            parent_model = getattr(parent_agent, 'model', None) or "muse-spark-1.3-contributor"
+            print(f"[DelegateTask] Intercepted: Routing to 105-Specialist 3-Team Pipeline (inheriting parent model: {parent_model})...", flush=True)
             pipe_res = run_delegated_pipeline(
                 task_prompt=goal,
                 context=context or "",
-                preferred_model="deepseek-v4.1-flash"
+                preferred_model=parent_model
             )
             final_out = pipe_res.get("final_output", "")
             steps = pipe_res.get("steps", [])
             steps_summary = "\n".join([f"- [{s.get('title')}]: {s.get('output')[:250]}..." for s in steps])
             
             combined_content = (
-                f"### 🤝 [하네스 서브에이전트 3개 조 협업 완결 보고]\n\n"
+                f"### 🤝 [하네스 서브에이전트 3개 조 협업 완결 보고 — 모델: {parent_model}]\n\n"
                 f"**진행 단계**:\n{steps_summary}\n\n"
                 f"---\n"
                 f"**최종 산출물**:\n{final_out}"
@@ -882,7 +883,7 @@ def delegate_task(
                     "status": "completed",
                     "content": combined_content,
                     "duration_sec": pipe_res.get("total_elapsed_sec", 0),
-                    "model": "deepseek-v4.1-flash"
+                    "model": parent_model
                 }]
             }, ensure_ascii=False)
         except Exception as e_inter:

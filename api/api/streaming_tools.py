@@ -1435,18 +1435,79 @@ def inject_colleague_tools(agent: Any, session_id: str = None) -> None:
         def _colleague_handler(args: dict, **kwargs) -> str:
             agent_name = (args.get("agent_name") or args.get("name") or "").strip()
             task = (args.get("task") or args.get("prompt") or args.get("instruction") or args.get("message") or "").strip()
-            timeout = int(args.get("timeout") or 180)
+            timeout = int(args.get("timeout") or 45)
 
             if not agent_name or not task:
                 return json.dumps({"ok": False, "error": "agent_name and task are required"}, ensure_ascii=False)
 
-            _logger.info(f"[delegate_to_agent] Delegating task to {agent_name}: {task[:60]}...")
+            # Inherit parent model dynamically (e.g. muse-spark, deepseek, etc.)
+            parent_model = getattr(agent, 'model', None)
+            if not parent_model and session_id:
+                try:
+                    from api.models import get_session
+                    _ps = get_session(session_id)
+                    if _ps:
+                        parent_model = getattr(_ps, 'model', None)
+                except Exception:
+                    pass
+            if not parent_model:
+                parent_model = "muse-spark-1.3-contributor"
+
+            _logger.info(f"[delegate_to_agent] Delegating task to {agent_name} (parent_model={parent_model}): {task[:60]}...")
+
+            # ── [Fast Dynamic Specialist Interceptor] ──
+            # Map legacy names (Bill, Tony, Sherlock, Prada) to 105 specialist catalog
+            norm_name = agent_name.lower().strip()
+            legacy_role_map = {
+                "bill": "python-backend",
+                "빌": "python-backend",
+                "developer": "python-backend",
+                "개발": "python-backend",
+                "tony": "architect",
+                "토니": "architect",
+                "planner": "architect",
+                "기획": "architect",
+                "sherlock": "security-audit",
+                "셜록": "security-audit",
+                "reviewer": "security-audit",
+                "검수": "security-audit",
+                "qa": "security-audit",
+                "prada": "frontend-react",
+                "프라다": "frontend-react",
+                "designer": "ui-ux",
+                "디자인": "ui-ux",
+            }
+            try:
+                from api.dynamic.role_pipeline import get_all_specialist_templates, execute_specialist_node
+                templates = get_all_specialist_templates()
+                target_id = legacy_role_map.get(norm_name, norm_name)
+                tmpl = templates.get(target_id)
+                if tmpl:
+                    _logger.info(f"[delegate_to_agent] Dynamic Specialist Dispatch: {agent_name} -> {target_id} using parent model {parent_model}")
+                    node_res = execute_specialist_node(
+                        template=tmpl,
+                        task_prompt=task,
+                        context=f"Parent Session: {session_id}",
+                        preferred_model=parent_model
+                    )
+                    return json.dumps({
+                        "ok": True,
+                        "agent": agent_name,
+                        "role": tmpl.get("display_name", target_id),
+                        "model": parent_model,
+                        "output": node_res.get("output", ""),
+                        "elapsed_sec": node_res.get("elapsed_sec", 0)
+                    }, ensure_ascii=False)
+            except Exception as e_dyn:
+                _logger.warning(f"[delegate_to_agent] Dynamic specialist execution fallback: {e_dyn}")
+
             try:
                 res = execute_agent_task(
                     agent_name=agent_name,
                     task=task,
-                    timeout=timeout,
-                    parent_session_id=session_id
+                    timeout=min(timeout, 45),
+                    parent_session_id=session_id,
+                    model=parent_model
                 )
                 return json.dumps(res, ensure_ascii=False)
             except Exception as e:

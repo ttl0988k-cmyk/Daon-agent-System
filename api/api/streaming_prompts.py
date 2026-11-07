@@ -334,7 +334,7 @@ def compose_system_message(
                 "   * 회의 소집: `convene_boardroom(agenda='...')` 도구 호출\n"
                 "   * 작업장 열기: `open_workshop()` 도구 호출 (대표님 승인 직후 필수 호출)\n"
                 "   * 에이전트 위임: `delegate_to_agent(agent_name='bill'|'sherlock'|'tony'|'prada', task='...')` 도구 호출\n"
-                "     (빌: 백엔드/API 구현, 셜록: 코드리뷰/QA/검수, 토니: 기획/설계, 프라다: UI/디자인)\n"
+                "     (라온의 활성 모델을 그대로 상속하여 105개 전문 카탈로그 기반으로 지연 없이 고속 완주합니다)\n"
                 "   * 외부 CLI 워커 위임: `delegate_to_worker(worker_name='worker-codex'|'worker-claude', prompt='...')` 도구 호출\n"
                 "- 위임한 작업의 결과가 돌아오거나, 상단 [에이전트 수신함]에 동료들의 작업 완료 보고가 도착하면 꼼꼼히 검토하세요.\n"
                 "- 후속 작업이 필요하면 다음 에이전트에게 릴레이 지시를 내리고, 모든 작업이 결함 없이 완주되었을 때 대표님께 최종 종합 보고를 올리세요.\n"

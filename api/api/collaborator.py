@@ -121,6 +121,19 @@ def execute_agent_task(
     from api.config import STREAMS, STREAMS_LOCK, ACTIVE_SESSION_STREAMS, ACTIVE_SESSION_STREAMS_LOCK
     from api.streaming import BroadcastQueue, _run_agent_streaming, cancel_stream
 
+    timeout = min(int(timeout or 45), 60)
+
+    if not model and parent_session_id:
+        try:
+            from api.models import get_session
+            ps = get_session(parent_session_id)
+            if ps and getattr(ps, 'model', None):
+                model = ps.model
+        except Exception:
+            pass
+    if not model:
+        model = "muse-spark-1.3-contributor"
+
     canonical_profile = normalize_agent_profile(agent_name)
     if force_new_session:
         # Boardroom/meeting isolation: use a fresh session tagged as boardroom
@@ -133,6 +146,7 @@ def execute_agent_task(
             surface="boardroom" if source == "boardroom" else "multi",
             source=source,
             parent_session_id=parent_session_id,
+            model=model,
         )
     else:
         target_session = find_or_create_agent_session(
@@ -140,6 +154,9 @@ def execute_agent_task(
             workspace=workspace,
             parent_session_id=parent_session_id,
         )
+
+    if model:
+        target_session.model = model
 
     sid = target_session.session_id
     stream_id = uuid.uuid4().hex

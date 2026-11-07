@@ -98,7 +98,7 @@ def execute_specialist_node(
     task_prompt: str,
     context: str = "",
     previous_steps: Optional[List[Dict[str, Any]]] = None,
-    preferred_model: Optional[str] = "deepseek-v4.1-flash",
+    preferred_model: Optional[str] = None,
     event_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
     """
@@ -106,6 +106,9 @@ def execute_specialist_node(
     Shares a single cost-effective model instance with fast failover.
     """
     from api.dynamic.direct_calls import _call_direct
+
+    if not preferred_model:
+        preferred_model = "muse-spark-1.3-contributor"
 
     agent_id = template.get("id", "specialist")
     disp_name = template.get("display_name", agent_id)
@@ -185,7 +188,7 @@ def run_delegated_pipeline(
     task_prompt: str,
     context: str = "",
     specialist_ids: Optional[List[str]] = None,
-    preferred_model: Optional[str] = "deepseek-v4.1-flash",
+    preferred_model: Optional[str] = None,
     event_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
     """
@@ -196,6 +199,9 @@ def run_delegated_pipeline(
       3. Quality / Security Reviewer (e.g. security-audit, code-review)
       4. Raon CEO Synthesizer
     """
+    if not preferred_model:
+        preferred_model = "muse-spark-1.3-contributor"
+
     templates = get_all_specialist_templates()
     
     # 1. 3개 전문 조 (Trio Matrix: 1조 설계 -> 2조 구현 -> 3조 검증) 엄격 확정

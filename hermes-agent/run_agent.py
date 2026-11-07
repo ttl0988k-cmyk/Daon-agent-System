@@ -5558,7 +5558,19 @@ class AIAgent:
                 return False
         # OpenCode (Go & Zen), DeepSeek, Minimax, and OpenAI-compatible routes that accept reasoning
         if "opencode.ai" in self._base_url_lower:
-            return True
+            m_low = (self.model or "").lower()
+            if any(k in m_low for k in ("muse", "luna", "crouton")):
+                return False
+            try:
+                import sys
+                from pathlib import Path
+                api_dir = str(Path(__file__).parent.parent / "api")
+                if api_dir not in sys.path:
+                    sys.path.insert(0, api_dir)
+                from api.managers.model_manager import model_manager
+                return model_manager.supports_reasoning(self.model, self.provider)
+            except Exception:
+                return True
         if any(domain in self._base_url_lower for domain in ("deepseek.com", "minimax.io", "together.xyz")) or self.provider in ("opencode-go", "opencode-zen", "deepseek", "minimax"):
             try:
                 import sys

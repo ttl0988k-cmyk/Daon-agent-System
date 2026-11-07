@@ -2003,7 +2003,8 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               _logger.info("[Streaming] Autonomous trigger: Delegating to Ruflo 105-Specialist Role Pipeline (session %s)", session_id)
               try:
                   from api.dynamic.role_pipeline import run_delegated_pipeline
-                  put('token', {'text': f"\n\n🎯 **[하네스 서브에이전트 팀 가동]** 105개 전문 에이전트 카탈로그에서 최적 전문가 선발 중...\n"})
+                  _eff_model = model or getattr(s, 'model', None) or "muse-spark-1.3-contributor"
+                  put('token', {'text': f"\n\n🎯 **[하네스 서브에이전트 팀 가동 — 모델: {_eff_model}]** 105개 전문 에이전트 카탈로그에서 최적 전문가 선발 중...\n"})
                   
                   def _pipeline_event_cb(evt_type, agent_name, payload):
                       if evt_type == "pipeline_start":
@@ -2024,7 +2025,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   pipeline_res = run_delegated_pipeline(
                       task_prompt=msg_text,
                       context=f"Session: {session_id}\nWorkspace: {workspace}",
-                      preferred_model=model if ("deepseek" in str(model).lower() or "minimax" in str(model).lower()) else "deepseek-v4.1-flash",
+                      preferred_model=_eff_model,
                       event_callback=_pipeline_event_cb
                   )
                   

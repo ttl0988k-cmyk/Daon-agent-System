@@ -643,9 +643,10 @@ class ModelManager:
             'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'gpt-4', 'gpt-3.5',
             'claude-3-5', 'claude-3.5', 'claude-3-opus', 'claude-3-haiku',
             'gemini-1.5', 'gemini-1.0',
-            'llama', 'mistral', 'codestral', 'command-r'
+            'llama', 'mistral', 'codestral', 'command-r',
+            'muse', 'luna', 'crouton'
         )
-        if any(mid.startswith(p) or ('/' + p) in mid for p in non_reasoning_prefixes):
+        if any(mid.startswith(p) or ('/' + p) in mid or p in mid for p in non_reasoning_prefixes):
             if 'thinking' not in mid and 'reason' not in mid and 'r1' not in mid:
                 return False
 
