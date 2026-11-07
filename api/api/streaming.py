@@ -1916,6 +1916,12 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # [Laya 이중 주입 방어]: Laya가 전용 스킬을 이미 핀포인트로 직배송 주입한 경우,
           # 기존 8766 랭커(_build_skill_hint)의 중복 힌트는 스킵하여 토큰 낭비를 원천 차단한다.
           _skill_hint = "" if has_laya_skill else _build_skill_hint(msg_text, context=_skill_context(s))
+          # ★ [BUGFIX 2026-11-08]: _skill_hint를 사용자 메시지(user_message_payload)에 직접 이어붙이면
+          # LLM이 사용자 발화로 오인하여 챗창에 그대로 출력(유출)해 버린다.
+          # 따라서 _skill_hint는 시스템 프롬프트(workspace_system_msg)에만 안전하게 주입한다.
+          if _skill_hint:
+              workspace_system_msg = (workspace_system_msg or "") + "\n\n" + _skill_hint
+
           # [하네스 완료 공지 주입 2026-10-15]: 턴 종료 후 끝난 백그라운드 잡은
           # push_harness_done()이 DB pending 공지로 저장해 둔다. 다음 턴 시작 시
           # 여기서 주입하면 라온이 챗창에 완료 보고를 한다. 수령 즉시 delivered=1
@@ -1966,7 +1972,7 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           user_message_payload = build_user_payload(
               workspace=s.workspace,
               msg_text=msg_text,
-              workspace_ctx=(_skill_hint + ("\n\n" + _harness_notice_ctx if _harness_notice_ctx else "") + ("\n\n" + _wake_ctx if _wake_ctx else "")),
+              workspace_ctx=((_harness_notice_ctx if _harness_notice_ctx else "") + ("\n\n" + _wake_ctx if _wake_ctx else "")),
               attachments=attachments,
           )
 
