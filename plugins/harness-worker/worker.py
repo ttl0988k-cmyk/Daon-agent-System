@@ -141,21 +141,19 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "headers": {},
     },
     "opencode-go": {
-        "label": "OpenCode Go (zen/go)",
-        "base_url": "https://opencode.ai/zen/go/v1",
-        # ★ [2026-10-18 대표님 지시] Claude Code 직결용 Anthropic 네이티브 엔드포인트.
-        #   LiteLLM 을 경유하면 Anthropic tool_use ↔ OpenAI tool_calls 변환에서
-        #   "No tool output found for tool call" 400 이 터져 워커가 중간에 죽는다(실측).
-        #   여기에 붙이면 변환 0회 → tool 왕복 정상. 최종 URL = <이 값>/v1/messages
-        "anthropic_base_url": "https://opencode.ai/zen/go",
-        # [2026-10-18 대표님 지시] Codex 워커 모델 = 뮤즈 1.3 (muse-spark-1.3-contributor)
+        "label": "OpenCode Go",
+        # [2026-10-30 대표님 지시] OpenCode 공식 문서(Harnesses > Codex > Go) 값 그대로.
+        #   base_url + /responses, env_key=OPENCODE_API_KEY, wire_api=responses
+        "base_url": "https://opencode.ai/inference/go/openai/v1",
+        # [2026-10-30 대표님 지시] OpenCode 공식 문서(Harnesses > Claude Code > Go) 값 그대로.
+        #   Claude Code 가 여기에 /v1/messages 를 붙인다. 경로 끝에 /v1 넣지 말 것.
+        "anthropic_base_url": "https://opencode.ai/inference/go/anthropic",
+        # [2026-11-03 대표님 지시] Codex만 muse-spark-1.3-contributor로 복원 (Claude는 deepseek 유지).
         "codex_model": "muse-spark-1.3-contributor",
         "claude_alias": "claude-oc",
-        # Claude Code 는 deepseek 유지 (codex_model 과 분리— 대표님 지시는 Codex 만)
         "claude_model": "deepseek-v4.1-flash",
-        # 없으면 403(Cloudflare 1010) / 400(MissingSessionID)
-        # /v1/messages 는 x-api-key, /v1/responses 는 Authorization: Bearer 를
-        # 요구한다(실측). 즉 같은 키인데 엔드포인트별 인증 방식이 다르다.
+        # 공식 하네스 문서에는 생략돼 있지만 Go 게이트웨이가 이 헤더 없이는
+        # 400 MissingSessionID 를 반환한다(공식 에러 본문이 문서 링크를 안내).
         "headers": {"x-opencode-session": "daon-harness-worker"},
     },
     "opencode-zen": {
@@ -742,7 +740,11 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
     home = CODEX_HOME_ROOT / name
     home.mkdir(parents=True, exist_ok=True)
 
-    env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
+    env_key_name = (
+        "OPENCODE_API_KEY"
+        if name in ("opencode-go", "opencode-zen")
+        else f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
+    )
 
     lines: List[str] = [
         'approval_policy = "never"',
@@ -1096,6 +1098,7 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
 
+    direct = None
     if harness == "codex":
         # 프로바이더별 config.toml 을 담은 임시 홈으로 고정한다.
         # 이게 없으면 ~/.codex/config.toml(전역)이 이겨서 프로바이더 전환이 안 된다.
@@ -1108,7 +1111,11 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
             for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY"):
                 env.pop(_k, None)
         else:
-            env_key_name = f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
+            env_key_name = (
+                "OPENCODE_API_KEY"
+                if name in ("opencode-go", "opencode-zen")
+                else f"DAON_HARNESS_{re.sub(r'[^A-Za-z0-9]', '_', name).upper()}_KEY"
+            )
             env[env_key_name] = key
             # 하위 호환: 예전 설정이 OPENROUTER_API_KEY 를 참조할 수 있다
             if name == "openrouter":
@@ -1120,17 +1127,17 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
             # LiteLLM 경유 시 tool_use↔tool_calls 매칭이 어긋나
             # "No tool output found for tool call" 400 으로 죽는다(실측).
             env["ANTHROPIC_BASE_URL"] = direct
-            # ★ 인증 방식이 엔드포인트마다 다르다(실측):
-            #   /v1/messages(Anthropic) = x-api-key  ← ANTHROPIC_API_KEY
-            #   /v1/responses(OpenAI)   = Authorization: Bearer
-            # Claude Code 는 ANTHROPIC_API_KEY 를 x-api-key 로 보낸다.
-            # (ANTHROPIC_AUTH_TOKEN 은 Bearer 로 보내 401 이 된다)
-            env["ANTHROPIC_API_KEY"] = key
-            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            # [2026-10-30 대표님 지시] OpenCode 공식 문서(Harnesses > Claude Code) 값 그대로.
+            #   공식 문서: ANTHROPIC_AUTH_TOKEN 사용, ANTHROPIC_API_KEY 사용 금지.
+            env["ANTHROPIC_AUTH_TOKEN"] = key
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT", None)
             _cm = resolve_claude_model(name, model)
             env["ANTHROPIC_MODEL"] = _cm
-            # 세션 제목 생성 슬롯도 같은 실모델을 쓴다.
-            # (claude-haiku-4-5 는 업스트림에 없어 404 가 난다)
+            # 공식 문서의 alias 슬롯도 전부 같은 모델로 매핑한다.
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = _cm
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = _cm
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = _cm
             env["ANTHROPIC_SMALL_FAST_MODEL"] = _cm
             _hdrs = spec.get("headers") or {}
             if _hdrs:
@@ -1146,7 +1153,9 @@ def build_env(harness: str, key: str, base_env: Optional[Dict[str, str]] = None,
             #  "isn't described by this version's model catalog" 경고를 쏟아낸다)
             env["ANTHROPIC_SMALL_FAST_MODEL"] = "claude-haiku-4-5"
         # 카탈로그에 없는 모델명을 써도 창 크기 강제 대기로 멈추지 않게 한다
-        env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
+        # (LiteLLM alias 경로 전용 호환 플래그. 공식 직결 경로에는 넣지 않는다)
+        if not direct:
+            env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] = "1"
     return env
 
 

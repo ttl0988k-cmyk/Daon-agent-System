@@ -64,11 +64,13 @@ LEGACY_SUMMARY_PREFIX = "[CONTEXT SUMMARY]:"
 HANDOFF_PREFIX = "[HANDOFF"
 
 # Minimum tokens for the summary output
-_MIN_SUMMARY_TOKENS = 2000
+_MIN_SUMMARY_TOKENS = 1200
 # Proportion of compressed content to allocate for summary
-_SUMMARY_RATIO = 0.20
+_SUMMARY_RATIO = 0.15
 # Absolute ceiling for summary tokens (even on very large context windows)
-_SUMMARY_TOKENS_CEILING = 12_000
+# Capped at 2,500 tokens so auxiliary models (e.g. MiniMax-M3.1-Flash) complete
+# compaction in a few seconds instead of hanging for 2-3 minutes generating 15K tokens.
+_SUMMARY_TOKENS_CEILING = 2_500
 
 # Placeholder used when pruning old tool results
 _PRUNED_TOOL_PLACEHOLDER = "[Old tool output cleared to save context space]"
@@ -772,11 +774,12 @@ class ContextCompressor(ContextEngine):
     # Truncation limits for the summarizer input.  These bound how much of
     # each message the summary model sees — the budget is the *summary*
     # model's context window, not the main model's.
-    _CONTENT_MAX = 6000       # total chars per message body
-    _CONTENT_HEAD = 4000      # chars kept from the start
-    _CONTENT_TAIL = 1500      # chars kept from the end
-    _TOOL_ARGS_MAX = 1500     # tool call argument chars
-    _TOOL_ARGS_HEAD = 1200    # kept from the start of tool args
+    _CONTENT_MAX = 2500       # total chars per message body
+    _CONTENT_HEAD = 1500      # chars kept from the start
+    _CONTENT_TAIL = 700       # chars kept from the end
+    _TOOL_ARGS_MAX = 600      # tool call argument chars
+    _TOOL_ARGS_HEAD = 450     # kept from the start of tool args
+    _SERIALIZED_TOTAL_MAX = 80000  # hard cap on total serialized input (~20K tokens)
 
     def _serialize_for_summary(self, turns: List[Dict[str, Any]]) -> str:
         """Serialize conversation turns into labeled text for the summarizer.
@@ -828,7 +831,16 @@ class ContextCompressor(ContextEngine):
                 content = content[:self._CONTENT_HEAD] + "\n...[truncated]...\n" + content[-self._CONTENT_TAIL:]
             parts.append(f"[{role.upper()}]: {content}")
 
-        return "\n\n".join(parts)
+        joined = "\n\n".join(parts)
+        if len(joined) > self._SERIALIZED_TOTAL_MAX:
+            head_len = 20000
+            tail_len = self._SERIALIZED_TOTAL_MAX - head_len
+            joined = (
+                joined[:head_len]
+                + "\n\n...[earlier intermediate turns condensed for fast compaction]...\n\n"
+                + joined[-tail_len:]
+            )
+        return joined
 
     def _generate_summary(self, turns_to_summarize: List[Dict[str, Any]], focus_topic: str = None) -> Optional[str]:
         """Generate a structured summary of conversation turns.
@@ -984,8 +996,8 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                     "api_mode": self.api_mode,
                 },
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": int(summary_budget * 1.3),
-                # timeout resolved from auxiliary.compression.timeout config by call_llm
+                "max_tokens": min(int(summary_budget * 1.25), 3200),
+                "timeout": 35.0,
             }
             if self.summary_model:
                 call_kwargs["model"] = self.summary_model
@@ -1035,7 +1047,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                 )
                 self.summary_model = ""  # empty = use main model
                 self._summary_failure_cooldown_until = 0.0  # no cooldown
-                return self._generate_summary(messages, summary_budget)  # retry immediately
+                return self._generate_summary(turns_to_summarize, focus_topic=focus_topic)  # retry immediately
 
             # Transient errors (timeout, rate limit, network) — shorter cooldown
             _transient_cooldown = 60

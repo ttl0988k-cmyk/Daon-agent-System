@@ -27,9 +27,9 @@ class ServerSupervisor {
     this.pythonProcess = null;
     this.ttsProcess = null;
     this.layaProcess = null;
-    // [FIX 2026-10-13] SkillRanker(8766) — Laya(8765)와 동일하게 슈퍼바이저가 관리한다.
+    // [FIX 2026-10-13] SkillRanker(8766) — 슈퍼바이저가 감시·재기동한다.
     //  과거엔 Startup VBS 런처가 부팅 시 1회만 띄우고 재시도가 없어, 조용히 죽으면
-    //  복구가 안 됐다(2026-10-13 실측: 8766 down). Laya 처럼 여기서 감시·재기동한다.
+    //  복구가 안 됐다(2026-10-13 실측: 8766 down). 여기서 감시·재기동한다.
     this.skillRankerProcess = null;
     this.watchdogTimer = null;
     this.watchdogRestartCount = 0;
@@ -633,19 +633,8 @@ class ServerSupervisor {
     return 'python';
   }
 
-  findLayaScript() {
-    const candidates = [
-      path.join(process.resourcesPath || '', 'daon_runtime', 'laya_service.py'),
-      path.join(__dirname, '..', '..', 'daon_runtime', 'laya_service.py'),
-      path.join('C:\\daon\\Daon agent System', 'daon_runtime', 'laya_service.py'),
-    ];
-    for (const c of candidates) {
-      if (fs.existsSync(c)) return c;
-    }
-    return null;
-  }
 
-  // [FIX 2026-10-13] SkillRanker(8766) 스크립트 탐색 — findLayaScript 와 동일 규칙.
+  // [FIX 2026-10-13] SkillRanker(8766) 스크립트 탐색.
   findSkillRankerScript() {
     const candidates = [
       path.join(process.resourcesPath || '', 'daon_runtime', 'skill_ranker.py'),
@@ -658,7 +647,9 @@ class ServerSupervisor {
     return null;
   }
 
-  async isLayaHealthy(port = 8765) {
+  // 범용 포트 헬스체크 — isSkillRankerHealthy 가 재사용한다.
+  // (Laya 서비스는 폐기됨. 함수명만 남아있고 실행 코드는 없다.)
+  async isLayaHealthy(port = 8766) {
     return new Promise((resolve) => {
       const req = http.get(`http://127.0.0.1:${port}/health`, (res) => {
         resolve(res.statusCode === 200);
@@ -671,64 +662,20 @@ class ServerSupervisor {
     });
   }
 
+  // [Deprecated] Laya Decision Engine is deprecated. Stub retained for backward compatibility.
   async startLayaProcess(port = 8765) {
-    if (this.isQuitting) return null;
-
-    const alreadyHealthy = await this.isLayaHealthy(port);
-    if (alreadyHealthy) {
-      this.mlog(`[ServerSupervisor] Laya Decision Engine is already healthy on http://127.0.0.1:${port}`);
-      return null;
-    }
-
-    const layaScript = this.findLayaScript();
-    if (!layaScript) {
-      this.mlog(`[ServerSupervisor] laya_service.py not found. Laya will run in heuristic fallback mode.`);
-      return null;
-    }
-
-    const pythonPath = this.findPythonPath();
-    const cwd = path.dirname(path.dirname(layaScript));
-
-    try {
-      this.mlog(`[ServerSupervisor] Starting Laya Decision Engine: ${pythonPath} "${layaScript}" --port ${port}`);
-      this.layaProcess = spawn(pythonPath, [layaScript, '--port', port.toString()], {
-        cwd,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      this.layaProcess.on('error', (err) => {
-        this.merr(`[ServerSupervisor] Laya process error: ${err && err.message}`);
-        this.layaProcess = null;
-      });
-
-      this.layaProcess.on('exit', (code, signal) => {
-        this.mlog(`[ServerSupervisor] Laya service exited (code=${code}, signal=${signal})`);
-        this.layaProcess = null;
-      });
-
-      if (process.platform === 'win32' && this.layaProcess.pid) {
-        try {
-          exec(`powershell -NoProfile -Command "(Get-Process -Id ${this.layaProcess.pid}).PriorityClass = 'BelowNormal'"`, { windowsHide: true });
-        } catch (_) { }
-      }
-
-      return this.layaProcess;
-    } catch (err) {
-      this.merr(`[ServerSupervisor] Failed to spawn Laya process: ${err.message}`);
-      this.layaProcess = null;
-      return null;
-    }
+    return null;
   }
 
-  // [FIX 2026-10-13] SkillRanker(8766) 헬스 프로브 — isLayaHealthy 와 동일 로직(포트만 다름).
+
+  // [FIX 2026-10-13] SkillRanker(8766) 헬스 프로브 — 공통 포트 헬스체크 사용.
   async isSkillRankerHealthy(port = 8766) {
     return this.isLayaHealthy(port);
   }
 
-  // [FIX 2026-10-13] SkillRanker(8766) 상주 기동 — startLayaProcess 와 동일 규칙
+  // [FIX 2026-10-13] SkillRanker(8766) 상주 기동
   //  (정상이면 no-op, 스크립트 탐색 후 python 으로 spawn, cwd=daon_runtime 상위).
-  //  Laya 는 --port 인자를 받고 SkillRanker 는 스크립트 내 PORT 상수를 쓰므로 인자 없음.
+  //  SkillRanker 는 스크립트 내 PORT 상수를 쓰므로 인자 없음.
   async startSkillRankerProcess(port = 8766) {
     if (this.isQuitting) return null;
 
@@ -854,11 +801,10 @@ class ServerSupervisor {
     this.watchdogTimer = setInterval(() => {
       if (this.isQuitting) return;
 
-      // [FIX 2026-10-13] 서브 데몬(Laya 8765 / SkillRanker 8766) 주기 보증.
+      // [FIX 2026-10-13] 서브 데몬(SkillRanker 8766) 주기 보증.
       //  과거엔 각각 부팅 시 1회만 확인해, 조용히 죽으면 복구 경로가 없었다
       //  (실측: 8766 down 후 재기동 트리거 부재). 30초마다 헬스 확인 후
       //  죽은 것만 재기동한다 — 정상이면 startXxxProcess 가 즉시 no-op.
-      if (!this.layaProcess) { this.startLayaProcess(8765); }
       if (!this.skillRankerProcess) { this.startSkillRankerProcess(8766); }
 
       // If server process was adopted, check if PID is still alive
@@ -916,10 +862,6 @@ class ServerSupervisor {
     if (this.ttsProcess && this.ttsProcess.pid) {
       this.killProcessTree(this.ttsProcess.pid);
       this.ttsProcess = null;
-    }
-    if (this.layaProcess && this.layaProcess.pid) {
-      this.killProcessTree(this.layaProcess.pid);
-      this.layaProcess = null;
     }
     if (this.skillRankerProcess && this.skillRankerProcess.pid) {
       this.killProcessTree(this.skillRankerProcess.pid);

@@ -69,6 +69,7 @@ Thread safety:
     free-threading).
 """
 
+import contextlib
 import asyncio
 import concurrent.futures
 import inspect
@@ -81,6 +82,49 @@ import shutil
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+# ── DAON: MCP stdio 자식 프로세스 콘솔 창(conhost) 깜빡임 방지 ──────────
+# Windows에서 stdio MCP 서버(cmd/npx/python)를 띄우면 새 콘솔 창이 생겨
+# 검은 창이 깜빡인다. anyio.open_process는 creationflags를 지원하므로,
+# stdio_client 실행 구간에서만 CREATE_NO_WINDOW를 강제하고 원복한다.
+@contextlib.asynccontextmanager
+async def stdio_client(server_params, *args, **kwargs):
+    """mcp.stdio.stdio_client 래퍼 (Windows 콘솔 창 억제)."""
+    import subprocess as _sp
+    import sys as _sys
+    from mcp.client.stdio import stdio_client as _inner
+
+    if _sys.platform != "win32":
+        async with _inner(server_params, *args, **kwargs) as streams:
+            yield streams
+        return
+
+    try:
+        import anyio
+    except Exception:
+        async with _inner(server_params, *args, **kwargs) as streams:
+            yield streams
+        return
+
+    _orig = anyio.open_process
+    if getattr(_orig, "_daon_no_window", False):
+        async with _inner(server_params, *args, **kwargs) as streams:
+            yield streams
+        return
+
+    async def _wrapped(*a, **kw):
+        if not kw.get("creationflags"):
+            kw["creationflags"] = _sp.CREATE_NO_WINDOW
+        return await _orig(*a, **kw)
+
+    _wrapped._daon_no_window = True
+    anyio.open_process = _wrapped
+    try:
+        async with _inner(server_params, *args, **kwargs) as streams:
+            yield streams
+    finally:
+        anyio.open_process = _orig
+
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +139,7 @@ _MCP_NOTIFICATION_TYPES = False
 _MCP_MESSAGE_HANDLER_SUPPORTED = False
 try:
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+    from mcp.client.stdio import stdio_client as _mcp_stdio_client
     _MCP_AVAILABLE = True
     try:
         from mcp.client.streamable_http import streamablehttp_client

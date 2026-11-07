@@ -297,8 +297,22 @@ class _ProviderCollector:
     def register_tool(self, *args, **kwargs):
         pass
 
-    def register_hook(self, *args, **kwargs):
-        pass
+    def register_hook(self, hook_name: str = "", callback=None, *args, **kwargs):
+        """Bridge memory-provider hooks to the real plugin hook registry.
+
+        Memory providers load through a reduced context that historically
+        discarded hook registrations.  claude-mem depends on ``post_tool_call``
+        to record tool usage, so forward the registration to the global
+        PluginManager instead of silently dropping it.
+        """
+        if not hook_name or not callable(callback):
+            return
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+
+            get_plugin_manager()._hooks.setdefault(hook_name, []).append(callback)
+        except Exception:
+            pass
 
     def register_cli_command(self, *args, **kwargs):
         pass  # CLI registration happens via discover_plugin_cli_commands()

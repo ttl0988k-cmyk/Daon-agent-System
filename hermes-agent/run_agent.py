@@ -5991,8 +5991,12 @@ class AIAgent:
             f"{approx_tokens:,}" if approx_tokens else "unknown", self.model,
             focus_topic,
         )
-        # Pre-compression memory flush: let the model save memories before they're lost
-        self.flush_memories(messages, min_turns=0)
+        # Pre-compression memory flush: skipped by default because claude-mem
+        # (on_pre_compress below) and WebUI background extraction already persist
+        # memories, while synchronous flush_memories sends the full 100K+ history
+        # to the auxiliary LLM and blocks the user turn for 10-30s.
+        if os.environ.get("HERMES_FLUSH_MEMORIES_ON_COMPRESS", "").strip().lower() in ("1", "true", "yes"):
+            self.flush_memories(messages, min_turns=0)
 
         # Notify external memory provider before compression discards context
         if self._memory_manager:
@@ -6085,6 +6089,16 @@ class AIAgent:
         self._session_messages = compressed
         self._allow_compact_save = True
         self._save_session_log(compressed)
+
+        # Immediately notify host (e.g. WebUI streaming.py) so s.messages is
+        # persisted right away — prevents infinite re-compression loops if the
+        # user cancels the stream before run_conversation finishes.
+        _on_compressed = getattr(self, "on_context_compressed", None)
+        if callable(_on_compressed):
+            try:
+                _on_compressed(compressed, new_system_prompt)
+            except Exception as _cb_err:
+                logger.debug("on_context_compressed callback failed: %s", _cb_err)
 
         # Warn on repeated compressions (quality degrades with each pass)
         _cc = self.context_compressor.compression_count
@@ -6401,6 +6415,21 @@ class AIAgent:
             and len(messages) > self.context_compressor.protect_first_n
                                 + self.context_compressor.protect_last_n + 1
         ):
+            # Cheap 0ms pre-pass: prune old tool outputs and oversized tool_call
+            # JSON arguments (e.g. write_file/patch payloads) outside the recent
+            # tail before estimating tokens. Often avoids an expensive LLM
+            # compaction call altogether and keeps per-turn tokens low.
+            try:
+                messages, _pre_pruned = self.context_compressor._prune_old_tool_results(
+                    messages,
+                    protect_tail_count=max(8, self.context_compressor.protect_last_n),
+                    protect_tail_tokens=min(self.context_compressor.tail_token_budget, 16000),
+                )
+                current_turn_user_idx = len(messages) - 1
+                self._persist_user_message_idx = current_turn_user_idx
+            except Exception:
+                pass
+
             # Include tool schema tokens — with many tools these can add
             # 20-30K+ tokens that the old sys+msg estimate missed entirely.
             _preflight_tokens = estimate_request_tokens_rough(
@@ -6605,6 +6634,19 @@ class AIAgent:
                 self._iters_since_skill += 1
             
             # Prepare messages for API call
+            # During multi-step tool loops (call#2, call#3, ...), prune older tool
+            # outputs and oversized tool_call arguments outside the recent tail so
+            # long tool-calling turns don't snowball to 100K+ tokens per step.
+            if self.compression_enabled and api_call_count > 1 and len(messages) > 20:
+                try:
+                    messages, _ = self.context_compressor._prune_old_tool_results(
+                        messages,
+                        protect_tail_count=10,
+                        protect_tail_tokens=16000,
+                    )
+                except Exception:
+                    pass
+
             # If we have an ephemeral system prompt, prepend it to the messages
             # Note: Reasoning is embedded in content via <think> tags for trajectory storage.
             # However, providers like Moonshot AI require a separate 'reasoning_content' field

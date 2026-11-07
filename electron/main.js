@@ -203,8 +203,6 @@ app.whenReady().then(async () => {
     // ── STEP 2: Start TTS process ──
     supervisor.startTtsProcess(TTS_PORT);
 
-    // ── STEP 2b: Start Laya Decision Engine (Port 8765) ──
-    supervisor.startLayaProcess(8765);
 
     // ── STEP 2c: Start Skill Ranker (Port 8766) [FIX 2026-10-13] ──
     //  임베딩 스킬 사전선별 서비스. 과거엔 Startup VBS 런처가 부팅 시 1회만 띄워
@@ -340,7 +338,6 @@ app.whenReady().then(async () => {
         mlog('[RestartOrch] cycle done: ' + JSON.stringify(result));
         try {
           if (!supervisor.ttsProcess) supervisor.startTtsProcess(TTS_PORT);
-          if (!supervisor.layaProcess) supervisor.startLayaProcess(8765);
           // [FIX 2026-10-13] SkillRanker(8766)도 재기동 사이클에 포함
           if (!supervisor.skillRankerProcess) supervisor.startSkillRankerProcess(8766);
         } catch (e) {

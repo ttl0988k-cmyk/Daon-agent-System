@@ -108,7 +108,7 @@ toolsets:
 
 # --- Context Compression (컨텍스트 자동 압축) ---
 compression:
-  threshold: 0.10
+  threshold: 0.065
   enabled: true
   target_ratio: 0.20
   protect_last_n: 8

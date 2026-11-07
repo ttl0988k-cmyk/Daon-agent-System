@@ -352,6 +352,32 @@ def _extract_clean_user_message(content: str) -> str:
     return content
 
 
+def _shrink_tool_args_json_safe(args_str: str, max_leaf_chars: int = 200) -> str:
+    """Shrink long string values inside a JSON tool_call arguments string while keeping valid JSON."""
+    if not isinstance(args_str, str) or len(args_str) <= 500:
+        return args_str
+    try:
+        parsed = json.loads(args_str)
+    except Exception:
+        return args_str
+
+    def _walk(val):
+        if isinstance(val, str):
+            if len(val) > max_leaf_chars:
+                return val[:max_leaf_chars] + f"...[+{len(val) - max_leaf_chars} chars omitted]"
+            return val
+        if isinstance(val, dict):
+            return {k: _walk(v) for k, v in val.items()}
+        if isinstance(val, list):
+            return [_walk(v) for v in val[:20]]
+        return val
+
+    try:
+        return json.dumps(_walk(parsed), ensure_ascii=False)
+    except Exception:
+        return args_str
+
+
 def _sanitize_messages_for_api(messages):
     """Return a deep copy of messages with only API-safe fields.
 
@@ -365,15 +391,16 @@ def _sanitize_messages_for_api(messages):
     would conflict with the new model's identity prompt.
     """
     clean = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        # 이전 모델의 시스템 프롬프트 중복 주입 방지: system 메시지는 히스토리에서 무조건 제거
-        if msg.get('role') == 'system':
-            continue
+    valid_msgs = [m for m in messages if isinstance(m, dict) and m.get('role') != 'system']
+    total_msgs = len(valid_msgs)
+    _RECENT_WINDOW = 16
+
+    for idx, msg in enumerate(valid_msgs):
+        is_recent = idx >= (total_msgs - _RECENT_WINDOW)
         sanitized = {k: v for k, v in msg.items() if k in _API_SAFE_MSG_KEYS}
+        role = sanitized.get('role')
         # 과거 대화 히스토리의 거대한 브라우저 화면 덤프 압축 (토큰 누적 방지)
-        if sanitized.get('role') == 'user':
+        if role == 'user':
             c = sanitized.get('content')
             if isinstance(c, str):
                 sanitized['content'] = _compress_past_browser_context(c)
@@ -388,13 +415,43 @@ def _sanitize_messages_for_api(messages):
                         new_c.append(part)
                 sanitized['content'] = new_c
         # 과거 대화 히스토리의 거대한 도구(터미널, 파일 읽기 등) 출력 압축 (토큰 폭증 및 어텐션 마비 방지)
-        elif sanitized.get('role') == 'tool':
+        elif role == 'tool':
             c = sanitized.get('content')
-            if isinstance(c, str) and len(c) > 1500:
-                head = c[:600]
-                tail = c[-400:]
-                sanitized['content'] = f"{head}\n\n... [과거 턴 도구 실행 결과 중략 (총 {len(c):,}자 중 1,000자 요약 보존)] ...\n\n{tail}"
-        if sanitized.get('role'):
+            if isinstance(c, str):
+                if is_recent and len(c) > 1500:
+                    head = c[:600]
+                    tail = c[-400:]
+                    sanitized['content'] = f"{head}\n\n... [과거 턴 도구 실행 결과 중략 (총 {len(c):,}자 중 1,000자 요약 보존)] ...\n\n{tail}"
+                elif not is_recent and len(c) > 500:
+                    head = c[:250]
+                    tail = c[-150:]
+                    sanitized['content'] = f"{head}\n... [이전 도구 출력 생략 (총 {len(c):,}자)] ...\n{tail}"
+        # 오래된 어시스턴트 메시지의 거대한 도구 인자(write_file/patch 등) 및 장문 응답 축약 (압축 요약문은 원문 보존)
+        elif role == 'assistant' and not is_recent:
+            c = sanitized.get('content')
+            is_compaction_summary = isinstance(c, str) and (
+                '[CONTEXT COMPACTION' in c or '[CONTEXT SUMMARY]' in c or '[HANDOFF' in c
+            )
+            if isinstance(c, str) and not is_compaction_summary and len(c) > 2000:
+                sanitized['content'] = f"{c[:1000]}\n\n... [이전 턴 장문 응답 중략 (총 {len(c):,}자)] ...\n\n{c[-500:]}"
+            tcs = sanitized.get('tool_calls')
+            if isinstance(tcs, list) and tcs:
+                new_tcs = []
+                for tc in tcs:
+                    if isinstance(tc, dict) and isinstance(tc.get('function'), dict):
+                        fn = tc['function']
+                        args_str = fn.get('arguments', '')
+                        if isinstance(args_str, str) and len(args_str) > 500:
+                            tc = {
+                                **tc,
+                                'function': {
+                                    **fn,
+                                    'arguments': _shrink_tool_args_json_safe(args_str),
+                                },
+                            }
+                    new_tcs.append(tc)
+                sanitized['tool_calls'] = new_tcs
+        if role:
             clean.append(sanitized)
     return clean
 
@@ -1552,6 +1609,29 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
               reasoning_config=_reasoning_config,
           )
           print(f"[webui-debug] AIAgent created, api_mode={getattr(agent, 'api_mode', '?')}", flush=True)
+
+          # Immediately persist compacted messages to the WebUI session whenever
+          # _compress_context completes so user cancellation never loses compaction.
+          def _on_agent_compressed(compacted_msgs, _new_sys_prompt=None):
+              try:
+                  cleaned_compacted = []
+                  for _cm in (compacted_msgs or []):
+                      if not isinstance(_cm, dict) or _cm.get('role') == 'system':
+                          continue
+                      if _cm.get('role') == 'user' and isinstance(_cm.get('content'), str):
+                          _cm_copy = dict(_cm)
+                          _cm_copy['content'] = _extract_clean_user_message(_cm_copy['content'])
+                          cleaned_compacted.append(_cm_copy)
+                      else:
+                          cleaned_compacted.append(_cm)
+                  if cleaned_compacted:
+                      s.messages = cleaned_compacted
+                      s.save()
+                      _logger.info("[webui] Persisted in-place compacted messages (%d msgs) immediately for session %s", len(cleaned_compacted), session_id)
+              except Exception as _comp_save_err:
+                  _logger.warning("[webui] Immediate compacted session save failed: %s", _comp_save_err)
+
+          agent.on_context_compressed = _on_agent_compressed
 
           # Register agent so cancel_stream() can call agent.interrupt()
           # to force-abort in-flight HTTP requests instead of waiting for the 120s timeout.

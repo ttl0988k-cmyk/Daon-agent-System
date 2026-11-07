@@ -677,8 +677,33 @@ def _save_session_to_db(session: Session) -> None:
         cursor.execute("SELECT id FROM sessions WHERE id = ?", (session.session_id,))
         existing = cursor.fetchone()
 
+        def _normalize_msg_row(msg):
+            role = _sql_scalar(msg.get('role', ''), 'message.role')
+            content = msg.get('content', '')
+            if isinstance(content, list):
+                content = ' '.join(
+                    p.get('text', '')
+                    for p in content
+                    if isinstance(p, dict) and p.get('type') == 'text'
+                )
+            content = _sql_scalar(content, 'message.content')
+            ts = _sql_scalar(msg.get('timestamp', time.time()), 'message.timestamp')
+            return (session.session_id, role, content, ts)
+
+        valid_msgs = []
+        for msg in session.messages:
+            if not isinstance(msg, dict):
+                _logger.warning(
+                    "session %s has non-dict message (%s); skipping",
+                    session.session_id, type(msg).__name__,
+                )
+                continue
+            valid_msgs.append(_normalize_msg_row(msg))
+
+        msgs_to_insert = valid_msgs
+
         if existing:
-            # Update existing session
+            # Update existing session metadata
             cursor.execute("""
                 UPDATE sessions SET
                     title = ?, model = ?, message_count = ?,
@@ -687,15 +712,39 @@ def _save_session_to_db(session: Session) -> None:
             """, (
                 _sql_scalar(session.title, 'title'),
                 _sql_scalar(session.model, 'model'),
-                len(session.messages),
+                len(valid_msgs),
                 _sql_scalar(session.updated_at, 'updated_at'),
                 _sql_scalar(session.input_tokens, 'input_tokens'),
                 _sql_scalar(session.output_tokens, 'output_tokens'),
                 _sql_scalar(session.session_id, 'session_id'),
             ))
-            
-            # Clear existing messages and re-insert (simple sync approach)
-            cursor.execute("DELETE FROM messages WHERE session_id = ?", (session.session_id,))
+
+            # Incremental append check: avoid deleting and re-indexing ratusan messages
+            # in the 765MB FTS5 + trigram tables on every turn when messages only grew.
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                (session.session_id,),
+            )
+            db_count = int((cursor.fetchone() or [0])[0] or 0)
+            can_append_incrementally = False
+            if 0 < db_count <= len(valid_msgs):
+                cursor.execute(
+                    "SELECT role, content FROM messages WHERE session_id = ? ORDER BY rowid DESC LIMIT 1",
+                    (session.session_id,),
+                )
+                last_db_row = cursor.fetchone()
+                expected_at_boundary = valid_msgs[db_count - 1]
+                if (
+                    last_db_row is not None
+                    and last_db_row[0] == expected_at_boundary[1]
+                    and (last_db_row[1] or '') == (expected_at_boundary[2] or '')
+                ):
+                    can_append_incrementally = True
+                    msgs_to_insert = valid_msgs[db_count:]
+
+            if not can_append_incrementally:
+                cursor.execute("DELETE FROM messages WHERE session_id = ?", (session.session_id,))
+                msgs_to_insert = valid_msgs
         else:
             # Insert new session
             cursor.execute("""
@@ -710,40 +759,19 @@ def _save_session_to_db(session: Session) -> None:
                 _sql_scalar(session.model, 'model'),
                 _sql_scalar(session.created_at, 'created_at'),
                 _sql_scalar(session.updated_at, 'updated_at'),
-                len(session.messages),
+                len(valid_msgs),
                 _sql_scalar(session.title, 'title'),
                 _sql_scalar(session.input_tokens, 'input_tokens'),
                 _sql_scalar(session.output_tokens, 'output_tokens'),
             ))
 
-        # Insert all messages
-        for msg in session.messages:
-            if not isinstance(msg, dict):
-                _logger.warning(
-                    "session %s has non-dict message (%s); skipping",
-                    session.session_id, type(msg).__name__,
-                )
-                continue
-            role = _sql_scalar(msg.get('role', ''), 'message.role')
-            content = msg.get('content', '')
-            if isinstance(content, list):
-                content = ' '.join(
-                    p.get('text', '')
-                    for p in content
-                    if isinstance(p, dict) and p.get('type') == 'text'
-                )
-            content = _sql_scalar(content, 'message.content')
-
-            cursor.execute("""
+        # Batch insert only new (or full-resync) messages
+        if msgs_to_insert:
+            cursor.executemany("""
                 INSERT INTO messages (session_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
-            """, (
-                session.session_id,
-                role,
-                content,
-                _sql_scalar(msg.get('timestamp', time.time()), 'message.timestamp'),
-            ))
-        
+            """, msgs_to_insert)
+
         conn.commit()
         conn.close()
     except Exception as e:
