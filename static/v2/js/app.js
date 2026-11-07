@@ -1416,19 +1416,25 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
         const curModelName = state.currentSessionModel ? (typeof formatModelName === 'function' ? formatModelName(state.currentSessionModel) : state.currentSessionModel) : '공유 하네스';
         setStatus(`🤝 [하네스 서브팀 3개 조 협업 중 — ${curModelName}] 1조 설계 ➔ 2조 구현 ➔ 3조 검증...`, 'sync');
         const subteamCard = document.createElement('div');
-        subteamCard.className = 'my-2 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-[8px] flex flex-wrap items-center justify-between gap-2 text-[12.5px] animate-pulse';
+        subteamCard.className = 'subteam-harness-card my-2.5 p-3 bg-amber-500/10 border border-amber-500/40 rounded-[10px] text-[12.5px] transition-all shadow-sm animate-pulse';
         subteamCard.innerHTML = `
-          <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
-            <span class="font-bold text-amber-700 dark:text-amber-400">🤝 하네스 서브에이전트 3개 조 가동 중</span>
-            <span class="text-on-surface-variant text-[11px]">(${escapeHtml(curModelName)} 공유 하네스)</span>
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-500/20">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] subteam-status-dot"></span>
+              <span class="font-bold text-amber-700 dark:text-amber-400 subteam-title">🤝 하네스 서브에이전트 실시간 가동 중</span>
+              <span class="text-on-surface-variant text-[11px]">(${escapeHtml(curModelName)} 공유 하네스)</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[11.5px] font-medium">
+              <span class="px-2 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 rounded font-semibold subteam-badge-1">1조 설계</span>
+              <span class="text-on-surface-variant">➔</span>
+              <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded font-semibold subteam-badge-2">2조 구현</span>
+              <span class="text-on-surface-variant">➔</span>
+              <span class="px-2 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded font-semibold subteam-badge-3">3조 검증</span>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5 text-[11.5px] font-medium">
-            <span class="px-2 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 rounded font-semibold">1조 설계자</span>
-            <span class="text-on-surface-variant">➔</span>
-            <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded font-semibold">2조 전문구현</span>
-            <span class="text-on-surface-variant">➔</span>
-            <span class="px-2 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded font-semibold">3조 보안검증</span>
+          <div class="subteam-feed-header mt-2 text-[11.5px] text-on-surface-variant flex items-center gap-1.5 font-mono">
+            <span class="material-symbols-outlined text-[13px] text-amber-600 animate-spin">sync</span>
+            <span>하위 에이전트 작업 로그 및 실행 결과가 아래에 실시간 스트리밍됩니다:</span>
           </div>
         `;
         contentEl.appendChild(subteamCard);
@@ -1480,6 +1486,20 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       lastToolMark = fullResponse.length;
       setStatus('⚙️ 도구 실행 완료 · 결과 분석 중...', 'sync');
       try { handleBoardroomToolResult(data); } catch (e) { console.warn('boardroom tool result err:', e); }
+
+      // 하네스 서브팀 카드 완료 상태로 갱신
+      try {
+        const card = contentEl.querySelector('.subteam-harness-card');
+        if (card) {
+          card.classList.remove('animate-pulse');
+          const title = card.querySelector('.subteam-title');
+          if (title) title.textContent = '🤝 하네스 서브에이전트 협업 완결';
+          const header = card.querySelector('.subteam-feed-header');
+          if (header) {
+            header.innerHTML = '<span class="material-symbols-outlined text-[13px] text-emerald-600">check_circle</span> <span class="text-emerald-700 dark:text-emerald-400 font-semibold">모든 하위 에이전트 단계 완료 — 라온 CEO 최종 취합 완결</span>';
+          }
+        }
+      } catch (_) {}
     },
     onHarnessStarted(data) {
       lastToolMark = fullResponse.length;

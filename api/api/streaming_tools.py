@@ -1484,12 +1484,21 @@ def inject_colleague_tools(agent: Any, session_id: str = None) -> None:
                 tmpl = templates.get(target_id)
                 if tmpl:
                     _logger.info(f"[delegate_to_agent] Dynamic Specialist Dispatch: {agent_name} -> {target_id} using parent model {parent_model}")
+                    stream_cb = getattr(agent, 'stream_delta_callback', None)
+                    if stream_cb:
+                        stream_cb(f"\n> 🤝 **[{tmpl.get('display_name', target_id)} 소환]** 작업 전달: {task[:60]}...\n")
+
                     node_res = execute_specialist_node(
                         template=tmpl,
                         task_prompt=task,
                         context=f"Parent Session: {session_id}",
                         preferred_model=parent_model
                     )
+
+                    if stream_cb:
+                        out_snip = str(node_res.get("output", ""))[:120].replace("\n", " ").strip()
+                        stream_cb(f"> ✅ **[{tmpl.get('display_name', target_id)}]** 완료 ({node_res.get('elapsed_sec', 0)}초) — `{out_snip}...`\n\n")
+
                     return json.dumps({
                         "ok": True,
                         "agent": agent_name,

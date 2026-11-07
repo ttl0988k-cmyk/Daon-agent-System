@@ -599,6 +599,25 @@ def _run_single_child(
     _heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
     _heartbeat_thread.start()
 
+    parent_stream_cb = getattr(parent_agent, 'stream_delta_callback', None)
+    if parent_stream_cb:
+        parent_stream_cb(f"\n> ⏳ **[하위 {task_index + 1}조 시작]** {goal[:60]}...\n")
+
+    # Wire child's progress callback to stream tool actions live to parent chat
+    orig_cb = getattr(child, 'tool_progress_callback', None)
+    def _live_child_tool_cb(event_type, tool_name=None, preview=None, args=None, **kw):
+        if orig_cb:
+            try: orig_cb(event_type, tool_name, preview, args, **kw)
+            except Exception: pass
+        if parent_stream_cb:
+            if event_type == "tool.started":
+                parent_stream_cb(f"> 🔧 [하위 {task_index + 1}조] 도구 실행: `{tool_name}` {str(preview or '')[:60]}\n")
+            elif event_type == "tool.completed":
+                is_err = kw.get('is_error', False)
+                parent_stream_cb(f"> {'⚠️' if is_err else '✔️'} [하위 {task_index + 1}조] `{tool_name}` 실행 {'오류' if is_err else '완료'}\n")
+
+    child.tool_progress_callback = _live_child_tool_cb
+
     try:
         if child_progress_cb:
             try:
@@ -616,6 +635,8 @@ def _run_single_child(
                 logger.debug("Progress callback flush failed: %s", e)
 
         duration = round(time.monotonic() - child_start, 2)
+        if parent_stream_cb:
+            parent_stream_cb(f"> ✅ **[하위 {task_index + 1}조 완료]** 소요시간: {duration}초\n\n")
 
         summary = result.get("final_response") or ""
         completed = result.get("completed", False)
@@ -861,10 +882,31 @@ def delegate_task(
             from api.dynamic.role_pipeline import run_delegated_pipeline
             parent_model = getattr(parent_agent, 'model', None) or "muse-spark-1.3-contributor"
             print(f"[DelegateTask] Intercepted: Routing to 105-Specialist 3-Team Pipeline (inheriting parent model: {parent_model})...", flush=True)
+
+            def _live_pipe_cb(evt_type, agent_name, payload):
+                stream_cb = getattr(parent_agent, 'stream_delta_callback', None)
+                if not stream_cb:
+                    return
+                if evt_type == "pipeline_start":
+                    specs = ", ".join(payload.get("specialists", []))
+                    stream_cb(f"\n> 📋 **하네스 선발 전문팀**: `{specs}`\n")
+                elif evt_type == "role_start":
+                    title = payload.get("title", agent_name)
+                    stream_cb(f"> ⏳ **[{title}]** 작업 분석 및 실행 중...\n")
+                elif evt_type == "role_done":
+                    title = payload.get("title", agent_name)
+                    elapsed = payload.get("elapsed_sec", 0)
+                    out_snippet = payload.get("output", "")[:140].replace("\n", " ").strip()
+                    stream_cb(f"> ✅ **[{title}]** 완료 ({elapsed}초) — `{out_snippet}...`\n\n")
+                elif evt_type == "role_error":
+                    title = payload.get("title", agent_name)
+                    stream_cb(f"> ⚠️ **[{title}]** 오류 발생: {payload.get('error')}\n\n")
+
             pipe_res = run_delegated_pipeline(
                 task_prompt=goal,
                 context=context or "",
-                preferred_model=parent_model
+                preferred_model=parent_model,
+                event_callback=_live_pipe_cb
             )
             final_out = pipe_res.get("final_output", "")
             steps = pipe_res.get("steps", [])
