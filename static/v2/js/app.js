@@ -1411,6 +1411,29 @@ function attachStreamEvents(streamId, bubble, contentEl, timeEl, onFinish) {
       setStatus(`🔧 도구 실행 중: ${friendly}`, 'construction');
 
       const name = rawName.toLowerCase();
+      // ── [위임 도구 시각화] delegate_task / delegate_team 호출 시 하네스 서브팀 협업 카드 표시 ──
+      if (name.includes('delegate')) {
+        setStatus('🤝 [하네스 서브팀 3개 조 협업 중] 1조 설계 ➔ 2조 구현 ➔ 3조 검증...', 'sync');
+        const subteamCard = document.createElement('div');
+        subteamCard.className = 'my-2 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-[8px] flex flex-wrap items-center justify-between gap-2 text-[12.5px] animate-pulse';
+        subteamCard.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+            <span class="font-bold text-amber-700 dark:text-amber-400">🤝 하네스 서브에이전트 3개 조 가동 중</span>
+            <span class="text-on-surface-variant text-[11px]">(DeepSeek V4.1 Flash 공유 하네스)</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11.5px] font-medium">
+            <span class="px-2 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 rounded font-semibold">1조 설계자</span>
+            <span class="text-on-surface-variant">➔</span>
+            <span class="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded font-semibold">2조 전문구현</span>
+            <span class="text-on-surface-variant">➔</span>
+            <span class="px-2 py-0.5 bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded font-semibold">3조 보안검증</span>
+          </div>
+        `;
+        contentEl.appendChild(subteamCard);
+        if (typeof scrollChatToBottom === 'function') scrollChatToBottom();
+        return;
+      }
       // 채팅 → 다이나믹 하네스: 백그라운드 실행 안내 + 하네스 탭 자동 전환 (구 UI 패턴 이식)
       // 하네스는 이제 백그라운드로 돌므로 챗 턴은 즉시 끝난다. 진행/결과는
       // 하네스 탭에서 폴링으로 확인하고, 사용자는 언제든 챗으로 돌아와 계속 대화할 수 있다.

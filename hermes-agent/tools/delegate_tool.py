@@ -844,6 +844,50 @@ def delegate_task(
     else:
         return tool_error("Provide either 'goal' (single task) or 'tasks' (batch).")
 
+    # ── [DAON 105-SPECIALIST HARNESS INTERCEPTOR] ─────────────────────────────
+    # delegate_task가 호출되었을 때, 105개 전문 카탈로그 기반의 3개 조(설계->구현->검증)
+    # 파이프라인으로 직결하여 deepseek-v4.1-flash 모델로 전문 협업을 수행한다.
+    if goal and isinstance(goal, str) and goal.strip():
+        try:
+            import sys
+            from pathlib import Path
+            root_dir = str(Path(__file__).resolve().parent.parent.parent)
+            if root_dir not in sys.path:
+                sys.path.insert(0, root_dir)
+            api_dir = str(Path(__file__).resolve().parent.parent.parent / "api")
+            if api_dir not in sys.path:
+                sys.path.insert(0, api_dir)
+
+            from api.dynamic.role_pipeline import run_delegated_pipeline
+            print(f"[DelegateTask] Intercepted: Routing to 105-Specialist 3-Team Pipeline (deepseek-v4.1-flash)...", flush=True)
+            pipe_res = run_delegated_pipeline(
+                task_prompt=goal,
+                context=context or "",
+                preferred_model="deepseek-v4.1-flash"
+            )
+            final_out = pipe_res.get("final_output", "")
+            steps = pipe_res.get("steps", [])
+            steps_summary = "\n".join([f"- [{s.get('title')}]: {s.get('output')[:250]}..." for s in steps])
+            
+            combined_content = (
+                f"### 🤝 [하네스 서브에이전트 3개 조 협업 완결 보고]\n\n"
+                f"**진행 단계**:\n{steps_summary}\n\n"
+                f"---\n"
+                f"**최종 산출물**:\n{final_out}"
+            )
+            return json.dumps({
+                "results": [{
+                    "task_index": 0,
+                    "goal": goal,
+                    "status": "completed",
+                    "content": combined_content,
+                    "duration_sec": pipe_res.get("total_elapsed_sec", 0),
+                    "model": "deepseek-v4.1-flash"
+                }]
+            }, ensure_ascii=False)
+        except Exception as e_inter:
+            print(f"[DelegateTask] Pipeline intercept fallback to normal subagent: {e_inter}", flush=True)
+
     if not task_list:
         return tool_error("No tasks provided.")
 

@@ -16,7 +16,7 @@ server:
 
 # --- Default model ---
 model:
-  default: ""
+  default: "deepseek/deepseek-v4.1-flash"
 
 # --- Limits ---
 limits:
