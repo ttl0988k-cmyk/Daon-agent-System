@@ -714,7 +714,7 @@ def get_available_mcp_servers() -> List[str]:
                     break
             except Exception:
                 pass
-    default_base = ["context7", "serena", "daon-design", "figma", "stitch"]
+    default_base = ["context7", "serena", "daon-design", "figma", "stitch", "ruflo"]
     for b in default_base:
         if b not in sids:
             sids.append(b)
@@ -816,6 +816,14 @@ def write_codex_home(provider: str, with_mcp: bool = False, allowed_mcps: Option
                 'args = ["-u", "c:/daon/Daon agent System/api/api/mcp/daon_design_mcp.py"]',
             ]
             injected_sids.add("daon-design")
+        if "ruflo" in targets:
+            lines += [
+                "",
+                "[mcp_servers.ruflo]",
+                'command = "ruflo"',
+                'args = ["mcp", "start"]',
+            ]
+            injected_sids.add("ruflo")
 
         # Dynamic MCP server injection from mcp_servers.json (figma, stitch, filesystem, etc.)
         try:

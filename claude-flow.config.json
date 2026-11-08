@@ -1,0 +1,43 @@
+{
+  "version": "3.5",
+  "agents": {
+    "defaultType": "coder",
+    "autoSpawn": false,
+    "maxConcurrent": 1,
+    "timeout": 300000,
+    "providers": []
+  },
+  "swarm": {
+    "topology": "hierarchical",
+    "maxAgents": 3,
+    "autoScale": false,
+    "coordinationStrategy": "sequential",
+    "healthCheckInterval": 30000
+  },
+  "memory": {
+    "backend": "hybrid",
+    "persistPath": "./data/memory",
+    "cacheSize": 1000,
+    "enableHNSW": true,
+    "vectorDimension": 384
+  },
+  "mcp": {
+    "serverHost": "localhost",
+    "serverPort": 3000,
+    "autoStart": false,
+    "transportType": "stdio",
+    "tools": []
+  },
+  "cli": {
+    "colorOutput": true,
+    "interactive": true,
+    "verbosity": "normal",
+    "outputFormat": "text",
+    "progressStyle": "spinner"
+  },
+  "hooks": {
+    "enabled": true,
+    "autoExecute": true,
+    "hooks": []
+  }
+}
