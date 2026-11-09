@@ -2043,9 +2043,9 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   if final_rep:
                       # DSML 태그 누출 2차 방어선 정제
                       import re
-                      final_rep = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*calls>.*?</[｜\|\s]*DSML[｜\|\s]*calls>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
-                      final_rep = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*invoke.*?</[｜\|\s]*DSML[｜\|\s]*invoke>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
-                      final_rep = re.sub(r'</?[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', final_rep, flags=re.IGNORECASE).strip()
+                      final_rep = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
+                      final_rep = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*invoke\b.*?>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*invoke\s*>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
+                      final_rep = re.sub(r'<\s*/?\s*[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', final_rep, flags=re.IGNORECASE).strip()
                       if not final_rep or len(final_rep) < 20:
                           final_rep = "하위 전문 에이전트들의 작업 및 분석이 완료되었습니다. 상세 결과는 위 단계를 참조해 주십시오."
 

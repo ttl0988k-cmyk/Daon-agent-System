@@ -102,13 +102,19 @@ def _sanitize_report_output(text: str, fallback_summary: str = "") -> str:
         return fallback_summary
     
     import re
-    cleaned = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*calls>.*?</[｜\|\s]*DSML[｜\|\s]*calls>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*invoke.*?</[｜\|\s]*DSML[｜\|\s]*invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r'</?[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', cleaned, flags=re.IGNORECASE)
+    # 1. Remove complete <...DSML...calls> ... </...DSML...calls> blocks
+    cleaned = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # 2. Remove complete <...DSML...invoke> ... </...DSML...invoke> blocks
+    cleaned = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*invoke\b.*?>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*invoke\s*>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    # 3. Remove any stray remaining DSML tags (including closing tags like < / | DSML | ...>)
+    cleaned = re.sub(r'<\s*/?\s*[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip()
     
     if len(cleaned) < 20 and fallback_summary:
-        return f"하위 전문 에이전트들의 작업 및 분석 결과를 종합한 보고입니다.\n\n{fallback_summary}"
+        clean_fallback = _sanitize_report_output(fallback_summary, "")
+        if clean_fallback:
+            return f"하위 전문 에이전트들의 작업 및 분석 결과를 종합한 보고입니다.\n\n{clean_fallback}"
+        return "하위 전문 에이전트들의 작업 및 분석이 완료되었습니다."
     return cleaned or fallback_summary
 
 
@@ -151,12 +157,35 @@ def execute_specialist_node(
     if success_criteria:
         crit_text = "\n### 당신의 작업 성공 기준 (MANDATORY):\n" + "\n".join(f"- {c}" for c in success_criteria)
 
+    # 템플릿의 도구 목록을 hermes toolset 목록으로 매핑하여 전문 에이전트가 실제 작업 수행 가능하도록 함
+    tmpl_tools = template.get("tools", [])
+    tool_map = {
+        "terminal": "terminal",
+        "file": "file",
+        "web_search": "web",
+        "search": "search",
+        "browser": "browser",
+        "web": "web",
+    }
+    resolved_toolsets = set()
+    for t in tmpl_tools:
+        if t in tool_map:
+            resolved_toolsets.add(tool_map[t])
+    if not resolved_toolsets:
+        resolved_toolsets = {"terminal", "file"}
+    else:
+        resolved_toolsets.add("terminal")
+        resolved_toolsets.add("file")
+
     system_instruction = (
         f"{persona}\n\n"
         f"에이전트 ID: {agent_id} ({disp_name})\n"
         f"분야: {category}\n"
         f"{crit_text}\n\n"
-        "주의: 도구를 직접 호출하지 말고 <｜DSML｜> 태그를 절대 출력하지 마십시오. 당신의 역할에 맞는 구체적인 분석/설계/구현 결과물을 순수 마크다운 텍스트로 작성하십시오."
+        "작업 지침:\n"
+        "1. 필요시 제공된 터미널과 파일 도구를 적극 활용하여 파일 구조와 코드를 직접 확인하고 실제 작업을 완수하십시오.\n"
+        "2. 도구 호출은 시스템 도구 인터페이스를 통해 정상 실행하십시오.\n"
+        "3. 작업이 끝나면 당신의 역할에 맞는 구체적인 분석/설계/구현 결과물을 완성도 높은 한국어 마크다운으로 작성하여 대표님께 보고하십시오."
     )
     
     full_prompt = (
@@ -171,7 +200,9 @@ def execute_specialist_node(
         output = _call_direct(
             prompt=full_prompt,
             system_instruction=system_instruction,
-            preferred_model=preferred_model
+            preferred_model=preferred_model,
+            enabled_toolsets=list(resolved_toolsets),
+            max_iterations=8
         )
         output = _sanitize_report_output(output, f"[{disp_name}] 역할 작업 완료")
         elapsed = round(time.time() - start_time, 2)
@@ -290,10 +321,10 @@ def run_delegated_pipeline(
     synthesis_instruction = (
         "당신은 DAON Agent System의 총괄 AI CEO 라온(Raon)입니다.\n"
         "하위 전문 에이전트들이 도출한 작업 결과물을 취합하여 대표님께 깔끔하고 명확한 최종 종합 보고서를 작성하세요.\n\n"
-        "CRITICAL RULES:\n"
-        "1. 당신은 도구를 직접 실행할 수 없습니다. 터미널 명령어나 파일 읽기 등의 도구 호출을 시도하지 마십시오.\n"
-        "2. <｜DSML｜> 또는 <|DSML|> 같은 도구 호출 태그를 절대 출력하지 마십시오.\n"
-        "3. 오직 하위 에이전트들의 산출물을 종합하여 대표님께 올릴 완성도 높은 마크다운 한국어 보고서만 작성하십시오."
+        "지침:\n"
+        "1. 하위 전문 에이전트들의 핵심 작업 내용과 성과를 빠짐없이 종합하여 완성도 높은 마크다운 한국어 보고서를 작성하십시오.\n"
+        "2. 필요시 파일 상태나 실행 결과를 직접 확인할 수 있습니다.\n"
+        "3. 최종 출력은 대표님께 보고드릴 완성된 최종 요약 및 작업 완료 리포트 형식이어야 합니다."
     )
     history_summary = "\n\n".join([f"### [{s['title']}]\n{s['output']}" for s in steps_results])
     synthesis_prompt = (
@@ -309,7 +340,9 @@ def run_delegated_pipeline(
         final_report = _call_direct(
             prompt=synthesis_prompt,
             system_instruction=synthesis_instruction,
-            preferred_model=preferred_model
+            preferred_model=preferred_model,
+            enabled_toolsets=["terminal", "file"],
+            max_iterations=5
         )
         final_report = _sanitize_report_output(final_report, history_summary)
         if event_callback:
