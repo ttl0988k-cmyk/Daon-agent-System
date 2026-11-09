@@ -1995,8 +1995,17 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
           # 순수 로컬 복합 작업 감지 (Laya 데몬 오프라인 시에도 100% 발동)
           _code_verbs = ["구현", "만들어", "작성", "개발", "추가", "수정", "고쳐", "리팩토링", "설계", "검증", "테스트", "최적화", "빌드", "에러", "버그", "해결"]
           _code_nouns = ["코드", "컴포넌트", "함수", "클래스", "api", "ui", "react", "vue", "python", "c#", "docker", "css", "db", "스키마", "서버", "웹", "앱", "기능", "로직", "누수"]
-          
-          has_verb = any(v in _m_lower for v in _code_verbs)
+          _negations = ["하지 말고", "하지마", "하지 마", "말고", "말아", "제외", "건너뛰", "금지"]
+
+          # 부정어가 붙은 동사는 제외 (예: "테스트 하지 말고", "수정하지 마")
+          valid_verbs = []
+          for v in _code_verbs:
+              if v in _m_lower:
+                  is_negated = any(f"{v} {neg}" in _m_lower or f"{v}{neg}" in _m_lower for neg in _negations)
+                  if not is_negated:
+                      valid_verbs.append(v)
+
+          has_verb = len(valid_verbs) > 0
           has_noun = any(n in _m_lower for n in _code_nouns)
           _is_autonomous_task = (len(_m_lower) >= 15 and has_verb and has_noun)
 
@@ -2032,6 +2041,14 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   
                   final_rep = pipeline_res.get("final_output", "")
                   if final_rep:
+                      # DSML 태그 누출 2차 방어선 정제
+                      import re
+                      final_rep = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*calls>.*?</[｜\|\s]*DSML[｜\|\s]*calls>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
+                      final_rep = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*invoke.*?</[｜\|\s]*DSML[｜\|\s]*invoke>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
+                      final_rep = re.sub(r'</?[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', final_rep, flags=re.IGNORECASE).strip()
+                      if not final_rep or len(final_rep) < 20:
+                          final_rep = "하위 전문 에이전트들의 작업 및 분석이 완료되었습니다. 상세 결과는 위 단계를 참조해 주십시오."
+
                       put('token', {'text': f"\n---\n### 👑 라온 CEO 최종 종합 보고\n\n{final_rep}\n"})
                       s.messages.append({'role': 'assistant', 'content': f"[하네스 서브에이전트 협업 완료]\n\n{final_rep}"})
                       s.save()

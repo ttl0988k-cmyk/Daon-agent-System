@@ -93,6 +93,25 @@ def select_specialists_for_task(task_prompt: str, top_k: int = 3) -> List[Dict[s
     return [item[2] for item in scored[:top_k]]
 
 
+def _sanitize_report_output(text: str, fallback_summary: str = "") -> str:
+    """
+    Strips raw DSML/tool-call markup (<｜DSML｜ ... </｜DSML｜>) and restores clean markdown.
+    If the output was pure DSML with no actual explanation, creates a structured summary from fallback.
+    """
+    if not text:
+        return fallback_summary
+    
+    import re
+    cleaned = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*calls>.*?</[｜\|\s]*DSML[｜\|\s]*calls>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r'<[｜\|\s]*DSML[｜\|\s]*invoke.*?</[｜\|\s]*DSML[｜\|\s]*invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r'</?[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+    
+    if len(cleaned) < 20 and fallback_summary:
+        return f"하위 전문 에이전트들의 작업 및 분석 결과를 종합한 보고입니다.\n\n{fallback_summary}"
+    return cleaned or fallback_summary
+
+
 def execute_specialist_node(
     template: Dict[str, Any],
     task_prompt: str,
@@ -137,7 +156,7 @@ def execute_specialist_node(
         f"에이전트 ID: {agent_id} ({disp_name})\n"
         f"분야: {category}\n"
         f"{crit_text}\n\n"
-        f"반드시 전문성을 100% 발휘하여 산출물을 작성하세요."
+        "주의: 도구를 직접 호출하지 말고 <｜DSML｜> 태그를 절대 출력하지 마십시오. 당신의 역할에 맞는 구체적인 분석/설계/구현 결과물을 순수 마크다운 텍스트로 작성하십시오."
     )
     
     full_prompt = (
@@ -154,6 +173,7 @@ def execute_specialist_node(
             system_instruction=system_instruction,
             preferred_model=preferred_model
         )
+        output = _sanitize_report_output(output, f"[{disp_name}] 역할 작업 완료")
         elapsed = round(time.time() - start_time, 2)
         
         result = {
@@ -268,8 +288,12 @@ def run_delegated_pipeline(
     # Final Synthesis: Raon CEO
     from api.dynamic.direct_calls import _call_direct
     synthesis_instruction = (
-        "당신은 DAON Agent System의 총괄 AI CEO 라온(Raon)입니다. "
-        "하위 전문 에이전트들이 도출한 작업 결과물을 취합하여 대표님께 깔끔하고 명확한 최종 보고서를 작성하세요."
+        "당신은 DAON Agent System의 총괄 AI CEO 라온(Raon)입니다.\n"
+        "하위 전문 에이전트들이 도출한 작업 결과물을 취합하여 대표님께 깔끔하고 명확한 최종 종합 보고서를 작성하세요.\n\n"
+        "CRITICAL RULES:\n"
+        "1. 당신은 도구를 직접 실행할 수 없습니다. 터미널 명령어나 파일 읽기 등의 도구 호출을 시도하지 마십시오.\n"
+        "2. <｜DSML｜> 또는 <|DSML|> 같은 도구 호출 태그를 절대 출력하지 마십시오.\n"
+        "3. 오직 하위 에이전트들의 산출물을 종합하여 대표님께 올릴 완성도 높은 마크다운 한국어 보고서만 작성하십시오."
     )
     history_summary = "\n\n".join([f"### [{s['title']}]\n{s['output']}" for s in steps_results])
     synthesis_prompt = (
@@ -287,6 +311,7 @@ def run_delegated_pipeline(
             system_instruction=synthesis_instruction,
             preferred_model=preferred_model
         )
+        final_report = _sanitize_report_output(final_report, history_summary)
         if event_callback:
             event_callback("role_done", "raon_synthesizer", {"title": "라온 CEO 종합 보고", "status": "done"})
     except Exception as e:
