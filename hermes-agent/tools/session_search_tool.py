@@ -223,7 +223,7 @@ async def _summarize_session(
         f"Summarize this conversation with focus on: {query}"
     )
 
-    max_retries = 3
+    max_retries = 1
     for attempt in range(max_retries):
         try:
             response = await async_call_llm(
@@ -234,30 +234,18 @@ async def _summarize_session(
                 ],
                 temperature=0.1,
                 max_tokens=MAX_SUMMARY_TOKENS,
+                timeout=8.0,
             )
             content = extract_content_or_reasoning(response)
             if content:
                 return content
-            # Reasoning-only / empty — let the retry loop handle it
-            logging.warning("Session search LLM returned empty content (attempt %d/%d)", attempt + 1, max_retries)
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1 * (attempt + 1))
-                continue
-            return content
+            return None
         except RuntimeError:
             logging.warning("No auxiliary model available for session summarization")
             return None
         except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1 * (attempt + 1))
-            else:
-                logging.warning(
-                    "Session summarization failed after %d attempts: %s",
-                    max_retries,
-                    e,
-                    exc_info=True,
-                )
-                return None
+            logging.warning("Session summarization failed/timed out (falling back to raw): %s", e)
+            return None
 
 
 # Sources that are excluded from session browsing/searching by default.
@@ -529,7 +517,7 @@ def session_search(
     limit: int = 3,
     db=None,
     current_session_id: str = None,
-    mode: str = "summary",
+    mode: str = "raw",
     anchor: str = None,
     message_id: Any = None,
     session_id: str = None,
@@ -537,15 +525,14 @@ def session_search(
     after: int = 7,
 ) -> str:
     """
-    Search past sessions: focused summaries (default) or verbatim excerpts.
+    Search past sessions: verbatim excerpts (default, fast 0.05s, no LLM) or focused summaries.
 
-    Modes (하위호환 — 기본 "summary"로 기존 호출 100% 호환):
-      - "summary": FTS5 매치 → 상위 세션 LLM 요약 (기존 동작 그대로).
-        각 entry에 match_anchors 포함 → 원문 확인 시 mode="around"로 2단 파이프라인.
-      - "raw": db.search_messages trigram 경로의 원문 스니펫을 요약 없이 직접 반환
-        (LLM 호출 없음, excerpt + 후속 around용 anchor 포함).
+    Modes:
+      - "raw" (default): db.search_messages trigram 경로의 원문 스니펫을 요약 없이 직접 반환
+        (무 LLM·즉답 0.05s, excerpt + 후속 around용 anchor 포함, 429 및 지연 완전 방지).
       - "around": anchor("session_id#message_id") 주변 앞뒤 문맥을 get_around()으로
         반환 (LLM 호출 없음, query 불필요).
+      - "summary": FTS5 매치 → 상위 세션 LLM 요약 (선택적).
 
     The current session is excluded from results since the agent already has that context.
     """
@@ -553,11 +540,11 @@ def session_search(
         return tool_error("Session database not available.", success=False)
 
     if not isinstance(mode, str):
-        mode = "summary"
-    mode = (mode or "summary").strip().lower()
+        mode = "raw"
+    mode = (mode or "raw").strip().lower()
     if mode not in ("summary", "raw", "around"):
         return tool_error(
-            f"Invalid mode '{mode}'. Use 'summary', 'raw', or 'around'.",
+            f"Invalid mode '{mode}'. Use 'raw', 'around', or 'summary'.",
             success=False,
         )
 
@@ -817,8 +804,8 @@ SESSION_SEARCH_SCHEMA = {
             },
             "mode": {
                 "type": "string",
-                "description": "Retrieval mode: 'summary' (default, LLM summaries with match_anchors), 'raw' (verbatim excerpts, no LLM), 'around' (verbatim context around anchor, no LLM, no query needed).",
-                "default": "summary",
+                "description": "Retrieval mode: 'raw' (default, fast verbatim excerpts in 0.05s, no LLM), 'around' (verbatim context around anchor, no LLM, no query needed), 'summary' (optional LLM summaries with match_anchors).",
+                "default": "raw",
             },
             "anchor": {
                 "type": "string",
@@ -861,7 +848,7 @@ registry.register(
         limit=args.get("limit", 3),
         db=kw.get("db"),
         current_session_id=kw.get("current_session_id"),
-        mode=args.get("mode", "summary"),
+        mode=args.get("mode", "raw"),
         anchor=args.get("anchor"),
         message_id=args.get("message_id"),
         session_id=args.get("session_id"),
