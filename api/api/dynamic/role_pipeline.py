@@ -10,6 +10,7 @@ with zero-latency failover.
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -101,7 +102,6 @@ def _sanitize_report_output(text: str, fallback_summary: str = "") -> str:
     if not text:
         return fallback_summary
     
-    import re
     # 1. Remove complete <...DSML...calls> ... </...DSML...calls> blocks
     cleaned = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>', '', text, flags=re.DOTALL | re.IGNORECASE)
     # 2. Remove complete <...DSML...invoke> ... </...DSML...invoke> blocks

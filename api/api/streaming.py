@@ -2042,7 +2042,6 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                   final_rep = pipeline_res.get("final_output", "")
                   if final_rep:
                       # DSML 태그 누출 2차 방어선 정제
-                      import re
                       final_rep = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*calls\s*>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
                       final_rep = re.sub(r'<\s*[｜\|\s]*DSML[｜\|\s]*invoke\b.*?>.*?<\s*/\s*[｜\|\s]*DSML[｜\|\s]*invoke\s*>', '', final_rep, flags=re.DOTALL | re.IGNORECASE)
                       final_rep = re.sub(r'<\s*/?\s*[｜\|\s]*DSML[｜\|\s]*[^>]*>', '', final_rep, flags=re.IGNORECASE).strip()
